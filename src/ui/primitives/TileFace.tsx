@@ -152,8 +152,15 @@ export const TileFace = memo(function TileFace({
  * Face-down tile. Deliberately NOT the same art as `CardBack`: a game
  * can have both on the table at once, and the two need to read as
  * different physical objects rather than as one deck at two sizes.
- * Dominoes are opaque blanks, so this is a plain bone-coloured back with
- * a single ruled line where the tile's own hairline would be.
+ *
+ * A real domino's back is a plain, opaque ivory tile — not felt-toned.
+ * An earlier version used the same warm felt gradient `CardBack` uses,
+ * on the reasoning that it should read as "a game piece, not paper" —
+ * but that gradient sits in the same colour family as the table itself
+ * (`--color-felt-700`/`800`), so a face-down tile all but disappeared
+ * against the board: an opponent's whole hand read as a faint smear
+ * rather than a countable row of pieces. Bone, not felt — the same base
+ * a face-up tile already uses — is what actually contrasts.
  */
 export const TileBack = memo(function TileBack({
   w,
@@ -175,10 +182,9 @@ export const TileBack = memo(function TileBack({
           width: box.w,
           height: box.h,
           borderRadius: box.w * 0.12,
-          border: "1px solid var(--color-brass-600)",
+          border: "1px solid var(--color-card-edge)",
           boxShadow: "var(--shadow-e1)",
-          background:
-            "linear-gradient(150deg, var(--color-felt-700), var(--color-felt-800))",
+          background: "var(--color-card-face)",
           position: "relative",
           backfaceVisibility: "hidden",
         }}
@@ -189,7 +195,7 @@ export const TileBack = memo(function TileBack({
             inset: box.w * 0.1,
             border: "1px solid var(--color-brass-500)",
             borderRadius: box.w * 0.07,
-            opacity: 0.45,
+            opacity: 0.55,
           }}
         />
         <span

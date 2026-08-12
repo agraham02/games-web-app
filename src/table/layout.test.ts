@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { cellHalfExtent, podBox, resolveTable, type Box, type Density } from "./geometry";
+import {
+  cellHalfExtent,
+  podBox,
+  resolveDensity,
+  resolveTable,
+  tileShortSide,
+  type Box,
+  type Density,
+} from "./geometry";
 import { boardCamera, boardPieceSize, layoutPiece, projectCell, baseSize } from "./layout";
 import type { Placement } from "@/engine/types";
 import { createRng } from "@/engine/rng";
@@ -135,7 +143,7 @@ describe("domino line — camera framing", () => {
         for (const density of DENSITIES) {
           const g = resolveTable({ seats, width: vp.w, height: vp.h, density });
           const zone = g.zones.line;
-          const pods = g.seats.filter((s) => !s.isHero).map(podBox);
+          const pods = g.seats.filter((s) => !s.isHero).map((s) => podBox(s, density));
 
           for (const chain of chainSnapshots(seats, 909 + seats)) {
             const cam = boardCamera(g, boundsOf(chain));
@@ -194,6 +202,127 @@ describe("domino line — camera framing", () => {
       const unit = boardCamera(g, boundsOf(chain)).unit;
       expect(unit).toBeLessThanOrEqual(previous + 1e-9);
       previous = unit;
+    }
+  });
+});
+
+describe("opponent tile hand — stays clear of the domino line", () => {
+  // A domino hand starts at 6 or 7 tiles (see dominoes/state.ts's
+  // `handSize`) and only shrinks from there.
+  const MAX_HAND = 7;
+
+  function handRect(g: ReturnType<typeof resolveTable>, seat: number, index: number, count: number) {
+    const placement: Placement = { zone: "hand", seat, index, count, faceUp: false };
+    const t = layoutPiece(placement, g, { kind: "tile" });
+    const base = baseSize(g);
+    const cx = t.x + base.w / 2;
+    const cy = t.y + base.h / 2;
+    // The tile's own rendered footprint, not the (larger, mostly
+    // transparent) base container it's inscribed in — matching how the
+    // "domino line" tests above measure a tile via `boardPieceSize`
+    // rather than the container it also renders inside.
+    const w = tileShortSide(g.miniCard);
+    const h = w * 2;
+    return { x: cx - w / 2, y: cy - h / 2, w, h } satisfies Box;
+  }
+
+  // A side-anchored seat's rack reaches straight out from its pod along
+  // the SAME axis it fans in (see layout.ts's "hand" case) — there is
+  // no room to fully clear `line` there once the hand gets big on a
+  // FORCED density/viewport mismatch (`wide` tiles pushed onto a phone,
+  // say — the lab preview can do this; `resolveDensity` alone never
+  // would), short of rotating the rack to stand along the pod's edge
+  // instead, which no seat needs today (dominoes tops out at 4 seats,
+  // and only that table ever puts a hand on a side edge at all — see
+  // the matching clamp comment on `sideBleed` in geometry.ts). Top/
+  // bottom seats fan perpendicular to their push and have no such
+  // ceiling, forced mismatch or not.
+  const MAX_HAND_SIDE_SAFE = 3;
+
+  it("never overlaps the line zone at any density, seat count, or hand size", () => {
+    // This is the bug from the /play/dominoes screenshot: an opponent's
+    // fanned hand rendering on top of the chain, right where a played
+    // tile is hardest to read. `line`'s own clearance (geometry.ts) and
+    // this placement (layout.ts) used to be two independently guessed
+    // numbers that quietly drifted apart — this is the permanent
+    // guarantee that they can't again, the same role the pod-overlap
+    // check above plays for the chain itself.
+    for (const vp of VIEWPORTS) {
+      const natural = resolveDensity(vp.w, vp.h);
+      for (const seats of [2, 3, 4]) {
+        for (const density of DENSITIES) {
+          const g = resolveTable({ seats, width: vp.w, height: vp.h, density });
+          for (const slot of g.seats) {
+            if (slot.isHero) continue;
+            // A forced density/viewport mismatch is a real, supported
+            // lab-preview mode, but only for the seats it was already
+            // proven exact for — see the comment above.
+            if (slot.anchor !== "top" && density !== natural) continue;
+            const maxHand = slot.anchor === "top" ? MAX_HAND : MAX_HAND_SIDE_SAFE;
+            for (let count = 1; count <= maxHand; count++) {
+              for (let index = 0; index < count; index++) {
+                const rect = handRect(g, slot.seat, index, count);
+                const label = `${vp.name}/${seats}seats/${density}/seat${slot.seat}/hand${count}#${index}`;
+                expect(overlapsBox(rect, g.zones.line), label).toBe(false);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("never moves a hand vertically as the hand's tile count changes", () => {
+    // A tile hand fans along screen-x only (see layout.ts's "hand"
+    // case) — its vertical position should be a function of the seat's
+    // pod alone, never of how many tiles are in it. This broke for any
+    // seat not dead-centre on its edge (any edge with 2+ opponents,
+    // e.g. the exact 3-seat/both-on-top table from the /play/dominoes
+    // screenshot): the seat's small horizontal push component let the
+    // hand-width term leak into the vertical anchor too, so a fuller
+    // hand visibly sank lower on screen.
+    for (const vp of VIEWPORTS) {
+      for (const seats of [2, 3, 4]) {
+        for (const density of DENSITIES) {
+          const g = resolveTable({ seats, width: vp.w, height: vp.h, density });
+          for (const slot of g.seats) {
+            if (slot.isHero) continue;
+            const centreY = (count: number) => handRect(g, slot.seat, 0, count).y;
+            const baseline = centreY(1);
+            for (let count = 2; count <= MAX_HAND; count++) {
+              const label = `${vp.name}/${seats}seats/${density}/seat${slot.seat}/hand${count}`;
+              expect(centreY(count), label).toBeCloseTo(baseline, 5);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("never overlaps its own pod, at any density, seat count, or hand size", () => {
+    // The follow-up to the vertical-drift bug above: fixing "moves with
+    // hand size" by dropping the count-dependent term from a value that
+    // ALSO set how far the hand sits from the pod (the two were the same
+    // shared, projected scalar) quietly pulled the fixed baseline closer
+    // to the pod too, for any off-centre top seat — caught live as the
+    // hand's top-left tile lightly overlapping the pod card's corner.
+    for (const vp of VIEWPORTS) {
+      for (const seats of [2, 3, 4]) {
+        for (const density of DENSITIES) {
+          const g = resolveTable({ seats, width: vp.w, height: vp.h, density });
+          for (const slot of g.seats) {
+            if (slot.isHero) continue;
+            const pod = podBox(slot, density);
+            for (let count = 1; count <= MAX_HAND; count++) {
+              for (let index = 0; index < count; index++) {
+                const rect = handRect(g, slot.seat, index, count);
+                const label = `${vp.name}/${seats}seats/${density}/seat${slot.seat}/hand${count}#${index}`;
+                expect(overlapsBox(rect, pod), label).toBe(false);
+              }
+            }
+          }
+        }
+      }
     }
   });
 });

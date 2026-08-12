@@ -252,6 +252,54 @@ describe("dominoes — scoring", () => {
   });
 });
 
+describe("dominoes — round transition", () => {
+  it("sweeps the previous round's WHOLE board back to the boneyard, not just the chain", () => {
+    // Play round 1 out to a "domino" so at least one other seat is left
+    // holding real tiles — the case a chain-only sweep silently missed:
+    // those leftover HAND tiles had no event moving them at all.
+    const rng = createRng(909);
+    const def = createDominoes(10_000); // never reaches the target
+    let state = def.setup({ seats: 3, rng });
+    ({ state } = startRound(state, rng));
+    let guard = 0;
+    while (!def.isRoundOver!(state) && guard++ < 2000) {
+      const seat = def.currentSeat(state)!;
+      const action = def.bots.steady.choose(def.playerView(state, seat), seat, rng);
+      ({ state } = def.reduce(state, action));
+    }
+    expect(state.result).not.toBeNull();
+
+    const leftoverChain = state.chain.map((t) => t.id);
+    const leftoverHands = Object.values(state.hands).flat();
+    // A real regression case, not a vacuous one: something has to still
+    // be on the table/in a hand for the bug to have been reachable.
+    expect(leftoverChain.length + leftoverHands.length).toBeGreaterThan(0);
+
+    const { events } = startRound(state, rng);
+    const sweep = events.find((e) => e.t === "sweep");
+    expect(sweep).toBeDefined();
+    const swept = new Set((sweep as { pieces: string[] }).pieces);
+    for (const id of [...leftoverChain, ...leftoverHands]) {
+      expect(swept.has(id), `${id} left un-swept from the old round`).toBe(true);
+    }
+    // Boneyard tiles were already face down in the right zone — sweeping
+    // them too would just be a piece popping in place, not a bug, but
+    // it's not what a "gather what's on the table" event should claim.
+    for (const id of state.boneyard) {
+      expect(swept.has(id), `${id} (already in the boneyard) swept unnecessarily`).toBe(
+        false,
+      );
+    }
+  });
+
+  it("emits no sweep on the very first deal", () => {
+    const rng = createRng(3);
+    const def = createDominoes();
+    const { events } = startRound(def.setup({ seats: 2, rng }), rng);
+    expect(events.some((e) => e.t === "sweep")).toBe(false);
+  });
+});
+
 describe("dominoes — hidden information", () => {
   it("hides every other hand and the whole boneyard from a viewer", () => {
     const { def, state } = fresh(4, 77);

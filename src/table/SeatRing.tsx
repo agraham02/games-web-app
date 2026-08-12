@@ -13,6 +13,7 @@
 import { memo } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
+import type { Density } from "./geometry";
 import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
 
@@ -48,6 +49,23 @@ function initialsOf(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+/**
+ * Pod dimensions per density tier. `compact`/`regular` keep the numbers
+ * this component always had; `wide` steps up noticeably rather than a
+ * token amount — that tier spans a 1024px laptop to a big desktop
+ * monitor, and a pod sized for the former reads as undersized on the
+ * latter, the same gap `DENSITY.wide` in geometry.ts exists to close for
+ * pieces. Full literal class strings, not built from `density` at
+ * runtime — Tailwind only picks up classes that appear as literal
+ * substrings in source, and a lookup table keyed by a runtime value is
+ * exactly that (unlike `w-${x}`, which it can't see).
+ */
+const POD_STYLES: Record<Density, { pod: string; avatar: string; name: string; meta: string }> = {
+  compact: { pod: "w-16", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
+  regular: { pod: "w-16", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
+  wide: { pod: "w-24", avatar: "h-12 w-12 text-[15px]", name: "text-[15px]", meta: "text-[13px]" },
+};
+
 export function SeatRing({ players }: { players: readonly SeatView[] }) {
   const geometry = useGeometry();
   if (!geometry) return null;
@@ -65,7 +83,7 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
               className="absolute -translate-x-1/2 -translate-y-1/2"
               style={{ left: slot.x, top: slot.y }}
             >
-              <SeatPod view={view} />
+              <SeatPod view={view} density={geometry.density} />
             </div>
           );
         })}
@@ -73,14 +91,15 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
   );
 }
 
-const SeatPod = memo(function SeatPod({ view }: { view: SeatView }) {
+const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; density: Density }) {
   const highlighted = view.active || view.winning;
+  const s = POD_STYLES[density];
   return (
     <motion.div
       initial={false}
       animate={{ scale: highlighted ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
-      className={`flex w-16 flex-col items-center gap-1 rounded-xl px-1 py-1.5 backdrop-blur-md transition-colors ${
+      className={`flex ${s.pod} flex-col items-center gap-1 rounded-xl px-1 py-1.5 backdrop-blur-md transition-colors ${
         highlighted
           ? "bg-felt-950/70 ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]"
           : "bg-felt-950/55 ring-1 ring-brass-400/20"
@@ -89,7 +108,7 @@ const SeatPod = memo(function SeatPod({ view }: { view: SeatView }) {
       <div className="relative">
         <AnimatePresence>{view.winning ? <WinnerCrown /> : null}</AnimatePresence>
         <div
-          className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-felt-950"
+          className={`flex ${s.avatar} items-center justify-center rounded-full font-bold text-felt-950`}
           style={{
             background: view.colour,
             filter: view.eliminated ? "grayscale(1)" : undefined,
@@ -100,12 +119,12 @@ const SeatPod = memo(function SeatPod({ view }: { view: SeatView }) {
         {view.thinking ? <ThinkingRing /> : null}
       </div>
 
-      <div className="max-w-full truncate text-[11px] leading-none font-semibold text-bone-50">
+      <div className={`max-w-full truncate ${s.name} leading-none font-semibold text-bone-50`}>
         {view.name}
       </div>
 
       {view.meta ? (
-        <div className="max-w-full truncate text-[9px] leading-none text-bone-400">
+        <div className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>
           {view.meta}
         </div>
       ) : null}

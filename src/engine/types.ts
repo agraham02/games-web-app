@@ -138,6 +138,18 @@ export type GameEvent =
   /** Sweeping a won trick to a seat. Staggered inward. */
   | { t: "collect"; pieces: PieceId[]; to: SeatId }
   /**
+   * Returns many pieces to a shared pile at once — a spent chain, or
+   * every seat's leftover hand, gathered face down before a fresh deal.
+   * Deliberately its OWN event rather than a batch of `move`s: a single
+   * deliberate placement (`move`) and "clear the table" are different
+   * GESTURES, and giving them the same choreography would force a
+   * round-transition sweep to play at the same weight as one careful
+   * move — which is what actually made an early version of a
+   * many-tile sweep look sluggish. `move`'s own pace stays exactly what
+   * it was; this gets its own, deliberately fast one (see `choreograph`).
+   */
+  | { t: "sweep"; pieces: PieceId[]; to: ZoneId }
+  /**
    * Bot deliberation. A first-class event, not a setTimeout in the UI:
    * it is what makes an opponent feel like a person rather than a
    * function that returns instantly.

@@ -108,8 +108,13 @@ export function GameHost<S, A>({
     endHoldMs: devSettings.endHoldMs,
     roundHoldMs: devSettings.roundHoldMs,
   });
+  // The match winner takes priority, but is only ever non-null right at
+  // the very end; the far more common "someone just won" moment in a
+  // multi-round game is a round winner — see `roundWinner`'s doc for why
+  // the two never disagree when both could apply.
+  const winningSeat = live.winner ?? live.roundWinner;
   const seatViews = players(live.state, live).map((view) =>
-    live.winner === view.seat ? { ...view, winning: true } : view,
+    winningSeat === view.seat ? { ...view, winning: true } : view,
   );
   const board = (standings ?? winLoseStandings)(live.state, live, seatViews);
 
@@ -126,7 +131,7 @@ export function GameHost<S, A>({
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
-      <HeroWinFlourish show={live.isOver && live.winner === HERO} />
+      <HeroWinFlourish show={winningSeat === HERO} />
       <GameToaster />
 
       <RoundEndScorecard

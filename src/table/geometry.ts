@@ -117,12 +117,21 @@ const DENSITY: Record<Density, DensitySpec> = {
     podInset: 54,
   },
   wide: {
-    handCard: { w: 84, h: 118 },
-    card: { w: 64, h: 90 },
-    miniCard: { w: 36, h: 50 },
-    handZone: 204,
-    ringPad: 24,
-    podInset: 62,
+    // A first pass at this (96/76/42) still read as small on an
+    // ordinary 1440x900 window — confirmed live, not guessed. This tier
+    // covers everything from a 1024px laptop to a big desktop monitor,
+    // and pieces sized for the former leave a lot of dead felt around
+    // them on the latter. Pushed substantially further this time, not
+    // another token step: there is real headroom (a 7-tile hand at
+    // these sizes still uses well under half the hand zone's width on a
+    // 1440px window), so the earlier pass was too conservative, not
+    // wrong in kind.
+    handCard: { w: 118, h: 165 },
+    card: { w: 92, h: 129 },
+    miniCard: { w: 50, h: 70 },
+    handZone: 250,
+    ringPad: 28,
+    podInset: 88,
   },
 };
 
@@ -177,16 +186,47 @@ const EDGES: Record<Density, Record<number, EdgeAlloc>> = {
 };
 
 /**
- * Roughly what a seat pod covers on screen, centred on its slot.
- * SeatRing renders a fixed `w-16` (64px) column whose height grows with
- * how many lines the game puts in it; this is a deliberately generous
- * estimate so layout code and tests can keep pieces clear of the pods
- * without reaching into the React component.
+ * Roughly what a seat pod covers on screen, centred on its slot. Per
+ * density because SeatRing's avatar/text scale with it (see that file) —
+ * this is a deliberately generous estimate so layout code and tests can
+ * keep pieces clear of the pods without reaching into the React
+ * component, but a stale one is worse than no estimate: `wide`'s bigger
+ * avatar and text push the pod noticeably taller than `compact`'s, and
+ * this needs to track that or the clearance math it feeds (hand
+ * placement, the domino line's inset) quietly stops being generous
+ * enough.
  */
-export const POD_SIZE: PieceSize = { w: 64, h: 62 };
+export const POD_SIZE: Record<Density, PieceSize> = {
+  compact: { w: 60, h: 62 },
+  regular: { w: 64, h: 68 },
+  wide: { w: 96, h: 100 },
+};
 
 /** Clearance between the domino line's box and anything around it. */
 const LINE_BREATHING = 6;
+
+/**
+ * Gap between an opponent's pod and their fanned tile hand — shared with
+ * layout.ts's opponent-hand placement (`TILE_HAND_GAP` there is this
+ * same number) so the two can never drift apart again. They used to be
+ * independently guessed: `line`'s own clearance only ever budgeted room
+ * for the POD, and the hand's own placement reached much further past
+ * it than that budgeted for, which is exactly what let a full domino
+ * hand render on top of the chain it's meant to sit beside.
+ */
+export const TILE_HAND_GAP = 8;
+
+/**
+ * How far a box of the given size reaches along a push direction
+ * (ux, uy) — the projection of its own half-extents onto that
+ * direction. Shared by every "how far past this pod does that box
+ * reach" calculation (the pod itself, an opponent's tile hand) in both
+ * this file's `line` clearance and layout.ts's opponent-hand placement,
+ * so the two compute it identically instead of each re-deriving it.
+ */
+export function axisReach(ux: number, uy: number, size: PieceSize): number {
+  return Math.abs(ux) * (size.w / 2) + Math.abs(uy) * (size.h / 2);
+}
 
 /**
  * Minimum distance between two seat-pod centres before the names
@@ -195,7 +235,10 @@ const LINE_BREATHING = 6;
 export const POD_GAP: Record<Density, number> = {
   compact: 58,
   regular: 66,
-  wide: 74,
+  // Tracks POD_SIZE.wide's footprint (96px wide) with the same margin
+  // `regular` already keeps over ITS pod width — left too small here
+  // would let two pods sit closer together than they now are wide.
+  wide: 104,
 };
 
 /**
@@ -279,7 +322,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const { seats: seatCount, width, height } = opts;
   const density = opts.density ?? resolveDensity(width, height);
   const spec = DENSITY[density];
-  const handZone = opts.handZone ?? spec.handZone;
+
+  // Both clamped against the ACTUAL viewport, not just the density spec.
+  // `density` can be forced (the lab previews other devices at a chosen
+  // tier — see `ResolveOptions.density`), which is exactly the case
+  // `resolveDensity` itself can never produce: `wide` forced onto a
+  // small phone, with `wide`'s much bigger pods/hand strip pushing
+  // `ringH` toward zero or negative before anything downstream gets a
+  // chance to clamp it. A real, auto-resolved `wide` viewport is always
+  // comfortably larger than these thresholds, so this is a no-op there
+  // — it only bites the forced-onto-something-tiny case.
+  const podInsetCap = Math.max(24, Math.min(width, height) * 0.16);
+  const podInset = Math.min(spec.podInset, podInsetCap);
+  const handZone = Math.min(opts.handZone ?? spec.handZone, height * 0.34);
 
   const box: Box = { x: 0, y: 0, w: width, h: height };
 
@@ -298,16 +353,16 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     density,
     ringW,
     ringH,
-    spec.podInset,
+    podInset,
   );
 
   // Each edge stops short of the corners the other edges occupy,
   // otherwise the topmost side seat and the leftmost top seat land
   // within a pod's width of each other.
-  const sideTop = ringTop + (nTop > 0 ? spec.podInset : 0);
+  const sideTop = ringTop + (nTop > 0 ? podInset : 0);
   const sideH = Math.max(0, ringBottom - sideTop);
-  const topLeft = ringLeft + (nLeft > 0 ? spec.podInset : 0);
-  const topRight = ringRight - (nRight > 0 ? spec.podInset : 0);
+  const topLeft = ringLeft + (nLeft > 0 ? podInset : 0);
+  const topRight = ringRight - (nRight > 0 ? podInset : 0);
   const topW = Math.max(0, topRight - topLeft);
 
   const seats: SeatSlot[] = [
@@ -327,7 +382,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   for (let i = 0; i < nLeft; i++) {
     seats.push({
       seat: seat++,
-      x: ringLeft + spec.podInset / 2,
+      x: ringLeft + podInset / 2,
       y: ringBottom - ((i + 0.5) / nLeft) * sideH,
       anchor: "left",
       rotation: 90,
@@ -340,7 +395,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     seats.push({
       seat: seat++,
       x: topLeft + ((i + 0.5) / nTop) * topW,
-      y: ringTop + spec.podInset / 2,
+      y: ringTop + podInset / 2,
       anchor: "top",
       rotation: 180,
       isHero: false,
@@ -351,7 +406,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   for (let i = 0; i < nRight; i++) {
     seats.push({
       seat: seat++,
-      x: ringRight - spec.podInset / 2,
+      x: ringRight - podInset / 2,
       y: sideTop + ((i + 0.5) / nRight) * sideH,
       anchor: "right",
       rotation: -90,
@@ -361,10 +416,10 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
 
   // The play area is the ring pulled in past whichever edges hold seats.
   const play: Box = {
-    x: ringLeft + (nLeft > 0 ? spec.podInset : 0),
-    y: ringTop + (nTop > 0 ? spec.podInset : 0),
-    w: ringW - (nLeft > 0 ? spec.podInset : 0) - (nRight > 0 ? spec.podInset : 0),
-    h: ringH - (nTop > 0 ? spec.podInset : 0),
+    x: ringLeft + (nLeft > 0 ? podInset : 0),
+    y: ringTop + (nTop > 0 ? podInset : 0),
+    w: ringW - (nLeft > 0 ? podInset : 0) - (nRight > 0 ? podInset : 0),
+    h: ringH - (nTop > 0 ? podInset : 0),
   };
 
   const cx = play.x + play.w / 2;
@@ -404,14 +459,50 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   };
 
   // `play` is inset by a full `podInset` on each edge that holds seats,
-  // but a pod is centred at `podInset / 2` from the ring and is 64px
-  // wide — so on a tight density it can bleed a few px back INTO the
-  // play area. Card zones sit near the middle and never notice; a
-  // camera-fitted domino chain fills the whole box and would tuck its
+  // but a pod is centred at `podInset / 2` from the ring and has its own
+  // real footprint (see POD_SIZE) — so on a tight density, or a pod
+  // sized bigger than that inset expects, it can bleed a few px back
+  // INTO the play area. Card zones sit near the middle and never notice;
+  // a camera-fitted domino chain fills the whole box and would tuck its
   // ends straight under a pod. `line` is that box pulled clear of the
-  // real pod footprint, plus a little breathing room.
-  const sideBleed = Math.max(0, POD_SIZE.w / 2 - spec.podInset / 2) + LINE_BREATHING;
-  const topBleed = Math.max(0, POD_SIZE.h / 2 - spec.podInset / 2) + LINE_BREATHING;
+  // real pod footprint AND an opponent's fanned tile hand (see
+  // layout.ts's "hand" case) at its largest (a fresh 6-or-7-tile deal),
+  // plus a little breathing room.
+  //
+  // Mirrors layout.ts's own (axis-decoupled) opponent-hand placement
+  // exactly: every TOP seat's hand reaches the exact same distance below
+  // its pod regardless of where that seat sits on the edge or how many
+  // tiles are in it (see that file's doc for the two separate bugs a
+  // shared, projected reach used to cause), so unlike an earlier version
+  // of this, there is no need to check every real seat and take a max —
+  // one calculation covers every top seat, and one covers every side
+  // seat. `podInset / 2` converts a pod-CENTRE-relative distance (what
+  // layout.ts computes) into a `play`-EDGE-relative one (what `line`
+  // needs), since a seat's own centre sits `podInset / 2` inside `play`.
+  const podSize = POD_SIZE[density];
+  const miniW = tileShortSide(spec.miniCard);
+  const miniH = miniW * 2;
+  const maxFanW = miniW * Math.max(2.4, 7 * 0.9);
+  const topBleed = Math.max(
+    LINE_BREATHING,
+    Math.max(0, podSize.h / 2 - podInset / 2) + miniH + TILE_HAND_GAP + LINE_BREATHING,
+  );
+  // A full 7-tile rack genuinely does not fit beside a pod on a narrow
+  // phone with seats on both sides of the board — the real fix is
+  // rotating a side seat's rack to stand along the pod's own edge
+  // instead of reaching straight out from it (dominoes tops out at 4
+  // seats, and only that table ever puts a hand on a side edge at all).
+  // Clamped so `line` can't collapse to nothing chasing a case that has
+  // no real solution without that redesign; the residual gap is a large
+  // hand on a side seat still reaching a little into the chain on the
+  // narrowest phones, not the pod-adjacent overlap this whole change
+  // fixes everywhere else.
+  const sideReach =
+    Math.max(0, podSize.w / 2 - podInset / 2) + maxFanW + miniW / 2 + TILE_HAND_GAP;
+  const sideBleed = Math.max(
+    LINE_BREATHING,
+    Math.min(sideReach + LINE_BREATHING, play.w * 0.3),
+  );
   const line: Box = {
     x: play.x + (nLeft > 0 ? sideBleed : LINE_BREATHING),
     y: play.y + (nTop > 0 ? topBleed : LINE_BREATHING),
@@ -478,12 +569,13 @@ export function cellHalfExtent(rot: number): { hw: number; hh: number } {
   return turned ? { hw: 1, hh: 0.5 } : { hw: 0.5, hh: 1 };
 }
 
-export function podBox(slot: SeatSlot): Box {
+export function podBox(slot: SeatSlot, density: Density = "regular"): Box {
+  const size = POD_SIZE[density];
   return {
-    x: slot.x - POD_SIZE.w / 2,
-    y: slot.y - POD_SIZE.h / 2,
-    w: POD_SIZE.w,
-    h: POD_SIZE.h,
+    x: slot.x - size.w / 2,
+    y: slot.y - size.h / 2,
+    w: size.w,
+    h: size.h,
   };
 }
 

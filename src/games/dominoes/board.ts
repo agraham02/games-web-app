@@ -103,9 +103,13 @@ function contact(
 }
 
 /**
- * Turning a corner. B is laid along `to`, tucked against A's outer half
- * so that A's forward pip and B's back pip end up in adjacent cells —
- * the L-corner a real player makes when the line reaches the table edge.
+ * Turning a corner. B is laid along `to`, centred on A's forward CELL —
+ * "a tile played to a double touches its middle" is the printed rule for
+ * one case of this, but the join is really the same shape every time a
+ * new tile's long axis differs from the one it is joining: a domino is
+ * always two 1-unit cells about its own centre, so the cell nearest the
+ * join sits exactly 0.5 short of the tile's own extent on that axis,
+ * REGARDLESS of what tile comes next.
  */
 function cornerContact(
   anchor: PlacedTile,
@@ -117,8 +121,16 @@ function cornerContact(
   const ev = HEADING_VEC[to];
   const fromHoriz = isHorizontal(from);
   const toHoriz = isHorizontal(to);
-  // Along the old run: line the two up on their outer edges.
-  const along = halfExtent(anchor.rot, fromHoriz) - halfExtent(rot, fromHoriz);
+  // Along the old run: centred on A's forward cell, not on B's own
+  // shape. Using B's half-extent here (the earlier, wrong version) only
+  // happened to agree with this whenever B was an ordinary tile — B's
+  // cross-extent on this axis is always exactly 0.5 in that case. It
+  // disagreed the moment B was itself a double turning the corner (its
+  // cross-extent there is 1, not 0.5), which pulled the join half a unit
+  // off-centre: visually, the incoming tile sat noticeably high/left of
+  // where its neighbour's forward pip actually was instead of centred
+  // on it.
+  const along = halfExtent(anchor.rot, fromHoriz) - 0.5;
   // Across it: plain contact.
   const across = halfExtent(anchor.rot, toHoriz) + halfExtent(rot, toHoriz);
   return {

@@ -128,6 +128,13 @@ export function applyEventToTable(event: GameEvent): void {
       touched = true;
       break;
 
+    case "sweep":
+      for (const piece of event.pieces) {
+        moveTo(map, piece, { zone: event.to, faceUp: false });
+      }
+      touched = true;
+      break;
+
     case "move":
       if (map[event.piece]) {
         map[event.piece] = { ...map[event.piece]!, ...event.to };

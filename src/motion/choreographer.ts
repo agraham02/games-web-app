@@ -63,7 +63,32 @@ export function choreograph(events: readonly GameEvent[]): TimedStep[] {
         break;
 
       case "move":
-        steps.push({ event, offset: 0, duration: DURATION.play * MS });
+        // Staggered like a run of deals when several genuinely
+        // deliberate moves arrive back to back — e.g. LRC's multi-chip
+        // roll. Without this, `useChoreographer` falls back to playing
+        // each `move` fully end to end (see `beatOf`), fine for one or
+        // two chips but a visible crawl for more. A batch RETURN to a
+        // shared pile (a spent chain, spent hands at round end) is a
+        // different gesture and uses `sweep` below instead — deliberate
+        // single moves keep this pace unchanged either way.
+        steps.push({
+          event,
+          offset: sameRunAsPrev ? STAGGER.deal * MS : 0,
+          duration: DURATION.play * MS,
+        });
+        break;
+
+      case "sweep":
+        // See DURATION.sweep — a short, mostly flat step regardless of
+        // how many pieces are in the pile, so a big gather (a full
+        // round's worth of hands and a long chain) does not make the
+        // player wait proportionally longer before the ordinarily-paced
+        // deal that follows it is allowed to start.
+        steps.push({
+          event,
+          offset: 0,
+          duration: DURATION.sweep * MS + Math.min(event.pieces.length, 10) * STAGGER.sweep * MS,
+        });
         break;
 
       case "think":

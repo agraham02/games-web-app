@@ -50,6 +50,15 @@
   --shadow-e2: 0 4px 8px rgb(0 0 0 / 0.4), 0 12px 28px rgb(0 0 0 / 0.32);
   --shadow-e3: 0 10px 20px rgb(0 0 0 / 0.45), 0 24px 60px rgb(0 0 0 / 0.4);
   --shadow-glow: 0 0 16px rgb(212 175 106 / 0.5);
+  /* Same accent, held INSIDE the element's own edge. An outward glow
+     bleeds well past its 16px blur radius — fine for a single piece
+     sitting alone, but a fanned hand can pack pieces closer than that,
+     and two neighbouring glows merge into one shared halo that reads as
+     a single blob rather than two highlighted pieces. Piece
+     highlighting (PieceLayer's `highlighted` treatment) uses this one
+     specifically because it is the one glow guaranteed to sit next to
+     others like it. */
+  --shadow-glow-inset: inset 0 0 8px rgb(212 175 106 / 0.55);
   --shadow-rim: inset 0 1px 0 rgb(255 255 255 / 0.07);
 
   /* -- radii ---------------------------------------------- */

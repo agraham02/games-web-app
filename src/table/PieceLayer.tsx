@@ -79,6 +79,13 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
 
   const interactive =
     Boolean(onTap) &&
+    // A dimmed piece reads as "not currently usable" — a hand tile with
+    // no legal play, a discard-pile card out of reach. The pointer must
+    // agree with that at the input level, not just visually: leaving it
+    // clickable-but-ignored is what a dead button feels like, and this
+    // is the one flag the piece layer can check without knowing why a
+    // game dimmed it.
+    !placement.dimmed &&
     ((placement.zone === "hand" && (placement.seat ?? HERO) === HERO) ||
       Boolean(placement.highlighted));
 
@@ -147,10 +154,17 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
           aria-hidden
           style={{
             position: "absolute",
-            inset: -2,
+            // Drawn INSIDE the piece's own footprint, not extending
+            // past it (the earlier `-2` did). A hand can pack pieces
+            // closer together than an outward border's reach — a
+            // domino hand does, by design — and an outward border on
+            // two adjacent highlighted pieces merges into one shape
+            // instead of reading as two. Inset never has that failure
+            // mode, at any spacing.
+            inset: 2,
             borderRadius: base.w * 0.11,
             border: "2px solid var(--color-brass-400)",
-            boxShadow: "var(--shadow-glow)",
+            boxShadow: "var(--shadow-glow-inset)",
             pointerEvents: "none",
           }}
         />

@@ -109,7 +109,34 @@ export function startRound(state: DomState, rng: Rng): ReduceResult<DomState> {
   const hands: Record<SeatId, PieceId[]> = {};
   for (let seat = 0; seat < state.seats; seat++) hands[seat] = [];
 
-  const events: GameEvent[] = [{ t: "shuffle", seed: rng.seed }];
+  // Round 2+ inherits a full chain AND every seat's leftover hand from
+  // the round that just ended — `endRound` clears neither, since the
+  // ROUND summary still needs the board visible exactly as it finished.
+  // A "domino" round leaves other seats holding real hands; a "blocked"
+  // round leaves EVERY seat holding one. Sweeping only the chain (the
+  // first version of this) left those hand tiles untouched by any
+  // event — with nothing moving them, they either sat on screen still
+  // "in" a hand that no longer existed until the final reconcile popped
+  // them without warning, or — worse — happened to be redealt to
+  // somewhere and so played a full, ordinary DEAL flight, reading as
+  // "it's taking tiles out of my hand" for what should have been an
+  // instant, unremarkable gather.
+  //
+  // One `sweep` event, not one `move` per tile: this is a single
+  // gesture — gather everything face down — not a series of individual
+  // placements, and `sweep`'s own choreography (see presets.ts) is
+  // built to stay fast regardless of how many tiles are in it, entirely
+  // independent of `deal`'s pace right after it. `chain: []` and fresh
+  // `hands` in the returned state below are what make it permanent;
+  // this event is only what SHOWS that happening. A no-op on round 1:
+  // both are already empty.
+  const leftover = [
+    ...state.chain.map((tile) => tile.id),
+    ...Object.values(state.hands).flat(),
+  ];
+  const events: GameEvent[] =
+    leftover.length > 0 ? [{ t: "sweep", pieces: leftover, to: "boneyard" }] : [];
+  events.push({ t: "shuffle", seed: rng.seed });
 
   // Dealt round by round rather than hand by hand, so the deal reads as
   // one going round the table instead of four separate handfuls.
@@ -397,23 +424,33 @@ export function placements(state: DomState, viewer: SeatId): PlacementMap {
     };
   });
 
-  // Lighting the viewer's own playable tiles belongs here rather than in
+  // Marking the viewer's own playable tiles belongs here rather than in
   // the play screen: `placements` is the full visual truth a reconcile
   // restores, and a reconcile always lands immediately BEFORE the hero's
   // turn begins — so this survives it instead of being wiped by it.
-  const mine = currentSeat(state) === viewer ? playableTiles(state, viewer) : [];
+  //
+  // Dims the tiles that CAN'T be played rather than decorating the ones
+  // that can. A hand is already showing every piece in full — unlike a
+  // pile where picking the eligible few out from a stack is the whole
+  // problem a highlight solves — so the busier "add a glow to some of
+  // these" reads worse than the plainer "the ones you can't use fall
+  // back." A legal tile is left completely undecorated: normal opacity,
+  // a normal pointer cursor, nothing added.
+  const isMyTurn = currentSeat(state) === viewer;
+  const mine = isMyTurn ? playableTiles(state, viewer) : [];
   const playable = new Set(mine.map((p) => p.tile));
 
   for (let seat = 0; seat < state.seats; seat++) {
     const hand = state.hands[seat] ?? [];
+    const isViewerHand = seat === viewer;
     hand.forEach((id, i) => {
       out[id] = {
         zone: "hand",
         seat,
         index: i,
         count: hand.length,
-        faceUp: seat === viewer,
-        highlighted: playable.has(id) || undefined,
+        faceUp: isViewerHand,
+        dimmed: (isViewerHand && isMyTurn && !playable.has(id)) || undefined,
       };
     });
   }

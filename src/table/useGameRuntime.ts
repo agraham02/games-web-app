@@ -131,6 +131,20 @@ export interface GameRuntime<S, A> {
    * crown) can start the moment the board itself shows who won, with
    * GameEndSummary catching up a beat later. */
   winner: SeatId | null;
+  /** The just-finished ROUND's winner — same "public immediately, not
+   * held back for the summary" pacing as `winner`, but for a round
+   * instead of the match. A multi-round game's real, frequent "someone
+   * won" moment is a round ending (Dominoes: going out), not the match
+   * (which can take many rounds to reach a target score) — so SeatRing's
+   * crown and HeroWinFlourish's confetti key off `winner ?? roundWinner`,
+   * not `winner` alone. Null whenever `winner` is non-null: the last
+   * round of a match is both, and the match-level treatment takes over
+   * then (see `showSummary`'s doc for the same rule applied to the
+   * summary panel). Structural, like `winner`/`round` below — reads
+   * `state.result.winner`, the shape Dominoes' own per-round result
+   * already uses; a round-less game (LRC) or one shaped differently
+   * just never sets this. */
+  roundWinner: SeatId | null;
   /** True only after `isOver` AND the endHoldMs pause has elapsed — this
    * is what should gate GameEndSummary's `show`, not `isOver` itself. */
   showSummary: boolean;
@@ -442,6 +456,7 @@ export function useGameRuntime<S, A>(
     isHeroTurn: !isOver && currentSeat === HERO && !choreographer.isPlaying,
     isOver,
     winner: isOver ? extractWinner(state) : null,
+    roundWinner: !isOver && roundOver ? extractRoundWinner(state) : null,
     showSummary: isOver && gameEndRevealed,
     showRoundSummary: !isOver && roundOver && roundEndRevealed,
     round: extractRound(state),
@@ -474,4 +489,11 @@ function extractWinner<S>(state: S): SeatId | null {
 function extractRound<S>(state: S): number {
   const maybe = state as unknown as { round?: number };
   return typeof maybe.round === "number" ? maybe.round : 1;
+}
+
+/** See `GameRuntime.roundWinner`'s doc. */
+function extractRoundWinner<S>(state: S): SeatId | null {
+  const maybe = state as unknown as { result?: { winner?: SeatId | null } | null };
+  const winner = maybe.result?.winner;
+  return typeof winner === "number" ? winner : null;
 }

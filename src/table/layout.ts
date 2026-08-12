@@ -16,9 +16,11 @@
 import type { Placement, PieceKind, SeatId } from "@/engine/types";
 import { HERO } from "@/engine/types";
 import {
+  axisReach,
   fanSlot,
   tileShortSide,
   POD_SIZE,
+  TILE_HAND_GAP,
   type BoardView,
   type Box,
   type PieceSize,
@@ -377,13 +379,21 @@ export function layoutPiece(
 
       if (seatId === HERO) {
         // The boneyard shares this strip (see geometry's `boneyard`), so
-        // a tile hand starts clear of it. Card games have no such pile
+        // a tile hand keeps clear of it. Card games have no such pile
         // and keep the full width.
+        //
+        // The reserved space comes off BOTH sides, not just the left
+        // where the boneyard actually sits — shifting `within.x` alone
+        // (the first version of this) shrank the box from one edge
+        // only, which drags its centre off the true hand-zone centre by
+        // half the reservation. The hand has to stay centred on the
+        // zone regardless of what's parked beside it; a matching phantom
+        // margin on the right is the price of that, and it's cheap.
         const gutter = isTile ? g.zones.boneyard.w + 14 : 0;
         const within: Box = {
           ...g.zones.hand,
           x: g.zones.hand.x + gutter,
-          w: g.zones.hand.w - gutter,
+          w: g.zones.hand.w - gutter * 2,
         };
         const slot = fanSlot({
           index: p.index,
@@ -420,22 +430,58 @@ export function layoutPiece(
       const ux = dx / len;
       const uy = dy / len;
 
-      const fanW = miniW * 2.4;
-      // Far enough in to clear the pod completely, measured along the
-      // direction the hand is actually offset in and against the fan's
-      // real reach in that direction. A flat fraction of the piece
-      // height (what this used to be) is only ever right for one seat
-      // position: a top seat's hand is offset vertically and spreads
-      // horizontally, while a SIDE seat's hand is offset and spreads
-      // along the same axis, so it needs half the fan's width of extra
-      // clearance or it lands across the nameplate.
-      const podReach = Math.abs(ux) * (POD_SIZE.w / 2) + Math.abs(uy) * (POD_SIZE.h / 2);
-      const fanReach =
-        Math.abs(ux) * (fanW / 2 + miniW / 2) + Math.abs(uy) * (miniH / 2);
-      const inset = podReach + fanReach + 8;
+      // A fixed 2.4x width reads fine for LRC's mini hands (2-4 cards)
+      // but a domino hand runs up to 7 tiles, and a FIXED box just
+      // packed them tighter as the hand grew — `fanSlot`'s own gap
+      // formula (`usable / (count - 1)`) has no choice but to compress
+      // once the box can't grow with the count, and `maxGap` below never
+      // gets a chance to matter. Scaling with `p.count` gives a big hand
+      // the room a fixed box can't, while the floor keeps a small hand
+      // (LRC, or dominoes early in a round) exactly as it was.
+      const fanW = miniW * Math.max(2.4, p.count * 0.9);
+      const pod = POD_SIZE[g.density];
+      let anchorX: number;
+      let anchorY: number;
 
-      const anchorX = seat.x + ux * inset;
-      const anchorY = seat.y + uy * inset;
+      if (isTile) {
+        // A tile hand never rotates and always fans along screen-x (see
+        // `within` below), so its clearance from the pod is a plain,
+        // AXIS-ALIGNED distance derived straight from the seat's own
+        // `anchor` — never a scalar projected through (ux, uy) and
+        // shared between `anchorX` and `anchorY`, which is what this
+        // used to be and is a coupling that caused two separate bugs:
+        // a SIDE seat's hand needs `fanW`-scaled clearance because it
+        // fans along its own push direction, but that leaking into a
+        // TOP seat's `anchorY` (any seat not dead-centre on its edge —
+        // any edge with 2+ opponents — has a nonzero `ux`) first showed
+        // up as "a fuller hand sinks lower" (the leaked term grew with
+        // hand size), and REMOVING that term still left the coupling:
+        // `anchorY` is `seat.y + uy * inset`, so shrinking `inset` by
+        // dropping `fanW` also shrank the vertical gap itself, nudging
+        // a wide hand a hair closer to the pod even at a fixed size.
+        // Deriving each axis straight from `anchor` has no shared
+        // scalar for either bug to leak through.
+        if (seat.anchor === "left" || seat.anchor === "right") {
+          const dir = seat.anchor === "left" ? 1 : -1;
+          anchorX = seat.x + dir * (pod.w / 2 + fanW / 2 + miniW / 2 + TILE_HAND_GAP);
+          anchorY = seat.y;
+        } else {
+          // "top" is the only anchor left once hero (handled above) and
+          // the two side cases are accounted for.
+          anchorX = seat.x;
+          anchorY = seat.y + (pod.h / 2 + miniH / 2 + TILE_HAND_GAP);
+        }
+      } else {
+        // Card hands (no game uses this yet) keep the original
+        // projected-scalar formula — the coupling above only bit a
+        // tile hand because tiles are big enough, and hands long
+        // enough (up to 7), for it to be visible.
+        const podReach = axisReach(ux, uy, pod);
+        const fanReach = Math.abs(ux) * (fanW / 2 + miniW / 2) + Math.abs(uy) * (miniH / 2);
+        const inset = podReach + fanReach + TILE_HAND_GAP;
+        anchorX = seat.x + ux * inset;
+        anchorY = seat.y + uy * inset;
+      }
 
       const slot = fanSlot({
         index: p.index,
@@ -444,7 +490,7 @@ export function layoutPiece(
         size: { w: miniW, h: miniH },
         maxRotation: isTile ? 0 : 7,
         arcLift: isTile ? 0 : 4,
-        maxGap: miniW * (isTile ? 0.55 : 0.42),
+        maxGap: miniW * (isTile ? 0.7 : 0.42),
       });
 
       return {
@@ -558,7 +604,19 @@ export function layoutPiece(
       const x = cx + (col - (rowCount - 1) / 2) * colSpacing;
       const y = cy + chipSize * 0.6 + row * rowSpacing;
 
-      const { x: fx, y: fy } = centred(x, y, g);
+      // `collected` has always clamped to the viewport; this never did,
+      // on the assumption the play area is large enough that a pot of
+      // up to 3 chips per seat never reaches its edge. That held for the
+      // sizes this shipped with, but is a real gap, not a rule — a
+      // bigger `card` size (a wide-density bump) or a high seat count on
+      // a short viewport can grow the grid past the box before the
+      // count that would trigger it ever gets exercised by eye. Same
+      // fix, same reasoning: real margins from the piece's own scaled
+      // half-extents, not a guess — and `card`, not `miniCard`, because
+      // this piece renders at `tableScale` (see the return below), the
+      // one difference from `collected`'s otherwise identical clamp.
+      const clamped = clampToBox(x, y, g.box, g.card.w / 2, g.card.h / 2);
+      const { x: fx, y: fy } = centred(clamped.cx, clamped.cy, g);
       return { x: fx, y: fy, rotate: 0, scale: tableScale, z, opacity };
     }
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
 import { isDouble, parseTile } from "@/games/_shared/tiles";
-import { ARM_REACH, ROW_PITCH, halfExtent, tileRect } from "./board";
+import { ARM_REACH, ROW_PITCH, halfExtent, placeTile, tileRect } from "./board";
 import { createDominoes } from "./rules";
-import type { ChainEnd, DomAction, PlacedTile } from "./types";
+import type { ArmState, ChainEnd, DomAction, PlacedTile } from "./types";
 
 /**
  * The layout engine's guarantees, checked by playing real matches rather
@@ -176,6 +176,37 @@ describe("domino chain — the layout engine", () => {
     },
     30_000,
   );
+});
+
+describe("domino chain — corner centring", () => {
+  /**
+   * The bug this regression-tests: `cornerContact`'s "along the old run"
+   * offset used to be derived from the INCOMING tile's own half-extent
+   * on that axis. That happened to equal 0.5 — and so happened to look
+   * right — for every ordinary tile, because an ordinary tile's
+   * cross-extent on the axis it is leaving is always 0.5. It broke the
+   * moment the tile making the turn was itself a double: a double's
+   * extent on that axis is 1, not 0.5, which pulled the whole tile half
+   * a unit off the join. The fix anchors "along" to the tile it is
+   * joining instead — a domino's cell is always 0.5 short of its own
+   * centre, independent of what comes next.
+   */
+  it("centres a double that turns the corner on its neighbour's forward cell, not its own shape", () => {
+    // A normal tile laid along a rightward run, right at the edge of
+    // the arm's reach — so the very next tile is forced to turn.
+    const anchor: PlacedTile = { id: "6-5", x: ARM_REACH - 1, y: 0, rot: 90, a: 5, b: 6 };
+    const arm: ArmState = { heading: "R", horiz: "R", rowY: 0, turning: false };
+
+    const { tile } = placeTile([anchor], arm, "right", "6-6");
+
+    // Forced onto the perpendicular (the reach was exceeded).
+    expect(tile.y).not.toBe(anchor.y);
+    // The join is centred on the anchor's forward cell: half its own
+    // extent short of its full length, same as every other tile — a
+    // double's shape on the axis it is LEAVING never enters into it.
+    const expectedAlong = halfExtent(anchor.rot, true) - 0.5;
+    expect(tile.x).toBeCloseTo(anchor.x + expectedAlong, 9);
+  });
 });
 
 describe("domino chain — orientation", () => {
