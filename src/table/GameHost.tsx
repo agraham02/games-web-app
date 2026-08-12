@@ -13,17 +13,25 @@
  * down without a bespoke context provider for one hook's output.
  */
 
-import type { GameDefinition } from "@/engine/types";
+import { HERO, type GameDefinition, type SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
 import { TableSurface } from "./TableSurface";
 import { SeatRing } from "./SeatRing";
+import { DevPanel } from "./DevPanel";
+import { HeroWinFlourish } from "./HeroWinFlourish";
+import { useDevSettings } from "./devSettings";
 import { GameToaster } from "@/ui/disclosure";
 import { GameEndSummary } from "@/ui/phases/PhaseScreens";
 import { useGameRuntime, type GameRuntime, type GameRuntimeOptions } from "./useGameRuntime";
 
 export interface GameHostProps<S, A> {
   definition: GameDefinition<S, A>;
+  /** Setup-only: seats/seed/difficulty. Pacing fields (speed,
+   * autoAdvance, turnHoldMs, endHoldMs) are owned by the embedded
+   * DevPanel/devSettings, not the caller — see that module's doc for
+   * why (surviving a rematch). Pass them here and they're just
+   * overwritten. */
   runtime: GameRuntimeOptions;
   /** Cosmetic seat identity — name/colour/meta per bot seat. The host
    * doesn't compute this itself: player identity is flavour, not rules,
@@ -44,6 +52,11 @@ export interface GameHostProps<S, A> {
     seats: SeatView[],
   ) => Array<{ seat: number; name: string; total: number }>;
   stats?: (state: S, live: GameRuntime<S, A>) => Array<{ label: string; value: string }>;
+  /** DevPanel's one line of game-specific context about the pending
+   * turn — e.g. LRC's "Mia pending — 4 chips → 3 dice". Called only
+   * while a turn is actually pending. Optional; the panel still works
+   * (just with a generic "Turn pending" line) without it. */
+  pendingLabel?: (state: S, seat: SeatId, live: GameRuntime<S, A>) => string;
   onRematch?: () => void;
   onLobby?: () => void;
   children: (live: GameRuntime<S, A>) => React.ReactNode;
@@ -58,21 +71,34 @@ export function GameHost<S, A>({
   gameTitle,
   standings,
   stats,
+  pendingLabel,
   onRematch,
   onLobby,
   children,
 }: GameHostProps<S, A>) {
-  const live = useGameRuntime(definition, runtime);
-  const seatViews = players(live.state, live);
+  const devSettings = useDevSettings();
+  const live = useGameRuntime(definition, {
+    ...runtime,
+    autoAdvance: !devSettings.manualMode,
+    speed: devSettings.speed,
+    turnHoldMs: devSettings.turnHoldMs,
+    endHoldMs: devSettings.endHoldMs,
+  });
+  const seatViews = players(live.state, live).map((view) =>
+    live.winner === view.seat ? { ...view, winning: true } : view,
+  );
   const board = (standings ?? winLoseStandings)(live.state, live, seatViews);
+
+  const pendingSeat = live.pendingReveal ? definition.currentSeat(live.state) : null;
 
   return (
     <TableSurface seats={runtime.seats} density={density} handZone={handZone}>
       <SeatRing players={seatViews} />
+      <HeroWinFlourish show={live.isOver && live.winner === HERO} />
       <GameToaster />
 
       <GameEndSummary
-        show={live.isOver}
+        show={live.showSummary}
         winnerName={winnerLabel(live, seatViews)}
         winnerColour={winnerColour(live, seatViews)}
         subtitle={gameTitle}
@@ -80,6 +106,14 @@ export function GameHost<S, A>({
         stats={stats?.(live.state, live)}
         onRematch={onRematch}
         onLobby={onLobby}
+      />
+
+      <DevPanel
+        pendingReveal={live.pendingReveal}
+        advance={live.advance}
+        pendingLabel={
+          pendingSeat !== null ? pendingLabel?.(live.state, pendingSeat, live) : null
+        }
       />
 
       {children(live)}

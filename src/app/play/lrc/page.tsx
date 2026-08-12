@@ -50,6 +50,7 @@ export default function LrcPlayPage() {
       handZone={64} // just enough room for the Roll button, no hand
       players={playerViews}
       stats={(state) => [{ label: "Pot", value: `${potSize(state)} chips` }]}
+      pendingLabel={pendingLabel}
       onRematch={() => setGameKey((k) => k + 1)}
       onLobby={() => setStarted(false)}
     >
@@ -58,12 +59,31 @@ export default function LrcPlayPage() {
   );
 }
 
+/** DevPanel's game-specific line — see GameHostProps.pendingLabel. */
+function pendingLabel(state: LrcState, seat: number): string {
+  const chips = chipsHeld(state, seat);
+  const dice = diceCountFor(state, seat);
+  return `${botName(seat)} pending — ${chips} chip${chips === 1 ? "" : "s"} → ${dice} ${dice === 1 ? "die" : "dice"}`;
+}
+
 function playerViews(state: LrcState, live: GameRuntime<LrcState, LrcAction>): SeatView[] {
   const out: SeatView[] = [];
   for (let seat = 1; seat < state.seats; seat++) {
     const held = chipsHeld(state, seat);
     const eliminated = held === 0;
-    const thisSeatActing = live.busy && state.turn === seat;
+    // Deliberately NOT `state.turn === seat`: `state.turn` already
+    // points at whoever goes next the instant the PREVIOUS roll is
+    // computed — that's necessary for `reduce` itself, but it means the
+    // published `state` names the next actor before their dice have
+    // been revealed at all (before REVEAL_HOLD_MS elapses in automatic
+    // play, or indefinitely in manual mode). Highlighting off `state.turn`
+    // made the glow jump to the next pod before anything about their
+    // turn had actually happened — same shape of bug as the game-end
+    // summary appearing early, just on the seat ring instead. `lastAction`
+    // only changes at the moment a roll is genuinely revealed, so keying
+    // off it keeps the glow on whoever just acted for the whole pending
+    // gap, and only moves it once the next roll is truly shown.
+    const thisSeatActing = live.busy && live.lastAction?.seat === seat;
     out.push({
       seat,
       name: botName(seat),
@@ -77,28 +97,93 @@ function playerViews(state: LrcState, live: GameRuntime<LrcState, LrcAction>): S
   return out;
 }
 
+/**
+ * A bot's move only ever animates AFTER its dice settle: `revealBotTurn`
+ * prepends a real `think` event, so the choreographer holds the actual
+ * chip-move animation back until that beat (which comfortably outlasts
+ * the tumble) finishes. The hero's own roll had no equivalent — clicking
+ * Roll called `submitAction` immediately, which pushes the chip-move
+ * events to the choreographer right away, with nothing holding them
+ * back the way `think` does for a bot. The tumble and the chip's actual
+ * flight ran side by side instead of tumble-then-flight, which is
+ * exactly the "it looks like they're happening simultaneously" gap
+ * reported live. Matching bots' feel means the hero's OWN move needs
+ * the same kind of held beat, sized to the tumble it's covering for.
+ */
+const HERO_REVEAL_MS = 90 * 6 + 110; // TUMBLE_TICK_MS * TUMBLE_TICKS + a small settle beat
+
 /** The one game-specific slot: the Roll button and the dice it produces. */
 function LrcControls({ live }: { live: GameRuntime<LrcState, LrcAction> }) {
+  // Holds the hero's own roll back exactly the way a bot's `think` event
+  // holds theirs: dice are resolved and shown tumbling immediately (via
+  // `pendingRoll`, not `live.lastAction`, since the runtime hasn't been
+  // told about this roll yet), but `submitAction` — the call that
+  // actually moves the chips — doesn't fire until the tumble has had
+  // time to settle. The action itself is already fully resolved the
+  // instant Roll is clicked (`rollAction` already consumed the rng);
+  // this only delays WHEN it's applied, not what it resolves to.
+  const [pendingRoll, setPendingRoll] = useState<LrcAction | null>(null);
+
+  useEffect(() => {
+    if (!pendingRoll) return;
+    // Always the full delay, regardless of manual/autoAdvance mode.
+    // Manual mode only ever changes WHEN a BOT's turn is revealed
+    // (immediately on a timer vs. on a click) — never how any turn's
+    // own animation plays, hero's included. See useGameRuntime's
+    // `advance()` for the fuller version of this reasoning; the same
+    // "one gate (pendingReveal), not two (gate + skip the animation)"
+    // idea applies here.
+    const id = setTimeout(() => {
+      live.submitAction(pendingRoll);
+      setPendingRoll(null);
+    }, HERO_REVEAL_MS);
+    return () => clearTimeout(id);
+    // Only pendingRoll identity should re-trigger this — live.submitAction
+    // is a fresh closure every render but always calls through to the
+    // same runtime, so depending on it here would just restart the timer
+    // on every unrelated re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRoll]);
+
   const roll = () => {
+    if (pendingRoll) return; // Already rolling — ignore a second click.
     const count = diceCountFor(live.state, HERO);
-    live.submitAction(rollAction(live.rng, count));
+    setPendingRoll(rollAction(live.rng, count));
   };
 
-  const lastRoll =
-    live.lastAction?.action.t === "roll" ? live.lastAction.action.dice : null;
+  const showRoll = live.isHeroTurn && !pendingRoll;
+  const lastRoll = pendingRoll
+    ? (pendingRoll.t === "roll" ? pendingRoll.dice : null)
+    : live.lastAction?.action.t === "roll"
+      ? live.lastAction.action.dice
+      : null;
 
   return (
     <>
-      <TurnIndicator label="Your turn — roll" show={live.isHeroTurn} />
+      <TurnIndicator label="Your turn — roll" show={showRoll} />
 
-      <DiceOverlay dice={lastRoll} revision={live.lastAction} />
+      <DiceOverlay
+        dice={lastRoll}
+        // `.action`, not the `{seat, action}` wrapper: `submitAction`
+        // stores the exact SAME action object `pendingRoll` already
+        // held (see its own comment — only WHEN it's applied is
+        // delayed, not what it resolves to), so once it fires,
+        // `live.lastAction.action` is === the `pendingRoll` we were
+        // already showing. Comparing the wrapper instead — a NEW object
+        // every time regardless — made the tumble reset and replay a
+        // second time the instant submitAction landed, even though it's
+        // the same roll: the exact "dice rolled twice" bug reported
+        // live. Bot rolls are unaffected — `bot.choose()` always builds
+        // a genuinely new action, so this is still a real change then.
+        revision={pendingRoll ?? live.lastAction?.action}
+      />
 
       <div
         className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 flex justify-center pb-4"
         style={{ height: 64 }}
       >
         <AnimatePresence>
-          {live.isHeroTurn ? (
+          {showRoll ? (
             <motion.button
               type="button"
               onClick={roll}

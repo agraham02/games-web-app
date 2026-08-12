@@ -11,7 +11,7 @@
  */
 
 import { memo } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
 import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
@@ -31,6 +31,12 @@ export interface SeatView {
    * disappearing, since the seat itself is still a real position other
    * players' relative left/right depends on. */
   eliminated?: boolean;
+  /** This seat won. GameHost sets this from `live.winner`, which (unlike
+   * `live.showSummary`) is public the instant the game ends — so the
+   * crown lands on the table itself before GameEndSummary covers it,
+   * the same "show it, THEN summarize it" pacing the endHoldMs pause
+   * exists for. */
+  winning?: boolean;
   /**
    * Rummy's ambient disclosure tier: a micro-strip of this player's
    * board melds, always visible at zero interaction cost.
@@ -68,18 +74,20 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
 }
 
 const SeatPod = memo(function SeatPod({ view }: { view: SeatView }) {
+  const highlighted = view.active || view.winning;
   return (
     <motion.div
       initial={false}
-      animate={{ scale: view.active ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
+      animate={{ scale: highlighted ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
       className={`flex w-16 flex-col items-center gap-1 rounded-xl px-1 py-1.5 backdrop-blur-md transition-colors ${
-        view.active
+        highlighted
           ? "bg-felt-950/70 ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]"
           : "bg-felt-950/55 ring-1 ring-brass-400/20"
       }`}
     >
       <div className="relative">
+        <AnimatePresence>{view.winning ? <WinnerCrown /> : null}</AnimatePresence>
         <div
           className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-felt-950"
           style={{
@@ -116,6 +124,51 @@ function ThinkingRing() {
       animate={{ opacity: [0.15, 0.85, 0.15], scale: [1, 1.14, 1] }}
       transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
     />
+  );
+}
+
+/**
+ * The per-seat echo of GameEndSummary's winner callout, landing on the
+ * table itself the instant `live.winner` is known (see the `winning`
+ * doc on SeatView) — well before the summary panel does, per the same
+ * "show it, then summarize it" pacing endHoldMs exists for.
+ *
+ * Rests ON the avatar's own top edge rather than floating clear above
+ * it with a gap: TableSurface clips its contents (`overflow-hidden`),
+ * and a top-row pod's own headroom above it is thin by design (14–24px
+ * of `ringPad`, tuned only for the pod itself) — a crown hovering a
+ * full ~20px above the avatar reliably poked past that and got clipped
+ * at the screen edge. Overlapping the avatar instead of appending above
+ * it means the crown never needs more vertical room than the pod
+ * already has, on any seat, at any density.
+ *
+ * Motion: a settle-style entrance (no bounce, matching the app's whole
+ * direction — see layout.ts/CLAUDE.md), then a slow, gentle float while
+ * it holds, small enough to stay within that same margin. That float is
+ * ambient idle motion, not a bounce: it never overshoots or rebounds,
+ * just drifts up and back on a long, easeInOut sine — the same category
+ * of motion as ThinkingRing's pulse just above it in this file, not the
+ * bounce the rest of the app deliberately avoids.
+ */
+function WinnerCrown() {
+  return (
+    <motion.div
+      aria-hidden
+      className="pointer-events-none absolute -top-1.5 left-1/2 -translate-x-1/2 text-sm"
+      style={{ filter: "drop-shadow(0 0 5px rgb(212 175 106 / 0.65))" }}
+      initial={{ opacity: 0, scale: 0.5, y: 3 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.6, y: 3 }}
+      transition={TRANSITIONS.deal}
+    >
+      <motion.span
+        className="block"
+        animate={{ y: [0, -1.5, 0] }}
+        transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+      >
+        👑
+      </motion.span>
+    </motion.div>
   );
 }
 
