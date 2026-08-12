@@ -102,16 +102,25 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         willChange: "transform",
       }}
     >
-      <Flipper faceUp={placement.faceUp} w={base.w} h={base.h}>
-        <PieceFace
-          kind={meta.kind}
-          face={meta.face}
-          w={base.w}
-          h={base.h}
-          detail={detail}
-          ariaHidden={!placement.faceUp}
-        />
-      </Flipper>
+      {meta.kind === "card" ? (
+        <Flipper faceUp={placement.faceUp} w={base.w} h={base.h}>
+          <PieceFace
+            kind={meta.kind}
+            face={meta.face}
+            w={base.w}
+            h={base.h}
+            detail={detail}
+            ariaHidden={!placement.faceUp}
+          />
+        </Flipper>
+      ) : (
+        // Tiles and chips never flip — no dealt-face-down state exists
+        // for either in any game here. Skip Flipper's dual-face 3D
+        // wrapper entirely: one motion.div instead of two per piece,
+        // which matters once a game like LRC can have 30 chips on
+        // screen at once.
+        <PieceFace kind={meta.kind} face={meta.face} w={base.w} h={base.h} detail={detail} />
+      )}
 
       {placement.highlighted ? (
         <span

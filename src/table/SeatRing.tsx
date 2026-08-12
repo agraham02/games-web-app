@@ -26,6 +26,11 @@ export interface SeatView {
   /** Highlights the pod and shows a pulse. */
   active?: boolean;
   thinking?: boolean;
+  /** Out for the rest of the game — LRC's elimination, a future game's
+   * fold/bust. Dims the pod; it stays in the ring rather than
+   * disappearing, since the seat itself is still a real position other
+   * players' relative left/right depends on. */
+  eliminated?: boolean;
   /**
    * Rummy's ambient disclosure tier: a micro-strip of this player's
    * board melds, always visible at zero interaction cost.
@@ -66,7 +71,7 @@ const SeatPod = memo(function SeatPod({ view }: { view: SeatView }) {
   return (
     <motion.div
       initial={false}
-      animate={{ scale: view.active ? 1.06 : 1 }}
+      animate={{ scale: view.active ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
       className={`flex w-16 flex-col items-center gap-1 rounded-xl px-1 py-1.5 backdrop-blur-md transition-colors ${
         view.active
@@ -77,7 +82,10 @@ const SeatPod = memo(function SeatPod({ view }: { view: SeatView }) {
       <div className="relative">
         <div
           className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-felt-950"
-          style={{ background: view.colour }}
+          style={{
+            background: view.colour,
+            filter: view.eliminated ? "grayscale(1)" : undefined,
+          }}
         >
           {initialsOf(view.name)}
         </div>

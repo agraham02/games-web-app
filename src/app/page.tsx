@@ -5,8 +5,7 @@ const GAMES = [
   { name: "Rummy 500", detail: "2–8 seats · board melds", status: "planned" },
   { name: "Dominoes", detail: "2–4 seats · block & draw", status: "planned" },
   { name: "Poker", detail: "2–10 seats · no-limit hold'em", status: "planned" },
-  { name: "Left Right Center", detail: "3–10 seats · dice & chips", status: "planned" },
-];
+] as const;
 
 export default function Home() {
   return (
@@ -17,17 +16,26 @@ export default function Home() {
           Table Games
         </h1>
         <p className="mt-3 max-w-lg text-sm leading-relaxed text-bone-400">
-          The shared layer is built; no game rules are written yet. Everything
-          below is exercised through the lab harness — seat geometry, the piece
-          layer, motion pacing, phase screens and Rummy&apos;s board disclosure.
+          Left Right Center is the first game with real rules — everything
+          else is still exercised through the lab harness: seat geometry, the
+          piece layer, motion pacing, phase screens and Rummy&apos;s board
+          disclosure.
         </p>
 
-        <Link
-          href="/lab/seats"
-          className="mt-7 inline-block rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-6 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
-        >
-          Open the lab →
-        </Link>
+        <div className="mt-7 flex flex-wrap gap-3">
+          <Link
+            href="/play/lrc"
+            className="inline-block rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-6 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
+          >
+            Play Left Right Center →
+          </Link>
+          <Link
+            href="/lab/seats"
+            className="inline-block rounded-lg bg-bone-50/6 px-6 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
+          >
+            Open the lab
+          </Link>
+        </div>
 
         <span className="rule-brass my-10 block" />
 

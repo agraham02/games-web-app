@@ -67,6 +67,22 @@ export interface Placement {
 
 export type PlacementMap = Record<PieceId, Placement>;
 
+/**
+ * What a piece physically is. Placement says WHERE it is; this says WHAT
+ * it looks like — and unlike Placement, it never changes during a game,
+ * so it's a setup-time concern (`GameDefinition.pieces`), not a per-turn
+ * one. Lives here, not in the table store, because every game needs to
+ * describe its own physical pieces regardless of how the React layer
+ * happens to cache them.
+ */
+export type PieceKind = "card" | "tile" | "chip";
+
+export interface PieceMeta {
+  kind: PieceKind;
+  /** Face identity: card id, "6-3" for a tile, a colour token for a chip. */
+  face: string;
+}
+
 /* ============================================================
    Events — the animation vocabulary.
    ============================================================ */
@@ -138,6 +154,14 @@ export interface GameDefinition<S, A> {
   setup(opts: SetupOptions): S;
   reduce(state: S, action: A): ReduceResult<S>;
   legalActions(state: S, seat: SeatId): A[];
+
+  /**
+   * The physical pieces this game uses and what they look like. Fixed
+   * once `setup` runs — a game's piece SET never changes, only where
+   * each one sits — so the runtime calls this once and caches it,
+   * unlike `placements` which it calls after every batch of events.
+   */
+  pieces(state: S): Record<PieceId, PieceMeta>;
 
   /**
    * Full visual truth for a state. The choreographer applies events

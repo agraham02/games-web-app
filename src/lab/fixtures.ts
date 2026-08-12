@@ -18,17 +18,9 @@ import type {
 import { HERO } from "@/engine/types";
 import type { PieceMeta } from "@/table/store";
 import { shuffledDeck, SUIT_GLYPH, parseCard } from "@/games/_shared/cards";
+import { botColour, botName } from "@/games/_shared/botIdentity";
 import { doubleSixSet } from "@/ui/primitives/TileFace";
 import type { SeatView } from "@/table/SeatRing";
-
-const BOT_NAMES = [
-  "Mia", "Sam", "Kofi", "Jo", "Ada", "Rui", "Nia", "Tomas", "Elle",
-];
-
-const BOT_COLOURS = [
-  "#c9a0a0", "#a0a8c9", "#c9bfa0", "#8fb8a0", "#b9a0c9",
-  "#a0c9c4", "#c9b0a0", "#aab8a0", "#c0a8b8",
-];
 
 export function makePlayers(
   seats: number,
@@ -39,8 +31,8 @@ export function makePlayers(
     const i = seat - 1;
     out.push({
       seat,
-      name: BOT_NAMES[i % BOT_NAMES.length]!,
-      colour: BOT_COLOURS[i % BOT_COLOURS.length]!,
+      name: botName(seat),
+      colour: botColour(seat),
       meta: opts.melds ? `${4 + (i % 5)} cards` : `bid ${1 + (i % 4)}`,
       active: opts.activeSeat === seat,
       thinking: opts.activeSeat === seat,

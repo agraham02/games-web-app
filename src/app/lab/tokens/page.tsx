@@ -144,9 +144,9 @@ export default function TokensLab() {
 
           <Section title="Chips · LRC">
             <div className="flex flex-wrap gap-3">
-              <ChipFace colour="left" size={48} />
-              <ChipFace colour="center" size={48} />
-              <ChipFace colour="right" size={48} />
+              <ChipFace colour="ruby" size={48} />
+              <ChipFace colour="forest" size={48} />
+              <ChipFace colour="gold" size={48} />
               <ChipFace colour="neutral" size={48} label="5" />
               <ChipFace colour="brass" size={48} label="25" />
             </div>

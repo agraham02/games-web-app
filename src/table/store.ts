@@ -15,16 +15,13 @@
 
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
-import type { Placement, PlacementMap, PieceId } from "@/engine/types";
+import type { Placement, PlacementMap, PieceId, PieceMeta } from "@/engine/types";
 import type { TableGeometry } from "./geometry";
 
-export type PieceKind = "card" | "tile" | "chip";
-
-export interface PieceMeta {
-  kind: PieceKind;
-  /** Face identity: card id, "6-3" for a tile, a colour for a chip. */
-  face: string;
-}
+// Re-exported for existing call sites — the types themselves live in
+// engine/types.ts now, since every GameDefinition needs to describe its
+// pieces regardless of the React layer's own caching.
+export type { PieceKind, PieceMeta } from "@/engine/types";
 
 interface TableState {
   geometry: TableGeometry | null;

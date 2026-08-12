@@ -172,12 +172,20 @@ body {
 }
 
 /* The piece layer promotes every piece to its own compositor
-   layer. Only transform + opacity ever animate. */
+   layer. Only transform + opacity ever animate.
+   NOT transform-style: preserve-3d here — that belongs on each
+   Flipper's own local wrapper (PieceLayer.tsx already sets it there
+   for the card-flip 3D effect) and nowhere else. Set on this OUTER
+   container, it forces the whole piece layer into its own stacking
+   context regardless of z-index:auto, which traps every individual
+   piece's z-index (however high) below any sibling that has an
+   explicit z-index of its own — confirmed as the exact reason chip
+   piles kept rendering behind seat pods even after each piece's own
+   z-index was raised above the pods'. */
 @utility piece-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  transform-style: preserve-3d;
 }
 
 /* ============================================================
