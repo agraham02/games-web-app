@@ -13,7 +13,7 @@
  * down without a bespoke context provider for one hook's output.
  */
 
-import { HERO, type GameDefinition, type SeatId } from "@/engine/types";
+import { HERO, type GameDefinition, type PieceId, type SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
 import { TableSurface } from "./TableSurface";
@@ -22,7 +22,11 @@ import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { useDevSettings } from "./devSettings";
 import { GameToaster } from "@/ui/disclosure";
-import { GameEndSummary } from "@/ui/phases/PhaseScreens";
+import {
+  GameEndSummary,
+  RoundEndScorecard,
+  type ScoreRow,
+} from "@/ui/phases/PhaseScreens";
 import { useGameRuntime, type GameRuntime, type GameRuntimeOptions } from "./useGameRuntime";
 
 export interface GameHostProps<S, A> {
@@ -52,6 +56,20 @@ export interface GameHostProps<S, A> {
     seats: SeatView[],
   ) => Array<{ seat: number; name: string; total: number }>;
   stats?: (state: S, live: GameRuntime<S, A>) => Array<{ label: string; value: string }>;
+  /** Scorecard between rounds, for games played as a match. Omit for a
+   * single-round game — nothing renders and the runtime never asks. */
+  roundSummary?: (
+    state: S,
+    live: GameRuntime<S, A>,
+    seats: SeatView[],
+  ) => { title: string; rows: ScoreRow[]; note?: RoundNote } | null;
+  /** Taps on a piece — the hero picking a card or tile off the table.
+   * Only pieces in the hero's hand or explicitly `highlighted` are
+   * clickable at all; see PieceLayer. Handed the live runtime for the
+   * same reason `children` is: the handler almost always needs to submit
+   * an action, and the runtime is not in scope where the prop is
+   * written. */
+  onPieceTap?: (id: PieceId, live: GameRuntime<S, A>) => void;
   /** DevPanel's one line of game-specific context about the pending
    * turn — e.g. LRC's "Mia pending — 4 chips → 3 dice". Called only
    * while a turn is actually pending. Optional; the panel still works
@@ -62,6 +80,9 @@ export interface GameHostProps<S, A> {
   children: (live: GameRuntime<S, A>) => React.ReactNode;
 }
 
+/** Optional callout under a round's scores — "blocked", "nobody scored". */
+export type RoundNote = { tone: "warn" | "info"; title: string; body: string };
+
 export function GameHost<S, A>({
   definition,
   runtime,
@@ -71,6 +92,8 @@ export function GameHost<S, A>({
   gameTitle,
   standings,
   stats,
+  roundSummary,
+  onPieceTap,
   pendingLabel,
   onRematch,
   onLobby,
@@ -83,6 +106,7 @@ export function GameHost<S, A>({
     speed: devSettings.speed,
     turnHoldMs: devSettings.turnHoldMs,
     endHoldMs: devSettings.endHoldMs,
+    roundHoldMs: devSettings.roundHoldMs,
   });
   const seatViews = players(live.state, live).map((view) =>
     live.winner === view.seat ? { ...view, winning: true } : view,
@@ -90,12 +114,29 @@ export function GameHost<S, A>({
   const board = (standings ?? winLoseStandings)(live.state, live, seatViews);
 
   const pendingSeat = live.pendingReveal ? definition.currentSeat(live.state) : null;
+  // Built only while it is actually showing: a game's scorecard reads
+  // `state.result`, which is null for most of a round.
+  const card = live.showRoundSummary ? roundSummary?.(live.state, live, seatViews) : null;
 
   return (
-    <TableSurface seats={runtime.seats} density={density} handZone={handZone}>
+    <TableSurface
+      seats={runtime.seats}
+      density={density}
+      handZone={handZone}
+      onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
+    >
       <SeatRing players={seatViews} />
       <HeroWinFlourish show={live.isOver && live.winner === HERO} />
       <GameToaster />
+
+      <RoundEndScorecard
+        show={Boolean(card)}
+        eyebrow={`Round ${live.round}`}
+        title={card?.title ?? ""}
+        rows={card?.rows ?? []}
+        note={card?.note}
+        onContinue={live.nextRound}
+      />
 
       <GameEndSummary
         show={live.showSummary}

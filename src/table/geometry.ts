@@ -53,6 +53,11 @@ export type ZoneName =
   | "deck"
   | "discard"
   | "board"
+  /** Where a domino chain is fitted. Aliases the whole play area. */
+  | "line"
+  /** Dominoes' face-down draw pool. See `resolveTable` for why it sits
+   * in the hand strip rather than out on the table. */
+  | "boneyard"
   | "hand";
 
 export interface TableGeometry {
@@ -170,6 +175,18 @@ const EDGES: Record<Density, Record<number, EdgeAlloc>> = {
     9: [3, 3, 3],
   },
 };
+
+/**
+ * Roughly what a seat pod covers on screen, centred on its slot.
+ * SeatRing renders a fixed `w-16` (64px) column whose height grows with
+ * how many lines the game puts in it; this is a deliberately generous
+ * estimate so layout code and tests can keep pieces clear of the pods
+ * without reaching into the React component.
+ */
+export const POD_SIZE: PieceSize = { w: 64, h: 62 };
+
+/** Clearance between the domino line's box and anything around it. */
+const LINE_BREATHING = 6;
 
 /**
  * Minimum distance between two seat-pod centres before the names
@@ -363,18 +380,57 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const discardX = cx + spec.card.w / 2 + pileGap;
   const pileY = cy - spec.card.h / 2;
 
+  const hand: Box = {
+    x: spec.ringPad,
+    y: height - handZone,
+    w: width - spec.ringPad * 2,
+    h: handZone,
+  };
+
+  // The boneyard lives at the left end of the HAND strip, not out on the
+  // table. Two reasons, both about the thing dominoes is short of:
+  // room. A draw pile parked anywhere inside the play area would have to
+  // be carved out of the one region the chain needs (and the chain is
+  // fitted by a camera, so it would happily grow straight over it),
+  // whereas the hand strip has spare width at every size. It also reads
+  // correctly — it is the pile YOU draw from, so it belongs next to your
+  // hand and next to the Draw button.
+  const tileW = tileShortSide(spec.card);
+  const bone: Box = {
+    x: hand.x,
+    y: hand.y + Math.max(0, (handZone - tileW * 2) / 2),
+    w: tileW,
+    h: Math.min(handZone, tileW * 2),
+  };
+
+  // `play` is inset by a full `podInset` on each edge that holds seats,
+  // but a pod is centred at `podInset / 2` from the ring and is 64px
+  // wide — so on a tight density it can bleed a few px back INTO the
+  // play area. Card zones sit near the middle and never notice; a
+  // camera-fitted domino chain fills the whole box and would tuck its
+  // ends straight under a pod. `line` is that box pulled clear of the
+  // real pod footprint, plus a little breathing room.
+  const sideBleed = Math.max(0, POD_SIZE.w / 2 - spec.podInset / 2) + LINE_BREATHING;
+  const topBleed = Math.max(0, POD_SIZE.h / 2 - spec.podInset / 2) + LINE_BREATHING;
+  const line: Box = {
+    x: play.x + (nLeft > 0 ? sideBleed : LINE_BREATHING),
+    y: play.y + (nTop > 0 ? topBleed : LINE_BREATHING),
+    w:
+      play.w -
+      (nLeft > 0 ? sideBleed : LINE_BREATHING) -
+      (nRight > 0 ? sideBleed : LINE_BREATHING),
+    h: play.h - (nTop > 0 ? topBleed : LINE_BREATHING) - LINE_BREATHING,
+  };
+
   const zones: Record<ZoneName, Box> = {
     play,
     trick: { x: cx - trickW / 2, y: cy - trickH / 2, w: trickW, h: trickH },
     deck: { x: deckX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
     discard: { x: discardX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
     board: play,
-    hand: {
-      x: spec.ringPad,
-      y: height - handZone,
-      w: width - spec.ringPad * 2,
-      h: handZone,
-    },
+    line,
+    boneyard: bone,
+    hand,
   };
 
   return {
@@ -385,6 +441,49 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     card: spec.card,
     handCard: spec.handCard,
     miniCard: spec.miniCard,
+  };
+}
+
+/**
+ * A domino is 1:2 where a card is 2.5:3.5, and every piece renders into
+ * the card-shaped base box (see table/layout.ts), so a tile inscribes
+ * itself in that box rather than filling it. This is the resulting short
+ * side — the unit the whole chain is measured in. Shared with
+ * TileFace's own `tileBox` so the maths and the drawing agree.
+ */
+export function tileShortSide(card: PieceSize): number {
+  return Math.min(card.w, card.h / 2);
+}
+
+/* ============================================================
+   Board space — the coordinate system a domino chain lives in.
+   Pure, and kept here rather than in the store so that layout and its
+   tests never have to reach into React state to do maths.
+   ============================================================ */
+
+/** Extent of everything laid in board space, in board units. */
+export interface BoardView {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * Half-extents of a piece laid at `rot`, in board units. A piece in
+ * board space is 1x2 (a domino), so a quarter turn swaps the axes.
+ */
+export function cellHalfExtent(rot: number): { hw: number; hh: number } {
+  const turned = Math.round((((rot % 360) + 360) % 360) / 90) % 2 === 1;
+  return turned ? { hw: 1, hh: 0.5 } : { hw: 0.5, hh: 1 };
+}
+
+export function podBox(slot: SeatSlot): Box {
+  return {
+    x: slot.x - POD_SIZE.w / 2,
+    y: slot.y - POD_SIZE.h / 2,
+    w: POD_SIZE.w,
+    h: POD_SIZE.h,
   };
 }
 

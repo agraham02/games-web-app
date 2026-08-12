@@ -13,9 +13,19 @@
  * is what lets each <Piece> subscribe to only its own placement.
  */
 
-import type { Placement, SeatId } from "@/engine/types";
+import type { Placement, PieceKind, SeatId } from "@/engine/types";
 import { HERO } from "@/engine/types";
-import { fanSlot, type Box, type TableGeometry } from "./geometry";
+import {
+  fanSlot,
+  tileShortSide,
+  POD_SIZE,
+  type BoardView,
+  type Box,
+  type PieceSize,
+  type TableGeometry,
+} from "./geometry";
+
+type BoardCell = NonNullable<Placement["cell"]>;
 
 export interface PieceTransform {
   /** Top-left of the base-size box, in container px. */
@@ -40,7 +50,9 @@ export interface PieceTransform {
 const Z: Record<string, number> = {
   offscreen: 0,
   deck: 100,
+  boneyard: 150,
   board: 200,
+  line: 250,
   discard: 300,
   trick: 400,
   collected: 850,
@@ -53,6 +65,28 @@ const Z_SELECTED = 5000;
 /** The base box every piece is rendered at, before scaling. */
 export function baseSize(g: TableGeometry) {
   return g.handCard;
+}
+
+/**
+ * What a piece actually DRAWS inside that base box. A card fills it; a
+ * domino is 1:2 and inscribes itself (see TileFace), so every scale in
+ * this file has to be computed against the art, not the box, or a tile
+ * comes out a third too small everywhere.
+ */
+function artSize(g: TableGeometry, kind: PieceKind | undefined): PieceSize {
+  const base = baseSize(g);
+  if (kind !== "tile") return base;
+  const w = Math.min(base.w, base.h / 2);
+  return { w, h: w * 2 };
+}
+
+/** The same piece's size when it is lying on the table / in a pod. */
+function tableArt(g: TableGeometry, kind: PieceKind | undefined): number {
+  return kind === "tile" ? tileShortSide(g.card) : g.card.w;
+}
+
+function miniArt(g: TableGeometry, kind: PieceKind | undefined): number {
+  return kind === "tile" ? tileShortSide(g.miniCard) : g.miniCard.w;
 }
 
 function centred(cx: number, cy: number, g: TableGeometry) {
@@ -80,10 +114,126 @@ function clampToBox(cx: number, cy: number, box: Box, marginW: number, marginH: 
   };
 }
 
-export function layoutPiece(p: Placement, g: TableGeometry): PieceTransform {
+/* ============================================================
+   The board camera — dominoes' line of play.
+   ============================================================ */
+
+/**
+ * A domino chain cannot be laid out from (index, count) the way every
+ * other zone is: a double advances the line by one unit where everything
+ * else advances it by two, so a tile's spot depends on the entire run
+ * before it. The game therefore computes each tile's board-space cell
+ * ONCE, when it is played, and that cell is then immutable for the rest
+ * of the round — a played tile never moves relative to its neighbours,
+ * which is the whole point.
+ *
+ * What moves instead is this camera. It fits the chain's bounding box
+ * into the line zone, so the board is viewed from further back as it
+ * grows rather than being re-laid-out. Every relative position and every
+ * pip contact is preserved exactly, because a fit is one scale and one
+ * translation applied to the whole space.
+ *
+ * Two properties keep it calm:
+ *
+ *  - `unit` is CLAMPED at the normal table piece size, so for the
+ *    opening tiles the camera is completely still — it only starts
+ *    easing out once the chain genuinely no longer fits.
+ *  - the bounding box only ever grows (tiles are never removed), so the
+ *    scale is monotonically non-increasing. It cannot oscillate.
+ */
+export interface BoardCamera {
+  /** Screen px per board unit. */
+  unit: number;
+  /** Rotation applied to the whole board space, in degrees. */
+  rot: number;
+  /** Board-space point that sits at the screen centre of the zone. */
+  bx: number;
+  by: number;
+  /** That screen centre. */
+  cx: number;
+  cy: number;
+}
+
+/** Blank space kept around the chain, in board units. */
+const BOARD_PAD = 0.6;
+
+/**
+ * A tile renders at slightly under its exact unit footprint, so every
+ * joint gets a uniform hairline. Real dominoes on a table have that gap;
+ * without it two doubles in adjacent rows read as one solid block.
+ */
+const CONTACT_GAP = 0.955;
+
+export function boardCamera(g: TableGeometry, board: BoardView | null): BoardCamera {
+  const zone = g.zones.line;
+  const cx = zone.x + zone.w / 2;
+  const cy = zone.y + zone.h / 2;
+  const maxUnit = tileShortSide(g.card);
+
+  // Turning the whole board a quarter turn on a portrait zone is not a
+  // gimmick: domino pips are rotation-invariant, so it costs nothing to
+  // read, and it roughly DOUBLES the usable tile size on a phone (a
+  // ~14x8-unit board fits a 270x620 zone at ~19px/unit upright, ~34
+  // rotated). Derived from the zone alone, never from the chain, so it
+  // is stable for a whole round and only changes on a real resize.
+  const rot = zone.h > zone.w ? 90 : 0;
+
+  if (!board) return { unit: maxUnit, rot, bx: 0, by: 0, cx, cy };
+
+  const bw = board.maxX - board.minX + BOARD_PAD * 2;
+  const bh = board.maxY - board.minY + BOARD_PAD * 2;
+  const fitW = rot === 90 ? bh : bw;
+  const fitH = rot === 90 ? bw : bh;
+
+  const unit = Math.min(zone.w / fitW, zone.h / fitH, maxUnit);
+
+  return {
+    unit,
+    rot,
+    bx: (board.minX + board.maxX) / 2,
+    by: (board.minY + board.maxY) / 2,
+    cx,
+    cy,
+  };
+}
+
+/** Board-space cell -> screen centre and final rotation. */
+export function projectCell(cell: BoardCell, cam: BoardCamera) {
+  const dx = cell.x - cam.bx;
+  const dy = cell.y - cam.by;
+  // Screen y runs downward, so a quarter turn clockwise takes
+  // (x, y) -> (-y, x). The piece's own rotation gets the same turn, which
+  // is what keeps the tile square to the run it was laid along.
+  const rx = cam.rot === 90 ? -dy : dx;
+  const ry = cam.rot === 90 ? dx : dy;
+  return {
+    cx: cam.cx + rx * cam.unit,
+    cy: cam.cy + ry * cam.unit,
+    rotate: cell.rot + cam.rot,
+  };
+}
+
+/** On-screen size of one board-space piece, for ghosts and markers. */
+export function boardPieceSize(cam: BoardCamera) {
+  return { short: cam.unit * CONTACT_GAP, long: cam.unit * 2 * CONTACT_GAP };
+}
+
+export interface LayoutContext {
+  /** What the piece physically is — a tile draws 1:2 inside the base box. */
+  kind?: PieceKind;
+  /** Extent of everything in board space; drives the camera. */
+  board?: BoardView | null;
+}
+
+export function layoutPiece(
+  p: Placement,
+  g: TableGeometry,
+  ctx?: LayoutContext,
+): PieceTransform {
   const base = baseSize(g);
-  const tableScale = g.card.w / base.w;
-  const miniScale = g.miniCard.w / base.w;
+  const art = artSize(g, ctx?.kind);
+  const tableScale = tableArt(g, ctx?.kind) / art.w;
+  const miniScale = miniArt(g, ctx?.kind) / art.w;
 
   const zBase = Z[p.zone] ?? 0;
   const z = p.selected ? Z_SELECTED + p.index : zBase + p.index;
@@ -182,16 +332,67 @@ export function layoutPiece(p: Placement, g: TableGeometry): PieceTransform {
       return { x, y, rotate: 0, scale: tableScale, z, opacity };
     }
 
+    /* -------------------------------------------------- line */
+    case "line": {
+      // Position comes from the game, not from index/count — see
+      // `boardCamera` above for why, and `Placement.cell` for the
+      // contract. All this does is project it.
+      if (!p.cell) {
+        const { cx, cy } = boxCentre(g.zones.line);
+        const { x, y } = centred(cx, cy, g);
+        return { x, y, rotate: 0, scale: tableScale, z, opacity };
+      }
+      const cam = boardCamera(g, ctx?.board ?? null);
+      const { cx, cy, rotate } = projectCell(p.cell, cam);
+      const { x, y } = centred(cx, cy, g);
+      return {
+        x,
+        y,
+        rotate,
+        // The drawn art's short side becomes exactly one board unit
+        // (less the hairline), which is what makes contact exact.
+        scale: (cam.unit * CONTACT_GAP) / art.w,
+        z,
+        opacity,
+      };
+    }
+
+    /* ---------------------------------------------- boneyard */
+    case "boneyard": {
+      const zone = g.zones.boneyard;
+      const { cx, cy } = boxCentre(zone);
+      // Same capped stack as the deck: depth, not a fan of 14 tiles.
+      const lift = Math.min(p.index, 8) * 0.45;
+      const { x, y } = centred(cx + lift, cy - lift, g);
+      return { x, y, rotate: 0, scale: zone.w / art.w, z, opacity };
+    }
+
     /* -------------------------------------------------- hand */
     case "hand": {
       const seatId: SeatId = p.seat ?? HERO;
+      // Cards overlap in a fanned arc, which is how you hold cards.
+      // Dominoes do not fan — you stand them in a rack, edge to edge and
+      // upright — so a tile hand is a flat, evenly spaced row.
+      const isTile = ctx?.kind === "tile";
 
       if (seatId === HERO) {
+        // The boneyard shares this strip (see geometry's `boneyard`), so
+        // a tile hand starts clear of it. Card games have no such pile
+        // and keep the full width.
+        const gutter = isTile ? g.zones.boneyard.w + 14 : 0;
+        const within: Box = {
+          ...g.zones.hand,
+          x: g.zones.hand.x + gutter,
+          w: g.zones.hand.w - gutter,
+        };
         const slot = fanSlot({
           index: p.index,
           count: p.count,
-          within: g.zones.hand,
-          size: base,
+          within,
+          size: art,
+          maxRotation: isTile ? 0 : undefined,
+          arcLift: isTile ? 0 : undefined,
+          maxGap: isTile ? art.w * 1.14 : undefined,
         });
         const lift = p.selected ? -18 : 0;
         return {
@@ -209,24 +410,41 @@ export function layoutPiece(p: Placement, g: TableGeometry): PieceTransform {
       const seat = g.seats[seatId];
       if (!seat) return { x: 0, y: 0, rotate: 0, scale: miniScale, z, opacity };
 
+      const miniW = miniArt(g, ctx?.kind);
+      const miniH = isTile ? miniW * 2 : g.miniCard.h;
+
       const { cx: pcx, cy: pcy } = boxCentre(g.zones.play);
       const dx = pcx - seat.x;
       const dy = pcy - seat.y;
       const len = Math.hypot(dx, dy) || 1;
-      const inset = g.miniCard.h * 0.85;
+      const ux = dx / len;
+      const uy = dy / len;
 
-      const anchorX = seat.x + (dx / len) * inset;
-      const anchorY = seat.y + (dy / len) * inset;
+      const fanW = miniW * 2.4;
+      // Far enough in to clear the pod completely, measured along the
+      // direction the hand is actually offset in and against the fan's
+      // real reach in that direction. A flat fraction of the piece
+      // height (what this used to be) is only ever right for one seat
+      // position: a top seat's hand is offset vertically and spreads
+      // horizontally, while a SIDE seat's hand is offset and spreads
+      // along the same axis, so it needs half the fan's width of extra
+      // clearance or it lands across the nameplate.
+      const podReach = Math.abs(ux) * (POD_SIZE.w / 2) + Math.abs(uy) * (POD_SIZE.h / 2);
+      const fanReach =
+        Math.abs(ux) * (fanW / 2 + miniW / 2) + Math.abs(uy) * (miniH / 2);
+      const inset = podReach + fanReach + 8;
 
-      const fanW = g.miniCard.w * 2.4;
+      const anchorX = seat.x + ux * inset;
+      const anchorY = seat.y + uy * inset;
+
       const slot = fanSlot({
         index: p.index,
         count: p.count,
         within: { x: anchorX - fanW / 2, y: anchorY, w: fanW, h: 0 },
-        size: g.miniCard,
-        maxRotation: 7,
-        arcLift: 4,
-        maxGap: g.miniCard.w * 0.42,
+        size: { w: miniW, h: miniH },
+        maxRotation: isTile ? 0 : 7,
+        arcLift: isTile ? 0 : 4,
+        maxGap: miniW * (isTile ? 0.55 : 0.42),
       });
 
       return {

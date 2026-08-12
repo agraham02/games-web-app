@@ -34,6 +34,16 @@ export type ZoneId =
   | "hand"
   | "collected"
   | "center"
+  /**
+   * A chain of pieces laid end to end — dominoes' line of play. Unlike
+   * every other zone, position here is NOT derived from index/count:
+   * where a domino sits depends on the exact run of tiles before it
+   * (a double advances the line by half as much as anything else), and
+   * a played tile must never move again. See `Placement.cell`.
+   */
+  | "line"
+  /** Face-down pool drawn from — dominoes' boneyard. */
+  | "boneyard"
   | "offscreen";
 
 /**
@@ -63,6 +73,30 @@ export interface Placement {
    * subscribe to its own placement alone.
    */
   fanned?: boolean;
+  /**
+   * Position in an abstract board-unit space, for zones where a piece
+   * sits where the pieces before it put it rather than at an index in a
+   * fan (`zone: "line"`).
+   *
+   * This exists because everywhere else, position is a pure function of
+   * (index, count) — which is what lets layout stay O(1) per piece with
+   * no sibling knowledge. A domino chain breaks that: a double advances
+   * the line by one unit and everything else by two, so a tile's spot
+   * depends on the whole run before it. The game does that walk once,
+   * at the moment the piece is played, and stores the answer here. It is
+   * then immutable for the rest of the round — which is the point. The
+   * player's frame of reference is never re-derived under them; only the
+   * camera that views this space moves (see `boardCamera` in
+   * table/layout.ts).
+   *
+   * Units are the piece's short side, so a domino is 1x2. `rot` is the
+   * final face rotation in degrees (0 = upright, high half at the top),
+   * which is all the renderer needs to make matching pips touch.
+   *
+   * Structural, not a transient interaction flag — do NOT add it to the
+   * store's `clearFlags`.
+   */
+  cell?: { x: number; y: number; rot: number };
 }
 
 export type PlacementMap = Record<PieceId, Placement>;
@@ -176,6 +210,32 @@ export interface GameDefinition<S, A> {
 
   currentSeat(state: S): SeatId | null;
   isOver(state: S): boolean;
+
+  /**
+   * Deals (or re-deals) and returns the events that show it happening.
+   * The runtime calls this once before the first turn, and again each
+   * time the player continues from a round summary.
+   *
+   * Optional: a single-round game (LRC) sets up entirely in `setup` and
+   * omits this. Implementing it buys an ANIMATED opening deal, which
+   * `setup` alone cannot give you — `setup` returns state only, so a game
+   * that deals there has its cards simply appear. A game with this hook
+   * returns an undealt state from `setup` (everything still in the deck
+   * or boneyard) and lets the deal fly out of the pile like a real one.
+   *
+   * The piece SET must not change between rounds — `pieces()` is called
+   * once and cached.
+   */
+  startRound?(state: S, rng: Rng): ReduceResult<S>;
+
+  /**
+   * True between a round ending and `startRound` being called again.
+   * Games that run a single round omit this.
+   *
+   * `currentSeat` should return null while this is true; the runtime
+   * stops pacing turns and shows the round summary instead.
+   */
+  isRoundOver?(state: S): boolean;
 
   bots: Record<BotDifficulty, BotStrategy<S, A>>;
 }

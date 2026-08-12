@@ -25,10 +25,10 @@ import { memo } from "react";
 import { motion } from "motion/react";
 import { HERO, type PieceId } from "@/engine/types";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
-import { TileFace } from "@/ui/primitives/TileFace";
+import { TileBack, TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { baseSize, layoutPiece } from "./layout";
-import { useGeometry, usePieceIds, usePlacement, usePieceMeta } from "./store";
+import { useBoardView, useGeometry, usePieceIds, usePlacement, usePieceMeta } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
 
 /** Below this on-screen width, pips become mud — draw the simple face. */
@@ -63,10 +63,16 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   const placement = usePlacement(id);
   const meta = usePieceMeta(id);
   const geometry = useGeometry();
+  // Only pieces laid in board space care where the board's camera
+  // currently sits, and the camera moves every time the chain grows —
+  // so this subscription is deliberately conditional. A hand tile or a
+  // face-down boneyard tile reads `null` and stays out of the churn,
+  // which is the same narrowness the per-piece placement selector buys.
+  const board = useBoardView(Boolean(placement?.cell));
 
   if (!placement || !geometry || !meta) return null;
 
-  const t = layoutPiece(placement, geometry);
+  const t = layoutPiece(placement, geometry, { kind: meta.kind, board });
   const base = baseSize(geometry);
   const onScreenW = base.w * t.scale;
   const detail = onScreenW < DETAIL_THRESHOLD_PX ? "index" : "full";
@@ -102,8 +108,29 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         willChange: "transform",
       }}
     >
-      {meta.kind === "card" ? (
-        <Flipper faceUp={placement.faceUp} w={base.w} h={base.h}>
+      {meta.kind === "chip" ? (
+        // Chips never flip — no game here deals one face down. Skip
+        // Flipper's dual-face 3D wrapper entirely: one motion.div
+        // instead of two per piece, which matters once a game like LRC
+        // can have 30 chips on screen at once.
+        <PieceFace kind={meta.kind} face={meta.face} w={base.w} h={base.h} detail={detail} />
+      ) : (
+        // Cards AND tiles both have a real face-down state — dominoes
+        // deal into hidden hands and draw from a face-down boneyard, so
+        // a tile that only ever showed its pips would leak every
+        // opponent's hand straight onto the table.
+        <Flipper
+          faceUp={placement.faceUp}
+          w={base.w}
+          h={base.h}
+          back={
+            meta.kind === "tile" ? (
+              <TileBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
+            ) : (
+              <CardBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
+            )
+          }
+        >
           <PieceFace
             kind={meta.kind}
             face={meta.face}
@@ -113,13 +140,6 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
             ariaHidden={!placement.faceUp}
           />
         </Flipper>
-      ) : (
-        // Tiles and chips never flip — no dealt-face-down state exists
-        // for either in any game here. Skip Flipper's dual-face 3D
-        // wrapper entirely: one motion.div instead of two per piece,
-        // which matters once a game like LRC can have 30 chips on
-        // screen at once.
-        <PieceFace kind={meta.kind} face={meta.face} w={base.w} h={base.h} detail={detail} />
       )}
 
       {placement.highlighted ? (
@@ -147,11 +167,14 @@ function Flipper({
   faceUp,
   w,
   h,
+  back,
   children,
 }: {
   faceUp: boolean;
   w: number;
   h: number;
+  /** The reverse face — a card back or a tile back, per piece kind. */
+  back: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -177,7 +200,7 @@ function Flipper({
           transform: "rotateY(180deg)",
         }}
       >
-        <CardBack w={w} h={h} ariaHidden={faceUp} />
+        {back}
       </div>
     </motion.div>
   );
@@ -196,10 +219,10 @@ function PieceFace({
   w: number;
   h: number;
   detail: "full" | "index";
-  /** Cards only — hides the front face while it's the back that's showing. */
+  /** Flippable kinds — hides the front face while the back is showing. */
   ariaHidden?: boolean;
 }) {
-  if (kind === "tile") return <TileFace tile={face} w={w} h={h} />;
+  if (kind === "tile") return <TileFace tile={face} w={w} h={h} ariaHidden={ariaHidden} />;
   if (kind === "chip") return <ChipFace colour={face} size={Math.min(w, h)} />;
   return <CardFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
 }

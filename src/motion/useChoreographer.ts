@@ -132,7 +132,25 @@ export function useChoreographer({
     setPlaying(false);
   }, []);
 
-  useEffect(() => stopTimer, []);
+  /**
+   * Stop the timer when this really unmounts — but pick a batch back up
+   * if we are only being re-mounted.
+   *
+   * React StrictMode runs mount, cleanup, mount. Anything pushed from a
+   * mount effect elsewhere in the tree therefore gets its drain timer
+   * cleared halfway through and, because `running` stays true, nothing
+   * ever restarts it: the queue is stranded and the batch silently never
+   * finishes. That is not hypothetical — it is exactly what swallowed
+   * dominoes' opening deal, which is the first thing in this app pushed
+   * from a mount effect rather than from a later click. Resuming here
+   * costs nothing on a genuine unmount (there is no second run) and
+   * makes the queue's "a pushed batch always finishes" guarantee true
+   * regardless of who pushed it or when.
+   */
+  useEffect(() => {
+    if (running.current && queue.current.length > 0) drainRef.current();
+    return stopTimer;
+  }, []);
 
   return { push, skip, clear, isPlaying };
 }

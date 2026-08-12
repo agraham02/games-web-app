@@ -125,6 +125,15 @@ export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps
               format={(v) => `${v}ms`}
             />
             <Slider
+              label="Round hold"
+              value={settings.roundHoldMs}
+              onChange={settings.setRoundHoldMs}
+              min={0}
+              max={4000}
+              step={100}
+              format={(v) => `${v}ms`}
+            />
+            <Slider
               label="End hold"
               value={settings.endHoldMs}
               onChange={settings.setEndHoldMs}

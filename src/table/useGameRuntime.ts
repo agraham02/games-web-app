@@ -35,8 +35,10 @@ import { useEffect, useRef, useState } from "react";
 import type { BotDifficulty, GameDefinition, PieceMeta, PieceId, SeatId } from "@/engine/types";
 import { HERO } from "@/engine/types";
 import { createRng, randomSeed, type Rng } from "@/engine/rng";
+import type { GameEvent } from "@/engine/types";
 import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
+import { announce } from "@/ui/disclosure";
 import { applyEventToTable } from "./applyEvent";
 import { useTableStore } from "./store";
 
@@ -68,6 +70,29 @@ const DEFAULT_TURN_HOLD_MS = 900;
  */
 const DEFAULT_END_HOLD_MS = 1200;
 
+/**
+ * Dead air between a ROUND ending and its scorecard appearing. Same
+ * reasoning as DEFAULT_END_HOLD_MS — the last tile of a round is often
+ * the most interesting one on the table, and covering it instantly with
+ * a panel of numbers throws it away — but shorter, because a round
+ * ending is a punctuation mark and a match ending is a full stop.
+ */
+const DEFAULT_ROUND_HOLD_MS = 1000;
+
+/**
+ * Events the table itself cannot show. `applyEventToTable` deliberately
+ * only knows about placements, so without this an `announce` fell
+ * straight through its `default:` and was silently dropped — which is
+ * why LRC's "You win the pot!" has never actually appeared. It lives
+ * here rather than in applyEvent because this hook is where engine
+ * events meet the UI, and applyEvent should stay a pure placement
+ * reducer.
+ */
+function surfaceEvent(event: GameEvent): void {
+  if (event.t === "announce") announce(event.text, event.tone);
+  applyEventToTable(event);
+}
+
 export interface GameRuntimeOptions {
   seats: number;
   /** Omit for a fresh random game; pass a fixed value to replay one exactly. */
@@ -88,6 +113,8 @@ export interface GameRuntimeOptions {
   turnHoldMs?: number;
   /** See DEFAULT_END_HOLD_MS. Defaults to it if omitted. */
   endHoldMs?: number;
+  /** See DEFAULT_ROUND_HOLD_MS. Defaults to it if omitted. */
+  roundHoldMs?: number;
 }
 
 export interface GameRuntime<S, A> {
@@ -107,6 +134,16 @@ export interface GameRuntime<S, A> {
   /** True only after `isOver` AND the endHoldMs pause has elapsed — this
    * is what should gate GameEndSummary's `show`, not `isOver` itself. */
   showSummary: boolean;
+  /** The round-level equivalent of `showSummary`: true once the round's
+   * final move has finished animating AND roundHoldMs has elapsed. Gate
+   * a round scorecard on this, never on the definition's `isRoundOver`,
+   * which flips the instant `reduce` runs. */
+  showRoundSummary: boolean;
+  /** 1-based round number, for a scorecard's heading. */
+  round: number;
+  /** Deals the next round and clears the scorecard. No-op unless a round
+   * is actually over. Wire this to the scorecard's continue button. */
+  nextRound: () => void;
   /** Whether bot turns are currently auto-revealing on their own pace
    * (true) or sitting pending until `advance()` is called (false) — the
    * resolved value of `GameRuntimeOptions.autoAdvance`. A revealed
@@ -178,10 +215,12 @@ export function useGameRuntime<S, A>(
 
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const roundHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
       if (holdTimer.current !== null) clearTimeout(holdTimer.current);
       if (endHoldTimer.current !== null) clearTimeout(endHoldTimer.current);
+      if (roundHoldTimer.current !== null) clearTimeout(roundHoldTimer.current);
     };
   }, []);
 
@@ -189,6 +228,10 @@ export function useGameRuntime<S, A>(
   // automatically on a rematch because GameHost remounts this whole hook
   // (fresh `key`), which is exactly the reset a NEW game needs.
   const [gameEndRevealed, setGameEndRevealed] = useState(false);
+  // The round-level equivalent. Unlike the game-end flag this one has to
+  // be cleared by hand, because the SAME hook instance lives on into the
+  // next round.
+  const [roundEndRevealed, setRoundEndRevealed] = useState(false);
 
   // The turn `onIdle` has already decided is next, held here until it's
   // actually revealed (see `advance` below). `hasPending` just mirrors
@@ -209,8 +252,16 @@ export function useGameRuntime<S, A>(
     // `think` rides first in the same batch, so playback waits out that
     // beat before the move events actually animate.
     const bot = definition.bots[difficultyFor(seat, opts.difficulty)];
-    const thinkMs = bot.thinkMs(current, seat, rng);
-    const action = bot.choose(current, seat, rng);
+    // The REDACTED state, not the real one. `playerView` has always been
+    // part of the GameDefinition contract ("bots for seat N only ever see
+    // view(N)") but nothing enforced it here, because LRC hides nothing
+    // and so never noticed. The first game with a concealed hand would
+    // have had its bots reading every opponent's tiles. `reduce` still
+    // runs against the true state — the bot only chooses from what it can
+    // legitimately see.
+    const view = definition.playerView(current, seat);
+    const thinkMs = bot.thinkMs(view, seat, rng);
+    const action = bot.choose(view, seat, rng);
     const { state: next, events } = definition.reduce(current, action);
     stateRef.current = next;
     setLastAction({ seat, action });
@@ -281,6 +332,18 @@ export function useGameRuntime<S, A>(
       return;
     }
 
+    // Checked AFTER isOver: the last round of a match is both, and the
+    // match ending is the one the player cares about. Like the game-end
+    // branch this schedules no next turn — the round is waiting on the
+    // player to continue, not on a bot.
+    if (definition.isRoundOver?.(current)) {
+      const delay = prefersReducedMotion()
+        ? 0
+        : (opts.roundHoldMs ?? DEFAULT_ROUND_HOLD_MS) * factor;
+      roundHoldTimer.current = setTimeout(() => setRoundEndRevealed(true), delay);
+      return;
+    }
+
     const seat = definition.currentSeat(current);
     if (seat === null || seat === HERO) return; // Hero's turn — wait for input, nothing to pace.
 
@@ -297,10 +360,42 @@ export function useGameRuntime<S, A>(
   // synchronously (same tick as the state update that preceded it) or
   // asynchronously (well after this render committed).
   const choreographer = useChoreographer({
-    apply: applyEventToTable,
+    apply: surfaceEvent,
     onIdle,
     speed: opts.speed,
   });
+
+  /**
+   * Deals a round and lets its events play. Used for the opening deal
+   * and for every round after it — they are the same operation, which is
+   * why `startRound` is one hook rather than two.
+   *
+   * This is what makes an opening deal ANIMATE. `setup` can only return
+   * state, so a game that deals there has its pieces simply appear;
+   * a game with `startRound` returns an undealt state from `setup` and
+   * the tiles fly out of the pile like a real deal.
+   */
+  const pushDeal = () => {
+    if (!definition.startRound) return;
+    const { state: next, events } = definition.startRound(stateRef.current, rng);
+    stateRef.current = next;
+    choreographer.push(events);
+  };
+
+  const nextRound = () => {
+    if (roundHoldTimer.current !== null) {
+      clearTimeout(roundHoldTimer.current);
+      roundHoldTimer.current = null;
+    }
+    if (!definition.isRoundOver?.(stateRef.current)) return;
+    if (definition.isOver(stateRef.current)) return;
+    // Only the between-rounds path needs these cleared; on mount they
+    // already hold exactly these values, which is why the opening deal
+    // calls `pushDeal` directly rather than going through here.
+    setLastAction(null);
+    setRoundEndRevealed(false);
+    pushDeal();
+  };
 
   // Kick off the very first turn once, after the table has had a chance
   // to mount with the initial placements (avoids racing the store).
@@ -309,7 +404,10 @@ export function useGameRuntime<S, A>(
     if (started.current) return;
     started.current = true;
     useTableStore.getState().reset(definition.placements(stateRef.current, HERO), pieceMeta);
-    onIdle();
+    // A game with rounds hasn't dealt yet, so there is nothing to pace
+    // until the deal lands — `onIdle` runs at the END of those events.
+    if (definition.startRound) pushDeal();
+    else onIdle();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -337,6 +435,7 @@ export function useGameRuntime<S, A>(
 
   const currentSeat = definition.currentSeat(state);
   const isOver = definition.isOver(state);
+  const roundOver = definition.isRoundOver?.(state) ?? false;
 
   return {
     state: definition.playerView(state, HERO),
@@ -344,6 +443,9 @@ export function useGameRuntime<S, A>(
     isOver,
     winner: isOver ? extractWinner(state) : null,
     showSummary: isOver && gameEndRevealed,
+    showRoundSummary: !isOver && roundOver && roundEndRevealed,
+    round: extractRound(state),
+    nextRound,
     autoAdvance: opts.autoAdvance !== false,
     busy: choreographer.isPlaying || (!isOver && currentSeat !== HERO),
     submitAction,
@@ -366,4 +468,10 @@ export function useGameRuntime<S, A>(
 function extractWinner<S>(state: S): SeatId | null {
   const maybe = state as unknown as { winner?: SeatId | null };
   return typeof maybe.winner === "number" ? maybe.winner : null;
+}
+
+/** Same structural read as `extractWinner`, for the scorecard heading. */
+function extractRound<S>(state: S): number {
+  const maybe = state as unknown as { round?: number };
+  return typeof maybe.round === "number" ? maybe.round : 1;
 }

@@ -16,17 +16,40 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { Placement, PlacementMap, PieceId, PieceMeta } from "@/engine/types";
-import type { TableGeometry } from "./geometry";
+import { cellHalfExtent, type BoardView, type TableGeometry } from "./geometry";
 
 // Re-exported for existing call sites — the types themselves live in
 // engine/types.ts now, since every GameDefinition needs to describe its
 // pieces regardless of the React layer's own caching.
 export type { PieceKind, PieceMeta } from "@/engine/types";
+export type { BoardView } from "./geometry";
+
+export type BoardCell = NonNullable<Placement["cell"]>;
 
 interface TableState {
   geometry: TableGeometry | null;
   placements: PlacementMap;
   meta: Record<PieceId, PieceMeta>;
+  /**
+   * Bounding box of every piece with a `cell`, plus any preview ghosts.
+   * Derived, not authored — it is what the board camera fits to the
+   * screen (see `boardCamera` in layout.ts).
+   *
+   * It has to be derived HERE rather than inside `layoutPiece` because
+   * a camera is inherently a fact about the whole chain, and layout is
+   * deliberately O(1) per piece with no sibling access. Recomputing it
+   * on each write is O(pieces) — irrelevant next to the React work this
+   * store exists to avoid, and it keeps the camera exactly in step with
+   * the placements it is fitting, including mid-animation.
+   */
+  board: BoardView | null;
+  /**
+   * Where a piece the player is currently holding WOULD land. Folded
+   * into `board` so picking up a tile eases the camera out just enough
+   * to make room for it, and the real piece then lands precisely on its
+   * own ghost instead of shunting the view a second time.
+   */
+  ghosts: readonly BoardCell[];
 
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
@@ -34,61 +57,121 @@ interface TableState {
   setPlacement(id: PieceId, p: Placement): void;
   patch(id: PieceId, partial: Partial<Placement>): void;
   patchMany(ids: readonly PieceId[], partial: Partial<Placement>): void;
+  setGhosts(cells: readonly BoardCell[]): void;
   /** Drops every transient visual flag. Cheap way to exit a mode. */
   clearFlags(): void;
 }
 
-export const useTableStore = create<TableState>((set) => ({
-  geometry: null,
-  placements: {},
-  meta: {},
+function boundsOf(
+  placements: PlacementMap,
+  ghosts: readonly BoardCell[],
+  prev: BoardView | null,
+): BoardView | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
 
-  setGeometry: (geometry) => set({ geometry }),
+  const extend = (cell: BoardCell) => {
+    const { hw, hh } = cellHalfExtent(cell.rot);
+    if (cell.x - hw < minX) minX = cell.x - hw;
+    if (cell.y - hh < minY) minY = cell.y - hh;
+    if (cell.x + hw > maxX) maxX = cell.x + hw;
+    if (cell.y + hh > maxY) maxY = cell.y + hh;
+  };
 
-  reset: (placements, meta) => set({ placements, meta }),
+  for (const p of Object.values(placements)) if (p.cell) extend(p.cell);
+  for (const cell of ghosts) extend(cell);
 
-  setPlacement: (id, p) =>
-    set((s) => ({ placements: { ...s.placements, [id]: p } })),
+  if (minX === Infinity) return null;
+  // Identity is preserved when nothing actually moved, so a piece that
+  // subscribes to the camera does not re-render on an unrelated change.
+  if (
+    prev &&
+    prev.minX === minX &&
+    prev.minY === minY &&
+    prev.maxX === maxX &&
+    prev.maxY === maxY
+  ) {
+    return prev;
+  }
+  return { minX, minY, maxX, maxY };
+}
 
-  patch: (id, partial) =>
-    set((s) => {
-      const prev = s.placements[id];
-      if (!prev) return s;
-      return { placements: { ...s.placements, [id]: { ...prev, ...partial } } };
-    }),
+export const useTableStore = create<TableState>((set) => {
+  /** Every placement write goes through this so `board` can never drift
+   * out of step with what is actually on the table. */
+  const commit = (s: TableState, placements: PlacementMap) => ({
+    placements,
+    board: boundsOf(placements, s.ghosts, s.board),
+  });
 
-  patchMany: (ids, partial) =>
-    set((s) => {
-      if (ids.length === 0) return s;
-      const next = { ...s.placements };
-      for (const id of ids) {
-        const prev = next[id];
-        if (prev) next[id] = { ...prev, ...partial };
-      }
-      return { placements: next };
-    }),
+  return {
+    geometry: null,
+    placements: {},
+    meta: {},
+    board: null,
+    ghosts: [],
 
-  clearFlags: () =>
-    set((s) => {
-      const next: PlacementMap = {};
-      let changed = false;
-      for (const [id, p] of Object.entries(s.placements)) {
-        if (p.selected || p.highlighted || p.dimmed || p.fanned) {
-          const { selected, highlighted, dimmed, fanned, ...rest } = p;
-          void selected;
-          void highlighted;
-          void dimmed;
-          void fanned;
-          next[id] = rest;
-          changed = true;
-        } else {
-          // Preserve identity so untouched pieces do not re-render.
-          next[id] = p;
+    setGeometry: (geometry) => set({ geometry }),
+
+    reset: (placements, meta) =>
+      set((s) => ({ meta, ...commit(s, placements) })),
+
+    setPlacement: (id, p) =>
+      set((s) => commit(s, { ...s.placements, [id]: p })),
+
+    patch: (id, partial) =>
+      set((s) => {
+        const prev = s.placements[id];
+        if (!prev) return s;
+        return commit(s, { ...s.placements, [id]: { ...prev, ...partial } });
+      }),
+
+    patchMany: (ids, partial) =>
+      set((s) => {
+        if (ids.length === 0) return s;
+        const next = { ...s.placements };
+        for (const id of ids) {
+          const prev = next[id];
+          if (prev) next[id] = { ...prev, ...partial };
         }
-      }
-      return changed ? { placements: next } : s;
-    }),
-}));
+        return commit(s, next);
+      }),
+
+    setGhosts: (cells) =>
+      set((s) => {
+        if (s.ghosts.length === 0 && cells.length === 0) return s;
+        return {
+          ghosts: cells,
+          board: boundsOf(s.placements, cells, s.board),
+        };
+      }),
+
+    clearFlags: () =>
+      set((s) => {
+        const next: PlacementMap = {};
+        let changed = false;
+        for (const [id, p] of Object.entries(s.placements)) {
+          if (p.selected || p.highlighted || p.dimmed || p.fanned) {
+            const { selected, highlighted, dimmed, fanned, ...rest } = p;
+            void selected;
+            void highlighted;
+            void dimmed;
+            void fanned;
+            next[id] = rest;
+            changed = true;
+          } else {
+            // Preserve identity so untouched pieces do not re-render.
+            next[id] = p;
+          }
+        }
+        // `cell` is structural, not a per-interaction flag, so it
+        // survives this and the camera does not move.
+        return changed ? { placements: next } : s;
+      }),
+  };
+});
 
 /* ============================================================
    Selectors — keep these narrow.
@@ -101,6 +184,15 @@ export const usePlacement = (id: PieceId) =>
   useTableStore((s) => s.placements[id]);
 
 export const usePieceMeta = (id: PieceId) => useTableStore((s) => s.meta[id]);
+
+/**
+ * The board camera's extent. Takes `enabled` rather than being read
+ * unconditionally because this value changes every time the chain grows:
+ * a piece that is not laid in board space must not re-render for it, and
+ * passing `false` gives it a stable `null` instead.
+ */
+export const useBoardView = (enabled: boolean): BoardView | null =>
+  useTableStore((s) => (enabled ? s.board : null));
 
 /**
  * Piece ids change only when the board is reset, but `Object.keys`
