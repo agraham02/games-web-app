@@ -26,10 +26,16 @@ interface DevSettingsState {
   speed: number;
   turnHoldMs: number;
   endHoldMs: number;
+  /** Drag offset from the panel's default top-2/left-2 corner, in px.
+   * Shared by the open panel and the collapsed button (see DevPanel)
+   * so dragging one and then toggling to the other doesn't jump. */
+  panelX: number;
+  panelY: number;
   setManualMode: (v: boolean) => void;
   setSpeed: (v: number) => void;
   setTurnHoldMs: (v: number) => void;
   setEndHoldMs: (v: number) => void;
+  setPanelPos: (x: number, y: number) => void;
 }
 
 export const useDevSettings = create<DevSettingsState>((set) => ({
@@ -37,8 +43,11 @@ export const useDevSettings = create<DevSettingsState>((set) => ({
   speed: 1,
   turnHoldMs: DEFAULT_TURN_HOLD_MS,
   endHoldMs: DEFAULT_END_HOLD_MS,
+  panelX: 0,
+  panelY: 0,
   setManualMode: (v) => set({ manualMode: v }),
   setSpeed: (v) => set({ speed: v }),
   setTurnHoldMs: (v) => set({ turnHoldMs: v }),
   setEndHoldMs: (v) => set({ endHoldMs: v }),
+  setPanelPos: (x, y) => set({ panelX: x, panelY: y }),
 }));

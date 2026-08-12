@@ -15,7 +15,7 @@
  */
 
 import { useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useDragControls } from "motion/react";
 import { useDevSettings } from "./devSettings";
 import { TRANSITIONS } from "@/motion/presets";
 
@@ -30,8 +30,24 @@ export interface DevPanelProps {
 export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps) {
   const [open, setOpen] = useState(true);
   const settings = useDevSettings();
+  // `dragListener={false}` + this is what makes ONLY the title bar (not
+  // the sliders/checkbox/button underneath it) start a drag — without
+  // it, `drag` on the whole card would fight every input inside it for
+  // the same pointerdown. The collapsed button has no such conflict
+  // (nothing else inside it to interact with), so it drags directly.
+  const dragControls = useDragControls();
 
   if (process.env.NODE_ENV === "production") return null;
+
+  // Shared by both the open panel and the collapsed button so toggling
+  // between them never jumps — see devSettings' doc on panelX/panelY.
+  const dragProps = {
+    drag: true as const,
+    dragMomentum: false,
+    style: { x: settings.panelX, y: settings.panelY },
+    onDragEnd: (_: unknown, info: { offset: { x: number; y: number } }) =>
+      settings.setPanelPos(settings.panelX + info.offset.x, settings.panelY + info.offset.y),
+  };
 
   return (
     <div className="pointer-events-auto absolute top-2 left-2 z-2000 text-[11px] text-bone-200">
@@ -39,6 +55,9 @@ export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps
         {open ? (
           <motion.div
             key="open"
+            {...dragProps}
+            dragListener={false}
+            dragControls={dragControls}
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
@@ -46,7 +65,12 @@ export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps
             className="flex w-56 flex-col gap-2.5 rounded-lg border border-dashed border-brass-400/50 bg-felt-950/92 p-2.5"
           >
             <div className="flex items-center justify-between">
-              <span className="font-bold text-brass-300">Dev panel</span>
+              <span
+                onPointerDown={(e) => dragControls.start(e)}
+                className="cursor-grab font-bold text-brass-300 select-none active:cursor-grabbing"
+              >
+                Dev panel
+              </span>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -115,11 +139,12 @@ export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps
             key="closed"
             type="button"
             onClick={() => setOpen(true)}
+            {...dragProps}
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
             transition={TRANSITIONS.ui}
-            className="rounded-lg border border-dashed border-brass-400/50 bg-felt-950/92 px-2 py-1 font-bold text-brass-300"
+            className="cursor-grab rounded-lg border border-dashed border-brass-400/50 bg-felt-950/92 px-2 py-1 font-bold text-brass-300 active:cursor-grabbing"
           >
             Dev
           </motion.button>
