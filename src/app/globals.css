@@ -1,26 +1,195 @@
 @import "tailwindcss";
 
+/* ============================================================
+   NEO-FELT — the single source of visual truth.
+   Mirrors the Claude Design canvas "Neo-Felt System".
+   This app is permanently dark; there is no light theme.
+   ============================================================ */
+
+@theme {
+  /* -- surface: felt -------------------------------------- */
+  --color-felt-950: #071310;
+  --color-felt-900: #0b2019;
+  --color-felt-850: #0f2a22;
+  --color-felt-800: #143528;
+  --color-felt-700: #1b4634;
+  --color-felt-600: #245c45;
+
+  /* -- accent: brass -------------------------------------- */
+  --color-brass-200: #f0dcb4;
+  --color-brass-300: #e3c68f;
+  --color-brass-400: #d4af6a;
+  --color-brass-500: #b8914e;
+  --color-brass-600: #8e6e39;
+  --color-brass-700: #5c4724;
+
+  /* -- text: bone ----------------------------------------- */
+  --color-bone-50: #f5f2ea;
+  --color-bone-200: #ddd6c5;
+  --color-bone-400: #a69d89;
+  --color-bone-600: #6b6455;
+
+  /* -- printed stock -------------------------------------- */
+  --color-card-face: #fbf8f1;
+  --color-card-edge: #e4decd;
+  --color-suit-red: #c0362c;
+  --color-suit-ink: #1a1712;
+
+  /* -- semantic ------------------------------------------- */
+  --color-win: #4e9e6a;
+  --color-warn: #d89b3c;
+  --color-loss: #b4453a;
+
+  /* -- type ----------------------------------------------- */
+  --font-display: var(--font-cinzel), Georgia, serif;
+  --font-sans: var(--font-figtree), system-ui, sans-serif;
+  --font-rank: var(--font-source-serif), Georgia, serif;
+
+  /* -- elevation: warm drop shadows on dark felt ----------- */
+  --shadow-e1: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.22);
+  --shadow-e2: 0 4px 8px rgb(0 0 0 / 0.4), 0 12px 28px rgb(0 0 0 / 0.32);
+  --shadow-e3: 0 10px 20px rgb(0 0 0 / 0.45), 0 24px 60px rgb(0 0 0 / 0.4);
+  --shadow-glow: 0 0 16px rgb(212 175 106 / 0.5);
+  --shadow-rim: inset 0 1px 0 rgb(255 255 255 / 0.07);
+
+  /* -- radii ---------------------------------------------- */
+  --radius-card: 0.5rem;
+  --radius-tile: 0.4375rem;
+  --radius-pod: 999px;
+  --radius-sheet: 1.25rem;
+
+  /* -- motion: weighted, never springy --------------------
+     Durations are consumed by Motion via src/motion/presets.ts;
+     they live here so a designer can retune the whole app. */
+  --duration-deal: 380ms;
+  --duration-play: 300ms;
+  --duration-collect: 420ms;
+  --duration-flip: 300ms;
+  --duration-ui: 200ms;
+  --duration-count: 900ms;
+
+  --ease-settle: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ============================================================
+   Piece dimensions per density tier.
+   The piece layer reads these through the geometry store, not
+   CSS — but they are declared here so the two never drift.
+   ============================================================ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --card-aspect: 0.7143; /* 2.5 x 3.5 poker */
+
+  color-scheme: dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  background: var(--color-felt-950);
+  color: var(--color-bone-50);
+  font-family: var(--font-sans);
+  text-wrap: pretty;
+  -webkit-font-smoothing: antialiased;
+  /* A table game never scrolls sideways. */
+  overflow-x: hidden;
+  overscroll-behavior: none;
+}
+
+/* @layer base, not unlayered: Tailwind puts its utilities in
+   @layer utilities, which is ordered AFTER base — so a `text-*`
+   color utility on a Link correctly overrides this default here.
+   Left unlayered, this plain `a{}` rule would beat every utility
+   class regardless of specificity (unlayered CSS always wins over
+   layered CSS) and silently override every styled link's color —
+   including the felt-950-on-brass active nav tab and the button CTA,
+   both of which would render illegibly. */
+@layer base {
+  a {
+    color: var(--color-brass-400);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--color-brass-300);
+  }
+}
+
+/* ============================================================
+   Felt surface — layered radial + woven texture.
+   Applied to the table root; ::after carries the weave so the
+   element's own background stays animatable.
+   ============================================================ */
+@utility felt {
+  position: relative;
+  background: radial-gradient(
+    120% 90% at 50% 0%,
+    var(--color-felt-700) 0%,
+    var(--color-felt-850) 55%,
+    var(--color-felt-950) 100%
+  );
+}
+
+@utility felt-weave {
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.3;
+    background-image:
+      repeating-linear-gradient(90deg, rgb(255 255 255 / 0.028) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(0deg, rgb(0 0 0 / 0.045) 0 1px, transparent 1px 3px);
+  }
+}
+
+/* Brass hairline divider. */
+@utility rule-brass {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-brass-600),
+    transparent
+  );
+  opacity: 0.5;
+}
+
+@utility eyebrow {
+  font-size: 0.625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-bone-400);
+  font-weight: 700;
+}
+
+/* Scores and counters must never reflow while animating. */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The piece layer promotes every piece to its own compositor
+   layer. Only transform + opacity ever animate. */
+@utility piece-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform-style: preserve-3d;
+}
+
+/* ============================================================
+   Reduced motion: the choreographer collapses durations to 0
+   in JS, but kill CSS transitions here too as a backstop.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
