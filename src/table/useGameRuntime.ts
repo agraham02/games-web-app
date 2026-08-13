@@ -115,6 +115,8 @@ export interface GameRuntimeOptions {
   endHoldMs?: number;
   /** See DEFAULT_ROUND_HOLD_MS. Defaults to it if omitted. */
   roundHoldMs?: number;
+  /** See `ChoreographOptions.dealStaggerMs`. Forwarded to useChoreographer. */
+  dealStaggerMs?: number;
 }
 
 export interface GameRuntime<S, A> {
@@ -392,6 +394,7 @@ export function useGameRuntime<S, A>(
     apply: surfaceEvent,
     onIdle,
     speed: opts.speed,
+    dealStaggerMs: opts.dealStaggerMs,
   });
 
   /**

@@ -39,9 +39,11 @@ can continue is a dialog. Nothing else qualifies.
 someone count highlighted cards. Highlighting shows *which*; words show
 *how many*.
 
-**Dim, don't hide.** In a targeting mode, invalid options drop to ~0.3
-opacity rather than disappearing. Vanishing options make the board
-reflow, which destroys the spatial memory the player just built.
+**Dim, don't hide.** In a targeting mode, invalid options desaturate and
+darken (a grayscale/brightness filter, not reduced opacity — opacity
+washes a light card face toward the felt and costs legibility) rather
+than disappearing. Vanishing options make the board reflow, which
+destroys the spatial memory the player just built.
 
 ## The three-tier pattern
 

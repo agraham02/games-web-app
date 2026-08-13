@@ -87,6 +87,22 @@ export function isHiddenFromSelf(state: SpadesState, seat: SeatId): boolean {
   return Boolean(state.blindEligible[seat]) && !state.handRevealed[seat];
 }
 
+/**
+ * True once this seat's PARTNER has already committed the team to
+ * bidding blind — the synchronized team rule: whoever bids first for a
+ * blind-eligible team decides for both partners, so a seat whose
+ * partner already went blind no longer has "look at my hand" as an
+ * option; they must also bid blind (their own choice of nil vs numeric,
+ * and their own number, but never "look"). The other direction — a
+ * partner who already LOOKED — doesn't need a query here at all: their
+ * hand-revealed flip is applied directly in `reduceBid` (see its
+ * doc), so `isHiddenFromSelf` above already answers false for them by
+ * the time it matters.
+ */
+export function mustBidBlind(state: SpadesState, seat: SeatId): boolean {
+  return Boolean(state.bids[partnerOf(seat)]?.blind);
+}
+
 function trickCard(id: PieceId): TrickCard {
   return { id, suit: effectiveSuit(id), isTrump: isTrump(id) };
 }

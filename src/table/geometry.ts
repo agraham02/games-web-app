@@ -605,6 +605,35 @@ export interface FanOptions {
 }
 
 /**
+ * The 1-D distribution both `fanSlot` and `radialFanSlot` share: how far
+ * apart to place `count` items across `available` px so a short hand
+ * doesn't stretch to the edges and a long one compresses instead of
+ * overflowing, plus the signed `-1..1` position of `index` within that
+ * spread (used for the arc lift and rotation tapering at the ends).
+ * Pulled out so a fan that runs along an arbitrary screen direction
+ * (`radialFanSlot`) computes the exact same overlap/compression curve an
+ * axis-aligned one does, rather than a second, easily-drifting copy of
+ * the formula.
+ */
+function fanSpread(
+  index: number,
+  count: number,
+  available: number,
+  size: number,
+  maxGap: number,
+): { offset: number; t: number } {
+  if (count <= 1) return { offset: 0, t: 0 };
+  const usable = Math.max(0, available - size);
+  const gap = Math.min(maxGap, usable / (count - 1));
+  const spread = gap * (count - 1);
+  return {
+    offset: index * gap - spread / 2,
+    // -1 at the left/first edge of the fan, +1 at the right/last.
+    t: (index / (count - 1)) * 2 - 1,
+  };
+}
+
+/**
  * Lays a piece out along a shallow arc. Overlap is derived from the
  * available width, so 13 cards compress and 3 cards spread — the hand
  * never overflows and never looks sparse.
@@ -623,19 +652,74 @@ export function fanSlot(o: FanOptions): FanSlot {
     };
   }
 
-  // Distribute centres across the usable width, capped so a short hand
-  // does not stretch to the edges.
-  const usable = Math.max(0, within.w - size.w);
-  const gap = Math.min(maxGap, usable / (count - 1));
-  const spread = gap * (count - 1);
-
-  // -1 at the left edge of the fan, +1 at the right.
-  const t = (index / (count - 1)) * 2 - 1;
+  const { offset, t } = fanSpread(index, count, within.w, size.w, maxGap);
 
   return {
-    x: within.x + within.w / 2 - spread / 2 + index * gap,
+    x: within.x + within.w / 2 + offset,
     // Ends of the arc sit lower than the middle.
     y: within.y + within.h / 2 + t * t * arcLift,
     rotation: t * maxRotation,
+  };
+}
+
+export interface RadialFanOptions {
+  /** Centre point the fan is built around. */
+  anchor: { x: number; y: number };
+  /**
+   * Unit vector the fan spreads ALONG. `fanSlot` always spreads along
+   * screen-x; this is the generalisation a side seat's hand needs —
+   * perpendicular to that seat's own line to table centre, so it runs
+   * top-to-bottom instead. (Named for what it does, not what axis it
+   * happens to be — for a top/bottom seat this vector just points along
+   * screen-x again, and the two functions agree exactly.)
+   */
+  spread: { x: number; y: number };
+  /**
+   * Unit vector pointing away from table centre. The ends of the fan
+   * bow toward this — the same role `fanSlot`'s `arcLift` plays for the
+   * hero's own hand (its ends dip toward the bottom of the screen, away
+   * from the table).
+   */
+  away: { x: number; y: number };
+  index: number;
+  count: number;
+  /** Total on-screen spread available — plays `within.w`'s role. */
+  spreadWidth: number;
+  size: PieceSize;
+  /**
+   * Rotation shared by every card in this fan before its own small
+   * per-card tilt — a seat's base orientation (`SeatSlot.rotation`), so
+   * a card actually stands toward the table rather than always reading
+   * screen-upright regardless of which edge it was dealt to.
+   */
+  baseRotation: number;
+  /** Max additional tilt at the outermost piece, in degrees. */
+  maxTilt?: number;
+  arcLift?: number;
+  maxGap?: number;
+}
+
+/**
+ * `fanSlot`'s generalisation to an arbitrary on-screen direction. Same
+ * overlap/compression curve (`fanSpread`), projected along `spread`
+ * instead of assuming screen-x, with the arc bow along `away` instead of
+ * assuming screen-y-down and rotation starting from `baseRotation`
+ * instead of 0.
+ */
+export function radialFanSlot(o: RadialFanOptions): FanSlot {
+  const { anchor, spread, away, index, count, spreadWidth, size, baseRotation } = o;
+  const maxTilt = o.maxTilt ?? 7;
+  const arcLift = o.arcLift ?? 4;
+  const maxGap = o.maxGap ?? size.w * 0.42;
+
+  if (count <= 1) return { x: anchor.x, y: anchor.y, rotation: baseRotation };
+
+  const { offset, t } = fanSpread(index, count, spreadWidth, size.w, maxGap);
+  const bow = t * t * arcLift;
+
+  return {
+    x: anchor.x + spread.x * offset + away.x * bow,
+    y: anchor.y + spread.y * offset + away.y * bow,
+    rotation: baseRotation + t * maxTilt,
   };
 }

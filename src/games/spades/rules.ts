@@ -47,6 +47,7 @@ import type {
 import { HERO } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
 import { botName } from "@/games/_shared/botIdentity";
+import { sortHandForDisplay } from "@/games/_shared/cards";
 import { resolveTrick } from "@/games/_shared/trickTaking";
 import {
   cardStrength,
@@ -62,8 +63,10 @@ import {
   HIDDEN_CARD,
   isBlindEligible,
   isHiddenFromSelf,
+  isSecondBidder,
   legalPlays,
   minLegalBid,
+  mustBidBlind,
   nextSeat,
   partnerOf,
   teamOf,
@@ -91,10 +94,37 @@ function describeBid(bid: Bid): string {
   return bid.blind ? `${bid.tricks} blind` : `${bid.tricks}`;
 }
 
+/**
+ * The next seat that still genuinely needs to bid, skipping anyone who
+ * already has one recorded. Bidding normally fills strictly in turn
+ * order, so this is a no-op everywhere except right after a team blind
+ * bid (see `reduceBid`'s doc) — that's the one case where a bid can get
+ * mirrored onto a seat BEFORE turn order naturally reaches them, and
+ * without this, `currentSeat` would still stop on that seat and prompt
+ * them to bid a second time.
+ */
+function nextBidder(bids: Record<SeatId, Bid | null>, from: SeatId): SeatId {
+  let s = nextSeat(from);
+  while (bids[s] != null) s = nextSeat(s);
+  return s;
+}
+
+/**
+ * Every unordered pair from `items`, in BOTH orders — `[a, b]` and
+ * `[b, a]` are the exact same real action (an exchangeGive/exchangeTake
+ * pair has no concept of "first" vs "second" card; neither reducer ever
+ * reads `cards[0]` differently from `cards[1]`), so both need to appear
+ * for `legalActions` to correctly recognise EITHER as legal. A caller
+ * (a bot sorting by strength, say) picking the same two cards in the
+ * order it happens to prefer isn't choosing a different action from one
+ * that picked them the other way around.
+ */
 function combinations2<T>(items: readonly T[]): [T, T][] {
   const out: [T, T][] = [];
   for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) out.push([items[i]!, items[j]!]);
+    for (let j = i + 1; j < items.length; j++) {
+      out.push([items[i]!, items[j]!], [items[j]!, items[i]!]);
+    }
   }
   return out;
 }
@@ -260,7 +290,16 @@ function reduceLook(state: SpadesState): ReduceResult<SpadesState> {
   const seat = currentSeat(state);
   if (seat === null) return { state, events: [] };
   const hand = state.hands[seat] ?? [];
-  const events: GameEvent[] = hand.map((id) => ({ t: "flip", piece: id, faceUp: true }));
+  // The shared table store only ever holds ONE viewer's picture (the
+  // hero's — see useGameRuntime's `definition.placements(current, HERO)`),
+  // so a `flip` event's `faceUp` has to already be hero-relative when it's
+  // emitted; `applyEventToTable` applies it verbatim with no idea who's
+  // watching. A non-hero seat looking at their OWN hand is real and
+  // legal, but must not flash it face up on the hero's screen — that was
+  // a real bug (a blind-eligible partner choosing to look, mid-round,
+  // visibly flipped their cards for the hero to see, if only briefly
+  // until the next reconcile corrected it back).
+  const events: GameEvent[] = hand.map((id) => ({ t: "flip", piece: id, faceUp: seat === HERO }));
   return {
     state: { ...state, handRevealed: { ...state.handRevealed, [seat]: true } },
     events,
@@ -270,8 +309,23 @@ function reduceLook(state: SpadesState): ReduceResult<SpadesState> {
 function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
   const seat = currentSeat(state);
   if (seat === null) return { state, events: [] };
+  const partner = partnerOf(seat);
 
-  const bids = { ...state.bids, [seat]: bid };
+  // A blind NUMERIC bid made by the FIRST bidder of a blind-eligible
+  // team is the TEAM's bid, full stop — confirmed against pagat.com's
+  // "bid blind" rule ("a partnership... may choose not to look... bid
+  // 'blind'... the partners pick up their cards", one joint decision,
+  // not two individual numbers that sum) and trickstercards.com's own
+  // "min blind bid... is a team bid". The partner never gets a separate
+  // bidding turn: their hand reveals immediately and turn order skips
+  // straight past them (`nextBidder`, below). A SECOND bidder's own
+  // blind numeric bid — locked into blind via `mustBidBlind` after a
+  // partner's Blind Nil, say — is unaffected: there's no partner turn
+  // left to pre-empt, since the partner already bid separately.
+  const isTeamBlindBid = bid.blind && !bid.nil && !isSecondBidder(state, seat);
+  const bids = isTeamBlindBid
+    ? { ...state.bids, [seat]: bid, [partner]: bid }
+    : { ...state.bids, [seat]: bid };
   const events: GameEvent[] = [];
 
   // A blind NUMERIC bid reveals the instant it's locked in — there is no
@@ -282,18 +336,61 @@ function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
   let handRevealed = state.handRevealed;
   if (bid.blind && !bid.nil) {
     handRevealed = { ...handRevealed, [seat]: true };
-    for (const id of state.hands[seat] ?? []) events.push({ t: "flip", piece: id, faceUp: true });
+    // Same hero-relative gating as reduceLook above — a non-hero seat's
+    // blind numeric bid reveals to THEM, not to the hero watching.
+    for (const id of state.hands[seat] ?? []) {
+      events.push({ t: "flip", piece: id, faceUp: seat === HERO });
+    }
+  }
+
+  if (isTeamBlindBid) {
+    // The partner never bid, but their hand reveals right alongside the
+    // bidder's own — the whole team's cards land on the table together
+    // the instant the team's one blind bid locks in.
+    handRevealed = { ...handRevealed, [partner]: true };
+    for (const id of state.hands[partner] ?? []) {
+      events.push({ t: "flip", piece: id, faceUp: partner === HERO });
+    }
+  } else if (!bid.blind && state.blindEligible[partner] && !handRevealed[partner] && bids[partner] == null) {
+    // Synchronized team decision, the mirror-image direction: this bid
+    // just LOOKED (bid.blind === false — the "look" step already ran).
+    // If the partner hasn't bid yet and is still blind-eligible and
+    // hidden, the team just committed to looking — reveal the
+    // partner's hand right now, exactly like reduceLook would for
+    // their own "look" action, so they never see a "go blind" option
+    // that no longer exists for this team.
+    handRevealed = { ...handRevealed, [partner]: true };
+    for (const id of state.hands[partner] ?? []) {
+      events.push({ t: "flip", piece: id, faceUp: partner === HERO });
+    }
   }
 
   if (seat !== HERO) {
     events.push({ t: "announce", seat, text: `${botName(seat)} bids ${describeBid(bid)}`, tone: "info" });
+  }
+  if (isTeamBlindBid) {
+    events.push({
+      t: "announce",
+      seat: partner,
+      text:
+        partner === HERO
+          ? "Your team's bid is set — you don't need to bid"
+          : `${botName(partner)} doesn't bid — the team's bid is already set`,
+      tone: "info",
+    });
   }
 
   let next: SpadesState = { ...state, bids, handRevealed };
 
   const allBid = SEATS.every((s) => bids[s] != null);
   if (!allBid) {
-    return { state: { ...next, turn: nextSeat(seat) }, events };
+    // nextBidder, not a raw nextSeat: a team blind bid can fill the
+    // PARTNER'S slot before turn order naturally reaches them (see
+    // isTeamBlindBid above), and asking an already-bid seat to bid
+    // again would be a real bug, not just a redundant prompt — their
+    // hand is already revealed and there's nothing left for them to
+    // decide.
+    return { state: { ...next, turn: nextBidder(bids, seat) }, events };
   }
 
   // All four bids are in. Per the rule, a pending Blind Nil exchange
@@ -323,7 +420,10 @@ function reduceSkipExchange(state: SpadesState): ReduceResult<SpadesState> {
   if (!ex) return { state, events: [] };
   const events: GameEvent[] = [];
   const handRevealed = { ...state.handRevealed, [ex.giver]: true };
-  for (const id of state.hands[ex.giver] ?? []) events.push({ t: "flip", piece: id, faceUp: true });
+  // Hero-relative — see reduceLook's doc.
+  for (const id of state.hands[ex.giver] ?? []) {
+    events.push({ t: "flip", piece: id, faceUp: ex.giver === HERO });
+  }
   events.push(leadAnnounce(state.leader));
   return { state: { ...state, phase: "play", exchange: null, handRevealed }, events };
 }
@@ -331,7 +431,25 @@ function reduceSkipExchange(state: SpadesState): ReduceResult<SpadesState> {
 function reduceExchangeGive(state: SpadesState, cards: [PieceId, PieceId]): ReduceResult<SpadesState> {
   const ex = state.exchange;
   if (!ex || ex.stage !== "give") return { state, events: [] };
-  const giverHand = (state.hands[ex.giver] ?? []).filter((id) => !cards.includes(id));
+  // A BOT giver's own hand is genuinely hidden from ITSELF — `playerView`
+  // redacts it before `bot.choose` ever runs, same as it would a hero's
+  // (see this file's top doc: "the GIVER still hasn't seen their own
+  // hand"). `chooseExchange`'s blind pick therefore can only ever hand
+  // back HIDDEN_CARD placeholders, never real ids — which two cards go is
+  // explicitly "a genuinely blind pick, not a judged one" (that
+  // function's own comment), so it doesn't matter WHICH two get
+  // substituted here; the giver's own first two, in whatever order they
+  // happen to sit in `hands` (itself arbitrary deal order), are exactly
+  // as blind as any other choice. Passing the placeholders straight
+  // through used to corrupt real state instead: the filter below never
+  // matched a genuine id (so nothing was actually removed from the
+  // giver's hand), and the placeholders themselves got recorded as
+  // `exchange.given` and later spliced into the TAKER's real hand as two
+  // literal "??" strings — which `legalPlays` correctly strips as
+  // HIDDEN_CARD, silently shrinking that seat's playable hand for the
+  // rest of the round.
+  const realCards = cards.includes(HIDDEN_CARD) ? ([...(state.hands[ex.giver] ?? [])].slice(0, 2) as [PieceId, PieceId]) : cards;
+  const giverHand = (state.hands[ex.giver] ?? []).filter((id) => !realCards.includes(id));
   const hands = { ...state.hands, [ex.giver]: giverHand };
   // Rendered face up in the discard zone once given — the taker (who is
   // always already able to see their own hand by this point, see the
@@ -339,9 +457,22 @@ function reduceExchangeGive(state: SpadesState, cards: [PieceId, PieceId]): Redu
   // back; a real table passes them as a face-down PACKET across to the
   // partner only in the sense that other opponents don't get to see them
   // first, not that the partner never does.
-  const events: GameEvent[] = cards.map((id) => ({ t: "play", piece: id, from: ex.giver, to: "discard" }));
+  //
+  // KNOWN SMALL GAP: `applyEvent.ts`'s "play" case hardcodes
+  // `faceUp: true` for every seat (correct for an ordinary trick play,
+  // which really is visible to everyone) — unlike `flip`/`draw`, it has
+  // no per-event override, so these 2 cards briefly render face up to
+  // an OPPONENT-viewing hero too during this one animated step, before
+  // `placements()`'s own reconcile (fixed above) corrects it back down.
+  // Not fixed here: doing so means either threading viewer-awareness
+  // into "play" (shared by every game's real trick-play mechanic) or
+  // switching this specific transfer to a `move` event with a
+  // caller-built `Placement`. Worth doing if this transient flash is
+  // ever actually reported — nobody has hit it yet, unlike the
+  // persistent reconcile-level leak this same investigation found.
+  const events: GameEvent[] = realCards.map((id) => ({ t: "play", piece: id, from: ex.giver, to: "discard" }));
   return {
-    state: { ...state, hands, exchange: { ...ex, stage: "take", given: cards } },
+    state: { ...state, hands, exchange: { ...ex, stage: "take", given: realCards } },
     events,
   };
 }
@@ -355,7 +486,17 @@ function reduceExchangeTake(state: SpadesState, cards: [PieceId, PieceId]): Redu
   const hands = { ...state.hands, [ex.taker]: takerHand, [ex.giver]: giverHand };
 
   const events: GameEvent[] = [
-    ...given.map((id) => ({ t: "draw" as const, piece: id, from: "discard" as const, to: ex.taker, faceUp: true })),
+    // Hero-relative — see reduceLook's doc. The taker's hand is always
+    // already visible to THEMSELVES by this point (the file-top doc
+    // explains why), but that's a fact about the taker, not about
+    // whichever seat the hero happens to be watching from.
+    ...given.map((id) => ({
+      t: "draw" as const,
+      piece: id,
+      from: "discard" as const,
+      to: ex.taker,
+      faceUp: ex.taker === HERO,
+    })),
     // Still face down: the giver hasn't seen ANY of their hand yet, old
     // or new — the flip loop below reveals the whole 13-card hand as one
     // uniform moment, rather than these 2 popping face up a beat early.
@@ -363,7 +504,8 @@ function reduceExchangeTake(state: SpadesState, cards: [PieceId, PieceId]): Redu
   ];
 
   const handRevealed = { ...state.handRevealed, [ex.giver]: true };
-  for (const id of giverHand) events.push({ t: "flip", piece: id, faceUp: true });
+  // Hero-relative — see reduceLook's doc.
+  for (const id of giverHand) events.push({ t: "flip", piece: id, faceUp: ex.giver === HERO });
   events.push(leadAnnounce(state.leader));
 
   return { state: { ...state, phase: "play", hands, handRevealed, exchange: null }, events };
@@ -505,10 +647,23 @@ export function legalActions(state: SpadesState, seat: SeatId): SpadesAction[] {
     const ex = state.exchange;
     if (ex.stage === "give") {
       const hand = state.hands[ex.giver] ?? [];
-      return [
-        { t: "skipExchange" },
-        ...combinations2(hand).map(([a, b]): SpadesAction => ({ t: "exchangeGive", cards: [a, b] })),
-      ];
+      const out: SpadesAction[] = [{ t: "skipExchange" }];
+      // The giver is always a Blind Nil bidder — their own hand is
+      // ALWAYS still hidden from themselves at this exact point (see
+      // "keeps a Blind Nil bidder's hand hidden... until the exchange
+      // resolves" in rules.test.ts). The hero's own UI can still target
+      // a SPECIFIC real card sight-unseen (tapping a face-down piece is
+      // real, just not looked at) — combinations2(hand) covers that. A
+      // bot cannot: `playerView` collapses every hidden card to the
+      // SAME HIDDEN_CARD placeholder, so it has no way to reference "the
+      // 3rd card" distinctly from "the 7th" — `[HIDDEN_CARD, HIDDEN_CARD]`
+      // is the only action shape it could ever legitimately produce.
+      // reduceExchangeGive resolves that placeholder into 2 real cards
+      // itself (the choice is genuinely blind either way, so which two
+      // doesn't matter).
+      out.push({ t: "exchangeGive", cards: [HIDDEN_CARD, HIDDEN_CARD] });
+      out.push(...combinations2(hand).map(([a, b]): SpadesAction => ({ t: "exchangeGive", cards: [a, b] })));
+      return out;
     }
     const hand = state.hands[ex.taker] ?? [];
     return combinations2(hand).map(([a, b]): SpadesAction => ({ t: "exchangeTake", cards: [a, b] }));
@@ -516,7 +671,9 @@ export function legalActions(state: SpadesState, seat: SeatId): SpadesAction[] {
 
   if (state.phase === "bid") {
     if (isHiddenFromSelf(state, seat)) {
-      const out: SpadesAction[] = [{ t: "look" }];
+      // "look" is off the table once the partner already committed the
+      // team to bidding blind — see `mustBidBlind`'s doc.
+      const out: SpadesAction[] = mustBidBlind(state, seat) ? [] : [{ t: "look" }];
       if (minLegalBid(state, seat) === 0) out.push({ t: "blindNil" });
       // A blind numeric bid's minimum of 6 is never blocked by the Board
       // rule (6 always exceeds minLegalBid's ceiling of 4), so every
@@ -553,12 +710,20 @@ export function placements(state: SpadesState, viewer: SeatId): PlacementMap {
     const hand = state.hands[seat] ?? [];
     const isViewerHand = seat === viewer;
     const faceUp = isViewerHand && Boolean(state.handRevealed[seat]);
-    hand.forEach((id, i) => {
+    // Only the viewer's own hand displays sorted — suit-grouped
+    // (diamonds, clubs, hearts, spades), ascending strength within each
+    // group, folding in the jokers/2-of-spades-high toggles for free via
+    // cardStrength. Purely cosmetic: `state.hands` itself (what bots and
+    // the exchange read from) is never reordered, so nothing about turn
+    // order or a bot's own choices changes. Opponent hands stay in deal
+    // order — always face-down here, so no one ever sees it.
+    const ordered = isViewerHand ? handDisplayOrder(hand, state.rules) : hand;
+    ordered.forEach((id, i) => {
       out[id] = {
         zone: "hand",
         seat,
         index: i,
-        count: hand.length,
+        count: ordered.length,
         faceUp,
         dimmed: isViewerHand && legalCardIds && !legalCardIds.has(id) ? true : undefined,
       };
@@ -569,20 +734,53 @@ export function placements(state: SpadesState, viewer: SeatId): PlacementMap {
     out[play.card] = { zone: "trick", seat: play.seat, index: i, count: state.trick.length, faceUp: true };
   });
 
+  // Won tricks are not shown as a physical, ever-growing pile — the
+  // `collect` event already flies them to the winner's pod (see
+  // choreographer.ts's trick hold for the pause that makes that
+  // readable), and each pod's own "won N" readout (YourBidBadge for the
+  // hero) is the lasting record. `hidden` fades them to invisible right
+  // where the collect animation left them, in place, rather than
+  // stacking indefinitely or popping out of the placement map entirely
+  // (which would skip the fade and unmount the piece outright).
   for (const seat of SEATS) {
     const wonCards = state.won[seat] ?? [];
     wonCards.forEach((id, i) => {
-      out[id] = { zone: "collected", seat, index: i, count: wonCards.length, faceUp: false };
+      out[id] = { zone: "collected", seat, index: i, count: wonCards.length, faceUp: false, hidden: true };
     });
   }
 
   if (state.exchange?.given) {
+    // Visible only to the exchanging team, not to opponents watching the
+    // same table — this used to be unconditionally `faceUp: true`
+    // regardless of `viewer`, which leaked the exchanged cards' actual
+    // ranks to an opponent-viewing hero for the whole "take" stage (not
+    // just a transient flash — this is the RECONCILED state, restored
+    // after every batch settles).
+    const teamVisible = teamOf(viewer) === teamOf(state.exchange.giver);
     const [a, b] = state.exchange.given;
-    out[a] = { zone: "discard", index: 0, count: 2, faceUp: true, fanned: true };
-    out[b] = { zone: "discard", index: 1, count: 2, faceUp: true, fanned: true };
+    out[a] = { zone: "discard", index: 0, count: 2, faceUp: teamVisible, fanned: true };
+    out[b] = { zone: "discard", index: 1, count: 2, faceUp: teamVisible, fanned: true };
   }
 
+  // Every card not accounted for above — the whole deck before the
+  // opening deal, or the moment between a round's sweep and its next
+  // deal — sits in the deck zone, which is the pile a `deal` event
+  // actually needs to fly FROM. Without this, a card with no placement
+  // entry is a no-op target for its own `deal` event (applyEvent.ts's
+  // `moveTo` bails if the piece isn't already tracked), which is why the
+  // very first deal of a game previously had nothing to animate from and
+  // the hand just appeared instead of being dealt. Mirrors Dominoes'
+  // boneyard, which is seeded the same way for the same reason.
+  const deckIds = spadesDeck(state.rules).filter((id) => !out[id]);
+  deckIds.forEach((id, i) => {
+    out[id] = { zone: "deck", index: i, count: deckIds.length, faceUp: false };
+  });
+
   return out;
+}
+
+function handDisplayOrder(hand: readonly PieceId[], rules: SpadesRules): PieceId[] {
+  return sortHandForDisplay(hand, effectiveSuit, (id) => cardStrength(id, rules));
 }
 
 /**
@@ -632,4 +830,4 @@ export const spades = createSpades();
 // simple questions about a position. `HIDDEN_CARD` stays internal — only
 // `playerView` needs it. The play screen defines its own local
 // `seatName` from `botName` directly, matching Dominoes' page.tsx.
-export { isBlindEligible, isHiddenFromSelf, legalPlays, minLegalBid, partnerOf, teamOf, teammates };
+export { isBlindEligible, isHiddenFromSelf, legalPlays, minLegalBid, mustBidBlind, partnerOf, teamOf, teammates };

@@ -102,6 +102,38 @@ export function shuffledDeck(rng: Rng): Card[] {
   return rng.shuffle(standardDeck());
 }
 
+/**
+ * Suit order for a HELD hand's on-screen display: diamonds, clubs,
+ * hearts, spades. Alternating red/black, so two adjacent suit groups in
+ * the fan are never the same colour — easier to tell apart at a glance
+ * than dealing order (which is arbitrary) or a same-colour-adjacent
+ * grouping would be. Lives in `_shared` because any game with a
+ * face-up fanned hand wants this, not just Spades.
+ */
+export const HAND_DISPLAY_SUIT_ORDER: readonly Suit[] = ["D", "C", "H", "S"];
+
+/**
+ * Sorts a hand for on-screen display — grouped by
+ * `HAND_DISPLAY_SUIT_ORDER`, ascending strength (weakest to strongest,
+ * left to right) within each group. Returns a new array; never mutates
+ * `ids` or anything it points at, so a caller's own authoritative hand
+ * order (whatever engine logic or bots read from) is untouched — this
+ * is purely a cosmetic reordering for the piece layer.
+ *
+ * `suitOf`/`strength` are callbacks, the same shape `trickTaking.ts`
+ * takes a `strength` callback: a game with its own ranking rules
+ * (Spades' 2-of-spades-high and joker toggles, a future game's own)
+ * plugs those in without this helper knowing any house rules exist.
+ */
+export function sortHandForDisplay<T>(
+  ids: readonly T[],
+  suitOf: (id: T) => Suit,
+  strength: (id: T) => number,
+): T[] {
+  const groupOf = (id: T) => HAND_DISPLAY_SUIT_ORDER.indexOf(suitOf(id));
+  return [...ids].sort((a, b) => groupOf(a) - groupOf(b) || strength(a) - strength(b));
+}
+
 /** Human-readable, for announcements and screen readers. */
 export function cardLabel(card: Card): string {
   const rankName: Partial<Record<Rank, string>> = {

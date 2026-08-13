@@ -10,7 +10,7 @@
  */
 
 import type { GameEvent } from "@/engine/types";
-import { DURATION, STAGGER } from "./presets";
+import { DURATION, HOLD, STAGGER } from "./presets";
 
 export interface TimedStep {
   event: GameEvent;
@@ -22,13 +22,29 @@ export interface TimedStep {
 
 const MS = 1000;
 
+export interface ChoreographOptions {
+  /**
+   * Overrides `STAGGER.deal` (ms between one deal event starting and the
+   * next) — see devSettings' independent "Deal speed" slider. Deal-only:
+   * `move`'s reuse of the same base constant below (LRC's multi-chip
+   * roll) is deliberately a separate gesture from dealing and does not
+   * respect this override.
+   */
+  dealStaggerMs?: number;
+}
+
 /**
  * Runs of the same kind of event overlap instead of queueing end to end
  * — dealing 52 cards at 380ms each would take twenty seconds. A deal
- * starts every 65ms and the cards fly concurrently.
+ * starts every `dealStaggerMs` (default `STAGGER.deal`) and the cards
+ * fly concurrently.
  */
-export function choreograph(events: readonly GameEvent[]): TimedStep[] {
+export function choreograph(
+  events: readonly GameEvent[],
+  opts: ChoreographOptions = {},
+): TimedStep[] {
   const steps: TimedStep[] = [];
+  const dealStagger = opts.dealStaggerMs ?? STAGGER.deal * MS;
 
   for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
@@ -39,7 +55,7 @@ export function choreograph(events: readonly GameEvent[]): TimedStep[] {
       case "deal":
         steps.push({
           event,
-          offset: sameRunAsPrev ? STAGGER.deal * MS : 0,
+          offset: sameRunAsPrev ? dealStagger : 0,
           duration: DURATION.deal * MS,
         });
         break;
@@ -52,7 +68,10 @@ export function choreograph(events: readonly GameEvent[]): TimedStep[] {
       case "collect":
         steps.push({
           event,
-          offset: 0,
+          // See HOLD.trick — a completed trick sits fully visible for a
+          // beat before it starts gathering, long enough to actually
+          // read who played what and whose pod it's about to land in.
+          offset: HOLD.trick * MS,
           // The sweep staggers inward across the collected cards.
           duration: DURATION.collect * MS + event.pieces.length * STAGGER.collect * MS,
         });

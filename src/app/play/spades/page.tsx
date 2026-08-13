@@ -5,11 +5,13 @@
  *
  * The genuinely game-specific parts:
  *
- *  - **the bid pad.** Per POLICY.md, the hero's own bid/blind-choice
- *    decisions are real stakes with no table interaction attached, so
- *    they're `BlockingDialog`s (rung 6) — `BlindChoiceDialog` for a
- *    blind-eligible seat's look-or-go-blind choice, `NumericBidDialog`
- *    for an ordinary bid.
+ *  - **the bid pad.** `BlindChoiceDialog` (a blind-eligible seat's
+ *    look-or-go-blind choice) is a rung-6 `BlockingDialog` — nothing to
+ *    compare against yet, since the hand is still hidden at that exact
+ *    decision. An ORDINARY bid is different: deciding how much to bid
+ *    means looking at your own hand, so `NumericBidPanel` is a
+ *    non-modal floating panel instead (POLICY.md: "never put reference
+ *    information in a modal").
  *  - **the exchange bar.** The Blind Nil card exchange is DIFFERENT: it
  *    requires tapping the hero's own hand cards on the table, which a
  *    true modal dialog would block (`showModal()` traps all interaction
@@ -36,7 +38,7 @@ import { GameHost, type RoundNote } from "@/table/GameHost";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
 import { useTableStore } from "@/table/store";
-import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { BlockingDialog } from "@/ui/disclosure";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { createSpades } from "@/games/spades/rules";
@@ -44,6 +46,7 @@ import {
   isHiddenFromSelf,
   legalPlays,
   minLegalBid,
+  mustBidBlind,
   partnerOf,
   teamOf,
   teammates,
@@ -162,10 +165,15 @@ function SpadesTable({
   );
 }
 
-/** Rung 1: an always-visible ambient readout of the hero's own bid —
- * POLICY.md's own "current bid" example. The hero has no seat pod
- * (SeatRing only ever shows opponents), so nothing else on screen
- * carries this. */
+/**
+ * Rung 1 ambient readout of the hero's own bid — POLICY.md's own
+ * "current bid" example. The hero has no seat pod (SeatRing only ever
+ * shows opponents), so nothing else on screen carries this. Thin
+ * game-specific wrapper around the shared `HeroStatusBadge` (same
+ * component a future Poker's "current bet" or Rummy's deadwood count
+ * would use) — anchored to the LEFT, close to the hand it's describing,
+ * so it never collides with `TurnIndicator`'s centred text.
+ */
 function YourBidBadge({ state }: { state: SpadesState }) {
   const bid = state.bids[HERO];
   if (!bid) return null;
@@ -174,11 +182,7 @@ function YourBidBadge({ state }: { state: SpadesState }) {
     state.phase === "play" && !state.exchange
       ? `${label} · won ${state.tricksWon[HERO] ?? 0}`
       : `bid ${label}`;
-  return (
-    <div className="pointer-events-none absolute top-3 left-3 z-900 rounded-full bg-felt-950/70 px-3 py-1.5 text-[11px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm">
-      Your bid: {detail}
-    </div>
-  );
+  return <HeroStatusBadge label="Your bid" detail={detail} side="left" />;
 }
 
 function BidPad({
@@ -197,7 +201,7 @@ function BidPad({
     return <ExchangeBar live={live} isGiver={state.exchange.stage === "give"} held={held} onClearHeld={onClearHeld} />;
   }
   if (isHiddenFromSelf(state, HERO)) return <BlindChoiceDialog live={live} />;
-  return <NumericBidDialog live={live} />;
+  return <NumericBidPanel live={live} />;
 }
 
 /**
@@ -285,75 +289,147 @@ function ActionButton({
   );
 }
 
-/** Rung 6 `BlockingDialog` — an ordinary forced bid, no table
- * interaction needed, so a real modal costs nothing here. */
-function NumericBidDialog({ live }: { live: Live }) {
+/**
+ * NOT a BlockingDialog, unlike BlindChoiceDialog below — an ordinary bid
+ * is exactly the case POLICY.md's own hard rule calls out: "if the
+ * player needs to compare [a decision] against their own hand, a modal
+ * makes the comparison impossible." Deciding how much to bid means
+ * looking at your hand, which a full-screen `<dialog>`'s blurred
+ * backdrop was hiding. A floating, non-modal panel anchored above the
+ * hand zone — same shape as ExchangeBar below — keeps the hand fully
+ * visible and tappable underneath it.
+ */
+function NumericBidPanel({ live }: { live: Live }) {
   const state = live.state;
   const floor = minLegalBid(state, HERO);
+  const min = Math.max(1, floor);
   const partnerBid = state.bids[partnerOf(HERO)];
+  const [value, setValue] = useState(min);
   const submit = (action: SpadesAction) => live.submitAction(action);
 
   return (
-    <BlockingDialog open title="Your bid">
-      <div className="flex flex-col gap-4">
-        {partnerBid ? (
-          <p className="text-[12px] text-bone-400">
-            Partner bid {describeBid(partnerBid)}
-            {floor > 0 ? ` — your team needs at least ${floor} combined.` : "."}
-          </p>
-        ) : null}
-
-        <div className="grid grid-cols-5 gap-1.5">
-          {Array.from({ length: 13 }, (_, i) => i + 1)
-            .filter((n) => n >= Math.max(1, floor))
-            .map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => submit({ t: "bid", tricks: n, nil: false })}
-                className="rounded-lg bg-bone-50/6 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300"
-              >
-                {n}
-              </button>
-            ))}
+    <div
+      className="pointer-events-none absolute inset-x-0 z-1800 flex justify-center px-4"
+      style={{ bottom: "calc(var(--hand-zone, 150px) + 12px)" }}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={TRANSITIONS.ui}
+        className="pointer-events-auto flex w-[min(20rem,92vw)] flex-col items-center gap-3 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-4 shadow-e2 backdrop-blur-md"
+      >
+        <div className="flex flex-col items-center gap-1">
+          <h3 className="font-display text-[15px] tracking-wide text-brass-300">Your bid</h3>
+          {partnerBid ? (
+            <p className="text-center text-[12px] text-bone-400">
+              Partner bid {describeBid(partnerBid)}
+              {floor > 0 ? ` — your team needs at least ${floor} combined.` : "."}
+            </p>
+          ) : null}
         </div>
+
+        <NumberStepper value={value} min={min} max={13} onChange={setValue} />
+
+        <button
+          type="button"
+          onClick={() => submit({ t: "bid", tricks: value, nil: false })}
+          className="w-full rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-2.5 text-sm font-extrabold text-felt-950 shadow-e2"
+        >
+          Bid {value}
+        </button>
 
         {floor === 0 ? (
           <button
             type="button"
             onClick={() => submit({ t: "bid", tricks: 0, nil: true })}
-            className="rounded-lg bg-bone-50/6 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-warn/15 hover:text-warn"
+            className="w-full rounded-lg bg-bone-50/6 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-warn/15 hover:text-warn"
           >
             Nil
           </button>
         ) : null}
-      </div>
-    </BlockingDialog>
+      </motion.div>
+    </div>
   );
 }
 
-/** Rung 6 `BlockingDialog` — same reasoning as NumericBidDialog: fixed
- * choices, no card on the table involved yet. */
+/**
+ * A big centred number with +/- either side, rather than a wall of
+ * buttons — one number to read, not thirteen. The end buttons disable
+ * (dim + stop responding to taps) exactly at `min`/`max`, so there's
+ * never a tap that silently does nothing.
+ */
+function NumberStepper({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-center gap-5">
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(min, value - 1))}
+        disabled={value <= min}
+        aria-label="Fewer tricks"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30"
+      >
+        −
+      </button>
+      <span className="tnum w-12 text-center font-display text-4xl font-extrabold text-brass-300">
+        {value}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(max, value + 1))}
+        disabled={value >= max}
+        aria-label="More tricks"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+/** Rung 6 `BlockingDialog` — same reasoning as `NumericBidPanel`'s doc
+ * gives for why it ISN'T one: nothing here needs the table (the hand is
+ * still hidden at this exact decision — the whole point of "blind"), so
+ * a real modal costs nothing. */
 function BlindChoiceDialog({ live }: { live: Live }) {
   const state = live.state;
   const deficit = (state.scores[((HERO + 1) % 4) as SeatId] ?? 0) - (state.scores[HERO] ?? 0);
   const canBlindNil = minLegalBid(state, HERO) === 0;
+  // Synchronized team decision (pagat.com: "a partnership... may choose
+  // not to look... after agreeing on a blind bid, the partners pick up
+  // their cards" — a joint choice, not two independent ones). If the
+  // partner already bid blind, "look" is off the table entirely.
+  const locked = mustBidBlind(state, HERO);
+  const [blindValue, setBlindValue] = useState(6);
   const submit = (action: SpadesAction) => live.submitAction(action);
 
   return (
     <BlockingDialog open title="Your team trails — bid blind?">
       <div className="flex flex-col gap-4">
         <p className="text-[12px] text-bone-400">
-          Your team trails by {deficit} — you may bid without looking at your hand.
+          {locked
+            ? "Your partner already bid blind — your team is committed. Pick your own blind bid."
+            : `Your team trails by ${deficit} — you may bid without looking at your hand.`}
         </p>
 
-        <button
-          type="button"
-          onClick={() => submit({ t: "look" })}
-          className="rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-3 text-sm font-extrabold text-felt-950 shadow-e2"
-        >
-          Look at my hand
-        </button>
+        {locked ? null : (
+          <button
+            type="button"
+            onClick={() => submit({ t: "look" })}
+            className="rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-3 text-sm font-extrabold text-felt-950 shadow-e2"
+          >
+            Look at my hand
+          </button>
+        )}
 
         {canBlindNil ? (
           <button
@@ -365,22 +441,26 @@ function BlindChoiceDialog({ live }: { live: Live }) {
           </button>
         ) : null}
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col items-center gap-2">
           <span className="text-[11px] font-semibold tracking-wide text-bone-400 uppercase">
-            Blind bid — min 6, doubles on success
+            {locked
+              ? "Your own blind bid — min 6, doubles on success"
+              : "Blind bid for your TEAM — min 6, doubles on success"}
           </span>
-          <div className="grid grid-cols-4 gap-1.5">
-            {Array.from({ length: 8 }, (_, i) => i + 6).map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => submit({ t: "blindBid", tricks: n })}
-                className="rounded-lg bg-bone-50/6 py-2 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300"
-              >
-                {n}
-              </button>
-            ))}
-          </div>
+          <NumberStepper value={blindValue} min={6} max={13} onChange={setBlindValue} />
+          <button
+            type="button"
+            onClick={() => submit({ t: "blindBid", tricks: blindValue })}
+            className="w-full rounded-lg bg-bone-50/6 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300"
+          >
+            {locked ? `Blind bid ${blindValue}` : `Bid ${blindValue} for your team`}
+          </button>
+          {locked ? null : (
+            <p className="text-center text-[11px] text-bone-500">
+              Your partner won&apos;t bid separately — their hand turns face up and your
+              team&apos;s target is set to {blindValue}.
+            </p>
+          )}
         </div>
       </div>
     </BlockingDialog>
@@ -430,11 +510,20 @@ function playerViews(state: SpadesState, live: Live): SeatView[] {
   return out;
 }
 
+/** One row per TEAM, not per seat — GameEndSummary just renders
+ * whatever {seat, name, total} list it's given, so merging here is all
+ * grouping takes for the match-end standings (the round scorecard needs
+ * its own `ScoreRow.team` grouping instead, since it also carries a
+ * per-seat bid/won detail line this shape has no room for). */
 function standings(state: SpadesState, _live: Live, seats: SeatView[]) {
-  return [
-    { seat: HERO, name: "You", total: state.scores[HERO] ?? 0 },
-    ...seats.map((s) => ({ seat: s.seat, name: s.name, total: state.scores[s.seat] ?? 0 })),
-  ].sort((a, b) => b.total - a.total);
+  const nameOf = (seat: SeatId) =>
+    seat === HERO ? "You" : (seats.find((s) => s.seat === seat)?.name ?? botName(seat));
+  return ([0, 1] as const)
+    .map((team) => {
+      const [a, b] = teammates(team);
+      return { seat: a, name: `${nameOf(a)} & ${nameOf(b)}`, total: state.scores[a] ?? 0 };
+    })
+    .sort((x, y) => y.total - x.total);
 }
 
 function statsFor(state: SpadesState): Array<{ label: string; value: string }> {
@@ -466,6 +555,10 @@ function roundSummary(state: SpadesState) {
       flag: overtricks > 0 ? `${overtricks} bag${overtricks === 1 ? "" : "s"}` : undefined,
       delta: result.deltas[seat] ?? 0,
       total: state.scores[seat] ?? 0,
+      // Partners' round delta/total are always identical (see
+      // scoring.ts) — grouping them shows that shared score once instead
+      // of twice, while each still gets its own bid/won detail line.
+      team: teamOf(seat),
     });
   }
 

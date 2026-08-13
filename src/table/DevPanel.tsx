@@ -142,6 +142,20 @@ export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps
               step={100}
               format={(v) => `${v}ms`}
             />
+            <Slider
+              label="Deal speed"
+              value={settings.dealSpeed}
+              onChange={settings.setDealSpeed}
+              min={0.25}
+              max={4}
+              step={0.25}
+              // Same "×" convention as the Speed slider just above —
+              // drag right, it gets faster. A raw ms value (the
+              // underlying dealStaggerMs) would drag BACKWARDS: lower ms
+              // is faster, so dragging right (toward the visually
+              // "more" end) would have made dealing slower.
+              format={(v) => `${v.toFixed(2)}×`}
+            />
           </motion.div>
         ) : (
           <motion.button

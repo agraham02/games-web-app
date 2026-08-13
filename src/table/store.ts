@@ -50,6 +50,17 @@ interface TableState {
    * own ghost instead of shunting the view a second time.
    */
   ghosts: readonly BoardCell[];
+  /**
+   * Index within the hero's own hand currently under the pointer, or
+   * `null`. Lives here rather than as component-local state because the
+   * lift effect (PieceLayer's `Piece`) needs to react to a NEIGHBOR
+   * being hovered, not just itself — a shared, narrowly-subscribed value
+   * is what lets "the hovered card and its 1-2 neighbours lift" work
+   * without every hand piece re-rendering on every pointer move (only
+   * the hero's own ~13 hand pieces subscribe to this at all; see
+   * `useHeroHoverIndex`).
+   */
+  heroHoverIndex: number | null;
 
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
@@ -60,6 +71,7 @@ interface TableState {
   setGhosts(cells: readonly BoardCell[]): void;
   /** Drops every transient visual flag. Cheap way to exit a mode. */
   clearFlags(): void;
+  setHeroHoverIndex(index: number | null): void;
 }
 
 function boundsOf(
@@ -112,6 +124,7 @@ export const useTableStore = create<TableState>((set) => {
     meta: {},
     board: null,
     ghosts: [],
+    heroHoverIndex: null,
 
     setGeometry: (geometry) => set({ geometry }),
 
@@ -153,12 +166,13 @@ export const useTableStore = create<TableState>((set) => {
         const next: PlacementMap = {};
         let changed = false;
         for (const [id, p] of Object.entries(s.placements)) {
-          if (p.selected || p.highlighted || p.dimmed || p.fanned || p.motionDelayMs) {
-            const { selected, highlighted, dimmed, fanned, motionDelayMs, ...rest } = p;
+          if (p.selected || p.highlighted || p.dimmed || p.fanned || p.hidden || p.motionDelayMs) {
+            const { selected, highlighted, dimmed, fanned, hidden, motionDelayMs, ...rest } = p;
             void selected;
             void highlighted;
             void dimmed;
             void fanned;
+            void hidden;
             void motionDelayMs;
             next[id] = rest;
             changed = true;
@@ -171,6 +185,9 @@ export const useTableStore = create<TableState>((set) => {
         // survives this and the camera does not move.
         return changed ? { placements: next } : s;
       }),
+
+    setHeroHoverIndex: (index) =>
+      set((s) => (s.heroHoverIndex === index ? s : { heroHoverIndex: index })),
   };
 });
 
@@ -202,3 +219,15 @@ export const useBoardView = (enabled: boolean): BoardView | null =>
  */
 export const usePieceIds = () =>
   useTableStore(useShallow((s) => Object.keys(s.placements)));
+
+/**
+ * See `TableState.heroHoverIndex`'s doc. Takes `enabled` for the same
+ * reason `useBoardView` does: a piece that isn't in the hero's own hand
+ * has no use for this value, and always selecting `null` for it means
+ * the selector's RESULT never changes for that piece regardless of how
+ * often the real hover index does — so it never re-renders for it. Only
+ * the hero's own ~13 hand pieces ever actually subscribe.
+ */
+export const useHeroHoverIndex = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.heroHoverIndex : null));
+export const useSetHeroHoverIndex = () => useTableStore((s) => s.setHeroHoverIndex);

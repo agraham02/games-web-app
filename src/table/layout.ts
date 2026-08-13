@@ -18,6 +18,7 @@ import { HERO } from "@/engine/types";
 import {
   axisReach,
   fanSlot,
+  radialFanSlot,
   tileShortSide,
   POD_SIZE,
   TILE_HAND_GAP,
@@ -239,7 +240,14 @@ export function layoutPiece(
 
   const zBase = Z[p.zone] ?? 0;
   const z = p.selected ? Z_SELECTED + p.index : zBase + p.index;
-  const opacity = p.dimmed ? 0.32 : 1;
+  // `dimmed` no longer touches opacity — POLICY.md's "invalid options
+  // drop to ~0.3 opacity" was replaced by a grayscale/darken filter
+  // (see PieceLayer.tsx) so a dimmed card stays fully legible instead of
+  // washing out toward the felt. `hidden` is the one thing that still
+  // animates opacity here, since fading a piece out in place (Spades'
+  // won tricks) is exactly the case opacity-as-a-transform-safe-property
+  // exists for.
+  const opacity = p.hidden ? 0 : 1;
 
   switch (p.zone) {
     /* -------------------------------------------------- deck */
@@ -440,10 +448,10 @@ export function layoutPiece(
       // (LRC, or dominoes early in a round) exactly as it was.
       const fanW = miniW * Math.max(2.4, p.count * 0.9);
       const pod = POD_SIZE[g.density];
-      let anchorX: number;
-      let anchorY: number;
 
       if (isTile) {
+        let anchorX: number;
+        let anchorY: number;
         // A tile hand never rotates and always fans along screen-x (see
         // `within` below), so its clearance from the pod is a plain,
         // AXIS-ALIGNED distance derived straight from the seat's own
@@ -471,26 +479,79 @@ export function layoutPiece(
           anchorX = seat.x;
           anchorY = seat.y + (pod.h / 2 + miniH / 2 + TILE_HAND_GAP);
         }
-      } else {
-        // Card hands (no game uses this yet) keep the original
-        // projected-scalar formula — the coupling above only bit a
-        // tile hand because tiles are big enough, and hands long
-        // enough (up to 7), for it to be visible.
-        const podReach = axisReach(ux, uy, pod);
-        const fanReach = Math.abs(ux) * (fanW / 2 + miniW / 2) + Math.abs(uy) * (miniH / 2);
-        const inset = podReach + fanReach + TILE_HAND_GAP;
-        anchorX = seat.x + ux * inset;
-        anchorY = seat.y + uy * inset;
+        const slot = fanSlot({
+          index: p.index,
+          count: p.count,
+          within: { x: anchorX - fanW / 2, y: anchorY, w: fanW, h: 0 },
+          size: { w: miniW, h: miniH },
+          maxRotation: 0,
+          arcLift: 0,
+          maxGap: miniW * 0.7,
+        });
+
+        return {
+          x: slot.x - base.w / 2,
+          y: slot.y - base.h / 2,
+          rotate: slot.rotation,
+          scale: miniScale,
+          z,
+          opacity,
+        };
       }
 
-      const slot = fanSlot({
+      // Card hands fan PERPENDICULAR to this seat's own line to table
+      // centre, not always along screen-x — a side seat's hand runs
+      // top-to-bottom, the way a fan of cards actually looks held by
+      // someone sitting to your left or right (LRC's chip piles already
+      // fan this way; see `collected` below for the same perpendicular
+      // vector). Each card also inherits the seat's own base rotation
+      // (`SeatSlot.rotation`) so it visually stands toward the table
+      // rather than always reading screen-upright regardless of which
+      // edge it was dealt to. Dominoes' tile racks (above) deliberately
+      // don't get this yet — real dominoes stand upright in a rack
+      // regardless of seat, and that redesign is tracked separately
+      // ([[domino-side-seat-hand-overlap]]) — this only ever runs for a
+      // card game.
+      //
+      // Clearance from the pod is a plain axisReach along the push
+      // direction, same idea as the tile branch's own axis-derived
+      // anchor above: since the fan now always spreads PERPENDICULAR to
+      // (ux, uy), its width never adds to how far the hand reaches
+      // along (ux, uy) — only one card's own thickness does — so this
+      // has none of the fanW-leaking-into-the-wrong-axis coupling the
+      // tile branch's doc above describes; there is no shared scalar
+      // between the two axes to leak through in the first place.
+      // `axisReach` assumes an axis-aligned box, but a left/right seat's
+      // card is rotated a quarter turn (`baseRotation` below) — its true
+      // on-screen footprint along the push direction is governed by its
+      // ROTATED bounding box, which swaps width and height. A top seat's
+      // 180° rotation doesn't swap anything, so only left/right needs this.
+      const rotatedQuarter = seat.anchor === "left" || seat.anchor === "right";
+      const cardFootprint: PieceSize = rotatedQuarter
+        ? { w: miniH, h: miniW }
+        : { w: miniW, h: miniH };
+      const podReach = axisReach(ux, uy, pod);
+      const cardReach = axisReach(ux, uy, cardFootprint);
+      const inset = podReach + cardReach + TILE_HAND_GAP;
+      const anchorX = seat.x + ux * inset;
+      const anchorY = seat.y + uy * inset;
+
+      const slot = radialFanSlot({
+        anchor: { x: anchorX, y: anchorY },
+        // Perpendicular to (ux, uy) — the axis the fan spreads along.
+        spread: { x: -uy, y: ux },
+        // Away from table centre — the ends of the fan bow toward this,
+        // the same convention fanSlot's own arcLift uses for the hero's
+        // hand (its ends dip toward the screen edge behind the hero).
+        away: { x: -ux, y: -uy },
         index: p.index,
         count: p.count,
-        within: { x: anchorX - fanW / 2, y: anchorY, w: fanW, h: 0 },
+        spreadWidth: fanW,
         size: { w: miniW, h: miniH },
-        maxRotation: isTile ? 0 : 7,
-        arcLift: isTile ? 0 : 4,
-        maxGap: miniW * (isTile ? 0.7 : 0.42),
+        baseRotation: seat.rotation,
+        maxTilt: 7,
+        arcLift: 4,
+        maxGap: miniW * 0.42,
       });
 
       return {

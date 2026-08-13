@@ -67,6 +67,16 @@ export interface Placement {
   /** Pushed back as an invalid target during a targeting mode. */
   dimmed?: boolean;
   /**
+   * Faded to fully invisible (opacity 0) without leaving the placement
+   * map — used for a piece that is logically "put away" (Spades' won
+   * tricks) but should still fade out smoothly in place rather than pop
+   * out of existence. Keeping it tracked, rather than omitting it from
+   * `PlacementMap` entirely, is what keeps this consistent with "cards
+   * never reparent": the piece never unmounts, it just animates opacity
+   * to 0 like any other transition.
+   */
+  hidden?: boolean;
+  /**
    * Spread a pile out instead of stacking it. Set on every piece in the
    * pile, because a piece is laid out without knowledge of its siblings
    * — that is what keeps layout O(1) per piece and lets each one

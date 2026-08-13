@@ -91,6 +91,7 @@ function moveTo(
     highlighted: false,
     dimmed: false,
     fanned: false,
+    hidden: false,
   };
 }
 

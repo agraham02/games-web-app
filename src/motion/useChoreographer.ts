@@ -25,6 +25,10 @@ export interface ChoreographerOptions {
   onIdle?: () => void;
   /** 1 = designed pace. The lab exposes this as a slider. */
   speed?: number;
+  /** See `ChoreographOptions.dealStaggerMs` — deliberately independent
+   * of `speed`, which is why it's threaded through separately rather
+   * than folded into the same multiplier. */
+  dealStaggerMs?: number;
 }
 
 export interface Choreographer {
@@ -40,6 +44,7 @@ export function useChoreographer({
   apply,
   onIdle,
   speed = 1,
+  dealStaggerMs,
 }: ChoreographerOptions): Choreographer {
   const [isPlaying, setPlaying] = useState(false);
 
@@ -47,6 +52,7 @@ export function useChoreographer({
   const applyRef = useRef(apply);
   const onIdleRef = useRef(onIdle);
   const speedRef = useRef(speed);
+  const dealStaggerRef = useRef(dealStaggerMs);
   const queue = useRef<GameEvent[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const running = useRef(false);
@@ -61,7 +67,8 @@ export function useChoreographer({
     applyRef.current = apply;
     onIdleRef.current = onIdle;
     speedRef.current = speed;
-  }, [apply, onIdle, speed]);
+    dealStaggerRef.current = dealStaggerMs;
+  }, [apply, onIdle, speed, dealStaggerMs]);
 
   const stopTimer = () => {
     if (timer.current !== null) {
@@ -90,9 +97,25 @@ export function useChoreographer({
 
     // Re-choreograph from the head each tick so a batch pushed mid-play
     // is timed against what is actually next, not against a plan made
-    // before it arrived.
-    const [next] = choreograph([queue.current[0]!]);
+    // before it arrived. Passes BOTH the event that just applied and the
+    // upcoming one — not just the upcoming one in isolation — because
+    // `choreograph`'s "same run" detection (what makes consecutive
+    // deals/moves stagger tighter than a one-off) reads `events[i-1]`.
+    // An isolated single-event lookup here always sees `prev` as
+    // undefined, which silently defeats that detection for every run of
+    // same-type events in real playback: it was never actually reachable
+    // outside `choreograph`'s own unit tests, which call it over a whole
+    // batch at once — a real deal was landing every ~beatOf(deal) (≈74%
+    // of a single card's flight, ~270ms) rather than every
+    // `dealStaggerMs`, more than 4x slower than intended.
+    const [, next] = choreograph(
+      [event, queue.current[0]!],
+      { dealStaggerMs: dealStaggerRef.current },
+    );
     const factor = prefersReducedMotion() ? 0 : 1 / Math.max(0.05, speedRef.current);
+    // beatOf needs no dealStaggerMs of its own — it only ever reads a
+    // step's DURATION, which the override never touches (only `offset`,
+    // computed just above, does).
     const wait = (next?.offset || beatOf(event)) * factor;
 
     timer.current = setTimeout(() => drainRef.current(), Math.max(0, wait));

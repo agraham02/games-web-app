@@ -37,6 +37,13 @@ describe("choreograph", () => {
     expect(step!.duration).toBe(1400);
   });
 
+  it("holds a completed trick on screen before it sweeps away", () => {
+    const [step] = choreograph([{ t: "collect", pieces: ["SA", "SK"], to: 1 }]);
+    // A visible pause to actually read who won, not an instant sweep —
+    // see HOLD.trick.
+    expect(step!.offset).toBeGreaterThanOrEqual(800);
+  });
+
   it("scales a collect with the number of cards swept", () => {
     const small = choreograph([{ t: "collect", pieces: ["a", "b"], to: 1 }]);
     const big = choreograph([

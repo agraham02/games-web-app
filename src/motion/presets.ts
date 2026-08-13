@@ -29,6 +29,19 @@ export const DURATION = {
   sweep: 0.16,
 } as const;
 
+/**
+ * Deliberate pauses BEFORE a step starts — distinct from DURATION, which
+ * is how long a step itself takes once it begins. `trick` is the beat
+ * between a trick's 4th card landing and the `collect` event actually
+ * starting to sweep it toward the winner's pod: without it, `collect`'s
+ * offset was 0, so the sweep began the instant the last card's `play`
+ * animation finished — nowhere near enough time to actually read who
+ * played what, let alone who won.
+ */
+export const HOLD = {
+  trick: 0.9,
+} as const;
+
 export const STAGGER = {
   deal: 0.065,
   collect: 0.04,

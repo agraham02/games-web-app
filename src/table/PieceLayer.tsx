@@ -28,11 +28,49 @@ import { CardBack, CardFace } from "@/ui/primitives/CardFace";
 import { TileBack, TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { baseSize, layoutPiece } from "./layout";
-import { useBoardView, useGeometry, usePieceIds, usePlacement, usePieceMeta } from "./store";
+import {
+  useBoardView,
+  useGeometry,
+  useHeroHoverIndex,
+  usePieceIds,
+  usePlacement,
+  usePieceMeta,
+  useSetHeroHoverIndex,
+  useTableStore,
+} from "./store";
 import { TRANSITIONS } from "@/motion/presets";
 
 /** Below this on-screen width, pips become mud — draw the simple face. */
 const DETAIL_THRESHOLD_PX = 52;
+
+/**
+ * Extra lift/scale for a hero-hand card at `index`, relative to
+ * whichever index is currently hovered — the card under the pointer
+ * rises and grows most, tapering off over its 1-2 nearest neighbours,
+ * like a real hand fanning open under a finger. Lift is a FRACTION of
+ * the card's own rendered height, not a fixed px amount — a flat px
+ * value read as barely-there on `wide` density's much taller cards, and
+ * as mostly a z-order jump-to-front rather than a visible rise. Scaled
+ * to the piece itself, it reads as genuine vertical motion at every
+ * density. Pure and cheap enough not to bother memoizing.
+ */
+function handHoverLift(
+  index: number,
+  hoverIndex: number | null,
+  cardHeight: number,
+): { liftPx: number; scale: number } {
+  if (hoverIndex === null) return { liftPx: 0, scale: 1 };
+  switch (Math.abs(index - hoverIndex)) {
+    case 0:
+      return { liftPx: -cardHeight * 0.32, scale: 1.08 };
+    case 1:
+      return { liftPx: -cardHeight * 0.16, scale: 1.04 };
+    case 2:
+      return { liftPx: -cardHeight * 0.06, scale: 1.015 };
+    default:
+      return { liftPx: 0, scale: 1 };
+  }
+}
 
 export interface PieceLayerProps {
   onPieceTap?: (id: PieceId) => void;
@@ -69,6 +107,17 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   // face-down boneyard tile reads `null` and stays out of the churn,
   // which is the same narrowness the per-piece placement selector buys.
   const board = useBoardView(Boolean(placement?.cell));
+  // Only the hero's own hand ever lifts on hover — opponent hands are
+  // mini, face-down and untappable, so hovering them has nothing to
+  // show. Selecting `null` for everything else means this subscription
+  // never triggers a re-render for those pieces, no matter how often the
+  // real hover index changes (see `useHeroHoverIndex`'s doc — same trick
+  // `useBoardView` already uses above).
+  const isHeroHandPiece = Boolean(
+    placement && placement.zone === "hand" && (placement.seat ?? HERO) === HERO,
+  );
+  const hoverIndex = useHeroHoverIndex(isHeroHandPiece);
+  const setHeroHoverIndex = useSetHeroHoverIndex();
 
   if (!placement || !geometry || !meta) return null;
 
@@ -76,6 +125,9 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   const base = baseSize(geometry);
   const onScreenW = base.w * t.scale;
   const detail = onScreenW < DETAIL_THRESHOLD_PX ? "index" : "full";
+  const hover = isHeroHandPiece
+    ? handHoverLift(placement.index, hoverIndex, base.h)
+    : { liftPx: 0, scale: 1 };
 
   const interactive =
     Boolean(onTap) &&
@@ -92,12 +144,39 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   return (
     <motion.div
       initial={false}
+      onMouseEnter={
+        isHeroHandPiece ? () => setHeroHoverIndex(placement.index) : undefined
+      }
+      onMouseLeave={
+        isHeroHandPiece
+          ? () => {
+              // Guarded against the live store value, not the closed-over
+              // `hoverIndex` prop: overlapping fanned cards can fire this
+              // piece's `mouseleave` after its neighbour's `mouseenter`
+              // already moved the hover elsewhere, and a stale closure
+              // would wrongly clear that neighbour's hover right after it
+              // was set.
+              if (useTableStore.getState().heroHoverIndex === placement.index) {
+                setHeroHoverIndex(null);
+              }
+            }
+          : undefined
+      }
       animate={{
         x: t.x,
-        y: t.y,
+        y: t.y + hover.liftPx,
         rotate: t.rotate,
-        scale: t.scale,
+        scale: t.scale * hover.scale,
         opacity: t.opacity,
+        // Illegal-target dimming (POLICY.md: "dim, don't hide") is a
+        // grayscale/darken filter rather than reduced opacity — a light
+        // card face loses too much legibility fading toward the felt,
+        // and this reuses the exact "disabled" idiom SeatRing already
+        // uses for an eliminated seat's avatar. `filter` is not a
+        // compositor-only property the way transform/opacity are (see
+        // CLAUDE.md), but at hand-sized piece counts (a dozen or so
+        // cards, not a 52-card deal) the cost is not visible.
+        filter: placement.dimmed ? "grayscale(0.85) brightness(0.78)" : "none",
       }}
       // A batch of pieces (a collected trick, a sweep) can all receive
       // their new `animate` target in the same React commit yet still
@@ -105,7 +184,14 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
       // individually via `delay`, which is exactly what
       // `applyEvent.ts`'s per-piece `motionDelayMs` assumes exists.
       // Zero for every ordinary move (deal/draw/play/flip never set it).
-      transition={{ ...TRANSITIONS.deal, delay: (placement.motionDelayMs ?? 0) / 1000 }}
+      // `filter` gets its own, un-delayed transition: dimming is a
+      // legality readout, not part of the piece's physical arrival, so
+      // it should react immediately rather than inherit a stagger meant
+      // for a batch of pieces landing in sequence.
+      transition={{
+        default: { ...TRANSITIONS.deal, delay: (placement.motionDelayMs ?? 0) / 1000 },
+        filter: TRANSITIONS.ui,
+      }}
       onClick={interactive ? () => onTap?.(id) : undefined}
       style={{
         position: "absolute",
@@ -113,6 +199,14 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         top: 0,
         width: base.w,
         height: base.h,
+        // Deliberately NOT bumped on hover — stacking order stays
+        // exactly what the base layout gives every piece, full stop.
+        // Z-index isn't animatable (Motion can't tween it, unlike
+        // x/y/scale/opacity), so nudging it here landed as an instant,
+        // out-of-sync "pop" the moment hover started or ended — visually
+        // read as the card snapping around rather than smoothly rising.
+        // Hover is transform-only now, matching the rest of this file's
+        // "only transform and opacity animate" rule.
         zIndex: t.z,
         transformOrigin: "center center",
         pointerEvents: interactive ? "auto" : "none",

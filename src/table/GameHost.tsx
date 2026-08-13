@@ -20,7 +20,7 @@ import { TableSurface } from "./TableSurface";
 import { SeatRing } from "./SeatRing";
 import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
-import { useDevSettings } from "./devSettings";
+import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
 import { GameToaster } from "@/ui/disclosure";
 import {
   GameEndSummary,
@@ -107,6 +107,10 @@ export function GameHost<S, A>({
     turnHoldMs: devSettings.turnHoldMs,
     endHoldMs: devSettings.endHoldMs,
     roundHoldMs: devSettings.roundHoldMs,
+    // The store keeps the intuitive "higher = faster" multiplier (see
+    // its own doc); useChoreographer wants the raw ms it's actually
+    // built around, so the conversion happens right at this boundary.
+    dealStaggerMs: DEFAULT_DEAL_STAGGER_MS / devSettings.dealSpeed,
   });
   // The match winner takes priority, but is only ever non-null right at
   // the very end; the far more common "someone just won" moment in a

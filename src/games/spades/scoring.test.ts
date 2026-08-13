@@ -115,6 +115,18 @@ describe("scoreRound — blind numeric bids", () => {
     const { deltas } = scoreRound(bids, tricksWon, NO_BAGS);
     expect(deltas[0]).toBe(8 * 20); // documented judgment call: whole contract doubles
   });
+
+  it("counts a TEAM blind bid (same Bid object mirrored on both seats) once, not twice", () => {
+    // rules.ts's isTeamBlindBid mirrors the exact same object onto both
+    // partners for a team-wide blind bid — the target here must be 6,
+    // not 6+6=12, which is what treating it as two independent bids
+    // (the ordinary case, covered above) would wrongly produce.
+    const teamBid = bid(6, { blind: true });
+    const bids = { 0: teamBid, 1: bid(4), 2: teamBid, 3: bid(3) };
+    const tricksWon = { 0: 3, 1: 4, 2: 3, 3: 3 }; // team makes exactly 6
+    const { deltas } = scoreRound(bids, tricksWon, NO_BAGS);
+    expect(deltas[0]).toBe(6 * 20); // NOT 12 * 20
+  });
 });
 
 describe("scoreRound — bag rollover", () => {

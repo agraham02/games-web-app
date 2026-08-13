@@ -16,7 +16,7 @@ import type { Rng } from "@/engine/rng";
 import { isJokerId, parseCard, cardId } from "@/games/_shared/cards";
 import { resolveTrick } from "@/games/_shared/trickTaking";
 import { cardStrength, effectiveSuit, isTrump, type SpadesRules } from "./cards";
-import { isHiddenFromSelf, legalPlays, minLegalBid, partnerOf } from "./state";
+import { isHiddenFromSelf, legalPlays, minLegalBid, mustBidBlind, partnerOf } from "./state";
 import type { SpadesAction, SpadesState } from "./types";
 
 function bestOf(items: readonly PieceId[], score: (id: PieceId) => number, rng: Rng): PieceId {
@@ -81,14 +81,22 @@ function estimateTricks(hand: readonly PieceId[], rules: SpadesRules): number {
 
 function chooseBidTurn(state: SpadesState, seat: SeatId, rng: Rng, tier: BotDifficulty): SpadesAction {
   if (isHiddenFromSelf(state, seat)) {
-    // Casual never goes blind — a cautious player who always looks
-    // first. Steady/sharp weigh going blind purely against the score
-    // deficit, since the hand is redacted at this point — there is
-    // nothing else TO weigh, which is the whole point.
-    if (tier === "casual") return { t: "look" };
-    const deficit = (state.scores[((seat + 1) % 4) as SeatId] ?? 0) - (state.scores[seat] ?? 0);
-    const boldness = tier === "sharp" ? 0.6 : 0.3;
-    if (deficit < 100 || rng.next() >= boldness) return { t: "look" };
+    // Synchronized team decision (see mustBidBlind's doc in state.ts) —
+    // once the partner has already bid blind, "look" is not a legal
+    // choice for this seat at all, regardless of tier or deficit. Not
+    // just a UI restriction: `legalActions` no longer offers `{t:"look"}`
+    // in this state, but a bot decides independently of that list here,
+    // so it has to honour the same rule itself or it'd bypass it outright.
+    if (!mustBidBlind(state, seat)) {
+      // Casual never goes blind — a cautious player who always looks
+      // first. Steady/sharp weigh going blind purely against the score
+      // deficit, since the hand is redacted at this point — there is
+      // nothing else TO weigh, which is the whole point.
+      if (tier === "casual") return { t: "look" };
+      const deficit = (state.scores[((seat + 1) % 4) as SeatId] ?? 0) - (state.scores[seat] ?? 0);
+      const boldness = tier === "sharp" ? 0.6 : 0.3;
+      if (deficit < 100 || rng.next() >= boldness) return { t: "look" };
+    }
     if (minLegalBid(state, seat) === 0 && rng.next() < 0.4) return { t: "blindNil" };
     return { t: "blindBid", tricks: 6 };
   }
@@ -113,7 +121,13 @@ function chooseExchange(state: SpadesState, tier: BotDifficulty): SpadesAction {
     // both take it — it can only help, there's no real downside — but
     // the GIVER still hasn't seen their own hand (that's the whole
     // point of Blind Nil), so which two cards go is a genuinely blind
-    // pick, not a judged one.
+    // pick, not a judged one. `hand` here is `state.hands[ex.giver]`
+    // from the REDACTED view this bot was handed — i.e. HIDDEN_CARD
+    // placeholders, not real ids, since this seat's own hand is hidden
+    // from itself. rules.ts's `reduceExchangeGive` is what actually
+    // resolves that into 2 real cards (its own first two, in whatever
+    // arbitrary order they sit in the true hand) — this function has no
+    // real ids to give it even in principle.
     if (tier === "casual") return { t: "skipExchange" };
     const hand = state.hands[ex.giver] ?? [];
     if (hand.length < 2) return { t: "skipExchange" };

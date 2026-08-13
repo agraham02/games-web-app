@@ -56,7 +56,15 @@ export function scoreRound(
     // empty; that combination is unreachable through legalActions (see
     // state.ts's minLegalBid), so it deliberately scores as a no-op
     // contract rather than needing its own branch here.
-    const numericBidders = [bids[a]!, bids[b]!].filter((bid) => !bid.nil);
+    //
+    // A team blind bid (rules.ts's `isTeamBlindBid`) mirrors the exact
+    // SAME `Bid` object onto both seats — one shared team number, not
+    // two independent ones that happen to match — so `bids[a] === bids[b]`
+    // by reference in that case, and must count ONCE toward the target,
+    // not twice (an earlier version of this summed it twice: bid 6
+    // mirrored onto both seats was read as "6 + 6 = 12 tricks needed").
+    const numericBidders =
+      bids[a] === bids[b] ? [bids[a]!].filter((bid) => !bid.nil) : [bids[a]!, bids[b]!].filter((bid) => !bid.nil);
     if (numericBidders.length > 0) {
       const target = numericBidders.reduce((sum, bid) => sum + bid.tricks, 0);
       const doubled = numericBidders.some((bid) => bid.blind);

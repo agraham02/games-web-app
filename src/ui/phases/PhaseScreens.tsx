@@ -100,6 +100,56 @@ export function TurnIndicator({ label, show }: { label: string; show: boolean })
 }
 
 /* ============================================================
+   Hero status badge — rung 1 ambient HUD for the hero's own
+   game-specific stake, since the hero has no seat pod to carry it.
+   ============================================================ */
+
+/**
+ * The hero's own always-visible readout of whatever this game's
+ * central "stake" is — Spades' bid + tricks won, a future Poker's
+ * current bet, a future Rummy's deadwood count. Every OTHER seat gets
+ * this on their pod's `meta` string (SeatRing); the hero has no pod at
+ * all, so this exists to carry the same rung-1 information for them.
+ *
+ * Anchored to the hand zone's top edge, offset to one side so it never
+ * collides with `TurnIndicator`'s centred text — deliberately close to
+ * the cards it's describing rather than a distant corner.
+ */
+export function HeroStatusBadge({
+  label,
+  detail,
+  show = true,
+  side = "left",
+}: {
+  /** e.g. "Your bid" */
+  label: string;
+  /** e.g. "4 (blind) · won 2" */
+  detail: string;
+  show?: boolean;
+  side?: "left" | "right";
+}) {
+  return (
+    <AnimatePresence>
+      {show ? (
+        <motion.div
+          className={`pointer-events-none absolute z-900 rounded-full bg-felt-950/78 px-3.5 py-2 text-[11px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm ${
+            side === "left" ? "left-3" : "right-3"
+          }`}
+          style={{ bottom: "calc(var(--hand-zone, 150px) + 10px)" }}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 6 }}
+          transition={TRANSITIONS.ui}
+        >
+          <span className="text-bone-300">{label}: </span>
+          {detail}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+/* ============================================================
    Round end
    ============================================================ */
 
@@ -112,6 +162,16 @@ export interface ScoreRow {
   total: number;
   /** Extra flag shown inline, e.g. "3 bags". */
   flag?: string;
+  /**
+   * Groups this row with others sharing the same id — a partnership
+   * game's round score is identical for both teammates, so showing it
+   * twice is noise rather than information. Rows sharing a `team` render
+   * under one shared delta/total (taken from whichever appears first);
+   * each member still gets their own name + detail line. Omit for a
+   * game with no team concept — that row renders exactly as it always
+   * has, unaffected.
+   */
+  team?: string | number;
 }
 
 export function RoundEndScorecard({
@@ -142,42 +202,8 @@ export function RoundEndScorecard({
       </div>
 
       <div className="mt-6 flex flex-col">
-        {rows.map((r, i) => (
-          <motion.div
-            key={r.seat}
-            className="grid grid-cols-[22px_1fr_auto_auto] items-center gap-2.5 border-b border-bone-50/7 py-2.5 last:border-b-0"
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ ...TRANSITIONS.ui, delay: 0.06 * i }}
-          >
-            <span
-              className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-[9px] font-bold text-felt-950"
-              style={{ background: r.colour }}
-            >
-              {r.name.slice(0, 2).toUpperCase()}
-            </span>
-            <span className="flex flex-col gap-0.5">
-              <span className="text-[13px] leading-none font-semibold text-bone-50">
-                {r.name}
-              </span>
-              {r.detail ? (
-                <span className="text-[10px] leading-none text-bone-400">
-                  {r.detail}
-                  {r.flag ? <span className="text-warn"> · {r.flag}</span> : null}
-                </span>
-              ) : null}
-            </span>
-            <span
-              className={`text-[13px] font-bold ${r.delta >= 0 ? "text-win" : "text-loss"}`}
-            >
-              {r.delta >= 0 ? "+" : "−"}
-              {Math.abs(r.delta)}
-            </span>
-            <AnimatedNumber
-              value={r.total}
-              className="w-11 text-right text-[17px] font-extrabold text-bone-50"
-            />
-          </motion.div>
+        {groupScoreRows(rows).map((group, i) => (
+          <ScoreRowGroup key={group.map((r) => r.seat).join("-")} rows={group} index={i} />
         ))}
       </div>
 
@@ -202,6 +228,89 @@ export function RoundEndScorecard({
         <PrimaryAction onClick={onContinue}>{continueLabel}</PrimaryAction>
       ) : null}
     </PhaseSheet>
+  );
+}
+
+/**
+ * Rows sharing a `team` id become one group; a row with no `team` is its
+ * own singleton group, rendering exactly as it always has. Preserves
+ * first-seen order — a game with no team concept never sees anything
+ * change here at all.
+ */
+function groupScoreRows(rows: readonly ScoreRow[]): ScoreRow[][] {
+  const groups: ScoreRow[][] = [];
+  const byTeam = new Map<string | number, ScoreRow[]>();
+  for (const r of rows) {
+    if (r.team === undefined) {
+      groups.push([r]);
+      continue;
+    }
+    const existing = byTeam.get(r.team);
+    if (existing) {
+      existing.push(r);
+    } else {
+      const fresh = [r];
+      byTeam.set(r.team, fresh);
+      groups.push(fresh);
+    }
+  }
+  return groups;
+}
+
+/**
+ * One or more rows sharing a single delta/total. A team of 2 shows one
+ * shared score (partners' round score is always identical — repeating
+ * it twice is noise, not information) with each member's own avatar,
+ * name and detail stacked above/below the other; a solo row (no `team`)
+ * renders identically to how this component always has.
+ */
+function ScoreRowGroup({ rows, index }: { rows: readonly ScoreRow[]; index: number }) {
+  const [first] = rows;
+  if (!first) return null;
+  return (
+    <motion.div
+      className="grid grid-cols-[22px_1fr_auto_auto] items-center gap-2.5 border-b border-bone-50/7 py-2.5 last:border-b-0"
+      initial={{ opacity: 0, x: -10 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ ...TRANSITIONS.ui, delay: 0.06 * index }}
+    >
+      <span className="flex flex-col gap-1.5">
+        {rows.map((r) => (
+          <span
+            key={r.seat}
+            className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-[9px] font-bold text-felt-950"
+            style={{ background: r.colour }}
+          >
+            {r.name.slice(0, 2).toUpperCase()}
+          </span>
+        ))}
+      </span>
+      <span className="flex flex-col gap-1.5">
+        {rows.map((r) => (
+          <span key={r.seat} className="flex flex-col gap-0.5">
+            <span className="text-[13px] leading-none font-semibold text-bone-50">
+              {r.name}
+            </span>
+            {r.detail ? (
+              <span className="text-[10px] leading-none text-bone-400">
+                {r.detail}
+                {r.flag ? <span className="text-warn"> · {r.flag}</span> : null}
+              </span>
+            ) : null}
+          </span>
+        ))}
+      </span>
+      <span
+        className={`text-[13px] font-bold ${first.delta >= 0 ? "text-win" : "text-loss"}`}
+      >
+        {first.delta >= 0 ? "+" : "−"}
+        {Math.abs(first.delta)}
+      </span>
+      <AnimatedNumber
+        value={first.total}
+        className="w-11 text-right text-[17px] font-extrabold text-bone-50"
+      />
+    </motion.div>
   );
 }
 
