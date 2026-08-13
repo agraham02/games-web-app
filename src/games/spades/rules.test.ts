@@ -1,18 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
-import type { PieceId, SeatId } from "@/engine/types";
-import { BIG_JOKER_ID, LITTLE_JOKER_ID } from "@/games/_shared/cards";
-import { spadesDeck, type SpadesRules } from "./cards";
-import { createSpades, minLegalBid, mustBidBlind, reduce, startRound } from "./rules";
+import type { GameEvent, PieceId, SeatId } from "@/engine/types";
+import { BIG_JOKER_ID, LITTLE_JOKER_ID, sortHandForDisplay } from "@/games/_shared/cards";
+import { cardStrength, effectiveSuit, spadesDeck, type SpadesRules } from "./cards";
+import { createSpades, legalPlays, minLegalBid, mustBidBlind, reduce, startRound } from "./rules";
 import { HIDDEN_CARD } from "./state";
 import type { SpadesState } from "./types";
 
 const STANDARD: SpadesRules = { jokers: false, twoOfSpadesHigh: false };
 
+/**
+ * `dealer: 3` (-> leader/first-bidder seat 0) is forced on every fixture
+ * below that needs one, rather than left to `makeSetup`'s own real
+ * random cut (see that function's doc) — most of this file is written
+ * around "seat 0 bids first" for readability, which is still a
+ * perfectly valid scenario to exercise, just no longer the only one a
+ * fresh setup produces in real play. The random cut itself, and its
+ * rotation round to round, are covered directly in "spades — the deal"
+ * below.
+ */
 function fresh(seed = 7, rules: SpadesRules = STANDARD) {
   const rng = createRng(seed);
   const def = createSpades(rules);
-  const { state } = startRound(def.setup({ seats: 4, rng }), rng);
+  const { state } = startRound({ ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId }, rng);
   return { def, rng, state };
 }
 
@@ -51,10 +61,14 @@ describe("spades — the deal", () => {
   });
 
   it("gives the first bid (and the first lead) to the seat left of the dealer", () => {
+    // Round one's dealer is now a genuine random cut (rng.pick in
+    // makeSetup — see its own doc), not a fixed sentinel, so this
+    // checks the RELATIONSHIP (leader sits left of whoever the cut
+    // landed on) rather than a hardcoded seat.
     const { state } = fresh();
-    expect(state.dealer).toBe(3);
-    expect(state.leader).toBe(0);
-    expect(state.turn).toBe(0);
+    expect([0, 1, 2, 3]).toContain(state.dealer);
+    expect(state.leader).toBe(((state.dealer + 1) % 4) as SeatId);
+    expect(state.turn).toBe(state.leader);
   });
 
   it("rotates the dealer each round", () => {
@@ -62,11 +76,22 @@ describe("spades — the deal", () => {
     const def = createSpades();
     let state = def.setup({ seats: 4, rng });
     ({ state } = startRound(state, rng));
-    expect(state.dealer).toBe(3);
+    const firstDealer = state.dealer;
+    expect([0, 1, 2, 3]).toContain(firstDealer);
     // Force the round to look finished so startRound can be called again.
-    state = { ...state, result: { bids: state.bids as never, tricksWon: state.tricksWon, deltas: {}, bags: {}, bagPenalty: {} } };
+    state = {
+      ...state,
+      result: {
+        bids: state.bids as never,
+        tricksWon: state.tricksWon,
+        deltas: {},
+        bags: {},
+        bagPenalty: {},
+        bagsAdded: {},
+      },
+    };
     ({ state } = startRound(state, rng));
-    expect(state.dealer).toBe(0);
+    expect(state.dealer).toBe(((firstDealer + 1) % 4) as SeatId);
   });
 });
 
@@ -115,7 +140,11 @@ describe("spades — blind eligibility and the hidden hand", () => {
   it("deals a blind-eligible hero's own hand face down; a non-eligible hero's face up", () => {
     const rng = createRng(9);
     const def = createSpades();
-    const eligible = { ...def.setup({ seats: 4, rng }), scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    const eligible = {
+      ...def.setup({ seats: 4, rng }),
+      dealer: 3 as SeatId,
+      scores: { 0: 0, 1: 100, 2: 0, 3: 100 },
+    };
     const { state: eligibleState, events: eligibleEvents } = startRound(eligible, rng);
     expect(eligibleState.blindEligible[0]).toBe(true);
     expect(eligibleState.handRevealed[0]).toBe(false);
@@ -123,7 +152,11 @@ describe("spades — blind eligibility and the hidden hand", () => {
     expect(heroDeals.every((e) => e.t === "deal" && e.faceUp === false)).toBe(true);
 
     const rng2 = createRng(9);
-    const notEligible = { ...def.setup({ seats: 4, rng: rng2 }), scores: { 0: 0, 1: 50, 2: 0, 3: 50 } };
+    const notEligible = {
+      ...def.setup({ seats: 4, rng: rng2 }),
+      dealer: 3 as SeatId,
+      scores: { 0: 0, 1: 50, 2: 0, 3: 50 },
+    };
     const { state: normalState, events: normalEvents } = startRound(notEligible, rng2);
     expect(normalState.blindEligible[0]).toBe(false);
     expect(normalState.handRevealed[0]).toBe(true);
@@ -134,7 +167,7 @@ describe("spades — blind eligibility and the hidden hand", () => {
   it("reveals a blind NUMERIC bid's hand immediately on locking in", () => {
     const rng = createRng(9);
     const def = createSpades();
-    const eligible = { ...def.setup({ seats: 4, rng }), scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    const eligible = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     let { state } = startRound(eligible, rng);
     expect(state.handRevealed[0]).toBe(false);
     ({ state } = reduce(state, { t: "blindBid", tricks: 6 }));
@@ -145,7 +178,7 @@ describe("spades — blind eligibility and the hidden hand", () => {
   it("keeps a Blind Nil bidder's hand hidden through bidding, until the exchange resolves", () => {
     const rng = createRng(9);
     const def = createSpades();
-    const eligible = { ...def.setup({ seats: 4, rng }), scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    const eligible = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     let { state } = startRound(eligible, rng);
     ({ state } = reduce(state, { t: "blindNil" }));
     expect(state.handRevealed[0]).toBe(false);
@@ -166,7 +199,7 @@ describe("spades — synchronized team blind decision", () => {
   function eligible(seed: number) {
     const rng = createRng(seed);
     const def = createSpades();
-    const state = { ...def.setup({ seats: 4, rng }), scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    const state = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     return { def, rng, ...startRound(state, rng) };
   }
 
@@ -283,11 +316,47 @@ describe("spades — synchronized team blind decision", () => {
   });
 });
 
+describe("spades — hand-reveal flips are ordered for display, not deal order", () => {
+  it("orders the hero's own reveal by on-screen (suit-sorted) position when their partner's team blind bid flips it", () => {
+    // The real reported scenario: HERO's own hand flips because their
+    // PARTNER made a team blind bid, not because HERO acted. `dealer: 1`
+    // makes the leader seat 2 (HERO's partner) — team 0 (seats 0 & 2)
+    // trails by 100+, so it's blind-eligible, and seat 2 bids first.
+    const rng = createRng(9);
+    const def = createSpades();
+    let state: SpadesState = {
+      ...def.setup({ seats: 4, rng }),
+      dealer: 1 as SeatId,
+      scores: { 0: 0, 1: 100, 2: 0, 3: 100 },
+    };
+    ({ state } = startRound(state, rng));
+    expect(state.leader).toBe(2);
+    expect(def.currentSeat(state)).toBe(2);
+
+    const heroHandBefore = state.hands[0] ?? [];
+    const { state: next, events } = reduce(state, { t: "blindBid", tricks: 6 }); // seat 2
+    expect(next.handRevealed[0]).toBe(true); // hero's hand really did reveal
+
+    const heroFlipOrder = events
+      .filter((e): e is GameEvent & { t: "flip" } => e.t === "flip")
+      .map((e) => e.piece)
+      .filter((id) => heroHandBefore.includes(id));
+
+    const expectedOrder = sortHandForDisplay(
+      heroHandBefore,
+      effectiveSuit,
+      (id) => cardStrength(id, STANDARD),
+    );
+
+    expect(heroFlipOrder).toEqual(expectedOrder);
+  });
+});
+
 describe("spades — the blind-nil card exchange", () => {
   it("runs give -> take: exactly the right 4 cards swap, both hands land back at 13", () => {
     const rng = createRng(11);
     const def = createSpades();
-    let state: SpadesState = { ...def.setup({ seats: 4, rng }), scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    let state: SpadesState = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     ({ state } = startRound(state, rng));
 
     ({ state } = reduce(state, { t: "blindNil" })); // seat 0
@@ -328,7 +397,7 @@ describe("spades — the blind-nil card exchange", () => {
   it("skips cleanly straight to play when the giver declines", () => {
     const rng = createRng(11);
     const def = createSpades();
-    let state: SpadesState = { ...def.setup({ seats: 4, rng }), scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    let state: SpadesState = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     ({ state } = startRound(state, rng));
     ({ state } = reduce(state, { t: "blindNil" }));
     ({ state } = reduce(state, { t: "bid", tricks: 3, nil: false }));
@@ -351,7 +420,7 @@ describe("spades — the blind-nil card exchange", () => {
     // splice two literal "??" strings into the taker's real hand).
     const rng = createRng(11);
     const def = createSpades();
-    let state: SpadesState = { ...def.setup({ seats: 4, rng }), scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    let state: SpadesState = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     ({ state } = startRound(state, rng));
     ({ state } = reduce(state, { t: "blindNil" })); // seat 0
     ({ state } = reduce(state, { t: "bid", tricks: 3, nil: false }));
@@ -390,6 +459,39 @@ describe("spades — the blind-nil card exchange", () => {
     ({ state: s } = reduce(s, { t: "bid", tricks: 2, nil: false }));
     expect(s.exchange).toBeNull();
     expect(s.phase).toBe("play");
+  });
+});
+
+describe("spades — trick resolution", () => {
+  it("highlights the winning card before collecting it to the winner", () => {
+    const { def, state } = fresh(13);
+    let s = state;
+    ({ state: s } = reduce(s, { t: "bid", tricks: 3, nil: false }));
+    ({ state: s } = reduce(s, { t: "bid", tricks: 3, nil: false }));
+    ({ state: s } = reduce(s, { t: "bid", tricks: 4, nil: false }));
+    ({ state: s } = reduce(s, { t: "bid", tricks: 2, nil: false }));
+    expect(s.phase).toBe("play");
+
+    let lastEvents: GameEvent[] = [];
+    for (let i = 0; i < 4; i++) {
+      const seat = def.currentSeat(s)!;
+      const card = legalPlays(s, seat)[0]!;
+      ({ state: s, events: lastEvents } = reduce(s, { t: "play", card }));
+    }
+
+    const highlightIdx = lastEvents.findIndex((e) => e.t === "highlight");
+    const collectIdx = lastEvents.findIndex((e) => e.t === "collect");
+    expect(highlightIdx).toBeGreaterThanOrEqual(0);
+    // Fired before collect, in the same batch — the whole point is that
+    // it's visible for collect's own HOLD.trick pause, not just the
+    // instant the sweep starts.
+    expect(collectIdx).toBeGreaterThan(highlightIdx);
+
+    const highlightEvent = lastEvents[highlightIdx];
+    if (highlightEvent?.t !== "highlight") throw new Error("expected a highlight event");
+    expect(highlightEvent.on).toBe(true);
+    // The highlighted card is genuinely the one the winner just took.
+    expect(s.won[s.leader]).toContain(highlightEvent.piece);
   });
 });
 

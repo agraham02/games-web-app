@@ -32,6 +32,28 @@ describe("choreograph", () => {
     expect(totalDuration(choreograph(deals))).toBeLessThan(4000);
   });
 
+  it("staggers a run of flips instead of queueing them end to end", () => {
+    // A whole-hand reveal (Spades: Blind Nil look, blind bid lock-in,
+    // team blind bid) is one flourish, not 13 independently-paced
+    // flips — before STAGGER.flip existed this fell back to `beatOf`'s
+    // per-event pace (~216ms/card via useChoreographer, since `offset`
+    // was unconditionally 0), stretching a 13-card reveal past 2.5s.
+    const flips: GameEvent[] = Array.from({ length: 13 }, (_, i) => ({
+      t: "flip",
+      piece: `S${i}`,
+      faceUp: true,
+    }));
+    const steps = choreograph(flips);
+
+    expect(steps[0]!.offset).toBe(0);
+    for (let i = 1; i < steps.length; i++) {
+      expect(steps[i]!.offset).toBe(STAGGER.flip * 1000);
+    }
+    // A full 13-card reveal reads as one quick flourish, not a slow
+    // scramble — well under a second total.
+    expect(totalDuration(steps)).toBeLessThan(1000);
+  });
+
   it("gives bot deliberation exactly the time it asked for", () => {
     const [step] = choreograph([{ t: "think", seat: 2, ms: 1400 }]);
     expect(step!.duration).toBe(1400);

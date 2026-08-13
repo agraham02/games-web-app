@@ -43,6 +43,7 @@ import type {
   PlacementMap,
   ReduceResult,
   SeatId,
+  SetupOptions,
 } from "@/engine/types";
 import { HERO } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
@@ -138,10 +139,17 @@ function combinations2<T>(items: readonly T[]): [T, T][] {
  * The deal itself is `startRound`'s job, which is what makes it animate.
  */
 function makeSetup(rules: SpadesRules) {
-  // Spades is always exactly 4 fixed-partnership seats — nothing in
-  // SetupOptions (seats/rng/difficulty) affects the initial state here,
-  // unlike Dominoes' variable-seat-count setup.
-  return function setup(): SpadesState {
+  // Spades is always exactly 4 fixed-partnership seats — the seat COUNT
+  // in SetupOptions never affects this, unlike Dominoes' variable-seat
+  // setup. `rng` is real, though: real Spades cuts for the first dealer
+  // randomly rather than always seating the same player first, and a
+  // hardcoded dealer meant every brand-new match opened on the exact
+  // same seat — indistinguishable from "it never rotates" if you were
+  // testing by hitting Rematch rather than playing several rounds
+  // within one match (within-match rotation itself was already correct;
+  // see startRound's `nextSeat(state.dealer)` and the regression test
+  // below).
+  return function setup(opts: SetupOptions): SpadesState {
     const num = (): Record<SeatId, number> => ({ 0: 0, 1: 0, 2: 0, 3: 0 });
     const bool = (v: boolean): Record<SeatId, boolean> => ({ 0: v, 1: v, 2: v, 3: v });
     const arr = (): Record<SeatId, PieceId[]> => ({ 0: [], 1: [], 2: [], 3: [] });
@@ -150,8 +158,9 @@ function makeSetup(rules: SpadesRules) {
       target: TARGET_SCORE,
       autoLoss: AUTO_LOSS_SCORE,
       round: 0,
-      // Sentinel so round 1 computes dealer=3, leader/first-bidder=seat 0.
-      dealer: 3,
+      // Round one is decided by this value directly (see startRound's
+      // `round === 1` branch) — a genuine random cut, not a sentinel.
+      dealer: opts.rng.pick(SEATS),
       phase: "bid",
       turn: HERO,
       hands: arr(),
@@ -179,7 +188,7 @@ function makeSetup(rules: SpadesRules) {
 
 export function startRound(state: SpadesState, rng: Rng): ReduceResult<SpadesState> {
   const round = state.round + 1;
-  // Round one is decided by the setup sentinel; after that, deal rotates.
+  // Round one is decided by setup's random cut; after that, deal rotates.
   const dealer = round === 1 ? state.dealer : nextSeat(state.dealer);
   const leader = nextSeat(dealer);
 
@@ -299,7 +308,19 @@ function reduceLook(state: SpadesState): ReduceResult<SpadesState> {
   // a real bug (a blind-eligible partner choosing to look, mid-round,
   // visibly flipped their cards for the hero to see, if only briefly
   // until the next reconcile corrected it back).
-  const events: GameEvent[] = hand.map((id) => ({ t: "flip", piece: id, faceUp: seat === HERO }));
+  //
+  // Ordered by DISPLAY position (`handDisplayOrder`), not raw deal
+  // order — a hand renders suit-sorted (see `placements()`), so
+  // flipping in deal order visibly scrambles relative to what's on
+  // screen: card 7 flips, then card 2, then card 11, with no relation
+  // to their sorted left-to-right positions. Sorting the events first
+  // makes the reveal sweep across the hand the same direction it's laid
+  // out in.
+  const events: GameEvent[] = handDisplayOrder(hand, state.rules).map((id) => ({
+    t: "flip",
+    piece: id,
+    faceUp: seat === HERO,
+  }));
   return {
     state: { ...state, handRevealed: { ...state.handRevealed, [seat]: true } },
     events,
@@ -338,7 +359,9 @@ function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
     handRevealed = { ...handRevealed, [seat]: true };
     // Same hero-relative gating as reduceLook above — a non-hero seat's
     // blind numeric bid reveals to THEM, not to the hero watching.
-    for (const id of state.hands[seat] ?? []) {
+    // Display-ordered — see reduceLook's own doc for why raw hand order
+    // reads as scrambled.
+    for (const id of handDisplayOrder(state.hands[seat] ?? [], state.rules)) {
       events.push({ t: "flip", piece: id, faceUp: seat === HERO });
     }
   }
@@ -348,7 +371,7 @@ function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
     // bidder's own — the whole team's cards land on the table together
     // the instant the team's one blind bid locks in.
     handRevealed = { ...handRevealed, [partner]: true };
-    for (const id of state.hands[partner] ?? []) {
+    for (const id of handDisplayOrder(state.hands[partner] ?? [], state.rules)) {
       events.push({ t: "flip", piece: id, faceUp: partner === HERO });
     }
   } else if (!bid.blind && state.blindEligible[partner] && !handRevealed[partner] && bids[partner] == null) {
@@ -360,7 +383,7 @@ function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
     // their own "look" action, so they never see a "go blind" option
     // that no longer exists for this team.
     handRevealed = { ...handRevealed, [partner]: true };
-    for (const id of state.hands[partner] ?? []) {
+    for (const id of handDisplayOrder(state.hands[partner] ?? [], state.rules)) {
       events.push({ t: "flip", piece: id, faceUp: partner === HERO });
     }
   }
@@ -420,8 +443,8 @@ function reduceSkipExchange(state: SpadesState): ReduceResult<SpadesState> {
   if (!ex) return { state, events: [] };
   const events: GameEvent[] = [];
   const handRevealed = { ...state.handRevealed, [ex.giver]: true };
-  // Hero-relative — see reduceLook's doc.
-  for (const id of state.hands[ex.giver] ?? []) {
+  // Hero-relative, display-ordered — see reduceLook's doc.
+  for (const id of handDisplayOrder(state.hands[ex.giver] ?? [], state.rules)) {
     events.push({ t: "flip", piece: id, faceUp: ex.giver === HERO });
   }
   events.push(leadAnnounce(state.leader));
@@ -504,8 +527,10 @@ function reduceExchangeTake(state: SpadesState, cards: [PieceId, PieceId]): Redu
   ];
 
   const handRevealed = { ...state.handRevealed, [ex.giver]: true };
-  // Hero-relative — see reduceLook's doc.
-  for (const id of giverHand) events.push({ t: "flip", piece: id, faceUp: ex.giver === HERO });
+  // Hero-relative, display-ordered — see reduceLook's doc.
+  for (const id of handDisplayOrder(giverHand, state.rules)) {
+    events.push({ t: "flip", piece: id, faceUp: ex.giver === HERO });
+  }
   events.push(leadAnnounce(state.leader));
 
   return { state: { ...state, phase: "play", hands, handRevealed, exchange: null }, events };
@@ -542,6 +567,13 @@ function reducePlay(state: SpadesState, card: PieceId): ReduceResult<SpadesState
     (id) => cardStrength(id, state.rules),
   );
 
+  // Marks the winning card itself BEFORE the collect event, not
+  // alongside it — collect's own HOLD.trick pause only starts counting
+  // once the queue actually reaches it, so highlighting here means the
+  // winner is visibly marked for that entire held beat, not just the
+  // instant the cards start flying away.
+  const winningCard = trick.find((p) => p.seat === winner)!.card;
+  events.push({ t: "highlight", piece: winningCard, on: true });
   events.push({ t: "collect", pieces: trick.map((p) => p.card), to: winner });
   events.push({
     t: "announce",
@@ -588,7 +620,7 @@ function endRound(state: SpadesState, events: GameEvent[]): ReduceResult<SpadesS
     2: state.bids[2]!,
     3: state.bids[3]!,
   };
-  const { deltas, bags, bagPenalty } = scoreRound(bids, state.tricksWon, state.bags);
+  const { deltas, bags, bagPenalty, bagsAdded } = scoreRound(bids, state.tricksWon, state.bags);
 
   const scores: Record<SeatId, number> = {};
   const nilsAttempted = { ...state.nilsAttempted };
@@ -601,7 +633,7 @@ function endRound(state: SpadesState, events: GameEvent[]): ReduceResult<SpadesS
     }
   }
 
-  const result: RoundResult = { bids, tricksWon: { ...state.tricksWon }, deltas, bags, bagPenalty };
+  const result: RoundResult = { bids, tricksWon: { ...state.tricksWon }, deltas, bags, bagPenalty, bagsAdded };
   events.push({ t: "score", deltas });
   events.push({ t: "roundEnd", round: state.round });
 

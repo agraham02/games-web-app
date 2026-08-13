@@ -80,6 +80,15 @@ const DEFAULT_END_HOLD_MS = 1200;
 const DEFAULT_ROUND_HOLD_MS = 1000;
 
 /**
+ * How long the "Round N" title card (`RoundIntro`) stays up over the
+ * opening deal — a fixed hold, deliberately NOT tied to how long that
+ * round's deal actually takes to animate. It is a brief announcement
+ * layered over the deal (see RoundIntro's own doc), not a mask for the
+ * whole thing.
+ */
+const ROUND_INTRO_HOLD_MS = 3000;
+
+/**
  * Events the table itself cannot show. `applyEventToTable` deliberately
  * only knows about placements, so without this an `announce` fell
  * straight through its `default:` and was silently dropped — which is
@@ -172,6 +181,16 @@ export interface GameRuntime<S, A> {
   showRoundSummary: boolean;
   /** 1-based round number, for a scorecard's heading. */
   round: number;
+  /**
+   * Non-null for a fixed hold right as a round's deal is DISPATCHED —
+   * NOT derived from `round` above, which only publishes once that
+   * deal's entire animation has finished (see `state`'s own doc on why
+   * that publish is deliberately late). Gate a `RoundIntro` on
+   * `dealingRound !== null`, not on watching `round` change. Carries the
+   * round number the incoming deal is FOR, so the intro doesn't have to
+   * wait a beat behind it either.
+   */
+  dealingRound: number | null;
   /** Deals the next round and clears the scorecard. No-op unless a round
    * is actually over. Wire this to the scorecard's continue button. */
   nextRound: () => void;
@@ -254,6 +273,43 @@ export function useGameRuntime<S, A>(
       if (roundHoldTimer.current !== null) clearTimeout(roundHoldTimer.current);
     };
   }, []);
+
+  // See `GameRuntime.dealingRound`'s doc — published synchronously from
+  // `pushDeal`, not derived from `state`.
+  const [dealingRound, setDealingRound] = useState<number | null>(null);
+
+  // Auto-clears `dealingRound` after its hold — a genuine dependency
+  // effect, NOT an imperative ref+setTimeout tucked inside `pushDeal`
+  // (an earlier version did exactly that, and it broke under React 18
+  // dev StrictMode specifically: the `started`-guarded mount effect
+  // below calls `pushDeal` SYNCHRONOUSLY on mount, which scheduled the
+  // clear-timer inside that same initial effects pass — but StrictMode
+  // double-invokes ALL of a commit's effects as mount -> cleanup ->
+  // mount, and the OTHER cleanup effect just above (covering
+  // holdTimer/endHoldTimer/roundHoldTimer) ran its cleanup in that same
+  // pass too, cancelling the freshly-scheduled deal-intro timer. Because
+  // `started.current` was already `true` by the remount pass, the
+  // `started` effect's body never ran again to reschedule it — leaving
+  // `dealingRound` stuck non-null forever in dev, exactly the "does not
+  // go away" report. A dependency effect has no such gate: StrictMode's
+  // mount -> cleanup -> mount runs THIS effect three times too, but that
+  // means schedule -> cancel -> reschedule, which always lands on a live
+  // timer either way. Also correctly re-arms on every later round (the
+  // dependency changing from one round's number to the next), without
+  // needing `pushDeal` to think about clearing anything itself.
+  useEffect(() => {
+    if (dealingRound === null) return;
+    // Same "always go through a real timer, just a 0ms one" shape
+    // `onIdle`'s own holds use for reduced motion — a synchronous
+    // setState call inside an effect body (calling it directly here
+    // instead) triggers React's own cascading-render lint rule, and
+    // isn't needed anyway: a 0ms timeout still clears on the very next
+    // tick, which reduced motion only cares about being "effectively
+    // instant," not literally synchronous.
+    const delay = prefersReducedMotion() ? 0 : ROUND_INTRO_HOLD_MS;
+    const t = setTimeout(() => setDealingRound(null), delay);
+    return () => clearTimeout(t);
+  }, [dealingRound]);
 
   // Gates `showSummary` — see DEFAULT_END_HOLD_MS. Resets to false
   // automatically on a rematch because GameHost remounts this whole hook
@@ -411,6 +467,14 @@ export function useGameRuntime<S, A>(
     if (!definition.startRound) return;
     const { state: next, events } = definition.startRound(stateRef.current, rng);
     stateRef.current = next;
+    // Published NOW, synchronously — `state` (and so `round`) only
+    // update once this deal's whole batch finishes animating (see
+    // `onIdle`'s doc), which would show the intro after the deal is
+    // already over. Structural read, like `extractRound` below, since
+    // `startRound`'s return type isn't required to carry `round`. The
+    // auto-clear lives in its own effect above — see that effect's doc
+    // for why it can't live here.
+    setDealingRound(extractRound(next));
     choreographer.push(events);
   };
 
@@ -479,6 +543,7 @@ export function useGameRuntime<S, A>(
     showSummary: isOver && gameEndRevealed,
     showRoundSummary: !isOver && roundOver && roundEndRevealed,
     round: extractRound(state),
+    dealingRound,
     nextRound,
     autoAdvance: opts.autoAdvance !== false,
     busy: choreographer.isPlaying || (!isOver && currentSeat !== HERO),

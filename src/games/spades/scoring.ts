@@ -32,6 +32,20 @@ export interface RoundScore {
   /** -100 per bag-penalty threshold crossed this round (0 if none),
    * mirrored per team. */
   bagPenalty: Record<SeatId, number>;
+  /**
+   * THIS round's overtricks, mirrored per team — `bags[seat] -
+   * (bags[seat] before this round)`, exposed directly rather than making
+   * every caller re-derive it. It's the team's shared total (one player
+   * under their own bid and the other over nets out at the TEAM level,
+   * same as bags always have — see `bagsAdded`'s own doc below), not a
+   * per-seat "this player personally overtricked" count. A UI showing
+   * "N bags" on an individual player's row should read from here, not
+   * recompute `tricksWon[seat] - bid[seat].tricks` itself — that naive
+   * per-seat difference over/undercounts whenever the two partners'
+   * individual bid/tricks don't happen to match their own share exactly
+   * (see spades/page.tsx's `roundSummary`, which had exactly this bug).
+   */
+  bagsAdded: Record<SeatId, number>;
 }
 
 export function scoreRound(
@@ -42,6 +56,7 @@ export function scoreRound(
   const deltas: Record<SeatId, number> = {};
   const bags: Record<SeatId, number> = {};
   const bagPenalty: Record<SeatId, number> = {};
+  const bagsAddedOut: Record<SeatId, number> = {};
 
   for (const team of [0, 1] as const) {
     const [a, b] = teammates(team);
@@ -106,8 +121,9 @@ export function scoreRound(
       deltas[seat] = delta;
       bags[seat] = totalBags;
       bagPenalty[seat] = crossings * 100;
+      bagsAddedOut[seat] = bagsAdded;
     }
   }
 
-  return { deltas, bags, bagPenalty };
+  return { deltas, bags, bagPenalty, bagsAdded: bagsAddedOut };
 }

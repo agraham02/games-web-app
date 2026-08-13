@@ -65,6 +65,13 @@ export function choreograph(
         steps.push({ event, offset: 0, duration: DURATION.play * MS });
         break;
 
+      case "highlight":
+        // Instant, like a flag flip — the actual READ time comes from
+        // whatever follows it (e.g. `collect`'s own HOLD.trick offset),
+        // not from this event having any duration of its own.
+        steps.push({ event, offset: 0, duration: 0 });
+        break;
+
       case "collect":
         steps.push({
           event,
@@ -78,7 +85,14 @@ export function choreograph(
         break;
 
       case "flip":
-        steps.push({ event, offset: 0, duration: DURATION.flip * MS });
+        // Same "runs of the same event overlap" idea as `deal` above —
+        // see STAGGER.flip's own doc for why a whole-hand reveal needs
+        // this at all.
+        steps.push({
+          event,
+          offset: sameRunAsPrev ? STAGGER.flip * MS : 0,
+          duration: DURATION.flip * MS,
+        });
         break;
 
       case "move":

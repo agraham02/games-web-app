@@ -56,6 +56,9 @@ export interface RoundResult {
   /** -100 per bag-penalty threshold crossed this round (0 if none),
    * mirrored per team. */
   bagPenalty: Record<SeatId, number>;
+  /** THIS round's overtricks, mirrored per team — see `RoundScore`'s own
+   * doc in scoring.ts for why a UI shouldn't recompute this per seat. */
+  bagsAdded: Record<SeatId, number>;
 }
 
 export interface TrickCardPlay {

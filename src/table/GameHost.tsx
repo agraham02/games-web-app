@@ -13,6 +13,7 @@
  * down without a bespoke context provider for one hook's output.
  */
 
+import { useEffect } from "react";
 import { HERO, type GameDefinition, type PieceId, type SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
@@ -21,10 +22,12 @@ import { SeatRing } from "./SeatRing";
 import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
+import { useTableStore } from "./store";
 import { GameToaster } from "@/ui/disclosure";
 import {
   GameEndSummary,
   RoundEndScorecard,
+  RoundIntro,
   type ScoreRow,
 } from "@/ui/phases/PhaseScreens";
 import { useGameRuntime, type GameRuntime, type GameRuntimeOptions } from "./useGameRuntime";
@@ -112,6 +115,28 @@ export function GameHost<S, A>({
     // built around, so the conversion happens right at this boundary.
     dealStaggerMs: DEFAULT_DEAL_STAGGER_MS / devSettings.dealSpeed,
   });
+  // Synced into the shared table store, not read as a prop threaded
+  // through PieceLayer — the piece that actually needs this (a hero-hand
+  // card, in any game) lives several components below here, and a
+  // written-in-an-effect store value is this app's established answer
+  // to "ambient fact every hand piece needs" (see heroHoverIndex's own
+  // doc). An effect, not a render-time write, for the same tearing
+  // reason every other store write in this app avoids doing it inline —
+  // see useChoreographer's own comment on exactly this.
+  useEffect(() => {
+    const store = useTableStore.getState();
+    store.setHeroTurnActive(live.isHeroTurn);
+    // A hover/tap-preview is meaningless once the hero's turn ends — but
+    // nothing else ever cleared it. `heroHoverIndex` is a HAND INDEX, not
+    // a piece id, and playing a card doesn't fire a real mouseleave (the
+    // pointer never moves; the card just flies away and the rest of the
+    // hand reindexes under it) — so the stored index silently kept
+    // pointing at whatever card now occupies that slot, leaving it stuck
+    // lifted/spread until the player happened to hover something else.
+    // Turn-end is the one moment that's true for every game sharing this
+    // hook, not just Spades.
+    if (!live.isHeroTurn) store.setHeroHoverIndex(null);
+  }, [live.isHeroTurn]);
   // The match winner takes priority, but is only ever non-null right at
   // the very end; the far more common "someone just won" moment in a
   // multi-round game is a round winner — see `roundWinner`'s doc for why
@@ -143,6 +168,20 @@ export function GameHost<S, A>({
       <SeatRing players={seatViews} />
       <HeroWinFlourish show={winningSeats?.includes(HERO) ?? false} />
       <GameToaster />
+
+      {/* Was already a finished component (see /lab/phases) but nothing
+          actually rendered it on a real table — `dealingRound` is
+          published the instant a round's deal is DISPATCHED, not once
+          `state`/`round` catch up (that only happens after the whole
+          deal has finished animating, far too late for an intro meant
+          to appear as the deal begins). Self-clears on its own hold, so
+          this is genuinely "a brief title card over the deal," not a
+          mask blocking it — see useGameRuntime's own doc. */}
+      <RoundIntro
+        show={live.dealingRound !== null}
+        eyebrow={`Round ${live.dealingRound ?? live.round}`}
+        title={gameTitle}
+      />
 
       <RoundEndScorecard
         show={Boolean(card)}

@@ -80,6 +80,46 @@ describe("chip pile clamping — collected", () => {
       }
     }
   });
+
+  it("clears the pod by a comparable ABSOLUTE distance regardless of anchor", () => {
+    // Clearance is derived from the pod's own footprint (`axisReach`
+    // against POD_SIZE), not from how far that seat happens to sit from
+    // table centre — an earlier version scaled with the latter (`len`)
+    // on the assumption a wide table's TOP/BOTTOM seats sit further from
+    // centre than LEFT/RIGHT ones, which is backwards: wide density's
+    // real horizontal room means LEFT/RIGHT seats are the ones far from
+    // centre, while a top seat sits close to it. That heuristic silently
+    // changed the seats nobody complained about while leaving the actual
+    // "too far from the pod" seats essentially untouched. Since
+    // POD_SIZE is close to square at every density, every anchor should
+    // now clear by roughly the same PX distance, independent of `len`.
+    for (const density of DENSITIES) {
+      const g = resolveTable({ seats: 4, width: 1440, height: 900, density });
+
+      const clearanceOf = (seatId: number) => {
+        const seat = g.seats.find((s) => s.seat === seatId)!;
+        const box = pieceOnScreen("collected", seatId, 0, 1, g);
+        const pileX = (box.left + box.right) / 2;
+        const pileY = (box.top + box.bottom) / 2;
+        return Math.hypot(seat.x - pileX, seat.y - pileY);
+      };
+
+      const topSeat = g.seats.find((s) => s.anchor === "top")!.seat;
+      const sideSeat = g.seats.find((s) => s.anchor === "left" || s.anchor === "right")!.seat;
+      const topClearance = clearanceOf(topSeat);
+      const sideClearance = clearanceOf(sideSeat);
+
+      const label = density;
+      expect(topClearance, label).toBeGreaterThan(0);
+      expect(sideClearance, label).toBeGreaterThan(0);
+      // Within 20% of each other — comparable, not identical (the pod
+      // isn't perfectly square), but nowhere near the several-times-off
+      // gap the len-based version produced on a wide viewport.
+      expect(Math.abs(topClearance - sideClearance), label).toBeLessThan(
+        Math.max(topClearance, sideClearance) * 0.2,
+      );
+    }
+  });
 });
 
 /* ============================================================

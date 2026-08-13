@@ -80,19 +80,58 @@ export function RoundIntro({
    Turn indicator — inline HUD, never a popup.
    ============================================================ */
 
+/**
+ * Shown ONLY while it's genuinely the hero's move (every call site gates
+ * `show` on that already) — so making this unmissable is exactly the
+ * point. The pulsing halo behind the label reuses the same
+ * opacity/scale pulse language as SeatRing's `ThinkingRing` (a bot
+ * deliberating), so the two read as one consistent "something is
+ * happening here, act or wait" motion vocabulary across every game that
+ * uses this shared component — which, as of writing, is all of them.
+ */
 export function TurnIndicator({ label, show }: { label: string; show: boolean }) {
   return (
     <AnimatePresence>
       {show ? (
         <motion.div
-          className="pointer-events-none absolute left-1/2 z-900 -translate-x-1/2 text-[11px] font-bold tracking-[0.16em] text-brass-300 uppercase"
+          // z-1000, above HeroStatusBadge's z-900 — on a narrow phone the
+          // label can wrap to 2 lines and reach far enough left to brush
+          // against the hero's own left-anchored bid badge; at equal
+          // z-index the badge (rendered later in the DOM, in every game's
+          // table overlay) always won that tie and covered the turn cue.
+          // This is the one that says "act now" — it should never lose a
+          // stacking fight with an ambient, passive readout.
+          className="pointer-events-none absolute left-1/2 z-1000 -translate-x-1/2"
           style={{ bottom: "calc(var(--hand-zone, 150px) + 8px)" }}
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
           transition={TRANSITIONS.ui}
         >
-          {label}
+          {/* `text-center` belongs HERE, not on the inline <span> below —
+              text-align governs how a BLOCK's own line boxes wrap, and an
+              inline element sets none of its own; centering it on the
+              span was a no-op, which is why a wrapped 2-line label (a
+              real case on a narrow phone) rendered left-ragged despite
+              the outer block itself being screen-centered. */}
+          <div className="relative px-3 py-1 text-center">
+            <motion.span
+              aria-hidden
+              className="pointer-events-none absolute -inset-5 rounded-full"
+              style={{
+                background: "radial-gradient(closest-side, rgb(212 175 106 / 0.65), transparent 72%)",
+                filter: "blur(10px)",
+              }}
+              animate={{ opacity: [0.35, 1, 0.35], scale: [0.9, 1.08, 0.9] }}
+              transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+            />
+            <span
+              className="relative text-[11px] font-bold tracking-[0.16em] text-brass-300 uppercase"
+              style={{ textShadow: "0 0 10px rgb(212 175 106 / 0.7)" }}
+            >
+              {label}
+            </span>
+          </div>
         </motion.div>
       ) : null}
     </AnimatePresence>
@@ -132,6 +171,11 @@ export function HeroStatusBadge({
     <AnimatePresence>
       {show ? (
         <motion.div
+          // z-900, deliberately BELOW TurnIndicator's z-1000 — see that
+          // component's own doc. This badge is an ambient, always-on
+          // readout; the turn cue is the one thing that must never be
+          // hidden if the two ever brush against each other on a narrow
+          // screen.
           className={`pointer-events-none absolute z-900 rounded-full bg-felt-950/78 px-3.5 py-2 text-[11px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm ${
             side === "left" ? "left-3" : "right-3"
           }`}

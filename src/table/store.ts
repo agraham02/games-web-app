@@ -61,6 +61,17 @@ interface TableState {
    * `useHeroHoverIndex`).
    */
   heroHoverIndex: number | null;
+  /**
+   * Mirrors `GameRuntime.isHeroTurn` — GameHost syncs it in on every
+   * change. Lives here, not as a prop threaded through PieceLayer,
+   * because the piece that needs it (a hero-hand card, in ANY game) is
+   * several component layers below where the runtime lives, and a
+   * shared store is what the hover-index work above already established
+   * as this app's answer to "ambient table-wide fact every hand piece
+   * needs, cheaply." Defaults true so a game with no turn concept yet
+   * wired up (nothing currently) never dims anything by omission.
+   */
+  heroTurnActive: boolean;
 
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
@@ -72,6 +83,7 @@ interface TableState {
   /** Drops every transient visual flag. Cheap way to exit a mode. */
   clearFlags(): void;
   setHeroHoverIndex(index: number | null): void;
+  setHeroTurnActive(active: boolean): void;
 }
 
 function boundsOf(
@@ -125,6 +137,7 @@ export const useTableStore = create<TableState>((set) => {
     board: null,
     ghosts: [],
     heroHoverIndex: null,
+    heroTurnActive: true,
 
     setGeometry: (geometry) => set({ geometry }),
 
@@ -188,6 +201,9 @@ export const useTableStore = create<TableState>((set) => {
 
     setHeroHoverIndex: (index) =>
       set((s) => (s.heroHoverIndex === index ? s : { heroHoverIndex: index })),
+
+    setHeroTurnActive: (active) =>
+      set((s) => (s.heroTurnActive === active ? s : { heroTurnActive: active })),
   };
 });
 
@@ -231,3 +247,12 @@ export const usePieceIds = () =>
 export const useHeroHoverIndex = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.heroHoverIndex : null));
 export const useSetHeroHoverIndex = () => useTableStore((s) => s.setHeroHoverIndex);
+
+/**
+ * See `TableState.heroTurnActive`'s doc. Same enabled-gated-selector
+ * trick as `useHeroHoverIndex` — a piece that isn't in the hero's own
+ * hand selects a constant `true` (never dims/shrinks it, never
+ * re-renders it when the real value changes).
+ */
+export const useHeroTurnActive = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.heroTurnActive : true));

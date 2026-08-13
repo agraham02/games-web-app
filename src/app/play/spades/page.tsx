@@ -546,13 +546,30 @@ function roundSummary(state: SpadesState) {
     const seat = i as SeatId;
     const bid = result.bids[seat]!;
     const won = result.tricksWon[seat] ?? 0;
-    const overtricks = !bid.nil && won > bid.tricks ? won - bid.tricks : 0;
+    // The TEAM's shared overtricks for the round, from `scoreRound`
+    // directly — NOT `won - bid.tricks` computed per seat. Bags are a
+    // team-level concept (the combined contract's combined overtricks),
+    // so a naive per-seat difference over/undercounts the instant the
+    // two partners' own bid/tricks don't individually line up: one
+    // partner short 2 or their own bid while the other is up 4 nets out
+    // to a real team bagsAdded of 2, but the old per-seat calc showed
+    // "4 bags" on just the second row (and nothing on the first) — a
+    // number that never matched what was actually scored.
+    const overtricks = result.bagsAdded[seat] ?? 0;
+    // Shown on only ONE of the two partner rows (the lower seat), not
+    // both — `overtricks` is identical for a team's two rows (it's a
+    // team quantity), and `ScoreRowGroup` renders each row's own `flag`
+    // independently inline in its own detail line, unlike `delta`/
+    // `total`, which it already reads once from the group's first row.
+    // Showing the same "2 bags" flag on BOTH lines would misread as "2
+    // bags each" (4 total) instead of "2 bags, shared by the team".
+    const showFlag = seat === teammates(teamOf(seat))[0];
     rows.push({
       seat,
       name: seatName(seat),
       colour: seatColour(seat),
       detail: `${bid.nil ? describeBid(bid) : `bid ${describeBid(bid)}`} · won ${won}`,
-      flag: overtricks > 0 ? `${overtricks} bag${overtricks === 1 ? "" : "s"}` : undefined,
+      flag: showFlag && overtricks > 0 ? `${overtricks} bag${overtricks === 1 ? "" : "s"}` : undefined,
       delta: result.deltas[seat] ?? 0,
       total: state.scores[seat] ?? 0,
       // Partners' round delta/total are always identical (see

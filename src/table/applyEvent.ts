@@ -22,8 +22,23 @@ import type {
 import { STAGGER } from "@/motion/presets";
 import { useTableStore } from "./store";
 
-/** Pieces sharing a bucket are indexed and fanned together. */
-function bucketKey(p: Placement): string {
+/**
+ * Pieces sharing a bucket are indexed and fanned together — EXCEPT a
+ * `hidden` one, which gets its own solo bucket instead. A hidden piece
+ * is functionally gone (faded to invisible), so it must not keep
+ * inflating the count/index its still-visible zone-mates lay themselves
+ * out from. Without this, a zone nothing ever clears mid-round (Spades'
+ * `collected`: every trick a seat has ever won stays tracked there,
+ * fading to `hidden` but never leaving the bucket until the round's own
+ * end-of-round sweep) keeps growing all round long — so `layoutPiece`'s
+ * "collected" grid packed each new trick's cards a little further out
+ * than the last, even though every earlier trick was already invisible.
+ * A solo, id-keyed bucket removes it from that shared math without
+ * moving it to a different zone or dropping it from the map outright
+ * (which would skip its own fade — see `moveTo`'s doc below).
+ */
+function bucketKey(p: Placement, id: PieceId): string {
+  if (p.hidden) return `hidden|${id}`;
   return `${p.zone}|${p.seat ?? "-"}|${p.group ?? "-"}`;
 }
 
@@ -34,7 +49,7 @@ export function reindex(map: PlacementMap): PlacementMap {
   const buckets = new Map<string, PieceId[]>();
 
   for (const [id, p] of Object.entries(map)) {
-    const key = bucketKey(p);
+    const key = bucketKey(p, id);
     const list = buckets.get(key);
     if (list) list.push(id);
     else buckets.set(key, [id]);
@@ -180,6 +195,13 @@ export function applyEventToTable(event: GameEvent): void {
         // staggered arrival, so any leftover delay from a prior
         // collect/sweep on this piece must not carry over.
         map[event.piece] = { ...map[event.piece]!, faceUp: event.faceUp, motionDelayMs: undefined };
+        touched = true;
+      }
+      break;
+
+    case "highlight":
+      if (map[event.piece]) {
+        map[event.piece] = { ...map[event.piece]!, highlighted: event.on };
         touched = true;
       }
       break;

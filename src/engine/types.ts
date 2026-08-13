@@ -158,6 +158,15 @@ export type GameEvent =
   /** Arbitrary relocation when nothing more specific fits. */
   | { t: "move"; piece: PieceId; to: Placement }
   | { t: "flip"; piece: PieceId; faceUp: boolean }
+  /**
+   * Toggles the same border/glow `Placement.highlighted` already draws
+   * for a legal target — reused here to mark a specific piece as
+   * notable for a reason that isn't "you may act on this" (a trick's
+   * winning card, say). Fired as its own event, ahead of whatever moves
+   * the piece next, so it's visible for a real beat rather than only
+   * during the instant that move's own animation begins.
+   */
+  | { t: "highlight"; piece: PieceId; on: boolean }
   /** Sweeping a won trick to a seat. Staggered inward. */
   | { t: "collect"; pieces: PieceId[]; to: SeatId }
   /**

@@ -48,6 +48,16 @@ export const STAGGER = {
   meld: 0.05,
   /** See DURATION.sweep — capped low deliberately, not a per-piece pace. */
   sweep: 0.012,
+  /**
+   * A whole-hand reveal (Spades: a Blind Nil look, a blind numeric bid
+   * locking in, a team blind bid pulling the partner's hand up too) is
+   * a single flourish, not 13 independent flips — without a same-run
+   * stagger here `choreograph`'s "flip" case fell back to `beatOf`'s
+   * per-event pace (~216ms/card), stretching a full hand's reveal past
+   * 2.5s. Tighter than `deal` on purpose: a reveal is one gesture the
+   * eye reads as a sweep, not cards individually arriving.
+   */
+  flip: 0.05,
 } as const;
 
 /** Overshoot-free spring: damping is high enough that it never rebounds. */
@@ -74,4 +84,18 @@ export const TRANSITIONS = {
 export function prefersReducedMotion(): boolean {
   if (typeof window === "undefined") return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * True on a device with a real mouse — a genuine hover state that
+ * previews without committing. False on touch-primary devices (no
+ * pointer that can rest over something without acting on it), which is
+ * what PieceLayer's hand-card hover uses to decide whether a tap should
+ * preview-then-confirm (touch) or act immediately (mouse, since hover
+ * already did the previewing). `(pointer: fine)` alongside `(hover:
+ * hover)` rules out a mouse-emulated hover on a coarse touchscreen.
+ */
+export function supportsHover(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 }

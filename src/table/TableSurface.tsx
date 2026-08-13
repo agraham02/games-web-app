@@ -110,6 +110,14 @@ export function TableSurface({
             "--hand-zone": handHeight !== null ? `${handHeight}px` : undefined,
           } as React.CSSProperties
         }
+        // Tapping the bare felt cancels a touch-preview left open by
+        // PieceLayer's tap-to-preview/tap-to-confirm (see that file) —
+        // `target === currentTarget` means this only fires for a genuine
+        // click on THIS div, never one that bubbled up from a piece or
+        // an overlay button. A no-op whenever nothing is previewed.
+        onClick={(e) => {
+          if (e.target === e.currentTarget) useTableStore.getState().setHeroHoverIndex(null);
+        }}
       >
         {children}
         <PieceLayer onPieceTap={onPieceTap} />

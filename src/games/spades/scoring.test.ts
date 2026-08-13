@@ -183,6 +183,44 @@ describe("scoreRound — bag rollover", () => {
   });
 });
 
+describe("scoreRound — bagsAdded (this round's team overtricks, exposed directly)", () => {
+  it("mirrors this round's raw overtrick count per team, separate from the cumulative `bags` total", () => {
+    // Team A target: 3 + 2 = 5, takes 4 + 3 = 7 -> 2 added this round.
+    const bids = { 0: bid(3), 1: bid(4), 2: bid(2), 3: bid(3) };
+    const tricksWon = { 0: 4, 1: 4, 2: 3, 3: 2 };
+    const priorBags: Record<SeatId, number> = { 0: 8, 1: 0, 2: 8, 3: 0 };
+    const { bagsAdded, bags } = scoreRound(bids, tricksWon, priorBags);
+    expect(bagsAdded[0]).toBe(2);
+    expect(bagsAdded[2]).toBe(2); // mirrored across the team, like `bags`
+    expect(bags[0]).toBe(10); // 8 prior + 2 added — a DIFFERENT number
+  });
+
+  it("is the TEAM's net overtricks, not the sum of each partner's own individual overtricks", () => {
+    // Team A: seat 0 bids 3 but wins only 1 (2 tricks SHORT of their own
+    // bid); seat 2 bids 3 and wins 7 (4 tricks OVER their own bid). A
+    // naive per-seat calculation (what spades/page.tsx's round summary
+    // used to do) would show seat 0 with 0 "bags" (never negative) and
+    // seat 2 with 4 — reading as "4 bags," which never matched what was
+    // actually scored. The real team contract is 3+3=6, the team took
+    // 1+7=8, so the team's real bagsAdded is 8-6=2, mirrored on BOTH
+    // seats — seat 0's shortfall genuinely offsets seat 2's excess at
+    // the team level, exactly like the combined bid does.
+    const bids = { 0: bid(3), 1: bid(2), 2: bid(3), 3: bid(2) };
+    const tricksWon = { 0: 1, 1: 2, 2: 7, 3: 3 };
+    const { bagsAdded } = scoreRound(bids, tricksWon, NO_BAGS);
+    expect(bagsAdded[0]).toBe(2);
+    expect(bagsAdded[2]).toBe(2);
+  });
+
+  it("is 0 whenever the team's contract failed (bags never accrue on a set)", () => {
+    const bids = { 0: bid(5), 1: bid(3), 2: bid(5), 3: bid(3) };
+    const tricksWon = { 0: 3, 1: 4, 2: 3, 3: 2 }; // team A: 6 tricks, target 10 -> failed
+    const { bagsAdded } = scoreRound(bids, tricksWon, NO_BAGS);
+    expect(bagsAdded[0]).toBe(0);
+    expect(bagsAdded[2]).toBe(0);
+  });
+});
+
 describe("match-level constants", () => {
   it("are sane, easy-to-retune numbers", () => {
     expect(TARGET_SCORE).toBeGreaterThan(0);

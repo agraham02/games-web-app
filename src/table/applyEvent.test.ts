@@ -96,6 +96,46 @@ describe("reindex", () => {
     expect(reindex({})).toEqual({});
   });
 
+  it("excludes hidden pieces from a bucket's count/index entirely", () => {
+    // Spades' `collected` zone never clears mid-round — a seat's whole
+    // won-tricks history stays tracked there, fading to `hidden` but
+    // never actually leaving the bucket until the round's own
+    // end-of-round sweep. Without this, a bucket with many old, already-
+    // invisible pieces keeps inflating count/index for every NEW arrival
+    // sharing it, pushing later tricks' landing spot further out with
+    // every trick won (see layout.ts's "collected" case).
+    const collected = (index: number, count: number, hidden?: boolean) => ({
+      zone: "collected" as const,
+      seat: 0,
+      index,
+      count,
+      faceUp: false,
+      hidden,
+    });
+    const map: PlacementMap = {
+      OLD1: collected(0, 8, true),
+      OLD2: collected(1, 8, true),
+      OLD3: collected(2, 8, true),
+      OLD4: collected(3, 8, true),
+      NEW1: collected(4, 8),
+      NEW2: collected(5, 8),
+    };
+    const next = reindex(map);
+    // The two VISIBLE pieces renumber as if they were alone — no trace
+    // of the 4 already-hidden ones sharing the old bucket.
+    expect(next.NEW1!.index).toBe(0);
+    expect(next.NEW1!.count).toBe(2);
+    expect(next.NEW2!.index).toBe(1);
+    expect(next.NEW2!.count).toBe(2);
+    // Each hidden piece gets its own solo bucket, not shared with the
+    // other hidden ones either — a lone hidden piece renumbers to (0, 1)
+    // regardless of how many other hidden pieces exist.
+    expect(next.OLD1!.index).toBe(0);
+    expect(next.OLD1!.count).toBe(1);
+    expect(next.OLD4!.index).toBe(0);
+    expect(next.OLD4!.count).toBe(1);
+  });
+
   it("preserves motionDelayMs through its identity-preservation path", () => {
     // reindex only special-cases index/count and otherwise spreads or
     // reuses the whole object — worth pinning explicitly, since this is
@@ -184,5 +224,65 @@ describe("applyEventToTable — collect/sweep stagger (motionDelayMs)", () => {
       to: { zone: "line", index: 0, count: 1, faceUp: true },
     });
     expect(useTableStore.getState().placements.B!.motionDelayMs).toBeUndefined();
+  });
+});
+
+describe("applyEventToTable — collected pile does not creep across a round", () => {
+  it("keeps a new trick's live index small even after many earlier tricks were collected and hidden", () => {
+    const meta: Record<string, PieceMeta> = {};
+    useTableStore.getState().reset({}, meta);
+
+    let cardNum = 0;
+    // Mirrors real play: `collect` moves 4 cards to the winner's pile
+    // (optimistic, via applyEvent — not yet hidden), then once that
+    // batch settles the game's own `placements()` reconcile marks them
+    // `hidden` — simulated here with a direct patch, the same effect
+    // `useGameRuntime`'s onIdle reconcile has.
+    for (let trick = 0; trick < 6; trick++) {
+      const pieces = [0, 1, 2, 3].map(() => `C${cardNum++}`);
+      const map: PlacementMap = {};
+      for (const id of pieces) map[id] = { zone: "hand", seat: 0, index: 0, count: 1, faceUp: true };
+      for (const id of pieces) useTableStore.getState().setPlacement(id, map[id]!);
+      applyEventToTable({ t: "collect", pieces, to: 0 });
+      for (const id of pieces) useTableStore.getState().patch(id, { hidden: true });
+    }
+
+    // The 7th trick arrives after 24 already-hidden cards share its old
+    // bucket. Its own index should still be 0-3, exactly as if it were
+    // the very first trick of the round.
+    const finalTrick = [0, 1, 2, 3].map(() => `C${cardNum++}`);
+    for (const id of finalTrick) {
+      useTableStore.getState().setPlacement(id, { zone: "hand", seat: 0, index: 0, count: 1, faceUp: true });
+    }
+    applyEventToTable({ t: "collect", pieces: finalTrick, to: 0 });
+    const placements = useTableStore.getState().placements;
+    for (const id of finalTrick) {
+      expect(placements[id]!.index, id).toBeLessThan(4);
+      expect(placements[id]!.count, id).toBe(4);
+    }
+  });
+});
+
+describe("applyEventToTable — highlight", () => {
+  it("sets and clears `highlighted` on exactly the targeted piece", () => {
+    const map: PlacementMap = {
+      A: { zone: "trick", seat: 0, index: 0, count: 2, faceUp: true },
+      B: { zone: "trick", seat: 1, index: 1, count: 2, faceUp: true },
+    };
+    const meta: Record<string, PieceMeta> = { A: { kind: "card", face: "A" }, B: { kind: "card", face: "B" } };
+    useTableStore.getState().reset(map, meta);
+
+    applyEventToTable({ t: "highlight", piece: "A", on: true });
+    expect(useTableStore.getState().placements.A!.highlighted).toBe(true);
+    expect(useTableStore.getState().placements.B!.highlighted).toBeFalsy();
+
+    applyEventToTable({ t: "highlight", piece: "A", on: false });
+    expect(useTableStore.getState().placements.A!.highlighted).toBe(false);
+  });
+
+  it("is a no-op for an untracked piece id, like every other event", () => {
+    useTableStore.getState().reset({}, {});
+    expect(() => applyEventToTable({ t: "highlight", piece: "ghost", on: true })).not.toThrow();
+    expect(useTableStore.getState().placements.ghost).toBeUndefined();
   });
 });

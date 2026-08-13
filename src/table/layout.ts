@@ -603,12 +603,30 @@ export function layoutPiece(
       const row = Math.floor(p.index / cols);
       const colSpacing = chipSize * 0.85;
       const rowSpacing = chipSize * 0.9;
-      // Clears the pod (~half its real rendered height, see SeatRing.tsx)
-      // with a visible gap to spare, not just a non-overlapping hair —
-      // the hero's own pile also has to clear the turn-indicator text
-      // sitting just above the hand zone, which needs a bit more than
-      // bare pod clearance.
-      const clearance = g.miniCard.h * 1.9;
+      // Clears the pod by its own real footprint along the push
+      // direction (ux, uy) — the same `axisReach` helper this file's
+      // opponent-hand placement already uses for exactly this question
+      // ("how far past this pod does something reaching outward from it
+      // need to start"), plus a little breathing room so the pile
+      // visibly separates rather than grazing the pod's edge.
+      //
+      // Deliberately NOT derived from `len` (the seat's distance to
+      // table centre) — an earlier version scaled clearance with `len`,
+      // reasoning that on a wide table a TOP/BOTTOM seat's span to
+      // centre is longer than a LEFT/RIGHT seat's. That's backwards: a
+      // wide table's real horizontal room means LEFT/RIGHT seats are
+      // the ones far from centre (large `len`), while a top seat, pinned
+      // close to the short vertical edge, sits near it (small `len`).
+      // Scaling by `len` therefore pushed LEFT/RIGHT piles further from
+      // their own pod, toward centre — the seats nobody complained about
+      // — while TOP/BOTTOM (the actual "too far from the pod" report)
+      // stayed essentially at the old flat value, since its small `len`
+      // rarely cleared that floor. The pod's own footprint has no such
+      // backwards relationship: `POD_SIZE` is close to square at every
+      // density, so every anchor clears by roughly the same amount
+      // regardless of how far that seat happens to sit from centre.
+      const pod = POD_SIZE[g.density];
+      const clearance = axisReach(ux, uy, pod) + g.miniCard.h * 0.55;
 
       const rowOriginX = seat.x + ux * (clearance + row * rowSpacing);
       const rowOriginY = seat.y + uy * (clearance + row * rowSpacing);
