@@ -43,6 +43,16 @@ export interface SeatView {
    * board melds, always visible at zero interaction cost.
    */
   melds?: string[];
+  /**
+   * This seat is the HERO's partner — Spades' 2v2 partnership, the first
+   * game with any team concept in this app. Purely a rung-1/2 ambient
+   * cue (POLICY.md): a small always-visible tag, same weight as `meta`.
+   * The hero's own pod never renders here at all (SeatRing filters it
+   * out below), so this only ever needs to answer one question — "is
+   * THIS pod my partner or an opponent" — not represent teams in the
+   * abstract, which is why it's a boolean rather than a team index.
+   */
+  partner?: boolean;
 }
 
 function initialsOf(name: string): string {
@@ -122,6 +132,12 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
       <div className={`max-w-full truncate ${s.name} leading-none font-semibold text-bone-50`}>
         {view.name}
       </div>
+
+      {view.partner ? (
+        <div className={`max-w-full truncate ${s.meta} leading-none font-bold text-brass-300/90`}>
+          Partner
+        </div>
+      ) : null}
 
       {view.meta ? (
         <div className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>

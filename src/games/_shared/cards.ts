@@ -45,7 +45,32 @@ export function cardId(suit: Suit, rank: Rank): PieceId {
   return `${suit}${rank}`;
 }
 
+/**
+ * Joker ids. "X" is never a real `Suit`, so these can never collide with
+ * `cardId()`'s `${suit}${rank}` scheme — a game that never enables jokers
+ * (every game but Spades, today) never produces or sees one.
+ */
+export const BIG_JOKER_ID: PieceId = "XB";
+export const LITTLE_JOKER_ID: PieceId = "XL";
+
+export function isJokerId(id: PieceId): boolean {
+  return id === BIG_JOKER_ID || id === LITTLE_JOKER_ID;
+}
+
+/** `"big" | "little"` for a joker id, `null` for an ordinary card. */
+export function jokerLabel(id: PieceId): "big" | "little" | null {
+  if (id === BIG_JOKER_ID) return "big";
+  if (id === LITTLE_JOKER_ID) return "little";
+  return null;
+}
+
+/** Throws on a joker id rather than silently mis-parsing it as suit "X" —
+ * callers that might see one (Spades' own code, CardFace) must check
+ * `isJokerId`/`jokerLabel` first. */
 export function parseCard(id: PieceId): Card {
+  if (isJokerId(id)) {
+    throw new Error(`parseCard: "${id}" is a joker — check isJokerId() first`);
+  }
   const suit = id[0] as Suit;
   const rank = id.slice(1) as Rank;
   return { id, suit, rank };

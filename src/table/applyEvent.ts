@@ -19,6 +19,7 @@ import type {
   SeatId,
   ZoneId,
 } from "@/engine/types";
+import { STAGGER } from "@/motion/presets";
 import { useTableStore } from "./store";
 
 /** Pieces sharing a bucket are indexed and fanned together. */
@@ -63,7 +64,17 @@ export function reindex(map: PlacementMap): PlacementMap {
 function moveTo(
   map: PlacementMap,
   id: PieceId,
-  target: { zone: ZoneId; seat?: SeatId; group?: number; faceUp?: boolean },
+  target: {
+    zone: ZoneId;
+    seat?: SeatId;
+    group?: number;
+    faceUp?: boolean;
+    /** See Placement.motionDelayMs. Omitted (0) by every caller except
+     * collect/sweep below — that omission is what makes it "consumed
+     * once": an ordinary deal/draw/play/flip on this same piece next
+     * resets it to undefined. */
+    motionDelayMs?: number;
+  },
 ): void {
   const prev = map[id];
   if (!prev) return;
@@ -74,6 +85,7 @@ function moveTo(
     group: target.group,
     faceUp: target.faceUp ?? prev.faceUp,
     index: APPEND,
+    motionDelayMs: target.motionDelayMs,
     // Flags are per-interaction; a piece that moves has left its mode.
     selected: false,
     highlighted: false,
@@ -122,29 +134,51 @@ export function applyEventToTable(event: GameEvent): void {
       break;
 
     case "collect":
-      for (const piece of event.pieces) {
-        moveTo(map, piece, { zone: "collected", seat: event.to, faceUp: false });
-      }
+      // Staggers inward: each card in the batch gets a slightly later
+      // delay than the last, capped at 10 — matching `choreograph`'s own
+      // `Math.min(pieces.length, 10)` duration cap exactly, so the
+      // visual stagger and the queue-duration budget it reserves agree.
+      event.pieces.forEach((piece, i) => {
+        moveTo(map, piece, {
+          zone: "collected",
+          seat: event.to,
+          faceUp: false,
+          motionDelayMs: Math.min(i, 10) * STAGGER.collect * 1000,
+        });
+      });
       touched = true;
       break;
 
     case "sweep":
-      for (const piece of event.pieces) {
-        moveTo(map, piece, { zone: event.to, faceUp: false });
-      }
+      event.pieces.forEach((piece, i) => {
+        moveTo(map, piece, {
+          zone: event.to,
+          faceUp: false,
+          motionDelayMs: Math.min(i, 10) * STAGGER.sweep * 1000,
+        });
+      });
       touched = true;
       break;
 
     case "move":
       if (map[event.piece]) {
-        map[event.piece] = { ...map[event.piece]!, ...event.to };
+        // `event.to` is a caller-built Placement (see Dominoes'
+        // `linePlacement`) that generally won't think to mention
+        // `motionDelayMs` at all — spreading it over the previous
+        // placement would otherwise leave a stale delay from an earlier
+        // collect/sweep batch on this same piece id. Cleared explicitly
+        // unless the caller deliberately wants one.
+        map[event.piece] = { ...map[event.piece]!, motionDelayMs: undefined, ...event.to };
         touched = true;
       }
       break;
 
     case "flip":
       if (map[event.piece]) {
-        map[event.piece] = { ...map[event.piece]!, faceUp: event.faceUp };
+        // Same reasoning as `move` above — a flip is not a fresh
+        // staggered arrival, so any leftover delay from a prior
+        // collect/sweep on this piece must not carry over.
+        map[event.piece] = { ...map[event.piece]!, faceUp: event.faceUp, motionDelayMs: undefined };
         touched = true;
       }
       break;

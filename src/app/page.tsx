@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 const GAMES = [
-  { name: "Spades", detail: "4 seats · bid, tricks, bags", status: "planned" },
   { name: "Rummy 500", detail: "2–8 seats · board melds", status: "planned" },
   { name: "Poker", detail: "2–10 seats · no-limit hold'em", status: "planned" },
 ] as const;
@@ -15,10 +14,10 @@ export default function Home() {
           Table Games
         </h1>
         <p className="mt-3 max-w-lg text-sm leading-relaxed text-bone-400">
-          Dominoes and Left Right Center have real rules, real bots and a
-          full table. The rest is still exercised through the lab harness:
-          seat geometry, the piece layer, motion pacing, phase screens and
-          Rummy&apos;s board disclosure.
+          Dominoes, Left Right Center and Spades have real rules, real bots
+          and a full table. The rest is still exercised through the lab
+          harness: seat geometry, the piece layer, motion pacing, phase
+          screens and Rummy&apos;s board disclosure.
         </p>
 
         <div className="mt-7 flex flex-wrap gap-3">
@@ -33,6 +32,12 @@ export default function Home() {
             className="inline-block rounded-lg bg-bone-50/6 px-6 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
           >
             Left Right Center
+          </Link>
+          <Link
+            href="/play/spades"
+            className="inline-block rounded-lg bg-bone-50/6 px-6 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
+          >
+            Spades
           </Link>
           <Link
             href="/lab/seats"

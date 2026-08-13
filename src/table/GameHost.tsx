@@ -111,10 +111,16 @@ export function GameHost<S, A>({
   // The match winner takes priority, but is only ever non-null right at
   // the very end; the far more common "someone just won" moment in a
   // multi-round game is a round winner — see `roundWinner`'s doc for why
-  // the two never disagree when both could apply.
-  const winningSeat = live.winner ?? live.roundWinner;
+  // the two never disagree when both could apply. `winningSeats` is
+  // every seat on the winning SIDE — for Dominoes/LRC that's the same
+  // one seat `=== winningSeat` used to check directly; for a partnership
+  // game (Spades) it's both members of the winning team, and `roundWinner`
+  // never applies there (see GameRuntime.winningSeats's doc), so the
+  // fallback to `[roundWinner]` only ever actually fires for a
+  // single-winner game.
+  const winningSeats = live.winningSeats ?? (live.roundWinner !== null ? [live.roundWinner] : null);
   const seatViews = players(live.state, live).map((view) =>
-    winningSeat === view.seat ? { ...view, winning: true } : view,
+    winningSeats?.includes(view.seat) ? { ...view, winning: true } : view,
   );
   const board = (standings ?? winLoseStandings)(live.state, live, seatViews);
 
@@ -131,7 +137,7 @@ export function GameHost<S, A>({
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
-      <HeroWinFlourish show={winningSeat === HERO} />
+      <HeroWinFlourish show={winningSeats?.includes(HERO) ?? false} />
       <GameToaster />
 
       <RoundEndScorecard

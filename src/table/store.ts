@@ -153,12 +153,13 @@ export const useTableStore = create<TableState>((set) => {
         const next: PlacementMap = {};
         let changed = false;
         for (const [id, p] of Object.entries(s.placements)) {
-          if (p.selected || p.highlighted || p.dimmed || p.fanned) {
-            const { selected, highlighted, dimmed, fanned, ...rest } = p;
+          if (p.selected || p.highlighted || p.dimmed || p.fanned || p.motionDelayMs) {
+            const { selected, highlighted, dimmed, fanned, motionDelayMs, ...rest } = p;
             void selected;
             void highlighted;
             void dimmed;
             void fanned;
+            void motionDelayMs;
             next[id] = rest;
             changed = true;
           } else {

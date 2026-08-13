@@ -99,7 +99,13 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         scale: t.scale,
         opacity: t.opacity,
       }}
-      transition={TRANSITIONS.deal}
+      // A batch of pieces (a collected trick, a sweep) can all receive
+      // their new `animate` target in the same React commit yet still
+      // arrive staggered — Motion holds each one's interpolation start
+      // individually via `delay`, which is exactly what
+      // `applyEvent.ts`'s per-piece `motionDelayMs` assumes exists.
+      // Zero for every ordinary move (deal/draw/play/flip never set it).
+      transition={{ ...TRANSITIONS.deal, delay: (placement.motionDelayMs ?? 0) / 1000 }}
       onClick={interactive ? () => onTap?.(id) : undefined}
       style={{
         position: "absolute",

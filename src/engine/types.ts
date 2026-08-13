@@ -74,6 +74,19 @@ export interface Placement {
    */
   fanned?: boolean;
   /**
+   * Per-piece animation delay in milliseconds, for a batch of pieces
+   * that should arrive staggered rather than simultaneously even though
+   * they all land in the same store write — a collected trick, a sweep.
+   * Set by applyEvent.ts at collect/sweep time; consumed once by
+   * PieceLayer's motion transition. Transient, not structural — grouped
+   * with `selected`/`highlighted`/`dimmed`/`fanned` in the store's
+   * `clearFlags()`, NOT with `cell` (which is deliberately excluded from
+   * that set). "Consumed once" falls out for free: every OTHER event
+   * type's placement write (`deal`, `draw`, `play`, `flip`) leaves this
+   * unset, which zeroes it for that piece the next time it moves.
+   */
+  motionDelayMs?: number;
+  /**
    * Position in an abstract board-unit space, for zones where a piece
    * sits where the pieces before it put it rather than at an index in a
    * fan (`zone: "line"`).

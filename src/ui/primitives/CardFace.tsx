@@ -15,6 +15,7 @@
 import { memo } from "react";
 import {
   isRed,
+  jokerLabel,
   parseCard,
   SUIT_GLYPH,
   cardLabel,
@@ -78,6 +79,15 @@ function CardFaceImpl({
   detail = "full",
   ariaHidden = false,
 }: CardFaceProps) {
+  // Checked before parseCard, which throws on a joker id (see
+  // _shared/cards.ts) — only ever reached when a game opts into jokers
+  // (Spades' house-rule toggle), so every other game's cards take the
+  // normal path below completely unchanged.
+  const joker = jokerLabel(card);
+  if (joker) {
+    return <JokerFace joker={joker} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
+  }
+
   const { suit, rank } = parseCard(card);
   const red = isRed(suit);
   const glyph = SUIT_GLYPH[suit];
@@ -256,6 +266,141 @@ function CourtPanel({
       <span style={{ fontSize: w * 0.2, lineHeight: 1, color: colour }}>
         {glyph}
       </span>
+    </div>
+  );
+}
+
+/**
+ * A joker's face — no rank, no suit, so it can't reuse PipField/CourtPanel
+ * directly, but deliberately echoes CourtPanel's brass-ruled-panel
+ * language rather than inventing a new visual vocabulary for one pair of
+ * cards. Big joker reads as the "colourful" one (traditionally the
+ * higher of the two — see Spades' house rule), little joker the plain
+ * one, using the same red/ink colour pair every suit already uses rather
+ * than a third colour this deck doesn't otherwise have.
+ */
+function JokerFace({
+  joker,
+  w,
+  h,
+  detail,
+  ariaHidden,
+}: {
+  joker: "big" | "little";
+  w: number;
+  h: number;
+  detail: "full" | "index";
+  ariaHidden: boolean;
+}) {
+  const colour = joker === "big" ? "var(--color-suit-red)" : "var(--color-suit-ink)";
+  const label = joker === "big" ? "BIG" : "LIT";
+  const name = joker === "big" ? "Big Joker" : "Little Joker";
+  const glyph = "★";
+
+  const corner = (flip: boolean) => (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        lineHeight: 0.94,
+        color: colour,
+        transform: flip ? "rotate(180deg)" : undefined,
+        alignSelf: flip ? "flex-end" : "flex-start",
+      }}
+    >
+      <span style={{ fontFamily: "var(--font-rank)", fontWeight: 700, fontSize: w * 0.2 }}>
+        {label}
+      </span>
+      <span style={{ fontSize: w * 0.2, marginTop: -w * 0.012 }}>{glyph}</span>
+    </div>
+  );
+
+  return (
+    <div
+      role={ariaHidden ? undefined : "img"}
+      aria-hidden={ariaHidden || undefined}
+      aria-label={ariaHidden ? undefined : name}
+      style={{
+        width: w,
+        height: h,
+        padding: w * 0.075,
+        borderRadius: w * 0.1,
+        background: "var(--color-card-face)",
+        border: "1px solid var(--color-card-edge)",
+        boxShadow: "var(--shadow-e1)",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        position: "relative",
+        overflow: "hidden",
+        backfaceVisibility: "hidden",
+      }}
+    >
+      {corner(false)}
+
+      {detail === "index" ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: w * 0.46,
+            color: colour,
+            opacity: 0.9,
+          }}
+        >
+          {glyph}
+        </div>
+      ) : (
+        <div
+          style={{
+            position: "absolute",
+            left: w * 0.16,
+            right: w * 0.16,
+            top: h * 0.15,
+            bottom: h * 0.15,
+            border: "1px solid var(--color-brass-500)",
+            borderRadius: w * 0.05,
+            background:
+              "linear-gradient(160deg, rgb(212 175 106 / 0.14), rgb(212 175 106 / 0.03))",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: h * 0.015,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--font-display)",
+              fontWeight: 700,
+              fontSize: w * 0.22,
+              lineHeight: 1.05,
+              color: colour,
+              textAlign: "center",
+            }}
+          >
+            {joker === "big" ? "BIG" : "LITTLE"}
+          </span>
+          <span
+            style={{
+              fontFamily: "var(--font-display)",
+              fontWeight: 700,
+              fontSize: w * 0.18,
+              lineHeight: 1,
+              color: colour,
+            }}
+          >
+            JOKER
+          </span>
+          <span style={{ fontSize: w * 0.22, lineHeight: 1, color: colour }}>{glyph}</span>
+        </div>
+      )}
+
+      {corner(true)}
     </div>
   );
 }

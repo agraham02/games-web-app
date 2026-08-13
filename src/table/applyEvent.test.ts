@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { reindex } from "./applyEvent";
-import type { PlacementMap } from "@/engine/types";
+import { applyEventToTable, reindex } from "./applyEvent";
+import { useTableStore } from "./store";
+import { STAGGER } from "@/motion/presets";
+import type { PieceMeta, PlacementMap } from "@/engine/types";
 
 /**
  * `reindex` is the quiet load-bearing piece of the piece layer. It has
@@ -92,5 +94,95 @@ describe("reindex", () => {
 
   it("handles an empty board", () => {
     expect(reindex({})).toEqual({});
+  });
+
+  it("preserves motionDelayMs through its identity-preservation path", () => {
+    // reindex only special-cases index/count and otherwise spreads or
+    // reuses the whole object — worth pinning explicitly, since this is
+    // exactly the kind of field reindex could silently drop.
+    const map: PlacementMap = {
+      SA: { ...hand(0, 2), motionDelayMs: 40 },
+      SK: hand(1, 2),
+    };
+    const next = reindex(map);
+    expect(next).toBe(map); // nothing about index/count changed -> identity preserved
+    expect(next.SA!.motionDelayMs).toBe(40);
+  });
+});
+
+/**
+ * `applyEventToTable`'s collect/sweep stagger. `collect`/`sweep` are the
+ * one pair of events whose whole batch lands in a single store write —
+ * `motionDelayMs` is what lets PieceLayer still show them arriving one
+ * after another instead of snapping to their new zone simultaneously.
+ */
+describe("applyEventToTable — collect/sweep stagger (motionDelayMs)", () => {
+  function seed(map: PlacementMap): void {
+    const meta: Record<string, PieceMeta> = {};
+    for (const id of Object.keys(map)) meta[id] = { kind: "card", face: id };
+    useTableStore.getState().reset(map, meta);
+  }
+
+  it("assigns an increasing per-piece delay on collect, capped at index 10", () => {
+    const pieces = Array.from({ length: 12 }, (_, i) => `C${i}`);
+    const map: PlacementMap = {};
+    for (const id of pieces) map[id] = { zone: "trick", seat: 0, index: 0, count: 1, faceUp: true };
+    seed(map);
+
+    applyEventToTable({ t: "collect", pieces, to: 1 });
+    const placements = useTableStore.getState().placements;
+    pieces.forEach((id, i) => {
+      expect(placements[id]!.motionDelayMs).toBeCloseTo(Math.min(i, 10) * STAGGER.collect * 1000);
+    });
+  });
+
+  it("assigns an increasing per-piece delay on sweep, capped at index 10", () => {
+    const pieces = Array.from({ length: 12 }, (_, i) => `T${i}`);
+    const map: PlacementMap = {};
+    for (const id of pieces) map[id] = { zone: "hand", seat: 0, index: 0, count: 1, faceUp: false };
+    seed(map);
+
+    applyEventToTable({ t: "sweep", pieces, to: "boneyard" });
+    const placements = useTableStore.getState().placements;
+    pieces.forEach((id, i) => {
+      expect(placements[id]!.motionDelayMs).toBeCloseTo(Math.min(i, 10) * STAGGER.sweep * 1000);
+    });
+  });
+
+  it("clears a nonzero motionDelayMs on a subsequent deal/play/flip/move of the same piece", () => {
+    const map: PlacementMap = {
+      A: { zone: "trick", seat: 0, index: 0, count: 2, faceUp: true },
+      B: { zone: "trick", seat: 1, index: 1, count: 2, faceUp: true },
+    };
+
+    // deal clears it (goes through moveTo, same as draw/play).
+    seed(map);
+    applyEventToTable({ t: "collect", pieces: ["A", "B"], to: 2 });
+    expect(useTableStore.getState().placements.B!.motionDelayMs).toBeGreaterThan(0);
+    applyEventToTable({ t: "deal", piece: "B", to: 0, faceUp: true });
+    expect(useTableStore.getState().placements.B!.motionDelayMs).toBeUndefined();
+
+    // play clears it.
+    seed(map);
+    applyEventToTable({ t: "collect", pieces: ["A", "B"], to: 2 });
+    applyEventToTable({ t: "play", piece: "B", from: 0, to: "trick" });
+    expect(useTableStore.getState().placements.B!.motionDelayMs).toBeUndefined();
+
+    // flip clears it.
+    seed(map);
+    applyEventToTable({ t: "collect", pieces: ["A", "B"], to: 2 });
+    applyEventToTable({ t: "flip", piece: "B", faceUp: true });
+    expect(useTableStore.getState().placements.B!.motionDelayMs).toBeUndefined();
+
+    // move clears it too, even though the caller-built Placement rarely
+    // mentions motionDelayMs at all.
+    seed(map);
+    applyEventToTable({ t: "collect", pieces: ["A", "B"], to: 2 });
+    applyEventToTable({
+      t: "move",
+      piece: "B",
+      to: { zone: "line", index: 0, count: 1, faceUp: true },
+    });
+    expect(useTableStore.getState().placements.B!.motionDelayMs).toBeUndefined();
   });
 });

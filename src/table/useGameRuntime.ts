@@ -145,6 +145,21 @@ export interface GameRuntime<S, A> {
    * already uses; a round-less game (LRC) or one shaped differently
    * just never sets this. */
   roundWinner: SeatId | null;
+  /**
+   * Every seat on the winning side, known the same instant `winner` is.
+   * For a single-winner game this is just `[winner]` (or `null`) — the
+   * field exists for PARTNERSHIP games (Spades: a team win is two
+   * seats, not one), where `winner` alone can only ever crown one of
+   * them. Structural, like `winner` — reads `state.winningSeats` if the
+   * game sets it; falls back to wrapping `winner` for every game that
+   * doesn't (Dominoes, LRC), so `winningSeats?.includes(seat)` is a
+   * drop-in replacement for `winner === seat` everywhere it matters
+   * (GameHost's per-pod crown, HeroWinFlourish) with IDENTICAL behavior
+   * for those games. No `roundWinningSeats` companion exists —
+   * `roundWinner` is Dominoes-shaped (someone going out) and no
+   * partnership game so far scores a single seat at round end.
+   */
+  winningSeats: SeatId[] | null;
   /** True only after `isOver` AND the endHoldMs pause has elapsed — this
    * is what should gate GameEndSummary's `show`, not `isOver` itself. */
   showSummary: boolean;
@@ -456,6 +471,7 @@ export function useGameRuntime<S, A>(
     isHeroTurn: !isOver && currentSeat === HERO && !choreographer.isPlaying,
     isOver,
     winner: isOver ? extractWinner(state) : null,
+    winningSeats: isOver ? resolveWinningSeats(state) : null,
     roundWinner: !isOver && roundOver ? extractRoundWinner(state) : null,
     showSummary: isOver && gameEndRevealed,
     showRoundSummary: !isOver && roundOver && roundEndRevealed,
@@ -483,6 +499,24 @@ export function useGameRuntime<S, A>(
 function extractWinner<S>(state: S): SeatId | null {
   const maybe = state as unknown as { winner?: SeatId | null };
   return typeof maybe.winner === "number" ? maybe.winner : null;
+}
+
+/** Structural, like `extractWinner` — reads `state.winningSeats` if a
+ * game sets it (Spades' team win). Absent for every existing game. */
+function extractWinningSeats<S>(state: S): SeatId[] | null {
+  const maybe = state as unknown as { winningSeats?: SeatId[] | null };
+  return Array.isArray(maybe.winningSeats) ? maybe.winningSeats : null;
+}
+
+/** See `GameRuntime.winningSeats`'s doc: prefers the structural
+ * multi-seat field, and falls back to wrapping the single `winner` so
+ * every game that never sets `winningSeats` produces an IDENTICAL truth
+ * table through `.includes()` that `=== winner` used to produce directly. */
+function resolveWinningSeats<S>(state: S): SeatId[] | null {
+  const structural = extractWinningSeats(state);
+  if (structural) return structural;
+  const single = extractWinner(state);
+  return single !== null ? [single] : null;
 }
 
 /** Same structural read as `extractWinner`, for the scorecard heading. */
