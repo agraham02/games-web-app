@@ -22,6 +22,7 @@ import {
   pileAssemblyHorizontal,
   radialFanSlot,
   tileShortSide,
+  MAX_DISCARD_STEP_FRACTION,
   MIN_HAND_GAP_FRACTION,
   POD_SIZE,
   TILE_HAND_GAP,
@@ -333,7 +334,9 @@ export function layoutPiece(
           baseRotation: 0,
           maxTilt: 0,
           arcLift: 0,
-          maxGap: along * 0.38,
+          // Must match `pileAssembly`'s own maxGap exactly — see
+          // MAX_DISCARD_STEP_FRACTION for why the two share a constant.
+          maxGap: along * MAX_DISCARD_STEP_FRACTION,
           minGap: a.minStep,
           pan: ctx?.discardScroll ?? 0,
           within: a.fan,

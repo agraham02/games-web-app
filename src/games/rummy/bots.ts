@@ -138,10 +138,17 @@ function chooseDraw(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): Rumm
  * own guard against discarding a card that feeds a meld, so the player's
  * chance to pounce comes from the weaker seats. That is the right place
  * for it to come from.
+ *
+ * The rates are OVERSIGHT rates, and they are deliberately small. The
+ * first pass ran 55%/20% and made the claim common, which was the wrong
+ * read of the problem: the bug was that it could never happen, not that
+ * it was rare. A claim is meant to be a moment, and a bot that overlooks
+ * a lay-off one turn in seven is already careless — one that does it
+ * every other turn is not playing the game.
  */
 const LAYOFF_ATTENTION: Record<Tier, number> = {
-  casual: 0.45,
-  steady: 0.8,
+  casual: 0.85,
+  steady: 0.95,
   sharp: 1,
 };
 

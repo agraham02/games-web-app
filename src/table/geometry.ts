@@ -122,12 +122,41 @@ export interface TableGeometry {
 
 export const CARD_ASPECT = 2.5 / 3.5;
 
+/**
+ * Below this height a viewport has no vertical room to spare, whatever
+ * its width. Three things key off it and they are the same judgement:
+ * `resolveDensity` refuses the `wide` tier, `resolveTable` shrinks the
+ * hand strip to what the cards actually need, and Rummy refuses to lay
+ * out at all (see `isShortViewport`).
+ */
+export const SHORT_VIEWPORT_H = 560;
+
 export function resolveDensity(w: number, h: number): Density {
   // Width drives the tier, but a short landscape phone (e.g. 844x390)
   // has no vertical room for `wide` piece sizes, so height demotes it.
   if (w < 640) return "compact";
-  if (w < 1024 || h < 560) return "regular";
+  if (w < 1024 || h < SHORT_VIEWPORT_H) return "regular";
   return "wide";
+}
+
+/**
+ * Is this viewport too short to lay a full table out on?
+ *
+ * Measured on a 1052x486 landscape phone with Rummy's real chrome: hand
+ * zone 165px, hand header 64px and a 81px resting board sheet left the
+ * table **86px tall** — pods, deck and discard all crushed into one strip
+ * behind the sheet. Three bands dividing an exhausted budget, which no
+ * single constant can fix.
+ *
+ * A game with this much chrome answers it by not rendering: Rummy asks
+ * the player to rotate. Games with less chrome (Spades, Dominoes, LRC)
+ * still fit, and only take the hand-strip relief `resolveTable` applies.
+ *
+ * Keyed on HEIGHT, not on landscape-ness: a 1440x900 desktop is
+ * landscape and perfectly fine, while a 844x390 phone is not.
+ */
+export function isShortViewport(box: { h: number }): boolean {
+  return box.h < SHORT_VIEWPORT_H;
 }
 
 interface DensitySpec {
@@ -143,18 +172,26 @@ interface DensitySpec {
 }
 
 const DENSITY: Record<Density, DensitySpec> = {
+  // The two phone tiers were sized before any fan could pan. Under that
+  // constraint every piece had to be small enough that the WORST case
+  // still fitted on screen, so the ordinary case paid for the extreme
+  // one. Compress-then-pan removes that: an overflowing fan now has
+  // somewhere to go (see MIN_HAND_GAP_FRACTION), so these are sized for
+  // the hand you normally hold rather than the biggest one possible.
+  // `wide` is unchanged — a desktop already had the room and never had
+  // the problem.
   compact: {
-    handCard: { w: 58, h: 81 },
-    card: { w: 44, h: 62 },
-    miniCard: { w: 26, h: 36 },
+    handCard: { w: 64, h: 90 },
+    card: { w: 48, h: 67 },
+    miniCard: { w: 28, h: 39 },
     handZone: 150,
     ringPad: 14,
     podInset: 46,
   },
   regular: {
-    handCard: { w: 68, h: 95 },
-    card: { w: 52, h: 73 },
-    miniCard: { w: 30, h: 42 },
+    handCard: { w: 74, h: 103 },
+    card: { w: 56, h: 78 },
+    miniCard: { w: 32, h: 45 },
     handZone: 172,
     ringPad: 18,
     podInset: 54,
@@ -248,8 +285,25 @@ export const POD_SIZE: Record<Density, PieceSize> = {
 /** Clearance between the domino line's box and anything around it. */
 const LINE_BREATHING = 6;
 
-/** `LINE_BREATHING`'s counterpart for `pileRegion`. */
-const PILE_BREATHING = 8;
+/**
+ * `LINE_BREATHING`'s counterpart for `pileRegion`.
+ *
+ * Raised from 8 once the fan stopped overhanging its region (see
+ * `fadeMargin` in `pileAssembly`): with the overhang gone, this is the
+ * WHOLE visible gap between the pile and the next player's cards, and 8px
+ * of it read as the two touching.
+ */
+const PILE_BREATHING = 16;
+
+/**
+ * Felt between the deck and the discard fan, as a fraction of card
+ * width. Shared between `pileAssembly`, which lays the pair out, and
+ * `pileRegion`'s own minimum width, which has to be wide enough to hold
+ * that pair — a floor narrower than the thing it is flooring is not a
+ * floor, and let the assembly hang out of its own region on a small
+ * phone at six seats.
+ */
+const PILE_GAP_FRACTION = 0.42;
 
 /**
  * Gap between an opponent's pod and their fanned tile hand — shared with
@@ -402,7 +456,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // — it only bites the forced-onto-something-tiny case.
   const podInsetCap = Math.max(24, Math.min(width, height) * 0.16);
   const podInset = Math.min(spec.podInset, podInsetCap);
-  const handZone = Math.min(opts.handZone ?? spec.handZone, height * 0.34);
+  // The hand strip is generous by default, which is right when there is
+  // height to be generous with. On a short viewport it is the single
+  // biggest claim on the axis everything else is also competing for, so
+  // it drops to what the cards themselves actually need: one card plus
+  // the ~18px a selected card lifts, and no more. Measured: 165px down
+  // to 129px on a 1052x486 landscape phone, all of it handed back to the
+  // table. Full-height viewports are untouched.
+  const short = height < SHORT_VIEWPORT_H;
+  const handZone = Math.min(
+    opts.handZone ?? spec.handZone,
+    height * 0.34,
+    short ? spec.handCard.h * 1.25 : Infinity,
+  );
 
   const box: Box = { x: 0, y: 0, w: width, h: height };
 
@@ -641,12 +707,21 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   };
   // Never let the clearances eat the region entirely on a small phone
   // with seats on every edge — a pile that cannot be drawn is worse than
-  // one sitting a little close. Floors at one card plus a margin.
+  // one sitting a little close. The width floor is exactly the deck and
+  // one discard card side by side with their gap, derived from the same
+  // constant `pileAssembly` lays them out with.
+  //
+  // Centred on what the clearances DID leave, rather than pinned to
+  // their left/top edge: when the floor engages, the region has to
+  // encroach on something, and splitting that evenly between the two
+  // sides is strictly better than dumping all of it on one.
+  const floorW = Math.max(spec.card.w * (2 + PILE_GAP_FRACTION), rawPile.w);
+  const floorH = Math.max(spec.card.h * 1.2, rawPile.h);
   const pileRegion: Box = {
-    x: rawPile.x,
-    y: rawPile.y,
-    w: Math.max(spec.card.w * 2.2, rawPile.w),
-    h: Math.max(spec.card.h * 1.2, rawPile.h),
+    x: rawPile.x - (floorW - rawPile.w) / 2,
+    y: rawPile.y - (floorH - rawPile.h) / 2,
+    w: floorW,
+    h: floorH,
   };
 
   const zones: Record<ZoneName, Box> = {
@@ -1086,20 +1161,56 @@ export function radialFanSlot(o: RadialFanOptions): FanSlot {
    ============================================================ */
 
 /**
- * The validated compression floor for the discard pile, as a fraction of
- * card width. 0.22 was tried first and still let a deep pile compress to
- * unreadable before panning ever engaged; 0.36 is the number that holds.
+ * The compression floor for the discard pile, as a fraction of card
+ * width. 0.22 was tried first and still let a deep pile compress to
+ * unreadable before panning ever engaged; 0.36 held it, and 0.46 is
+ * where it sits now — the pile still read as tightly packed at 0.36 on
+ * both phone and desktop, and once panning exists there is no reason to
+ * keep squeezing rather than simply offering the drag sooner.
  *
- * Deliberately a SEPARATE constant from `MIN_HAND_GAP_FRACTION` even
- * though the two currently share a value — they answer different
- * questions (how tightly may a pile on the felt stack, vs how tightly
- * may cards you are holding), and retuning one must never silently drag
- * the other along with it.
+ * Deliberately a SEPARATE constant from `MIN_HAND_GAP_FRACTION` — they
+ * answer different questions (how tightly may a pile on the felt stack,
+ * vs how tightly may cards you are holding), and retuning one must never
+ * silently drag the other along with it. That is not hypothetical: they
+ * no longer share a value, precisely because the pile wanted a bigger
+ * loosening than the hand could afford.
  */
-export const MIN_DISCARD_STEP_FRACTION = 0.36;
+export const MIN_DISCARD_STEP_FRACTION = 0.46;
 
-/** The hero hand's own compression floor. See MIN_DISCARD_STEP_FRACTION. */
-export const MIN_HAND_GAP_FRACTION = 0.36;
+/**
+ * The hero hand's own compression floor. See MIN_DISCARD_STEP_FRACTION.
+ *
+ * Raised far less than the pile's, and the ceiling is a real one: a full
+ * 13-card Rummy hand has to keep fitting a 390px phone without panning,
+ * because dragging to see your own cards while planning a meld is a much
+ * worse trade than a slightly tighter fan. At 0.38 with the current
+ * `compact` card it fits with a little to spare; past that it does not.
+ * The smallest phones (360px) do pan a 13-card hand, which is the
+ * accepted cost of the bigger cards.
+ */
+export const MIN_HAND_GAP_FRACTION = 0.38;
+
+/**
+ * The WIDEST the discard fan spreads, as a fraction of the card's extent
+ * along the fan — the ceiling `MIN_DISCARD_STEP_FRACTION` is the floor
+ * of. A short pile never needs to overlap at all, and at 0.38 even three
+ * cards read as one tight stack.
+ *
+ * Exported because `pileAssembly` (which computes the pan range) and
+ * `layout.ts` (which places each card) must pass the SAME value — the
+ * two derive different halves of one fan, and a mismatch would offer a
+ * drag for content that is not actually hidden, or hide content with no
+ * drag on offer.
+ */
+export const MAX_DISCARD_STEP_FRACTION = 0.55;
+
+/**
+ * The shortest run the discard fan will accept before it starts giving
+ * back its fade margin, as a multiple of the card's extent along the
+ * fan. Roughly four cards at the compression floor — below that the fan
+ * stops being a fan and becomes a stack with a drag handle.
+ */
+const MIN_USABLE_RUN = 2.5;
 
 /**
  * Does the deck/discard assembly lay out side by side (landscape) or
@@ -1153,8 +1264,35 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
   const minStep = card.w * MIN_DISCARD_STEP_FRACTION;
 
   // The fan gets the region minus the deck's own column/row plus a gap.
-  const gap = card.w * 0.42;
+  const gap = card.w * PILE_GAP_FRACTION;
   const deckSlot = card.w + gap;
+
+  // ...and minus a half-card at each END of its run, which is the piece
+  // of this that was missing and got reported.
+  //
+  // A fanned card is drawn while its CENTRE is inside the fan box (see
+  // `alongVisibility`), so the outermost thing on screen reaches half a
+  // card PAST that box. Sizing the box flush to `pileRegion` therefore
+  // let a fading card cross the region's edge by up to half its width —
+  // which on a desktop is ~46px, and the region's own clearance to an
+  // opponent's hand is only `PILE_BREATHING`. The visible result was the
+  // right-hand end of a long pile lying over the next player's cards.
+  //
+  // Reserving the overhang inside the box instead makes `pileRegion` a
+  // true bound on everything drawn, at the cost of one card's worth of
+  // fan length. That is the right trade: the length is recoverable by
+  // panning, the overlap was not fixable at all.
+  //
+  // It is taken out of SLACK, though, never out of the fan's last few
+  // cards. On a 360x640 phone that has also given up a band to a bottom
+  // sheet, the region is already down to its own floor, and a flat
+  // half-card subtraction there left a fan exactly one card long — a
+  // pile that pans from the second card is not a pile. Below
+  // `MIN_USABLE_RUN` the margin gives way instead, which is the same
+  // ordering of priorities `pileRegion`'s own floor already takes: being
+  // drawable beats being perfectly contained.
+  const usableRun = (room: number, extent: number) =>
+    Math.min(extent / 2, Math.max(0, room - extent * MIN_USABLE_RUN) / 2);
 
   if (portrait) {
     // Deck and discard side by side on X; the fan runs down Y.
@@ -1176,7 +1314,8 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
     // would centre a deep fan on the region's middle and let it drift
     // below the deck as it grew, which is exactly the `flex-start` look
     // this replaced. Past the cap the excess becomes pan range.
-    const budget = 2 * Math.min(axis - region.y, region.y + region.h - axis);
+    const room = 2 * Math.min(axis - region.y, region.y + region.h - axis);
+    const budget = room - usableRun(room, card.h) * 2;
     const fanH = Math.max(
       card.h,
       Math.min(budget, card.h + stepV * Math.max(0, discardCount - 1)),
@@ -1186,7 +1325,7 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
       count: discardCount,
       available: fanH,
       size: card.h,
-      maxGap: card.h * 0.38,
+      maxGap: card.h * MAX_DISCARD_STEP_FRACTION,
       minGap: stepV,
     });
     return {
@@ -1206,8 +1345,12 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
   // `pileAssemblyHorizontal`). The fan is centred on what it actually
   // occupies rather than on the leftover width, for the same reason the
   // portrait branch above sizes its pair to content.
+  // Both the deck's slot AND the fade overhang at each end come off the
+  // run. The right-hand one is the one that showed: without it the pile's
+  // far end lay across the next player's cards.
+  const run = region.w - deckSlot;
   const naturalW = Math.min(
-    region.w - deckSlot,
+    run - usableRun(run, card.w) * 2,
     card.w + minStep * Math.max(0, discardCount - 1),
   );
   const fanW = Math.max(card.w, naturalW);
@@ -1226,7 +1369,7 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
     count: discardCount,
     available: fan.w,
     size: card.w,
-    maxGap: card.w * 0.38,
+    maxGap: card.w * MAX_DISCARD_STEP_FRACTION,
     minGap: minStep,
   });
   return {

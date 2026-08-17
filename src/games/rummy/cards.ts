@@ -13,6 +13,8 @@ import type { Rng } from "@/engine/rng";
 import {
   HAND_DISPLAY_SUIT_ORDER,
   RANKS,
+  SUITS,
+  cardId,
   parseCard,
   rankValue,
   standardDeck,
@@ -147,17 +149,35 @@ export function isValidMeld(cards: readonly PieceId[]): boolean {
 }
 
 /**
- * A meld nobody can ever add to again, which at the table gets turned
- * face down — the pile of cards that is finished being looked at.
+ * A SET nobody can ever add to again, which at the table gets turned face
+ * down — the cards that are finished being looked at.
  *
- * Only a full set of four qualifies. A long run is technically closed
- * too once it reaches ace-to-king, but that is not what gets flipped in
- * a real game: the gesture means "all four of this rank are down", and a
- * run is still something players read along. `canExtend` already refuses
- * both, so this is purely how the meld is DRAWN.
+ * The test is "is this rank exhausted", NOT "does this meld hold four
+ * cards", and the difference is a real position rather than a nicety.
+ * Three aces are down as a set and the fourth is committed to an
+ * A-2-3 run: the set holds only three cards, but nothing can ever join
+ * it, because the one card that could is laid and laid cards never move.
+ * The run itself stays face up — it can still take a 4.
+ *
+ * `laid` is every card currently on the board, from every meld. This
+ * cannot be answered from a meld's own cards alone, which is exactly why
+ * the first version got the case above wrong.
+ *
+ * Runs are excluded deliberately. An ace-to-king run is closed too, but
+ * that is not what gets flipped in a real game: the gesture means "all
+ * four of this rank are down", and a run stays something players read
+ * along. `canExtend` already refuses both, so this is purely how the
+ * meld is DRAWN.
  */
-export function isDeadMeld(cards: readonly PieceId[]): boolean {
-  return cards.length === 4 && isSet(cards);
+export function isDeadMeld(cards: readonly PieceId[], laid: ReadonlySet<PieceId>): boolean {
+  if (!isSet(cards)) return false;
+  const rank = rankOf(cards[0]!);
+  return SUITS.every((suit) => laid.has(cardId(suit, rank)));
+}
+
+/** Every card on the board, which is what `isDeadMeld` measures against. */
+export function laidCards(melds: ReadonlyArray<{ cards: readonly PieceId[] }>): Set<PieceId> {
+  return new Set(melds.flatMap((m) => m.cards));
 }
 
 /**

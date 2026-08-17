@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import { HERO } from "@/engine/types";
+import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameHost } from "@/table/GameHost";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
@@ -302,6 +303,14 @@ function DiceOverlay({
   );
 }
 
+/**
+ * No difficulty control here, deliberately, and it is the only game
+ * without one: LRC has no decision in it. Rolling is the only legal
+ * action and the dice are random, so `lrcBots`' three tiers differ in
+ * PACING alone (see that file). A slider that changes how fast an
+ * opponent rolls and nothing else is worse than no slider — it promises
+ * a difference the game cannot have.
+ */
 function SetupScreen({
   seats,
   onSeatsChange,
@@ -312,7 +321,7 @@ function SetupScreen({
   onStart: () => void;
 }) {
   return (
-    <main className="felt felt-weave flex min-h-svh flex-col items-center justify-center gap-8 px-6">
+    <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">New game</span>
         <h1 className="font-display text-4xl tracking-wider text-brass-300">
@@ -347,6 +356,6 @@ function SetupScreen({
       <Link href="/" className="text-xs text-bone-400 hover:text-bone-200">
         ← Back
       </Link>
-    </main>
+    </SetupShell>
   );
 }

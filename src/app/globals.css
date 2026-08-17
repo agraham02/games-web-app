@@ -36,6 +36,12 @@
   --color-suit-ink: #1a1712;
 
   /* -- semantic ------------------------------------------- */
+  /* A meld that has just closed and is about to turn over. Cool, and
+     deliberately OUTSIDE the brass accent: brass everywhere else in this
+     app means "you chose this", and a closing meld is the table telling
+     you something rather than you selecting it. Blue also survives being
+     drawn on dark green, which a teal or a second gold would not. */
+  --color-closed: #79c6f2;
   --color-win: #4e9e6a;
   --color-warn: #d89b3c;
   --color-loss: #b4453a;

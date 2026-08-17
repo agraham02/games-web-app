@@ -53,6 +53,9 @@ export interface GameHostProps<S, A> {
   topZone?: number;
   bottomZone?: number;
   pileAnchor?: number;
+  /** Dev-only one-shot rigs, handed the live runtime so a game can build
+   *  a state that is otherwise only reachable by waiting for it. */
+  scenarios?: (live: GameRuntime<S, A>) => ReadonlyArray<{ label: string; run: () => void }>;
   gameTitle: string;
   /** How this game ranks players at the end — LRC has only win/lose, a
    * scored game would report real point totals. Falls back to a plain
@@ -99,6 +102,7 @@ export function GameHost<S, A>({
   topZone,
   bottomZone,
   pileAnchor,
+  scenarios,
   gameTitle,
   standings,
   stats,
@@ -238,6 +242,7 @@ export function GameHost<S, A>({
         debugState={live.rawState}
         pieces={pieceVocabulary}
         onDebugStateChange={(next) => live.replaceState(next as S)}
+        scenarios={scenarios?.(live)}
       />
 
       {children(live)}

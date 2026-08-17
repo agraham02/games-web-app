@@ -127,43 +127,57 @@ export function claimableMeld(state: RummyState, card: PieceId): Meld | null {
 /**
  * Every seat that could claim `card` — anyone but the discarder. Melds
  * are not owned for extension purposes, so capability is universal;
- * that is exactly why the tiebreak among them must not be turn order
- * (see `claimPick`).
+ * that is exactly why the winner among them must not be turn order
+ * (see `claimReactions`).
  */
 export function eligibleClaimSeats(state: RummyState, discarder: SeatId): SeatId[] {
   return seatsOf(state).filter((s) => s !== discarder);
 }
 
 /**
- * Which eligible seat gets a contested claim.
+ * How long each eligible bot takes to spot a claim, soonest first.
  *
- * Uniform among all of them, NOT "the seat next in turn order after the
- * discarder" — which is what this used to be, and is an arbitrary,
- * silently biased tiebreak dressed up as a rule. Every non-discarder is
- * equally capable of hitting the same meld, so picking the one whose
- * turn happens to be coming up reads as "whoever's next always wins the
- * reflex" rather than a real contest among the table.
+ * The whole point of the claim is that it is a RACE — the player and
+ * every bot are looking at the same card at the same moment, and it goes
+ * to whoever gets there first. So each bot draws a reaction time and the
+ * fastest one wins, exactly as a table full of people would resolve it.
  *
- * Derived from a plain string hash of data already in hand rather than
- * an `Rng`, because `reduce` is deliberately rng-free — only `setup`,
- * `startRound` and a bot's own `choose` ever receive real-world inputs.
- * This keeps the whole engine replayable from a seed exactly as before
- * while no longer being predictable.
+ * Derived from a plain string hash rather than an `Rng` for the same
+ * reason `claimPick` was: `reduce` is deliberately rng-free (only
+ * `setup`, `startRound` and a bot's own `choose` ever receive real-world
+ * inputs), and a claim arises inside `reduce`. Hashing data already in
+ * hand keeps the whole engine replayable from its seed.
+ *
+ * `CLAIM_REACTION_MIN` is NOT the 500ms that first suggested itself. A
+ * bot arriving at 0.5s is indistinguishable from the bug this feature was
+ * fixed for once already — "literally as soon as I discarded it, a bot
+ * claimed it" — because the button has to be *seen* before it can be
+ * raced for. A second and a bit is the floor at which there is genuinely
+ * something to react to.
  */
-export function claimPick(
-  eligible: readonly SeatId[],
+export const CLAIM_REACTION_MIN = 1100;
+export const CLAIM_REACTION_MAX = 5500;
+
+export function claimReactions(
+  state: RummyState,
   card: PieceId,
-  round: number,
   discarder: SeatId,
-): SeatId {
-  return eligible[hashString(`${card}|${round}|${discarder}`) % eligible.length]!;
+): Array<{ seat: SeatId; ms: number }> {
+  const span = CLAIM_REACTION_MAX - CLAIM_REACTION_MIN;
+  return eligibleClaimSeats(state, discarder)
+    .filter((s) => s !== HERO)
+    .map((seat) => ({
+      seat,
+      ms: CLAIM_REACTION_MIN + (hashString(`${card}|${state.round}|${discarder}|${seat}`) % span),
+    }))
+    .sort((a, b) => a.ms - b.ms || a.seat - b.seat);
 }
 
 /**
  * FNV-1a, returned as a non-negative 31-bit integer. The one place this
  * codebase derives "randomness" from data rather than an `Rng` — used
  * only where `reduce`'s purity forbids threading a real generator in
- * (see `claimPick`, and `rules.ts`'s in-reduce deal shuffle).
+ * (see `claimReactions`, and `rules.ts`'s in-reduce deal shuffle).
  */
 export function hashString(key: string): number {
   let h = 2166136261;

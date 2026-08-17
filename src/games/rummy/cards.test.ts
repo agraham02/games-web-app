@@ -5,9 +5,11 @@ import {
   cardsValue,
   findCompletion,
   handDisplayOrder,
+  isDeadMeld,
   isRun,
   isSet,
   isValidMeld,
+  laidCards,
   meldDisplayOrder,
   meldLabel,
   orderExtensions,
@@ -230,3 +232,52 @@ describe("rummy cards — findCompletion", () => {
     }
   });
 });
+
+describe("rummy cards — a dead set", () => {
+  const laid = (...melds: string[][]) => laidCards(melds.map((cards) => ({ cards })));
+
+  it("is dead once every suit of its rank is on the board", () => {
+    const board = [["SA", "HA", "CA", "DA"]];
+    expect(isDeadMeld(board[0]!, laid(...board))).toBe(true);
+  });
+
+  it("is dead at THREE cards when the fourth is committed to somebody's run", () => {
+    // Reported from play, and the case the first version got wrong: three
+    // aces down as a set, the fourth ace laid in an A-2-3 run. The set
+    // holds only three cards but can never take a fourth, because the one
+    // card that could join it is laid and laid cards never move.
+    const set = ["SA", "HA", "CA"];
+    const run = ["DA", "D2", "D3"];
+    const board = laid(set, run);
+    expect(isDeadMeld(set, board), "the three-ace set is closed").toBe(true);
+    // The reason, stated against the rules rather than asserted: of every
+    // card still ABLE to be played — anything not already on the board —
+    // none can join this set. `canExtend` alone would say DA fits, and it
+    // is right to: it is asked about a meld and a card, and knows nothing
+    // about where that card currently is. Availability is what closes the
+    // set, which is exactly why `isDeadMeld` needs the whole board.
+    for (const card of rummyDeck()) {
+      if (board.has(card)) continue;
+      expect(canExtend(set, card), `${card} must not extend a closed set`).toBe(false);
+    }
+    // And the run is NOT dead — it still takes a 4, and a run never turns
+    // over in this game regardless.
+    expect(isDeadMeld(run, board), "the run must stay face up").toBe(false);
+    expect(canExtend(run, "D4")).toBe(true);
+  });
+
+  it("is alive while any suit of its rank is still unaccounted for", () => {
+    const set = ["SA", "HA", "CA"];
+    // The fourth ace is in nobody's meld — it is in a hand or the stock.
+    expect(isDeadMeld(set, laid(set))).toBe(false);
+    expect(canExtend(set, "DA")).toBe(true);
+  });
+
+  it("never calls a run dead, however complete", () => {
+    // An ace-to-king run cannot be extended either, but turning a run over
+    // is not the gesture — "all four of this rank are down" is.
+    const run = ["SA", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "SJ", "SQ", "SK"];
+    expect(isDeadMeld(run, laid(run))).toBe(false);
+  });
+});
+

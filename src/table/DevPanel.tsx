@@ -36,6 +36,19 @@ export interface DevPanelProps {
   debugState?: unknown;
   pieces?: Record<PieceId, PieceMeta>;
   onDebugStateChange?: (next: unknown) => void;
+  /**
+   * Game-specific one-shot rigs — "put the game in exactly this
+   * situation". The generic state editor can move pieces between piles,
+   * but it cannot construct a state that is only reachable through a
+   * particular sequence of events, and some features live entirely in
+   * such states (Rummy's claim window opens only when a bot happens to
+   * discard into a live meld). Waiting for one to occur naturally is not
+   * a test loop.
+   *
+   * Deliberately just labelled callbacks: the panel knows nothing about
+   * what they do, so no game's rig can leak into this file.
+   */
+  scenarios?: ReadonlyArray<{ label: string; run: () => void }>;
 }
 
 export function DevPanel({
@@ -45,6 +58,7 @@ export function DevPanel({
   debugState,
   pieces,
   onDebugStateChange,
+  scenarios,
 }: DevPanelProps) {
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -181,6 +195,24 @@ export function DevPanel({
                 states the table layer most needs testing against. Kept
                 behind a toggle because it is tall and only occasionally
                 wanted. */}
+            {scenarios && scenarios.length > 0 ? (
+              <div className="flex flex-col gap-1.5 border-t border-bone-50/10 pt-2">
+                <span className="text-[11px] font-bold text-bone-200">Scenarios</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {scenarios.map((s) => (
+                    <button
+                      key={s.label}
+                      type="button"
+                      onClick={s.run}
+                      className="rounded bg-bone-50/8 px-2 py-1 text-[10px] font-bold text-bone-200 ring-1 ring-bone-50/14 hover:bg-brass-400/18 hover:text-brass-300"
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {debugState !== undefined && pieces && onDebugStateChange ? (
               <div className="flex flex-col gap-1.5 border-t border-bone-50/10 pt-2">
                 <button

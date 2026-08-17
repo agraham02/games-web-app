@@ -53,6 +53,18 @@ export interface ClaimWindow {
   discard: PieceId;
   discarder: SeatId;
   meldId: number;
+  /**
+   * Every eligible BOT's reaction time for this card, in ms, soonest
+   * first — the field that turns the claim from a queue into a race.
+   *
+   * It used to be neither: the hero got a fixed 5s refusal and only then
+   * did a bot get a look, so a claim could not actually be contested.
+   * Now every seat is running the same clock, and the winner is whoever
+   * reaches the card first. The times live in STATE rather than in the
+   * page because they decide who wins, and that has to be replayable from
+   * a seed like everything else here (see `claimReactions`).
+   */
+  bots: ReadonlyArray<{ seat: SeatId; ms: number }>;
 }
 
 export interface RoundResult {

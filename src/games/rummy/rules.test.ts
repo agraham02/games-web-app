@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
 import { HERO, type SeatId } from "@/engine/types";
-import { findCompletion, rummyDeck } from "./cards";
+import { contributorOf, findCompletion, rummyDeck } from "./cards";
 import { createRummy, reduce, startRound } from "./rules";
-import { claimPick, maxDealSize, validDealSizes } from "./state";
+import {
+  CLAIM_REACTION_MAX,
+  CLAIM_REACTION_MIN,
+  claimReactions,
+  maxDealSize,
+  validDealSizes,
+} from "./state";
 import type { Meld, RummyState } from "./types";
 
 const def = createRummy({ target: 250 });
@@ -308,14 +314,27 @@ describe("rummy — the claim window", () => {
       hands: { 0: ["S8", "CK"], 1: ["S8", "CK"], 2: ["H2"], 3: ["H3"] },
     });
 
-  it("gives the hero first refusal on a bot's discard", () => {
+  it("opens a contested window carrying every bot's own clock", () => {
     const state = { ...claimable(), turn: 1 as SeatId };
     const { state: next } = reduce(state, { t: "discard", card: "S8" });
-    expect(next.claimWindow).toEqual({ discard: "S8", discarder: 1, meldId: 1 });
+    expect(next.claimWindow?.discard).toBe("S8");
+    expect(next.claimWindow?.discarder).toBe(1);
+    expect(next.claimWindow?.meldId).toBe(1);
+    // The clocks are the race. Every eligible bot has one, soonest first,
+    // and the page runs the shortest against the hero's own — the hero
+    // used to get a guaranteed refusal, which was a queue pretending to
+    // be a contest.
+    const bots = next.claimWindow!.bots;
+    expect(bots.map((b) => b.seat)).toEqual([...bots].sort((a, b) => a.ms - b.ms).map((b) => b.seat));
+    expect(bots.length).toBe(2); // seats 2 and 3; seat 1 discarded it
+    for (const b of bots) {
+      expect(b.ms).toBeGreaterThanOrEqual(CLAIM_REACTION_MIN);
+      expect(b.ms).toBeLessThanOrEqual(CLAIM_REACTION_MAX);
+    }
     // The turn parks on the hero regardless of whose turn it nominally is.
     expect(def.currentSeat(next)).toBe(HERO);
     expect(def.legalActions(next, HERO)).toEqual([{ t: "claim" }, { t: "passClaim" }]);
-    // Crucially, no bot has grabbed it in the meantime.
+    // And nothing has been grabbed while the window is open.
     expect(next.melds[0]!.cards).toEqual(["S5", "S6", "S7"]);
   });
 
@@ -365,19 +384,74 @@ describe("rummy — the claim window", () => {
   });
 
   it("spreads contested claims across the table, not to whoever is next", () => {
-    // The correction this encodes: extension has no owner restriction,
-    // so every non-discarder is equally capable. Awarding it to the
+    // The correction this encodes: extension has no owner restriction, so
+    // every non-discarder is equally capable. Awarding it to the
     // discarder's next seat every time is an arbitrary, silently biased
     // tiebreak that reads as "whoever's turn is coming up always wins".
-    const eligible: SeatId[] = [1, 2, 3];
+    const state = fixture();
     const winners = new Set<SeatId>();
-    for (const card of rummyDeck()) winners.add(claimPick(eligible, card, 1, 0));
+    for (const card of rummyDeck()) {
+      const fastest = claimReactions(state, card, 0)[0];
+      if (fastest) winners.add(fastest.seat);
+    }
     expect(winners.size).toBeGreaterThan(1);
   });
 
-  it("picks deterministically for the same inputs — reduce stays replayable", () => {
-    const eligible: SeatId[] = [1, 2, 3];
-    expect(claimPick(eligible, "S8", 3, 0)).toBe(claimPick(eligible, "S8", 3, 0));
+  it("awards a passed claim to the FASTEST bot, not to a re-derived pick", () => {
+    // The window's clocks are fixed when it opens, so the winner is
+    // already decided by the time the hero passes. Re-deriving it on the
+    // pass would make the countdown a lie: the ring could run down against
+    // one bot and the card go to another.
+    const state = { ...claimable(), turn: 1 as SeatId };
+    const opened = reduce(state, { t: "discard", card: "S8" }).state;
+    const fastest = opened.claimWindow!.bots[0]!.seat;
+    const { state: next } = reduce(opened, { t: "passClaim" });
+    expect(next.melds[0]!.cards).toContain("S8");
+    // `contributorOf`, not `hitBy` — `hitBy` records only the cards whose
+    // player differs from the meld's owner, so asserting on it directly
+    // would pass for the wrong reason whenever the winner happens to own
+    // the meld already.
+    expect(contributorOf(next.melds[0]!, "S8")).toBe(fastest);
+  });
+
+  it("spends the winning bot's own reaction time as the visible beat", () => {
+    // When the HERO discarded there is no window and no page timer, so the
+    // pause has to come from the event batch — and it should be the bot's
+    // real reaction time, not a constant. A claim that resolves instantly
+    // reads as "it already knew", which was reported exactly that way.
+    const state = { ...claimable(), turn: HERO, phase: "meld" as const };
+    // Two cards, so discarding one does not empty the hand and end the
+    // round before the claim ever resolves.
+    const withCard = { ...state, hands: { ...state.hands, [HERO]: ["S8", "CK"] } };
+    const { events } = reduce(withCard, { t: "discard", card: "S8" });
+    const think = events.find((e) => e.t === "think");
+    expect(think, "a bot claim must carry a real beat").toBeDefined();
+    if (think?.t === "think") {
+      expect(think.ms).toBeGreaterThanOrEqual(CLAIM_REACTION_MIN);
+      expect(think.ms).toBeLessThanOrEqual(CLAIM_REACTION_MAX);
+    }
+  });
+
+  it("can give a bot a shorter clock than the hero's whole window", () => {
+    // Otherwise it is not a race. The hero used to get a guaranteed five
+    // seconds before any bot got a look, which meant a contested claim
+    // could never actually be contested.
+    const state = fixture();
+    let sawFast = false;
+    for (const card of rummyDeck()) {
+      const soonest = claimReactions(state, card, 1)[0];
+      if (soonest && soonest.ms < 2500) sawFast = true;
+    }
+    expect(sawFast, "no bot ever arrives before a slow human would").toBe(true);
+  });
+
+  it("draws reaction times deterministically — reduce stays replayable", () => {
+    const state = fixture();
+    expect(claimReactions(state, "S8", 0)).toEqual(claimReactions(state, "S8", 0));
+    // ...and never gives two bots the same instant, or "who was first"
+    // would come down to array order rather than to the race.
+    const times = claimReactions(state, "S8", 0).map((b) => b.ms);
+    expect(new Set(times).size).toBe(times.length);
   });
 });
 
@@ -793,10 +867,16 @@ describe("rummy — full-match simulation invariants", () => {
     // and so made the hero's "Rummy!" window unreachable in real play.
     // A window opening is not proof the feature is good, but zero of them
     // is proof it is dead, which is what it measured before.
+    // Measured with `steady` (what `runMatch` plays): 19 windows across
+    // 60 matches, roughly one every twelve rounds. Casual is ~5x that,
+    // sharp is genuinely zero — it never misses a lay-off AND avoids
+    // discarding into a live meld, which is what "rarely hands you a
+    // gift" has to mean. The floor here only has to be above zero;
+    // zero was the bug.
     claimWindowsOpened = 0;
     for (let seed = 1; seed <= 60; seed++) runMatch(seed, 2 + (seed % 5), false);
     expect(claimWindowsOpened, "no discard was ever claimable across 60 matches").toBeGreaterThan(
-      10,
+      5,
     );
   });
 });

@@ -6,8 +6,13 @@ const GAMES = [
 
 export default function Home() {
   return (
-    <main className="felt felt-weave min-h-svh">
-      <div className="relative z-1 mx-auto max-w-2xl px-6 py-16">
+    /* The PAGE scrolls, not the body — `body` is `overflow: hidden` on
+       both axes so the table can own its pan gestures (globals.css), and
+       a page that outgrows the viewport would otherwise have no way to be
+       reached at all. Same shape as `SetupShell`; this one is a document
+       rather than a centred form, so it needs no auto-margin centring. */
+    <main className="felt felt-weave h-svh overflow-y-auto overscroll-contain">
+      <div className="relative z-1 mx-auto max-w-2xl px-6 py-16 sm:py-16">
         <span className="eyebrow">Foundation build</span>
         <h1 className="mt-2 font-display text-4xl tracking-wider text-brass-300">
           Table Games

@@ -52,7 +52,6 @@ import {
   cardsValue,
   contributorOf,
   handDisplayOrder,
-  isDeadMeld,
   isValidMeld,
   meldLabel,
   rummyDeck,
@@ -63,10 +62,9 @@ import {
   DEFAULT_TARGET,
   MAX_SEATS,
   MIN_SEATS,
-  claimPick,
+  claimReactions,
   claimableMeld,
   contributedValue,
-  eligibleClaimSeats,
   handValue,
   hashString,
   layableMelds,
@@ -94,8 +92,17 @@ export const HIDDEN_CARD: PieceId = "??";
  */
 const NO_PROGRESS_LAPS = 20;
 
-/** Pacing for a bot's claim. Never faster than an ordinary bot turn. */
-const CLAIM_THINK_MS = 700;
+/**
+ * The beat before a claim that the RACE did not already supply.
+ *
+ * When the hero was offered the window, the page has already spent the
+ * winning bot's reaction time in real time waiting for it, so the engine
+ * only needs enough of a pause that the claim does not land in the same
+ * frame as the pass. When the hero DISCARDED the card there was no window
+ * and no page timer, so the bot's own reaction time becomes the beat —
+ * which is what makes it look like the bot noticed rather than knew.
+ */
+const CLAIM_SETTLE_MS = 220;
 
 /* ============================================================
    Setup and the deal
@@ -506,14 +513,26 @@ function openClaimWindow(
   const meld = claimableMeld(state, card);
   if (!meld) return advanceTurn(state, events);
 
-  if (discarder !== HERO && canExtend(meld.cards, card)) {
+  const bots = claimReactions(state, card, discarder);
+
+  if (discarder !== HERO) {
+    // The hero is in the race, so the window opens and carries the bots'
+    // clocks with it. The page runs the shortest of them against the
+    // hero's own; whoever gets there first wins. The hero no longer has a
+    // guaranteed refusal — that was a queue dressed up as a contest.
     return {
-      state: { ...state, claimWindow: { discard: card, discarder, meldId: meld.id } },
+      state: {
+        ...state,
+        claimWindow: { discard: card, discarder, meldId: meld.id, bots },
+      },
       events,
     };
   }
 
-  return resolveBotClaim(state, card, discarder, events);
+  // The hero discarded it, so there is nobody to open a window for and no
+  // page timer to spend the wait. The winning bot's own reaction time
+  // becomes the pause instead.
+  return resolveBotClaim(state, card, discarder, events, bots);
 }
 
 /**
@@ -525,21 +544,27 @@ function resolveBotClaim(
   card: PieceId,
   discarder: SeatId,
   events: GameEvent[],
+  /** The race, when the caller has already run it. */
+  reactions?: ReadonlyArray<{ seat: SeatId; ms: number }>,
 ): ReduceResult<RummyState> {
   const meld = claimableMeld(state, card);
   if (!meld) return advanceTurn(state, events);
 
-  const eligible = eligibleClaimSeats(state, discarder).filter((s) => s !== HERO);
-  if (eligible.length === 0) return advanceTurn(state, events);
+  const bots = reactions ?? claimReactions(state, card, discarder);
+  const winner = bots[0];
+  if (!winner) return advanceTurn(state, events);
+  const claimer = winner.seat;
 
-  const claimer = claimPick(eligible, card, state.round, discarder);
-
-  // A REAL deliberation beat before the claim plays out. The state
-  // transition below is synchronous, but without this the claim lands
-  // in the same instant as the discard that caused it, which reads as
-  // "the bot already knew and grabbed it before I saw what happened."
-  // A bot's claim must never resolve faster than an ordinary bot turn.
-  events.push({ t: "think", seat: claimer, ms: CLAIM_THINK_MS });
+  // A REAL beat before the claim plays out. The state transition below is
+  // synchronous, and without a pause the claim lands in the same instant
+  // as the discard that caused it — which reads as "the bot already knew
+  // and grabbed it before I saw what happened", and was reported exactly
+  // that way once.
+  events.push({
+    t: "think",
+    seat: claimer,
+    ms: reactions ? winner.ms : CLAIM_SETTLE_MS,
+  });
 
   const pile = state.discard;
   const taken: RummyState = {
@@ -586,8 +611,11 @@ function reducePassClaim(state: RummyState): ReduceResult<RummyState> {
   const window = state.claimWindow;
   if (!window) return { state, events: [] };
   const cleared: RummyState = { ...state, claimWindow: null };
-  // Only now do the bots get their shot at it.
-  return resolveBotClaim(cleared, window.discard, window.discarder, []);
+  // The hero lost the race (or declined it). The bots' clocks were fixed
+  // when the window opened, so the winner is already decided — pass the
+  // same list back rather than re-deriving it, and take the short settle
+  // beat, since the page has already spent the real wait.
+  return resolveBotClaim(cleared, window.discard, window.discarder, [], window.bots);
 }
 
 /* ============================================================
@@ -871,12 +899,13 @@ export function placements(state: RummyState, viewer: SeatId): PlacementMap {
   // `seat` is the per-card CONTRIBUTOR, not the meld's owner — see
   // `Placement.seat`. `group` carries which meld it belongs to, so
   // scoring attribution and visual grouping stay free to disagree.
+  //
+  // Note these stay FACE UP even when the meld is dead. Turning a dead
+  // meld over is a board-sheet job (see `useFlippedMelds`), and it has to
+  // be: the only moment a board card is visible on the felt is the beat
+  // its own flight takes, and the card that completes the set would then
+  // arrive face-down — you would watch it fly with its back to you.
   state.melds.forEach((meld) => {
-    // All four of a rank down means nothing can ever join it, and at a
-    // real table that meld gets turned over. Nothing about the rules
-    // changes — `canExtend` already refused a fifth suit — it is just no
-    // longer information anyone needs to keep reading.
-    const dead = isDeadMeld(meld.cards);
     meld.cards.forEach((id, i) => {
       const contributor = contributorOf(meld, id);
       out[id] = {
@@ -885,7 +914,7 @@ export function placements(state: RummyState, viewer: SeatId): PlacementMap {
         group: meld.id,
         index: i,
         count: meld.cards.length,
-        faceUp: !dead,
+        faceUp: true,
         hidden: true,
         // Only when the card is NOT the meld owner's. Tagging every card
         // in your own meld with your own initials says nothing — the

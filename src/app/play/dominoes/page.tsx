@@ -25,7 +25,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { HERO, type PieceId } from "@/engine/types";
+import { HERO, type BotDifficulty, type PieceId } from "@/engine/types";
+import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
+import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameHost, type RoundNote } from "@/table/GameHost";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
@@ -59,6 +61,7 @@ const TARGETS = [61, 100, 150];
 export default function DominoesPlayPage() {
   const [seats, setSeats] = useState(3);
   const [target, setTarget] = useState(100);
+  const [difficulty, setDifficulty] = useState<BotDifficulty>("steady");
   const [started, setStarted] = useState(false);
   const [gameKey, setGameKey] = useState(0);
   /** The tile the hero has picked up, if any. Lives here rather than in
@@ -103,6 +106,8 @@ export default function DominoesPlayPage() {
   if (!started) {
     return (
       <SetupScreen
+        difficulty={difficulty}
+        onDifficultyChange={setDifficulty}
         seats={seats}
         target={target}
         onSeatsChange={setSeats}
@@ -116,7 +121,7 @@ export default function DominoesPlayPage() {
     <GameHost<DomState, DomAction>
       key={gameKey}
       definition={definition}
-      runtime={{ seats }}
+      runtime={{ seats, difficulty: botTable(seats, difficulty) }}
       gameTitle="Dominoes"
       players={playerViews}
       standings={standings}
@@ -498,16 +503,20 @@ function SetupScreen({
   target,
   onSeatsChange,
   onTargetChange,
+  difficulty,
+  onDifficultyChange,
   onStart,
 }: {
   seats: number;
   target: number;
   onSeatsChange: (n: number) => void;
   onTargetChange: (n: number) => void;
+  difficulty: BotDifficulty;
+  onDifficultyChange: (d: BotDifficulty) => void;
   onStart: () => void;
 }) {
   return (
-    <main className="felt felt-weave flex min-h-svh flex-col items-center justify-center gap-8 px-6">
+    <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">New match</span>
         <h1 className="font-display text-4xl tracking-wider text-brass-300">
@@ -555,6 +564,10 @@ function SetupScreen({
         </span>
       </div>
 
+      <div className="flex w-full max-w-xs">
+        <DifficultyPicker value={difficulty} onChange={onDifficultyChange} />
+      </div>
+
       <button
         type="button"
         onClick={onStart}
@@ -566,7 +579,7 @@ function SetupScreen({
       <Link href="/" className="text-xs text-bone-400 hover:text-bone-200">
         ← Back
       </Link>
-    </main>
+    </SetupShell>
   );
 }
 

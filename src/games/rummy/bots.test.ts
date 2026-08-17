@@ -106,12 +106,14 @@ describe("rummy bots — decisions", () => {
     };
 
     expect(laysOff("sharp"), "sharp never misses a lay-off").toBe(1);
-    // The weaker tiers spot it often enough to feel competent and miss it
-    // often enough for the player to get a shot at the discard.
-    expect(laysOff("steady")).toBeGreaterThan(0.6);
+    // Small oversight rates, on purpose: ~5% for steady and ~15% for
+    // casual. The first pass ran 20%/55%, which made the claim window
+    // common — the wrong correction for a bug that was "it can never
+    // happen", not "it is rare".
+    expect(laysOff("steady")).toBeGreaterThan(0.88);
     expect(laysOff("steady")).toBeLessThan(1);
-    expect(laysOff("casual")).toBeGreaterThan(0.2);
-    expect(laysOff("casual")).toBeLessThan(0.75);
+    expect(laysOff("casual")).toBeGreaterThan(0.75);
+    expect(laysOff("casual")).toBeLessThan(0.94);
   });
 
   it("takes a pile dig that hands it a whole meld", () => {

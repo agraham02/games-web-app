@@ -31,17 +31,29 @@
  * real runtime geometry, which moves per viewport and density.
  */
 
+import { SHORT_VIEWPORT_H } from "./geometry";
 import { useGeometry } from "./store";
 
 /**
  * Height reserved for this row, in px.
  *
- * Deliberately a flat constant rather than per-density: callers need it
- * BEFORE `resolveTable` has run (it feeds `ResolveOptions.bottomZone`,
- * which is an input to the very geometry that would tell you the
- * density), so a density-aware value would be circular.
+ * Deliberately not per-DENSITY: callers need it BEFORE `resolveTable`
+ * has run (it feeds `ResolveOptions.bottomZone`, which is an input to
+ * the very geometry that would tell you the density), so a
+ * density-aware value would be circular.
+ *
+ * It does vary by viewport HEIGHT, which is not circular — the caller
+ * already knows that before asking for any geometry. On a short screen
+ * every vertical pixel is contested and 64px for one row of chips is
+ * more than the row needs; 44 still clears the tallest thing that goes
+ * in it (a pill button). See `SHORT_VIEWPORT_H`.
  */
 export const HAND_HEADER_H = 64;
+export const HAND_HEADER_H_SHORT = 44;
+
+export function handHeaderHeight(viewportH: number): number {
+  return viewportH < SHORT_VIEWPORT_H ? HAND_HEADER_H_SHORT : HAND_HEADER_H;
+}
 
 export interface HandZoneProps {
   left?: React.ReactNode;
@@ -65,11 +77,12 @@ export function HandZone({ left, center, right, bar }: HandZoneProps) {
   if (!geometry) return null;
 
   const hand = geometry.zones.hand;
+  const headerH = handHeaderHeight(geometry.box.h);
   const shell = {
     left: hand.x,
     width: hand.w,
-    top: hand.y - HAND_HEADER_H,
-    height: HAND_HEADER_H,
+    top: hand.y - headerH,
+    height: headerH,
   };
 
   if (bar) {

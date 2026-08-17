@@ -8,6 +8,7 @@ import {
   isPortraitTable,
   pileAssembly,
   pileAssemblyHorizontal,
+  isShortViewport,
   MIN_DISCARD_STEP_FRACTION,
   POD_GAP,
   POD_SIZE,
@@ -352,6 +353,74 @@ describe("fanSlot — compression floor and panning", () => {
   });
 });
 
+/**
+ * A short viewport has no vertical budget to divide.
+ *
+ * Reported from play on a 1052x486 landscape phone: Rummy's hand strip
+ * (165px), its header (64px) and the board sheet's resting height (81px)
+ * left the table **86px tall** — pods, deck and discard crushed into one
+ * strip with the sheet over most of it, and the sheet's own cards clipped
+ * because 81px minus a handle and a header is not a card.
+ *
+ * Rummy answers that by declining to lay out at all and asking the player
+ * to rotate, which is a page-level decision this file cannot see. What it
+ * CAN pin is the relief every game gets from it: the hand strip stops
+ * being generous when there is nothing to be generous with, which is what
+ * keeps Spades, Dominoes and LRC playable in the same orientation.
+ */
+describe("short viewports", () => {
+  const LANDSCAPE = [
+    { name: "phone landscape", w: 844, h: 390 },
+    { name: "big phone landscape", w: 1052, h: 486 },
+  ];
+  const TALL = [
+    { name: "phone portrait", w: 390, h: 844 },
+    { name: "tablet portrait", w: 768, h: 1024 },
+    { name: "desktop", w: 1440, h: 900 },
+  ];
+
+  it("recognises a short viewport by HEIGHT, not by orientation", () => {
+    for (const vp of LANDSCAPE) {
+      expect(isShortViewport(vp), vp.name).toBe(true);
+    }
+    for (const vp of TALL) {
+      // A 1440x900 desktop is landscape and has ample height.
+      expect(isShortViewport(vp), vp.name).toBe(false);
+    }
+  });
+
+  it("shrinks the hand strip only on short viewports", () => {
+    for (const vp of LANDSCAPE) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
+      // Down to the cards plus the lift a selected card takes, no more.
+      expect(g.zones.hand.h, vp.name).toBeLessThanOrEqual(g.handCard.h * 1.25 + 0.001);
+      expect(g.zones.hand.h, `${vp.name}: still holds a card`).toBeGreaterThan(g.handCard.h);
+    }
+    for (const vp of TALL) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
+      // Untouched where there is height to be generous with.
+      expect(g.zones.hand.h, vp.name).toBeGreaterThan(g.handCard.h * 1.25);
+    }
+  });
+
+  it("still leaves the hand strip the biggest single band it was", () => {
+    // The relief is a cap, not a rewrite: the strip is still sized from
+    // the cards, and there is nothing to check about the ring receiving
+    // the difference because `ringBottom` subtracts `handZone` directly —
+    // a smaller strip is a taller ring by arithmetic, not by policy.
+    for (const vp of [...LANDSCAPE, ...TALL]) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
+      expect(g.zones.hand.h, `${vp.name}: strip lost the cards`).toBeGreaterThanOrEqual(
+        g.handCard.h,
+      );
+      expect(g.zones.hand.y + g.zones.hand.h, `${vp.name}: strip left the viewport`).toBeCloseTo(
+        vp.h,
+        5,
+      );
+    }
+  });
+});
+
 describe("pileRegion", () => {
   it("stays clear of every seat pod AND its fanned hand, everywhere", () => {
     for (const vp of VIEWPORTS) {
@@ -362,6 +431,16 @@ describe("pileRegion", () => {
 
         expect(region.w, `${ctx}: region collapsed`).toBeGreaterThan(0);
         expect(region.h, `${ctx}: region collapsed`).toBeGreaterThan(0);
+
+        // The one documented exception: on a very small screen with seats
+        // on every edge, the clearances can eat the region entirely, and
+        // a floor takes over — a pile that cannot be drawn at all is
+        // worse than one sitting a little close. Where the floor is what
+        // sized the region, "clear of every hand" is not on offer and
+        // asserting it would be asserting the impossible.
+        const floored =
+          region.w <= g.card.w * 2.42 + 0.001 || region.h <= g.card.h * 1.2 + 0.001;
+        if (floored) continue;
 
         for (const seat of g.seats) {
           if (seat.isHero) continue;

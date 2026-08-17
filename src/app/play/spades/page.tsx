@@ -33,7 +33,9 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { HERO, type PieceId, type SeatId } from "@/engine/types";
+import { HERO, type BotDifficulty, type PieceId, type SeatId } from "@/engine/types";
+import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
+import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameHost, type RoundNote } from "@/table/GameHost";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
@@ -61,6 +63,7 @@ type Live = GameRuntime<SpadesState, SpadesAction>;
 export default function SpadesPlayPage() {
   const [jokers, setJokers] = useState(false);
   const [twoOfSpadesHigh, setTwoOfSpadesHigh] = useState(false);
+  const [difficulty, setDifficulty] = useState<BotDifficulty>("steady");
   const [started, setStarted] = useState(false);
   const [gameKey, setGameKey] = useState(0);
   /** Up to 2 cards picked for the current blind-nil exchange step.
@@ -107,6 +110,8 @@ export default function SpadesPlayPage() {
   if (!started) {
     return (
       <SetupScreen
+        difficulty={difficulty}
+        onDifficultyChange={setDifficulty}
         jokers={jokers}
         twoOfSpadesHigh={twoOfSpadesHigh}
         onJokersChange={setJokers}
@@ -120,7 +125,7 @@ export default function SpadesPlayPage() {
     <GameHost<SpadesState, SpadesAction>
       key={gameKey}
       definition={definition}
-      runtime={{ seats: 4 }}
+      runtime={{ seats: 4, difficulty: botTable(4, difficulty) }}
       gameTitle="Spades"
       players={playerViews}
       standings={standings}
@@ -584,16 +589,20 @@ function SetupScreen({
   twoOfSpadesHigh,
   onJokersChange,
   onTwoOfSpadesHighChange,
+  difficulty,
+  onDifficultyChange,
   onStart,
 }: {
   jokers: boolean;
   twoOfSpadesHigh: boolean;
   onJokersChange: (v: boolean) => void;
   onTwoOfSpadesHighChange: (v: boolean) => void;
+  difficulty: BotDifficulty;
+  onDifficultyChange: (d: BotDifficulty) => void;
   onStart: () => void;
 }) {
   return (
-    <main className="felt felt-weave flex min-h-svh flex-col items-center justify-center gap-8 px-6">
+    <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">New match</span>
         <h1 className="font-display text-4xl tracking-wider text-brass-300">Spades</h1>
@@ -617,6 +626,10 @@ function SetupScreen({
           checked={twoOfSpadesHigh}
           onChange={onTwoOfSpadesHighChange}
         />
+        {/* Applies to your partner too — a Spades table is 2v2, and a
+            partner who plays a different game from the opponents would be
+            a much stranger setting than one difficulty for the table. */}
+        <DifficultyPicker value={difficulty} onChange={onDifficultyChange} label="Table" />
       </div>
 
       <button
@@ -630,7 +643,7 @@ function SetupScreen({
       <Link href="/" className="text-xs text-bone-400 hover:text-bone-200">
         ← Back
       </Link>
-    </main>
+    </SetupShell>
   );
 }
 

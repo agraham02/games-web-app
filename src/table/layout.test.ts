@@ -413,27 +413,6 @@ describe("discard fan — never draws outside the pile region", () => {
     };
   }
 
-  /**
-   * How far the drawn card sticks out past `box`, in px, and how far its
-   * CENTRE is outside — measured per axis and reported as the worse of
-   * the two, since a card clear of the box on either axis is off it.
-   */
-  function overhangOf(c: ReturnType<typeof fanCard>, box: Box) {
-    const axis = (lo: number, hi: number, bLo: number, bHi: number) => ({
-      edge: Math.max(bLo - lo, hi - bHi, 0),
-      centre: Math.max(bLo - (lo + hi) / 2, (lo + hi) / 2 - bHi, 0),
-      extent: hi - lo,
-    });
-    const x = axis(c.left, c.right, box.x, box.x + box.w);
-    const y = axis(c.top, c.bottom, box.y, box.y + box.h);
-    return x.edge >= y.edge ? x : y;
-  }
-
-  /** The geometry's own tuning, restated: the band stops this far short
-   *  of the card's half-extent, so that much overhang stays fully drawn.
-   *  Plus a pixel for float residue. */
-  const solidSlack = (extent: number) => extent * (0.5 - 0.45) + 1;
-
   /** Real-game viewport/seat/depth matrix, with the board sheet's band
    *  reserved exactly as the play page reserves it. */
   function forEachFanCard(fn: (c: ReturnType<typeof fanCard>, label: string, g: ReturnType<typeof resolveTable>) => void) {
@@ -458,33 +437,68 @@ describe("discard fan — never draws outside the pile region", () => {
     }
   }
 
-  it("draws nothing once a card's centre has left the region", () => {
-    let gone = 0;
+  it("never draws any part of a card outside the region", () => {
+    // The strong form, and what the fan box's `fadeMargin` inset buys.
+    // The weaker "no card's CENTRE leaves the region" was not enough in
+    // practice: a card is drawn while its centre is inside, so the
+    // visible edge reached half a card further — ~46px on a desktop,
+    // against a clearance of `PILE_BREATHING`. Reported as the far end of
+    // a long pile lying across the next player's cards.
+    let overflowed = 0;
     forEachFanCard((c, label, g) => {
-      const o = overhangOf(c, g.pileRegion);
-      if (o.centre > 0) {
-        gone++;
-        expect(c.opacity, `${label}: centre outside the region but still drawn`).toBe(0);
+      if (c.opacity <= 0) {
+        overflowed++;
+        return;
       }
-      if (c.opacity > 0) {
-        expect(o.edge, `${label}: visible more than half a card past the edge`).toBeLessThanOrEqual(
-          o.extent / 2 + 1,
-        );
-      }
+      const R = g.pileRegion;
+      expect(c.left, `${label}: drawn left of the region`).toBeGreaterThanOrEqual(R.x - 1);
+      expect(c.right, `${label}: drawn right of the region`).toBeLessThanOrEqual(R.x + R.w + 1);
+      expect(c.top, `${label}: drawn above the region`).toBeGreaterThanOrEqual(R.y - 1);
+      expect(c.bottom, `${label}: drawn below the region`).toBeLessThanOrEqual(R.y + R.h + 1);
     });
-    // Not vacuous: these depths really do push cards right out of the
-    // region, which is the whole reason the fade exists.
-    expect(gone, "no pile in this matrix overflowed — nothing was tested").toBeGreaterThan(20);
+    // Not vacuous: these depths really do pan cards right out of sight,
+    // which is the whole reason the fade exists.
+    expect(overflowed, "no pile in this matrix overflowed — nothing was tested").toBeGreaterThan(
+      20,
+    );
   });
 
-  it("only draws a card at full strength while it is essentially inside", () => {
-    forEachFanCard((c, label, g) => {
-      if (c.opacity < 1) return;
-      const o = overhangOf(c, g.pileRegion);
-      expect(o.edge, `${label}: fully drawn while hanging out of the region`).toBeLessThanOrEqual(
-        solidSlack(o.extent),
-      );
-    });
+  it("keeps a clear gap between the pile and every opponent's own cards", () => {
+    // The reported symptom, asserted directly rather than only through
+    // the region that is meant to prevent it.
+    for (const vp of VIEWPORTS) {
+      for (const seats of [3, 4, 6]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, bottomZone: 204 });
+        const base = baseSize(g);
+        const R = g.pileRegion;
+        // Same documented exception `geometry.test.ts` carries: on a
+        // short landscape phone that has also given up a band to the
+        // board sheet, the clearances can leave no region at all and a
+        // floor takes over. A pile that cannot be drawn is worse than one
+        // sitting close, so there is nothing to assert here.
+        if (R.h <= g.card.h * 1.2 + 0.001 || R.w <= g.card.w * 2.42 + 0.001) continue;
+        for (const seat of g.seats) {
+          if (seat.isHero) continue;
+          const t = layoutPiece(
+            { zone: "hand", seat: seat.seat, index: 0, count: 1, faceUp: false },
+            g,
+            { kind: "card" },
+          );
+          // A side seat's card is turned a quarter turn, so its on-screen
+          // footprint has width and height swapped.
+          const turned = Math.abs(t.rotate) === 90;
+          const w = (turned ? base.h : base.w) * t.scale;
+          const h = (turned ? base.w : base.h) * t.scale;
+          const cx = t.x + base.w / 2;
+          const cy = t.y + base.h / 2;
+          const card: Box = { x: cx - w / 2, y: cy - h / 2, w, h };
+          expect(
+            overlapsBox(R, card),
+            `${vp.name}/${seats}seats: seat ${seat.seat}'s card overlaps the pile region`,
+          ).toBe(false);
+        }
+      }
+    }
   });
 
   it("still draws the cards that DO fit at full strength", () => {
