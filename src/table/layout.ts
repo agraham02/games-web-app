@@ -18,8 +18,11 @@ import { HERO } from "@/engine/types";
 import {
   axisReach,
   fanSlot,
+  pileAssembly,
+  pileAssemblyHorizontal,
   radialFanSlot,
   tileShortSide,
+  MIN_HAND_GAP_FRACTION,
   POD_SIZE,
   TILE_HAND_GAP,
   type BoardView,
@@ -95,6 +98,11 @@ function miniArt(g: TableGeometry, kind: PieceKind | undefined): number {
 function centred(cx: number, cy: number, g: TableGeometry) {
   const base = baseSize(g);
   return { x: cx - base.w / 2, y: cy - base.h / 2 };
+}
+
+/** `boxCentre` in the `{x, y}` shape `radialFanSlot`'s anchor wants. */
+function boxCentreXY(b: Box): { x: number; y: number } {
+  return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }
 
 function boxCentre(b: Box) {
@@ -226,6 +234,27 @@ export interface LayoutContext {
   kind?: PieceKind;
   /** Extent of everything in board space; drives the camera. */
   board?: BoardView | null;
+  /**
+   * Pan offsets for the two compress-then-pan zones, and the discard
+   * pile's live depth.
+   *
+   * Each is threaded in only for the pieces that actually need it (see
+   * PieceLayer's gated subscriptions): a pan updates on every
+   * pointermove, and an ungated subscription would re-render all 52
+   * pieces per frame of a drag. `discardCount` is the deck's own — in
+   * landscape the deck slides aside as the fan beside it grows, and
+   * layout is otherwise deliberately blind to a piece's siblings.
+   */
+  discardScroll?: number;
+  discardCount?: number;
+  handScroll?: number;
+  /**
+   * Where this piece sits in the hero's hand, overriding the
+   * placement's own index — a player-chosen sort. Resolved by
+   * PieceLayer, which is the layer that knows a piece's id; layout only
+   * ever sees one anonymous placement at a time.
+   */
+  handIndex?: number;
 }
 
 export function layoutPiece(
@@ -252,15 +281,78 @@ export function layoutPiece(
   switch (p.zone) {
     /* -------------------------------------------------- deck */
     case "deck": {
-      const { cx, cy } = boxCentre(g.zones.deck);
+      // A game whose discard pile fans (Rummy) passes its live depth,
+      // and in LANDSCAPE — where the fan grows along the same axis the
+      // two piles are offset on — the deck gives ground to it, keeping
+      // the pair centred as one unit. In PORTRAIT the fan grows
+      // perpendicular to that offset, so there is no reason for the deck
+      // to move and it does not. See geometry's `isPortraitTable`.
+      //
+      // Every other game passes nothing and gets `g.zones.deck` exactly
+      // as before.
+      const anchor =
+        ctx?.discardCount === undefined
+          ? boxCentre(g.zones.deck)
+          : (() => {
+              const { deckX, deckY } = pileAssemblyHorizontal(g, ctx.discardCount!);
+              return { cx: deckX, cy: deckY };
+            })();
       // A tall stack reads as depth, not as 52 offset cards — cap it.
       const lift = Math.min(p.index, 10) * 0.4;
-      const { x, y } = centred(cx + lift, cy - lift, g);
+      const { x, y } = centred(anchor.cx + lift, anchor.cy - lift, g);
       return { x, y, rotate: 0, scale: tableScale, z, opacity };
     }
 
     /* ----------------------------------------------- discard */
     case "discard": {
+      // Compress-then-pan is strictly opt-in: only a game that has
+      // published a pan value (Rummy) gets the floored, pannable,
+      // orientation-aware fan. Spades' two-card Blind Nil exchange, and
+      // anything else that merely sets `fanned`, keeps the simple
+      // centred fan below exactly as it was.
+      if (p.fanned && ctx?.discardScroll !== undefined) {
+        // Fanned so the player can see how deep the eligible run goes —
+        // and floored, so a 20+ card pile stops shrinking into slivers
+        // and becomes pannable instead (see MIN_DISCARD_STEP_FRACTION).
+        //
+        // Both orientations run through `radialFanSlot` rather than
+        // `fanSlot` because portrait fans DOWN the screen and landscape
+        // ACROSS it, and one parameterised path is the only way the two
+        // stay in step. `size.w` is the piece's extent along the spread
+        // axis by that function's own convention, hence the swap.
+        const a = pileAssembly(g, p.count);
+        const along = a.portrait ? g.card.h : g.card.w;
+        const slot = radialFanSlot({
+          anchor: boxCentreXY(a.fan),
+          spread: a.portrait ? { x: 0, y: 1 } : { x: 1, y: 0 },
+          away: { x: 0, y: 0 },
+          index: p.index,
+          count: p.count,
+          spreadWidth: a.portrait ? a.fan.h : a.fan.w,
+          size: { w: along, h: along },
+          baseRotation: 0,
+          maxTilt: 0,
+          arcLift: 0,
+          maxGap: along * 0.38,
+          minGap: a.minStep,
+          pan: ctx?.discardScroll ?? 0,
+          within: a.fan,
+        });
+        const { x, y } = centred(slot.x, slot.y, g);
+        // A panned fan always draws cards outside the box it was given
+        // — the compression floor is what makes it pannable, and the
+        // excess has to be SOMEWHERE. `pileRegion` is only clear of the
+        // seat pods and the sheet INSIDE its own bounds, so a card
+        // carried past them lands under a pod, under the board sheet, or
+        // off the screen entirely, and reads as broken.
+        //
+        // It cannot be clipped: the piece layer is one flat canvas of
+        // independent absolutely positioned nodes with no wrapper to put
+        // `overflow: hidden` on (CLAUDE.md). So the card fades out as it
+        // crosses the boundary instead — which is what a masked scroller
+        // looks like anyway, and stays on the compositor.
+        return { x, y, rotate: 0, scale: tableScale, z, opacity: opacity * slot.visible };
+      }
       const { cx, cy } = boxCentre(g.zones.discard);
       if (p.fanned) {
         // Fanned so the player can see how deep the eligible run goes.
@@ -310,33 +402,49 @@ export function layoutPiece(
 
     /* ------------------------------------------------- board */
     case "board": {
-      // Melds flow left-to-right, wrapping into rows. `group` is the
-      // meld index, `index` the card within it.
+      // A meld LANDING spot, not a permanent board layout.
       //
-      // KNOWN ISSUE (confirmed in /lab/rummy, not yet fixed): this grid
-      // fills the whole board zone width and has no idea where seat
-      // pods sit. SeatRing positions pods independently along the same
-      // zone's edges, so a meld row that lands at a side-seat's height
-      // renders underneath that pod and gets visually clipped — seen
-      // with 6+ seats where a middle meld row collides with a side pod.
-      // `podInset` in geometry.ts only reserves clearance at the
-      // top/bottom of the ring, not down the sides where a multi-row
-      // grid can reach. Real fix: either constrain each row's usable
-      // x-range by which seats occupy that row's height, or reserve a
-      // permanent side gutter sized to the pod width. Do this
-      // deliberately when Rummy 500 is actually built, not as a patch.
-      const board = g.zones.board;
+      // This used to be a full-width wrapping grid, and carried a known
+      // bug with it: the grid had no idea where seat pods sat, so at 6+
+      // seats a middle row rendered underneath a side pod and got
+      // clipped. `podInset` only reserves clearance at the top and
+      // bottom of the ring, never down the sides a multi-row grid
+      // reaches.
+      //
+      // The fix is not a cleverer grid. With six players there can be
+      // eighteen melds on the table, and no amount of grid maths makes
+      // eighteen melds legible on a phone's felt — that is exactly the
+      // problem the board sheet exists to solve (POLICY.md's three-tier
+      // pattern: ambient pod strips, a peek rail, then targeted
+      // filtering). So a laid meld flies to the felt, is visible for the
+      // beat its own animation takes, and then fades in place, leaving
+      // the felt to the piles. The game marks board pieces `hidden` for
+      // that; `applyEvent`'s `moveTo` clears the flag on the way in so
+      // the flight always plays.
+      //
+      // Which means all this has to do is put a landing spot somewhere
+      // legible and pod-safe. `pileRegion` is already clear of both pods
+      // and fanned opponent hands, so the meld lands BELOW it — on the
+      // open felt between the piles and the hand.
+      //
+      // Below, specifically, and not on the region itself: landing a
+      // meld on top of the discard pile makes the lay read as a discard,
+      // which is the one other thing cards fly to from your hand. Two
+      // different actions have to end in two different places or the
+      // animation stops carrying information.
+      const region = g.pileRegion;
+      const play = g.zones.play;
       const overlap = g.card.w * 0.44;
-      const meldW = g.card.w + overlap * 2.2;
-      const meldH = g.card.h * 1.18;
-      const cols = Math.max(1, Math.floor(board.w / (meldW + 8)));
+      const meldW = g.card.w + overlap * Math.max(0, p.count - 1);
 
-      const group = p.group ?? 0;
-      const row = Math.floor(group / cols);
-      const col = group % cols;
-
-      const originX = board.x + col * (meldW + 8) + g.card.w / 2;
-      const originY = board.y + row * meldH + g.card.h / 2;
+      const below = region.y + region.h;
+      const room = Math.max(0, play.y + play.h - below);
+      // A small per-meld stagger so a meld landing while the previous
+      // one is still fading doesn't sit exactly on top of it.
+      const lane = (p.group ?? 0) % 3;
+      const originX = region.x + region.w / 2 - meldW / 2 + g.card.w / 2;
+      const originY =
+        below + Math.min(room / 2, g.card.h * 0.7) + (lane - 1) * (g.card.h * 0.16);
 
       const { x, y } = centred(originX + p.index * overlap, originY, g);
       return { x, y, rotate: 0, scale: tableScale, z, opacity };
@@ -403,14 +511,31 @@ export function layoutPiece(
           x: g.zones.hand.x + gutter,
           w: g.zones.hand.w - gutter * 2,
         };
+        // A hand that has just swallowed six cards off the discard pile
+        // needs the same compress-then-pan treatment the pile itself
+        // does, and for the same reason — past a point, tighter is not
+        // more readable, it is less. Opt-in: a game that never threads
+        // `handScroll` in gets no floor and behaves exactly as before.
+        const panned = ctx?.handScroll !== undefined && !isTile;
+        // ONE index drives both the fan position and the stacking order.
+        //
+        // Splitting them is what produced a card sitting visually
+        // between its neighbours while painting behind both of them: a
+        // fan overlaps, so which card is on top has to follow the order
+        // the eye reads left to right. Taking the sorted index for
+        // position and the placement's own for `z` guarantees they
+        // disagree the moment a sort is anything but the deal order.
+        const handIndex = ctx?.handIndex ?? p.index;
         const slot = fanSlot({
-          index: p.index,
+          index: handIndex,
           count: p.count,
           within,
           size: art,
           maxRotation: isTile ? 0 : undefined,
           arcLift: isTile ? 0 : undefined,
           maxGap: isTile ? art.w * 1.14 : undefined,
+          minGap: panned ? art.w * MIN_HAND_GAP_FRACTION : undefined,
+          pan: panned ? ctx!.handScroll : undefined,
         });
         const lift = p.selected ? -18 : 0;
         return {
@@ -418,8 +543,13 @@ export function layoutPiece(
           y: slot.y - base.h / 2 + lift,
           rotate: slot.rotation,
           scale: 1,
-          z: p.selected ? Z_SELECTED : Z_HERO_HAND + p.index,
-          opacity,
+          z: p.selected ? Z_SELECTED : Z_HERO_HAND + handIndex,
+          // Same edge fade the discard fan uses, for the same reason —
+          // a panned hand overruns its zone too, and the cards it pushes
+          // out slide off the screen edges. Gated on `panned` so an
+          // unfloored fan (every other game) is untouched, including by
+          // float residue at the exact boundary.
+          opacity: panned ? opacity * slot.visible : opacity,
         };
       }
 

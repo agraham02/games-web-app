@@ -39,6 +39,8 @@ import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
 import { useTableStore } from "@/table/store";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { HandZone } from "@/table/HandZone";
+import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { BlockingDialog } from "@/ui/disclosure";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { createSpades } from "@/games/spades/rules";
@@ -158,8 +160,13 @@ function SpadesTable({
 
   return (
     <>
-      <TurnIndicator label="Your turn — tap a card" show={playable} />
-      <YourBidBadge state={state} />
+      {/* One row owns the band above the hand — see HandZone for why
+          two independently positioned badges up here is the thing being
+          fixed, not a style preference. */}
+      <HandZone
+        left={<YourBidBadge state={state} />}
+        center={<TurnIndicator inline label="Your turn — tap a card" show={playable} />}
+      />
       <BidPad live={live} held={held} onClearHeld={onClearHeld} />
     </>
   );
@@ -182,7 +189,7 @@ function YourBidBadge({ state }: { state: SpadesState }) {
     state.phase === "play" && !state.exchange
       ? `${label} · won ${state.tricksWon[HERO] ?? 0}`
       : `bid ${label}`;
-  return <HeroStatusBadge label="Your bid" detail={detail} side="left" />;
+  return <HeroStatusBadge inline label="Your bid" detail={detail} side="left" />;
 }
 
 function BidPad({
@@ -328,7 +335,7 @@ function NumericBidPanel({ live }: { live: Live }) {
           ) : null}
         </div>
 
-        <NumberStepper value={value} min={min} max={13} onChange={setValue} />
+        <NumberStepper value={value} min={min} max={13} onChange={setValue} label="tricks" />
 
         <button
           type="button"
@@ -348,50 +355,6 @@ function NumericBidPanel({ live }: { live: Live }) {
           </button>
         ) : null}
       </motion.div>
-    </div>
-  );
-}
-
-/**
- * A big centred number with +/- either side, rather than a wall of
- * buttons — one number to read, not thirteen. The end buttons disable
- * (dim + stop responding to taps) exactly at `min`/`max`, so there's
- * never a tap that silently does nothing.
- */
-function NumberStepper({
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  value: number;
-  min: number;
-  max: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div className="flex items-center justify-center gap-5">
-      <button
-        type="button"
-        onClick={() => onChange(Math.max(min, value - 1))}
-        disabled={value <= min}
-        aria-label="Fewer tricks"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30"
-      >
-        −
-      </button>
-      <span className="tnum w-12 text-center font-display text-4xl font-extrabold text-brass-300">
-        {value}
-      </span>
-      <button
-        type="button"
-        onClick={() => onChange(Math.min(max, value + 1))}
-        disabled={value >= max}
-        aria-label="More tricks"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30"
-      >
-        +
-      </button>
     </div>
   );
 }
@@ -447,7 +410,13 @@ function BlindChoiceDialog({ live }: { live: Live }) {
               ? "Your own blind bid — min 6, doubles on success"
               : "Blind bid for your TEAM — min 6, doubles on success"}
           </span>
-          <NumberStepper value={blindValue} min={6} max={13} onChange={setBlindValue} />
+          <NumberStepper
+            value={blindValue}
+            min={6}
+            max={13}
+            onChange={setBlindValue}
+            label="tricks"
+          />
           <button
             type="button"
             onClick={() => submit({ t: "blindBid", tricks: blindValue })}

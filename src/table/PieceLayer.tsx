@@ -30,7 +30,12 @@ import { ChipFace } from "@/ui/primitives/ChipFace";
 import { baseSize, layoutPiece } from "./layout";
 import {
   useBoardView,
+  useDiscardCount,
+  useDiscardPanEnabled,
+  useDiscardScroll,
   useGeometry,
+  useHandOrder,
+  useHandScroll,
   useHeroHoverIndex,
   useHeroTurnActive,
   usePieceIds,
@@ -50,6 +55,11 @@ const DETAIL_THRESHOLD_PX = 52;
  * the same spring transition every other piece move already uses, no
  * special-casing needed. */
 const INACTIVE_HAND_SCALE = 0.94;
+
+/** How solid a piece has to be drawn before a tap on it counts. See
+ * `interactive` below for why a faded piece must be inert, and
+ * `FanSlot.visible` for what fades them. */
+const MIN_TAPPABLE_OPACITY = 0.5;
 
 /**
  * Extra lift/scale/x-shift for a hero-hand card at `index`, relative to
@@ -153,15 +163,56 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   const heroTurnActive = useHeroTurnActive(isHeroHand);
   const hoverIndex = useHeroHoverIndex(hoverEligible);
   const setHeroHoverIndex = useSetHeroHoverIndex();
+  // Three more enabled-gated slices, each reaching exactly the pieces
+  // that need it and nothing else. This gating matters more here than
+  // anywhere: a pan value changes on every pointermove, so subscribing
+  // all 52 pieces to it would re-render the whole table per frame of a
+  // drag — the precise cost this store exists to avoid.
+  const isFannedDiscard = Boolean(placement?.zone === "discard" && placement.fanned);
+  const isDeck = placement?.zone === "deck";
+  const discardScroll = useDiscardScroll(isFannedDiscard);
+  // The deck reads the pile's DEPTH, not its pan — and only in a game
+  // that pans at all. `useDiscardPanEnabled` is a boolean selector for
+  // exactly that reason: it tells the deck panning is in play without
+  // re-rendering it on every frame of one.
+  const discardPan = useDiscardPanEnabled();
+  const discardCount = useDiscardCount(isDeck && discardPan);
+  const handScroll = useHandScroll(isHeroHand);
+  const handOrder = useHandOrder(isHeroHand);
 
   if (!placement || !geometry || !meta) return null;
 
-  const t = layoutPiece(placement, geometry, { kind: meta.kind, board });
+  // Where this card sits in the hand AS DISPLAYED. Everything positional
+  // — the fan slot, the stacking order, and the hover neighbourhood —
+  // must agree on this one number.
+  //
+  // `placement.index` is the game's own order; a player-chosen sort
+  // overrides it. Mixing the two is subtly broken rather than obviously
+  // so: `heroHoverIndex` is a HAND INDEX, so comparing it against
+  // `placement.index` while the cards are LAID OUT by the sorted index
+  // lifts whichever cards happen to be neighbours in the unsorted order
+  // — cards scattered across the fan. It looks correct under exactly one
+  // sort (by suit), because `placements()` already suit-sorts the
+  // viewer's hand and the two orders coincide there.
+  const handIndex = (isHeroHand ? handOrder?.[id] : undefined) ?? placement.index;
+
+  const t = layoutPiece(placement, geometry, {
+    kind: meta.kind,
+    board,
+    // `undefined`, not a number, for anything that doesn't participate:
+    // layout distinguishes "this game does not pan" from "this game pans
+    // and is at 0", which is what keeps every existing game's fan
+    // byte-identical to what it was.
+    discardScroll: discardScroll ?? undefined,
+    discardCount: isDeck && discardPan ? discardCount : undefined,
+    handScroll: handScroll ?? undefined,
+    handIndex,
+  });
   const base = baseSize(geometry);
   const onScreenW = base.w * t.scale;
   const detail = onScreenW < DETAIL_THRESHOLD_PX ? "index" : "full";
   const hover = hoverEligible
-    ? handHoverLift(placement.index, hoverIndex, base.w, base.h)
+    ? handHoverLift(handIndex, hoverIndex, base.w, base.h)
     : { liftPx: 0, xPx: 0, scale: 1 };
   // Settles to a slightly smaller rest size while it isn't the hero's
   // turn at all — see INACTIVE_HAND_SCALE's own doc.
@@ -180,7 +231,21 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
     // keeps the pointer honest about the same dim+shrink the piece is
     // showing below, rather than leaving a clickable-looking dead spot.
     heroTurnActive &&
-    (isHeroHand || Boolean(placement.highlighted));
+    // `tappable` is a strictly weaker claim than `highlighted` — "you
+    // may interact with this" rather than "this is known to work". A
+    // Rummy discard card stages a cancelable preview on tap, and gating
+    // that on already-being-legal would force the player to find a
+    // workable depth by trial and error before being allowed to look.
+    (isHeroHand || Boolean(placement.highlighted) || Boolean(placement.tappable)) &&
+    // You cannot tap what you cannot see. A pannable fan fades its
+    // pieces out as they cross the edge of the region they belong to
+    // (see `FanSlot.visible`), and those cards keep their DOM node at
+    // its real, now-invisible position — under a seat pod, under the
+    // board sheet, off the screen. Leaving them clickable puts live hit
+    // targets in places the player has every reason to read as empty
+    // felt or as someone else's chrome. Half-visible is the cut: a card
+    // still mostly inside its region is one the player is aiming at.
+    t.opacity >= MIN_TAPPABLE_OPACITY;
 
   // Touch has no hover to preview with, so an eligible card's tap does
   // double duty: the FIRST tap previews it (the same lift/spread a mouse
@@ -192,9 +257,15 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   // previewing for that input.
   const onCardClick = () => {
     if (!interactive) return;
-    if (hoverEligible && !supportsHover()) {
-      if (hoverIndex !== placement.index) {
-        setHeroHoverIndex(placement.index);
+    // ...unless the piece asks out. That two-tap gate exists to stop a
+    // fat-fingered, hard-to-undo PLAY; for a tap that only toggles a
+    // reversible selection with an action bar committing later, nothing
+    // has happened yet, so there is nothing to protect against and the
+    // extra tap just makes selecting a card feel broken. See
+    // `Placement.instantAct`.
+    if (hoverEligible && !placement.instantAct && !supportsHover()) {
+      if (hoverIndex !== handIndex) {
+        setHeroHoverIndex(handIndex);
         return;
       }
       setHeroHoverIndex(null);
@@ -205,7 +276,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   return (
     <motion.div
       initial={false}
-      onMouseEnter={mouseHoverEligible ? () => setHeroHoverIndex(placement.index) : undefined}
+      onMouseEnter={mouseHoverEligible ? () => setHeroHoverIndex(handIndex) : undefined}
       onMouseLeave={
         mouseHoverEligible
           ? () => {
@@ -215,7 +286,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
               // already moved the hover elsewhere, and a stale closure
               // would wrongly clear that neighbour's hover right after it
               // was set.
-              if (useTableStore.getState().heroHoverIndex === placement.index) {
+              if (useTableStore.getState().heroHoverIndex === handIndex) {
                 setHeroHoverIndex(null);
               }
             }
@@ -377,6 +448,34 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
             }}
           />
         </>
+      ) : null}
+
+      {/* Whose card this is, when the piece sits somewhere several
+          players' pieces mingle and the face alone cannot answer it —
+          a board meld, where any seat may hit any meld and each card
+          scores for whoever actually played it. */}
+      {placement.ownerTag ? (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            top: -3,
+            right: -3,
+            minWidth: Math.round(base.w * 0.3),
+            padding: "1px 3px",
+            borderRadius: 999,
+            background: placement.accentColour ?? "var(--color-brass-300)",
+            color: "var(--color-felt-950)",
+            fontSize: Math.max(7, Math.round(base.w * 0.16)),
+            lineHeight: 1.35,
+            fontWeight: 800,
+            textAlign: "center",
+            boxShadow: "0 1px 3px rgb(0 0 0 / 0.45)",
+            pointerEvents: "none",
+          }}
+        >
+          {placement.ownerTag}
+        </span>
       ) : null}
     </motion.div>
   );

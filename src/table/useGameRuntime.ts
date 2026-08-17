@@ -191,6 +191,15 @@ export interface GameRuntime<S, A> {
    * wait a beat behind it either.
    */
   dealingRound: number | null;
+  /**
+   * The UNREDACTED state. `state` above is `playerView(state, HERO)`,
+   * which is what every game screen should read — this exists for the
+   * dev state editor, which has to edit what is actually there rather
+   * than the hero's redacted picture of it.
+   */
+  rawState: S;
+  /** DEV ONLY — see the implementation's own doc. */
+  replaceState: (next: S) => void;
   /** Deals the next round and clears the scorecard. No-op unless a round
    * is actually over. Wire this to the scorecard's continue button. */
   nextRound: () => void;
@@ -529,12 +538,31 @@ export function useGameRuntime<S, A>(
     }
   };
 
+  /**
+   * DEV ONLY — replaces the live state wholesale and republishes the
+   * table from it, so the dev panel's state editor can put the game into
+   * a shape rules-legal play would take minutes to reach (a 20-card
+   * hand, a 30-card discard pile).
+   *
+   * Goes through `onIdle` rather than poking the store directly, so the
+   * edited state gets the identical publish-and-then-pace treatment any
+   * real action's result would: placements reconcile, and if the edit
+   * happens to leave a bot on turn, that turn is scheduled properly
+   * instead of the table silently sitting there.
+   */
+  const replaceState = (next: S) => {
+    stateRef.current = next;
+    onIdle();
+  };
+
   const currentSeat = definition.currentSeat(state);
   const isOver = definition.isOver(state);
   const roundOver = definition.isRoundOver?.(state) ?? false;
 
   return {
     state: definition.playerView(state, HERO),
+    rawState: state,
+    replaceState,
     isHeroTurn: !isOver && currentSeat === HERO && !choreographer.isPlaying,
     isOver,
     winner: isOver ? extractWinner(state) : null,

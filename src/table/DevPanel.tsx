@@ -16,7 +16,9 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence, useDragControls } from "motion/react";
+import type { PieceId, PieceMeta } from "@/engine/types";
 import { useDevSettings } from "./devSettings";
+import { DevStateEditor } from "./DevStateEditor";
 import { TRANSITIONS } from "@/motion/presets";
 
 export interface DevPanelProps {
@@ -25,10 +27,27 @@ export interface DevPanelProps {
   /** One line of game-specific context about the pending turn, e.g.
    * LRC's "Mia pending — 4 chips → 3 dice". Purely informational. */
   pendingLabel?: string | null;
+  /**
+   * The live, UNREDACTED game state plus its piece vocabulary. Supplied
+   * together or not at all — with both, the panel offers the generic
+   * state editor (see DevStateEditor); without them it behaves exactly
+   * as it always did.
+   */
+  debugState?: unknown;
+  pieces?: Record<PieceId, PieceMeta>;
+  onDebugStateChange?: (next: unknown) => void;
 }
 
-export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps) {
+export function DevPanel({
+  pendingReveal,
+  advance,
+  pendingLabel,
+  debugState,
+  pieces,
+  onDebugStateChange,
+}: DevPanelProps) {
   const [open, setOpen] = useState(true);
+  const [editing, setEditing] = useState(false);
   const settings = useDevSettings();
   // `dragListener={false}` + this is what makes ONLY the title bar (not
   // the sliders/checkbox/button underneath it) start a drag — without
@@ -156,6 +175,31 @@ export function DevPanel({ pendingReveal, advance, pendingLabel }: DevPanelProps
               // "more" end) would have made dealing slower.
               format={(v) => `${v.toFixed(2)}×`}
             />
+
+            {/* Rules-legal play takes real minutes to reach a 20-card
+                hand or a 30-card discard pile, which are exactly the
+                states the table layer most needs testing against. Kept
+                behind a toggle because it is tall and only occasionally
+                wanted. */}
+            {debugState !== undefined && pieces && onDebugStateChange ? (
+              <div className="flex flex-col gap-1.5 border-t border-bone-50/10 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditing((v) => !v)}
+                  className="flex items-center justify-between text-left text-[11px] font-bold text-bone-200 hover:text-brass-300"
+                >
+                  <span>State editor</span>
+                  <span className="text-bone-400">{editing ? "▾" : "▸"}</span>
+                </button>
+                {editing ? (
+                  <DevStateEditor
+                    state={debugState}
+                    pieces={pieces}
+                    onChange={onDebugStateChange}
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </motion.div>
         ) : (
           <motion.button

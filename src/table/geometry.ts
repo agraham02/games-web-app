@@ -65,6 +65,33 @@ export interface TableGeometry {
   density: Density;
   seats: SeatSlot[];
   zones: Record<ZoneName, Box>;
+  /**
+   * The box a growing pile assembly (deck + fanned discard) may occupy.
+   *
+   * Distinct from `zones.play` because `play` is only inset past the
+   * seat RING, and a pod is not the outermost thing a seat owns — its
+   * fanned hand reaches further in. A boundary derived from the pod's
+   * own footprint alone undershoots the moment a hand is fanned beside
+   * it, which is how a deep discard pile ends up sliding under an
+   * opponent's cards. Computed once here and consumed by BOTH the fan's
+   * clamp and the landscape deck's position (see `pileAssembly`), so the
+   * two can never disagree — a second, independent version of this
+   * calculation is precisely what went out of sync before.
+   *
+   * Same idea as `zones.line`, which does this for a camera-fitted
+   * domino chain against fanned TILE hands; this is the card equivalent.
+   */
+  pileRegion: Box;
+  /**
+   * What `ResolveOptions.topZone`/`bottomZone` were actually GRANTED, in
+   * px, which is not always what was asked for — a short landscape phone
+   * cannot give up 150px above the hand and still have a table left.
+   *
+   * A game must size its own chrome from this rather than from the value
+   * it requested. Assuming the request was honoured is how a bottom
+   * sheet ends up resting on top of the seat pods on exactly one device.
+   */
+  reserved: { top: number; bottom: number };
   /** Cards lying on the table. */
   card: PieceSize;
   /** Cards in the hero's hand — always the largest. */
@@ -205,6 +232,9 @@ export const POD_SIZE: Record<Density, PieceSize> = {
 /** Clearance between the domino line's box and anything around it. */
 const LINE_BREATHING = 6;
 
+/** `LINE_BREATHING`'s counterpart for `pileRegion`. */
+const PILE_BREATHING = 8;
+
 /**
  * Gap between an opponent's pod and their fanned tile hand — shared with
  * layout.ts's opponent-hand placement (`TILE_HAND_GAP` there is this
@@ -316,6 +346,27 @@ export interface ResolveOptions {
   density?: Density;
   /** Games with no hero hand (e.g. LRC) reclaim the bottom strip. */
   handZone?: number;
+  /**
+   * Reserved band at the TOP of the viewport for a game's own HUD strip,
+   * in px. The seat ring and everything inside it starts below it.
+   * Default 0 — every existing game is unaffected.
+   */
+  topZone?: number;
+  /**
+   * Reserved band directly ABOVE the hand, in px — for a bottom sheet's
+   * resting height (Rummy's board rail). The ring stops above this
+   * rather than the sheet covering the table's lowest seats. Default 0.
+   */
+  bottomZone?: number;
+  /**
+   * Where the pile assembly sits vertically within `pileRegion`, as a
+   * 0..1 fraction (0 = flush top, 1 = flush bottom). Default 0.5.
+   *
+   * A game whose discard pile FANS DOWNWARD wants its assembly high in
+   * the region, so the fan has somewhere to grow before it has to start
+   * panning. A game with a static pile wants it centred.
+   */
+  pileAnchor?: number;
 }
 
 export function resolveTable(opts: ResolveOptions): TableGeometry {
@@ -339,11 +390,37 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const box: Box = { x: 0, y: 0, w: width, h: height };
 
   // The band seats may occupy: full width, top of the viewport down to
-  // the top of the hero's hand strip.
+  // the top of the hero's hand strip — minus whatever bands the game has
+  // reserved for its own chrome above and below (both default 0, so
+  // every existing game resolves byte-identically).
+  //
+  // The clamp has to account for what the RING itself needs, not just
+  // for the raw height available: `play` is the ring inset by a full
+  // `podInset` on every edge holding seats, so reserving everything down
+  // to `height - handZone` leaves a play area of negative height. A
+  // short landscape phone (844x390) hits this immediately with any
+  // realistic bottom band — confirmed by geometry.test.ts, which caught
+  // it as a real -22px play zone rather than a hypothetical.
+  //
+  // When the request does not fit, both bands scale down TOGETHER rather
+  // than one being honoured and the other truncated: they are two halves
+  // of one screen composition, and shrinking them proportionally keeps
+  // that composition recognisable where dropping one outright would not.
+  // `reserved` on the returned geometry reports what was actually
+  // granted, so a game can size its own chrome to the answer instead of
+  // assuming it got what it asked for.
+  const ringNeed = podInset + spec.card.h * 1.1;
+  const reserveCap = Math.max(0, height - handZone - spec.ringPad * 2 - ringNeed);
+  const wantTop = Math.max(0, opts.topZone ?? 0);
+  const wantBottom = Math.max(0, opts.bottomZone ?? 0);
+  const wanted = wantTop + wantBottom;
+  const scale = wanted > reserveCap && wanted > 0 ? reserveCap / wanted : 1;
+  const topZone = wantTop * scale;
+  const bottomZone = wantBottom * scale;
   const ringLeft = spec.ringPad;
   const ringRight = width - spec.ringPad;
-  const ringTop = spec.ringPad;
-  const ringBottom = height - handZone - spec.ringPad;
+  const ringTop = spec.ringPad + topZone;
+  const ringBottom = height - handZone - bottomZone - spec.ringPad;
   const ringW = Math.max(0, ringRight - ringLeft);
   const ringH = Math.max(0, ringBottom - ringTop);
 
@@ -513,6 +590,48 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     h: play.h - (nTop > 0 ? topBleed : LINE_BREATHING) - LINE_BREATHING,
   };
 
+  // `pileRegion` — `play` pulled clear of the real pod footprint AND an
+  // opponent's fanned CARD hand, the same job `line` does above for
+  // fanned TILE hands and a camera-fitted chain.
+  //
+  // The card case is genuinely cheaper than the tile one, and for a
+  // structural reason worth stating: a card hand fans PERPENDICULAR to
+  // its seat's line to table centre (see layout.ts's "hand" case), so
+  // the fan's WIDTH never adds to how far that hand reaches inward —
+  // only one card's own rotated thickness does. A tile rack fans along
+  // screen-x regardless of seat, which is why `sideBleed` above has to
+  // carry a whole `maxFanW` and this does not.
+  //
+  // As with `line`, `podInset / 2` converts a pod-CENTRE-relative reach
+  // (what layout.ts computes) into a `play`-EDGE-relative one.
+  const cardTopReach =
+    Math.max(0, podSize.h / 2 - podInset / 2) + spec.miniCard.h + TILE_HAND_GAP;
+  // A left/right seat's cards are rotated a quarter turn, so the
+  // footprint facing the table is the card's HEIGHT, not its width —
+  // matching `cardFootprint` in layout.ts's own opponent-card branch.
+  const cardSideReach =
+    Math.max(0, podSize.w / 2 - podInset / 2) + spec.miniCard.h + TILE_HAND_GAP;
+  const pileTop = nTop > 0 ? cardTopReach + PILE_BREATHING : PILE_BREATHING;
+  const pileSide = nLeft > 0 || nRight > 0 ? cardSideReach + PILE_BREATHING : PILE_BREATHING;
+  const rawPile: Box = {
+    x: play.x + (nLeft > 0 ? pileSide : PILE_BREATHING),
+    y: play.y + pileTop,
+    w:
+      play.w -
+      (nLeft > 0 ? pileSide : PILE_BREATHING) -
+      (nRight > 0 ? pileSide : PILE_BREATHING),
+    h: play.h - pileTop - PILE_BREATHING,
+  };
+  // Never let the clearances eat the region entirely on a small phone
+  // with seats on every edge — a pile that cannot be drawn is worse than
+  // one sitting a little close. Floors at one card plus a margin.
+  const pileRegion: Box = {
+    x: rawPile.x,
+    y: rawPile.y,
+    w: Math.max(spec.card.w * 2.2, rawPile.w),
+    h: Math.max(spec.card.h * 1.2, rawPile.h),
+  };
+
   const zones: Record<ZoneName, Box> = {
     play,
     trick: { x: cx - trickW / 2, y: cy - trickH / 2, w: trickW, h: trickH },
@@ -524,11 +643,52 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     hand,
   };
 
+  // Where the pile assembly sits vertically.
+  //
+  // A fan centres itself inside the box it is given, so this box's own
+  // centre IS the pile's centre. By default that centre lines up with
+  // the SEAT PODS down the sides — the table's real eye level, and where
+  // a player looks for the piles. Deriving it from the seats rather than
+  // from a fraction of the region is what keeps it right as the region
+  // changes shape across densities and seat counts; a hand-tuned
+  // fraction lands correctly on one viewport and drifts on the rest.
+  //
+  // `pileAnchor` overrides it as a plain 0..1 fraction for a game that
+  // wants something else.
+  const sideSeats = seats.filter((s) => s.anchor === "left" || s.anchor === "right");
+  const seatMidY =
+    sideSeats.length > 0
+      ? sideSeats.reduce((sum, s) => sum + s.y, 0) / sideSeats.length
+      : pileRegion.y + pileRegion.h / 2;
+
+  // The returned box's TOP is where the assembly's first card sits, and
+  // everything below it is room the fan may grow into (see
+  // `pileAssembly`, which sizes the fan to its own content rather than
+  // to this whole height — a fan centres itself in the box it is given,
+  // so handing it all the growth room parks a short pile in the middle
+  // of it, well below the seats).
+  const cardH = spec.card.h;
+  const slack = Math.max(0, pileRegion.h - cardH);
+  const wantedTop =
+    opts.pileAnchor === undefined
+      ? seatMidY - cardH / 2
+      : pileRegion.y + slack * Math.min(1, Math.max(0, opts.pileAnchor));
+  // Clamped so the assembly can never leave the region it was cleared
+  // for, whatever the seats happen to be doing.
+  const top = Math.min(pileRegion.y + slack, Math.max(pileRegion.y, wantedTop));
+  const anchoredPile: Box = {
+    ...pileRegion,
+    y: top,
+    h: pileRegion.h - (top - pileRegion.y),
+  };
+
   return {
     box,
     density,
     seats,
     zones,
+    pileRegion: anchoredPile,
+    reserved: { top: topZone, bottom: bottomZone },
     card: spec.card,
     handCard: spec.handCard,
     miniCard: spec.miniCard,
@@ -587,6 +747,54 @@ export interface FanSlot {
   x: number;
   y: number;
   rotation: number;
+  /**
+   * How much of this piece is still inside `within`, 0..1, measured
+   * along the spread axis. 1 while it fits entirely, ramping to 0 across
+   * one piece-extent of travel as panning carries it past the edge.
+   *
+   * This is what a fan has instead of a clip. A pannable fan ALWAYS
+   * draws pieces outside the box it was given — `minGap` stops it
+   * compressing, so the excess has to go somewhere — and the app's one
+   * flat piece layer has no wrapper to put `overflow: hidden` on: every
+   * card is an independent absolutely positioned node, deliberately
+   * (see CLAUDE.md). So the pieces fade themselves out instead, which is
+   * both the honest fix and a compositor-only one.
+   *
+   * Ramping over one piece-extent rather than snapping at the boundary
+   * is what makes it read as a masked scroller rather than as cards
+   * blinking out of existence. It scales with the pieces, so it needs no
+   * per-density tuning.
+   *
+   * Only ever below 1 for a fan using `minGap` — a fan without a
+   * compression floor fits by construction.
+   */
+  visible: number;
+  /**
+   * False when this piece has been panned entirely outside `within`.
+   * Exactly `visible > 0`; kept as its own field because "is there
+   * hidden content this way" is a different question from "how far
+   * faded is this one piece", and the edge-fade affordance asks the
+   * first. Never a reason to skip rendering: pieces never unmount.
+   */
+  inView: boolean;
+}
+
+/**
+ * How much of a piece of `extent` centred at `centre` lies inside
+ * `[lo, hi]`, as 0..1 — 1 while wholly inside, 0 once wholly past, and
+ * a linear ramp across the one piece-extent between. Drives `FanSlot.
+ * visible`; see there for why a fan fades rather than clips.
+ */
+function alongVisibility(centre: number, extent: number, lo: number, hi: number): number {
+  if (extent <= 0) return 1;
+  const past = Math.max(lo - (centre - extent / 2), centre + extent / 2 - hi, 0);
+  // Snapped below a whole pixel, the same way `fanSpread` snaps its
+  // `overflow` and for the same reason: a fan with no compression floor
+  // ends exactly on the boundary, and the float residue from deriving
+  // its gap by division would otherwise dim every outermost card in the
+  // app by a fifteenth decimal place.
+  if (past < 1) return 1;
+  return Math.max(0, 1 - past / extent);
 }
 
 export interface FanOptions {
@@ -602,6 +810,28 @@ export interface FanOptions {
   arcLift?: number;
   /** Widest allowed gap between piece centres. */
   maxGap?: number;
+  /**
+   * Compression FLOOR: the narrowest the gap between piece centres is
+   * allowed to get. Default 0, which is exactly today's behaviour —
+   * compress without limit until the fan fits.
+   *
+   * Unbounded compression is wrong past a certain depth: a 20+ card
+   * discard pile or a hand that just swallowed half of one shrinks to
+   * unreadable slivers, and every extra card makes it worse. With a
+   * floor set, the fan compresses to it and then STOPS; whatever no
+   * longer fits becomes a pannable range instead (see `pan` and
+   * `fanPanRange`). Trading "see all of it, illegibly" for "see part of
+   * it, legibly, and drag for the rest" is the whole point.
+   */
+  minGap?: number;
+  /**
+   * Pan offset along the spread axis, in px. Meaningful only alongside
+   * `minGap`, since a fan with no floor never overflows. Clamp callers'
+   * values to `[0, fanPanRange(...)]` and pass the SIGNED offset — see
+   * `fanPanRange`'s doc for why the stored value is signed rather than
+   * a raw 0..max scroll.
+   */
+  pan?: number;
 }
 
 /**
@@ -621,16 +851,51 @@ function fanSpread(
   available: number,
   size: number,
   maxGap: number,
-): { offset: number; t: number } {
-  if (count <= 1) return { offset: 0, t: 0 };
+  minGap = 0,
+  pan = 0,
+): { offset: number; t: number; overflow: number } {
+  if (count <= 1) return { offset: 0, t: 0, overflow: 0 };
   const usable = Math.max(0, available - size);
-  const gap = Math.min(maxGap, usable / (count - 1));
+  // `minGap` is the compression floor. Without one (the default, and
+  // every pre-existing caller) this is the original
+  // `min(maxGap, usable / (count - 1))` exactly.
+  const gap = Math.max(minGap, Math.min(maxGap, usable / (count - 1)));
   const spread = gap * (count - 1);
   return {
-    offset: index * gap - spread / 2,
+    offset: index * gap - spread / 2 + pan,
     // -1 at the left/first edge of the fan, +1 at the right/last.
     t: (index / (count - 1)) * 2 - 1,
+    // Only nonzero once the floor stopped the fan from shrinking to fit.
+    //
+    // Snapped below a whole pixel: a fan sized to exactly its own
+    // content leaves float residue on the order of 1e-15, and "there is
+    // 0.000000000000007px of hidden content" is not a thing to offer the
+    // player a drag for.
+    overflow: spread - usable >= 1 ? spread - usable : 0,
   };
+}
+
+/**
+ * How far a floored fan can be panned, in px — the part of it that does
+ * not fit. Zero for any fan without a `minGap`, which is why every
+ * existing caller is unaffected.
+ *
+ * The value callers should STORE is a signed pan in `[-range/2,
+ * +range/2]`, not a raw `[0, range]` scroll. `fanSpread` centres the
+ * whole fan on `within`, so pan 0 shows the MIDDLE of an overflowing
+ * fan with content hidden off BOTH ends — which reads as broken before
+ * the player has dragged anything. Converting to a signed pan lets a
+ * caller start at `+range/2`, which puts the fan's first piece flush
+ * against the near edge, exactly where a hand or a pile should begin.
+ */
+export function fanPanRange(o: {
+  count: number;
+  available: number;
+  size: number;
+  maxGap: number;
+  minGap: number;
+}): number {
+  return fanSpread(0, o.count, o.available, o.size, o.maxGap, o.minGap).overflow;
 }
 
 /**
@@ -649,16 +914,37 @@ export function fanSlot(o: FanOptions): FanSlot {
       x: within.x + within.w / 2,
       y: within.y + within.h / 2,
       rotation: 0,
+      visible: 1,
+      inView: true,
     };
   }
 
-  const { offset, t } = fanSpread(index, count, within.w, size.w, maxGap);
+  const { offset, t } = fanSpread(
+    index,
+    count,
+    within.w,
+    size.w,
+    maxGap,
+    o.minGap ?? 0,
+    o.pan ?? 0,
+  );
+
+  const x = within.x + within.w / 2 + offset;
+  // Measured along the spread axis only. The cross axis is fixed by
+  // construction — a fan never moves off it — so folding it in would
+  // only introduce false fades from rounding.
+  const visible = alongVisibility(x, size.w, within.x, within.x + within.w);
 
   return {
-    x: within.x + within.w / 2 + offset,
+    x,
     // Ends of the arc sit lower than the middle.
     y: within.y + within.h / 2 + t * t * arcLift,
     rotation: t * maxRotation,
+    visible,
+    // "Any part of the piece is inside the box", not "its centre is" —
+    // a card half over the edge is still something the player can see
+    // and should not be reported as hidden content behind a fade.
+    inView: visible > 0,
   };
 }
 
@@ -697,6 +983,16 @@ export interface RadialFanOptions {
   maxTilt?: number;
   arcLift?: number;
   maxGap?: number;
+  /** Compression floor — see `FanOptions.minGap`. */
+  minGap?: number;
+  /** Pan along `spread`, in px — see `FanOptions.pan`. */
+  pan?: number;
+  /**
+   * Box to measure `visible`/`inView` against. Omit for a fan that
+   * always fits (an opponent's hand), in which case the piece is simply
+   * fully visible.
+   */
+  within?: Box;
 }
 
 /**
@@ -712,14 +1008,254 @@ export function radialFanSlot(o: RadialFanOptions): FanSlot {
   const arcLift = o.arcLift ?? 4;
   const maxGap = o.maxGap ?? size.w * 0.42;
 
-  if (count <= 1) return { x: anchor.x, y: anchor.y, rotation: baseRotation };
+  if (count <= 1) {
+    return { x: anchor.x, y: anchor.y, rotation: baseRotation, visible: 1, inView: true };
+  }
 
-  const { offset, t } = fanSpread(index, count, spreadWidth, size.w, maxGap);
+  // `size.w` is the piece's extent ALONG `spread`, not its screen width
+  // — for a fan running down the screen the caller passes the piece's
+  // height there. Same convention the opponent-hand caller already uses.
+  const { offset, t } = fanSpread(
+    index,
+    count,
+    spreadWidth,
+    size.w,
+    maxGap,
+    o.minGap ?? 0,
+    o.pan ?? 0,
+  );
   const bow = t * t * arcLift;
+  const x = anchor.x + spread.x * offset + away.x * bow;
+  const y = anchor.y + spread.y * offset + away.y * bow;
+
+  // Measured along `spread` and nothing else, which needs the box
+  // projected onto that direction too. Testing screen-x and screen-y
+  // independently (what this did first) is wrong for the same reason it
+  // would be for `fanSlot`: only the spread axis can overflow, and the
+  // cross axis reports a false partial fade the moment the piece's two
+  // dimensions differ — a portrait fan passes the card's HEIGHT as its
+  // along-extent, so an x-axis test compares a card's height against a
+  // column exactly one card WIDE and finds it hanging out both sides.
+  let visible = 1;
+  if (o.within) {
+    const b = o.within;
+    const boxCentreAlong = (b.x + b.w / 2) * spread.x + (b.y + b.h / 2) * spread.y;
+    const boxHalfAlong = (Math.abs(spread.x) * b.w + Math.abs(spread.y) * b.h) / 2;
+    visible = alongVisibility(
+      x * spread.x + y * spread.y,
+      size.w,
+      boxCentreAlong - boxHalfAlong,
+      boxCentreAlong + boxHalfAlong,
+    );
+  }
 
   return {
-    x: anchor.x + spread.x * offset + away.x * bow,
-    y: anchor.y + spread.y * offset + away.y * bow,
+    x,
+    y,
     rotation: baseRotation + t * maxTilt,
+    visible,
+    // Without a `within` there is nothing to be outside of — an
+    // opponent's hand has no compression floor and always fits by
+    // construction.
+    inView: visible > 0,
   };
+}
+
+/* ============================================================
+   Pile assembly — the deck and discard, and how they share space
+   ============================================================ */
+
+/**
+ * The validated compression floor for the discard pile, as a fraction of
+ * card width. 0.22 was tried first and still let a deep pile compress to
+ * unreadable before panning ever engaged; 0.36 is the number that holds.
+ *
+ * Deliberately a SEPARATE constant from `MIN_HAND_GAP_FRACTION` even
+ * though the two currently share a value — they answer different
+ * questions (how tightly may a pile on the felt stack, vs how tightly
+ * may cards you are holding), and retuning one must never silently drag
+ * the other along with it.
+ */
+export const MIN_DISCARD_STEP_FRACTION = 0.36;
+
+/** The hero hand's own compression floor. See MIN_DISCARD_STEP_FRACTION. */
+export const MIN_HAND_GAP_FRACTION = 0.36;
+
+/**
+ * Does the deck/discard assembly lay out side by side (landscape) or
+ * stacked one above the other (portrait)?
+ *
+ * This is NOT a relabelling of the same layout — the two orientations
+ * have genuinely different axis relationships, and the deck's behaviour
+ * differs because of it:
+ *
+ *  - PORTRAIT: deck and discard sit side by side on screen-X, and the
+ *    discard fans DOWNWARD along screen-Y. The offset axis between the
+ *    two piles is perpendicular to the fan's growth axis, so the pile
+ *    growing has no reason to move the deck at all. The deck never
+ *    moves.
+ *  - LANDSCAPE: deck and discard share one horizontal row, and the fan
+ *    also grows horizontally. Now the offset axis IS the growth axis, so
+ *    the deck slides left to make room as the fan widens, flexbox-style,
+ *    clamped at `pileRegion`'s stops. This is deliberate and requested,
+ *    not drift to be prevented.
+ */
+export function isPortraitTable(region: Box): boolean {
+  return region.h >= region.w;
+}
+
+/**
+ * Everything a caller needs to lay out the discard fan and place the
+ * deck beside it, derived ONCE from `pileRegion` so the fan's own clamp
+ * and the deck's landscape position can never disagree. A second,
+ * parallel "how close may this get to a hand" calculation is exactly
+ * what drifted out of sync last time.
+ */
+export interface PileAssembly {
+  portrait: boolean;
+  /** Box the discard fan spreads inside. */
+  fan: Box;
+  /** Centre of the deck's own card, before any landscape shift. */
+  deck: { x: number; y: number };
+  /** Gap between piece centres once the floor has engaged. */
+  minStep: number;
+  /** How far the fan can be panned; 0 while it still fits. */
+  panRange: number;
+  /** Leftmost the deck's centre may slide to in landscape. */
+  deckMinX: number;
+}
+
+export function pileAssembly(g: TableGeometry, discardCount: number): PileAssembly {
+  const region = g.pileRegion;
+  const card = g.card;
+  const portrait = isPortraitTable(region);
+  const minStep = card.w * MIN_DISCARD_STEP_FRACTION;
+
+  // The fan gets the region minus the deck's own column/row plus a gap.
+  const gap = card.w * 0.42;
+  const deckSlot = card.w + gap;
+
+  if (portrait) {
+    // Deck and discard side by side on X; the fan runs down Y.
+    //
+    // The fan gets a COLUMN exactly one card wide, not "the whole region
+    // minus the deck". `fanSlot` centres a fan inside the box it is
+    // given, so handing it a box far wider than it needs parks it in the
+    // middle of that width and leaves a lake of empty felt between the
+    // two piles — which is precisely what it did. The pair is sized to
+    // its real content and then centred as a unit instead.
+    const pairW = card.w * 2 + gap;
+    const pairLeft = region.x + Math.max(0, (region.w - pairW) / 2);
+    const stepV = card.h * MIN_DISCARD_STEP_FRACTION;
+    // Sized to its CONTENT, capped at the room available. A fan centres
+    // itself inside its box, so giving it the whole region parks a short
+    // pile halfway down the felt instead of up at the seats where the
+    // region's top edge already places it. Once the content exceeds the
+    // room, the cap engages and the excess becomes pan range.
+    const fanH = Math.max(card.h, Math.min(region.h, card.h + stepV * Math.max(0, discardCount - 1)));
+    const fan: Box = { x: pairLeft + card.w + gap, y: region.y, w: card.w, h: fanH };
+    const panRange = fanPanRange({
+      count: discardCount,
+      available: fanH,
+      size: card.h,
+      maxGap: card.h * 0.38,
+      minGap: stepV,
+    });
+    return {
+      portrait,
+      fan,
+      // Level with the fan's first card, which is level with the seats.
+      deck: { x: pairLeft + card.w / 2, y: region.y + card.h / 2 },
+      minStep: stepV,
+      panRange,
+      deckMinX: pairLeft + card.w / 2,
+    };
+  }
+
+  // Landscape: one horizontal row, and here the fan legitimately wants
+  // the run — it grows along the same axis the two piles are offset on,
+  // which is why the deck gives ground to it as the pile deepens (see
+  // `pileAssemblyHorizontal`). The fan is centred on what it actually
+  // occupies rather than on the leftover width, for the same reason the
+  // portrait branch above sizes its pair to content.
+  const naturalW = Math.min(
+    region.w - deckSlot,
+    card.w + minStep * Math.max(0, discardCount - 1),
+  );
+  const fanW = Math.max(card.w, naturalW);
+  const pairW = card.w + gap + fanW;
+  const pairLeft = region.x + Math.max(0, (region.w - pairW) / 2);
+  // One card tall: a landscape fan runs sideways, so it needs no
+  // vertical room, and pinning its height to the card keeps its centre
+  // level with the seats (see the portrait branch for the same point).
+  const fan: Box = { x: pairLeft + card.w + gap, y: region.y, w: fanW, h: card.h };
+  const panRange = fanPanRange({
+    count: discardCount,
+    available: fan.w,
+    size: card.w,
+    maxGap: card.w * 0.38,
+    minGap: minStep,
+  });
+  return {
+    portrait,
+    fan,
+    // Anchored to the PAIR's left edge, not the region's. Pinning the
+    // deck to the region while re-centring the fan is what left the two
+    // marooned at opposite ends of the felt — they are one composition
+    // and have to be positioned from one origin.
+    deck: { x: pairLeft + card.w / 2, y: region.y + card.h / 2 },
+    minStep,
+    panRange,
+    // The hard left stop is still the region's own edge: the deck may
+    // give ground to a growing fan right up to it, and no further.
+    deckMinX: region.x + card.w / 2,
+  };
+}
+
+/**
+ * The deck's landscape x — how far left it has been pushed by a growing
+ * discard fan beside it. Portrait callers never ask (the deck does not
+ * move); see `isPortraitTable`.
+ *
+ * The composition being preserved is "deck + fan, centred as one unit":
+ * as the fan widens, the pair's combined centre would drift right, so
+ * the deck gives ground to keep it put. Hard-stopped at `deckMinX` so it
+ * can never walk out of `pileRegion` and under an opponent's hand.
+ */
+export function pileAssemblyHorizontal(
+  g: TableGeometry,
+  discardCount: number,
+): { deckX: number; deckY: number } {
+  const a = pileAssembly(g, discardCount);
+  // `pileAssembly` already positions the deck from the PAIR's own left
+  // edge, and the pair is sized to its content and centred — so the deck
+  // walking left as the fan widens falls straight out of that, with the
+  // gap between the two staying constant.
+  //
+  // It used to subtract a further shift here on top of that, which
+  // double-counted: the deck moved left AND the fan re-centred, opening
+  // a gap that grew to ~87px at eight cards and ~155px on desktop before
+  // closing again once the fan hit its clamp. Deriving the position once
+  // is what makes it right at every depth rather than at the extremes.
+  return { deckX: Math.max(a.deckMinX, a.deck.x), deckY: a.deck.y };
+}
+
+/** Pan range for the discard fan at its current depth. */
+export function discardMaxScroll(g: TableGeometry, discardCount: number): number {
+  return pileAssembly(g, discardCount).panRange;
+}
+
+/**
+ * Pan range for the hero's own hand. Same compress-then-pan pattern as
+ * the discard pile — a hand that just swallowed six cards off the pile
+ * needs it for exactly the same reason a deep pile does.
+ */
+export function handFanMaxScroll(g: TableGeometry, count: number): number {
+  return fanPanRange({
+    count,
+    available: g.zones.hand.w,
+    size: g.handCard.w,
+    maxGap: g.handCard.w * 0.78,
+    minGap: g.handCard.w * MIN_HAND_GAP_FRACTION,
+  });
 }

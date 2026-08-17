@@ -1,0 +1,222 @@
+/**
+ * Rummy 500 bots — casual / steady / sharp.
+ *
+ * Heuristic, not optimal, and not claiming to be: the point is three
+ * opponents who feel meaningfully different across a match, in the same
+ * spirit as Spades' `estimateTricks`.
+ *
+ * Every method here receives `playerView(state, seat)`, guaranteed by
+ * `useGameRuntime.revealBotTurn` — so a bot literally cannot read
+ * another hand, and none of this needs bot-side discipline to stay
+ * honest. Other seats' cards arrive as `HIDDEN_CARD` placeholders,
+ * which is why nothing below ever inspects `state.hands` for a seat
+ * other than its own.
+ */
+
+import type { BotDifficulty, BotStrategy, PieceId, SeatId } from "@/engine/types";
+import type { Rng } from "@/engine/rng";
+import { canExtend, cardValue, findCompletion, rankOf, suitOf } from "./cards";
+import {
+  layableMelds,
+  layoffs,
+  legalDrawDepths,
+  mandatoryMelds,
+  validDealSizes,
+} from "./state";
+import type { RummyAction, RummyState } from "./types";
+
+type Tier = BotDifficulty;
+
+function bestOf<T>(items: readonly T[], score: (item: T) => number, rng: Rng): T | null {
+  if (items.length === 0) return null;
+  let best = -Infinity;
+  let winners: T[] = [];
+  for (const item of items) {
+    const s = score(item);
+    if (s > best) {
+      best = s;
+      winners = [item];
+    } else if (s === best) {
+      winners.push(item);
+    }
+  }
+  return rng.pick(winners);
+}
+
+/**
+ * How useful a card looks in this hand — a rough "is it going anywhere"
+ * score, deliberately cheap. Counts same-rank company and same-suit
+ * neighbours, which between them cover both meld shapes.
+ */
+function usefulness(card: PieceId, hand: readonly PieceId[]): number {
+  const rank = rankOf(card);
+  const suit = suitOf(card);
+  let score = 0;
+  for (const other of hand) {
+    if (other === card) continue;
+    if (rankOf(other) === rank) score += 2;
+    if (suitOf(other) === suit) {
+      // Adjacency matters far more than sharing a suit at all.
+      const near = Math.abs(rankIndex(other) - rankIndex(card));
+      if (near === 1) score += 2;
+      else if (near === 2) score += 1;
+    }
+  }
+  // A card that already completes something outright is not deadwood.
+  if (findCompletion(card, hand)) score += 6;
+  return score;
+}
+
+function rankIndex(card: PieceId): number {
+  const order = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+  return order.indexOf(rankOf(card));
+}
+
+/* ============================================================
+   Decisions
+   ============================================================ */
+
+function chooseDealSize(state: RummyState, rng: Rng): RummyAction {
+  const sizes = validDealSizes(state.seats);
+  const lo = Math.floor(sizes.length * 0.35);
+  const hi = Math.max(lo, Math.floor(sizes.length * 0.75));
+  const band = sizes.slice(lo, hi + 1);
+  return { t: "chooseDealSize", size: band.length ? rng.pick(band) : sizes[sizes.length - 1]! };
+}
+
+function chooseDraw(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): RummyAction {
+  const depths = legalDrawDepths(state, seat);
+  if (depths.length === 0) return { t: "drawStock" };
+
+  if (tier === "casual") {
+    // Casual plays it safe and mostly stays out of the pile — legal but
+    // not clever, which is the whole brief.
+    return rng.next() < 0.25 ? { t: "drawDiscard", depth: depths[0]! } : { t: "drawStock" };
+  }
+
+  const hand = state.hands[seat] ?? [];
+  const pile = state.discard;
+
+  // Weigh what a pickup actually buys against what it costs. Every
+  // pickup forces a brand-new meld, so the deepest card is spoken for;
+  // the real question is whether the cards riding along are worth
+  // adding to a hand you then have to get rid of again.
+  const scored = depths.map((depth) => {
+    const taken = pile.slice(pile.length - depth);
+    const deepest = taken[0]!;
+    const meld = findCompletion(deepest, hand, taken.slice(1)) ?? [];
+    const melded = new Set(meld);
+    // Points that go straight to the board are pure gain...
+    const gain = meld.reduce((n, id) => n + cardValue(id), 0);
+    // ...while anything picked up that ISN'T melded is dead weight you
+    // now hold, and holding is what loses rounds.
+    const drag = taken
+      .filter((id) => !melded.has(id))
+      .reduce((n, id) => n + cardValue(id) * (usefulness(id, hand) > 3 ? 0.3 : 1), 0);
+    return { depth, score: gain - drag };
+  });
+
+  const threshold = tier === "sharp" ? 0 : 5;
+  const best = bestOf(scored, (s) => s.score, rng);
+  if (best && best.score > threshold) return { t: "drawDiscard", depth: best.depth };
+  return { t: "drawStock" };
+}
+
+function chooseMeld(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): RummyAction {
+  const hand = state.hands[seat] ?? [];
+
+  // An outstanding pickup obligation is the only legal move there is —
+  // and `mandatoryMelds` is the same list `legalActions` builds, so the
+  // two can never disagree about what is available.
+  if (state.mandatory) {
+    const candidates = mandatoryMelds(hand, state.mandatory.card);
+    const pick = bestOf(candidates, (m) => m.reduce((n, id) => n + cardValue(id), 0), rng);
+    if (pick) return { t: "layNewMeld", cards: pick };
+    // Only reachable via the same livelock guard `legalActions`
+    // documents; discarding is genuinely legal at that point.
+    return chooseDiscard(state, seat, rng, tier);
+  }
+
+  // Laying off first: points on the board can't be caught holding.
+  if (tier !== "casual") {
+    const offs = layoffs(state, hand);
+    const off = bestOf(offs, (o) => cardValue(o.card), rng);
+    if (off) return { t: "extendMeld", meldId: off.meldId, card: off.card };
+  }
+
+  const melds = layableMelds(hand);
+  const meld = bestOf(melds, (m) => m.reduce((n, id) => n + cardValue(id), 0), rng);
+  if (meld) return { t: "layNewMeld", cards: meld };
+
+  if (tier === "casual") {
+    const offs = layoffs(state, hand);
+    const off = bestOf(offs, (o) => cardValue(o.card), rng);
+    if (off) return { t: "extendMeld", meldId: off.meldId, card: off.card };
+  }
+
+  return chooseDiscard(state, seat, rng, tier);
+}
+
+function chooseDiscard(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): RummyAction {
+  const hand = state.hands[seat] ?? [];
+  if (hand.length === 0) return { t: "discard", card: "" };
+
+  if (tier === "casual") {
+    // Dump the most expensive thing that isn't obviously going anywhere.
+    const card = bestOf(hand, (c) => cardValue(c) - usefulness(c, hand), rng);
+    return { t: "discard", card: card ?? hand[0]! };
+  }
+
+  // Steady/sharp: least likely to complete anything, breaking ties
+  // toward the higher-value card so a bad round costs less.
+  const card = bestOf(hand, (c) => -usefulness(c, hand) * 4 + cardValue(c) * 0.5, rng);
+
+  if (tier === "sharp" && card) {
+    // Don't hand the table a card that instantly extends a live meld if
+    // there is anything else nearly as dead.
+    const feeds = state.melds.some((m) => canExtend(m.cards, card));
+    if (feeds) {
+      const safe = hand.filter((c) => !state.melds.some((m) => canExtend(m.cards, c)));
+      const alt = bestOf(safe, (c) => -usefulness(c, hand) * 4 + cardValue(c) * 0.5, rng);
+      if (alt) return { t: "discard", card: alt };
+    }
+  }
+
+  return { t: "discard", card: card ?? hand[0]! };
+}
+
+/* ============================================================
+   Strategy objects
+   ============================================================ */
+
+function makeBot(
+  id: string,
+  tier: Tier,
+  pace: (rng: Rng) => number,
+): BotStrategy<RummyState, RummyAction> {
+  return {
+    id,
+    choose(state, seat, rng) {
+      if (state.dealSizePending !== null) return chooseDealSize(state, rng);
+      // A bot never sees a claim window — its claims resolve inline
+      // inside `reduce` — so there is no branch for one here.
+      if (state.phase === "draw") return chooseDraw(state, seat, rng, tier);
+      return chooseMeld(state, seat, rng, tier);
+    },
+    thinkMs(state, seat, rng) {
+      const beat = pace(rng);
+      // Drawing with no pile option, or melding under an obligation, is
+      // not a real decision — don't make the player watch one.
+      const forced =
+        (state.phase === "draw" && legalDrawDepths(state, seat).length === 0) ||
+        state.mandatory !== null;
+      return forced ? Math.round(beat * 0.35) : beat;
+    },
+  };
+}
+
+export const rummyBots: Record<BotDifficulty, BotStrategy<RummyState, RummyAction>> = {
+  casual: makeBot("casual", "casual", (rng) => 400 + rng.int(350)),
+  steady: makeBot("steady", "steady", (rng) => 650 + rng.int(450)),
+  sharp: makeBot("sharp", "sharp", (rng) => 850 + rng.int(500)),
+};

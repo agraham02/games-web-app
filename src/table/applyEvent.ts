@@ -104,9 +104,16 @@ function moveTo(
     // Flags are per-interaction; a piece that moves has left its mode.
     selected: false,
     highlighted: false,
+    tappable: false,
     dimmed: false,
     fanned: false,
     hidden: false,
+    // Ownership marks belong to the piece's PLACE, not the piece. A card
+    // swept off a board meld back into the deck is nobody's any more,
+    // and carrying its old owner chip through the shuffle is a visible
+    // leftover from a round that has ended.
+    ownerTag: undefined,
+    accentColour: undefined,
   };
 }
 

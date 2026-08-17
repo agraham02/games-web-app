@@ -36,6 +36,7 @@ import {
 } from "@/table/layout";
 import { useBoardView, useGeometry, useTableStore } from "@/table/store";
 import { TurnIndicator } from "@/ui/phases/PhaseScreens";
+import { HandZone } from "@/table/HandZone";
 import type { ScoreRow } from "@/ui/phases/PhaseScreens";
 import { TileFace } from "@/ui/primitives/TileFace";
 import { botColour, botName } from "@/games/_shared/botIdentity";
@@ -184,7 +185,9 @@ function DominoTable({
       <GhostTiles live={live} held={held} onPlace={onPlace} />
       <BoneyardCount state={state} />
 
-      <TurnIndicator label={label} show={live.isHeroTurn && label !== ""} />
+      <HandZone
+        center={<TurnIndicator inline label={label} show={live.isHeroTurn && label !== ""} />}
+      />
 
       <div
         className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 flex items-end justify-center gap-2 pb-3"

@@ -25,6 +25,16 @@ export interface TableSurfaceProps {
   density?: Density;
   /** Games with no hero hand (LRC) pass 0 to reclaim the bottom strip. */
   handZone?: number;
+  /**
+   * Felt-treatment knobs, all additive and defaulting to today's
+   * behaviour — see `ResolveOptions` for what each reserves. A game
+   * passes these when it has chrome the table must make room for (a top
+   * HUD strip, a bottom sheet's resting height) or a pile that fans and
+   * therefore wants sitting high in its region.
+   */
+  topZone?: number;
+  bottomZone?: number;
+  pileAnchor?: number;
   onPieceTap?: (id: PieceId) => void;
   /** Debug overlay: seat slots and zone boxes. */
   showGuides?: boolean;
@@ -38,6 +48,9 @@ export function TableSurface({
   seats,
   density,
   handZone,
+  topZone,
+  bottomZone,
+  pileAnchor,
   onPieceTap,
   showGuides,
   children,
@@ -79,13 +92,22 @@ export function TableSurface({
         height: size.h,
         density,
         handZone,
+        topZone,
+        bottomZone,
+        pileAnchor,
       }),
     );
-  }, [size, seats, density, handZone, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, pileAnchor, setGeometry]);
 
   return (
     <div
-      className={`felt felt-weave relative overflow-hidden ${className ?? ""}`}
+      // `touch-none`: the felt removes every native touch behaviour that
+      // could otherwise compete with an intentional drag/pan gesture for
+      // the same touch. It governs only the browser's own default
+      // handling, never JS pointer listeners, so it cannot break
+      // anything — it is the belt-and-suspenders half of the pair whose
+      // other half is `body { overflow: hidden }` in globals.css.
+      className={`felt felt-weave relative touch-none overflow-hidden ${className ?? ""}`}
       style={
         fill === "viewport"
           ? {

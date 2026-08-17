@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   cellHalfExtent,
+  discardMaxScroll,
+  handFanMaxScroll,
   podBox,
   resolveDensity,
   resolveTable,
@@ -361,6 +363,210 @@ describe("opponent tile hand — stays clear of the domino line", () => {
               }
             }
           }
+        }
+      }
+    }
+  });
+});
+
+/**
+ * The pannable discard fan, and the one thing it cannot do: draw a card
+ * outside the region cleared for it.
+ *
+ * Reported from play, portrait phone, with a deep pile: panning one way
+ * ran the fan up under the top seat's pod and off the top of the screen;
+ * panning the other ran it down under the board sheet and back out again
+ * in the gap below it, over the hand's own chrome. Both are the same
+ * defect — a floored fan overflows its box BY DESIGN (that is what makes
+ * it pannable) and nothing was hiding the part that spilled, because the
+ * piece layer is one flat canvas with no wrapper to clip against.
+ *
+ * The cards fade themselves out at the boundary instead. The invariant
+ * that makes that a fix rather than a softening is: **a card is never
+ * drawn more strongly than the fraction of it that is inside the
+ * region.** Fully outside is fully gone; half over the edge is half
+ * drawn, which is what a masked scroller looks like. The old behaviour
+ * fails it at the widest possible margin — opacity 1 with nothing of the
+ * card inside at all.
+ */
+describe("discard fan — never draws outside the pile region", () => {
+  function fanCard(index: number, count: number, g: ReturnType<typeof resolveTable>, pan: number) {
+    const placement: Placement = { zone: "discard", index, count, faceUp: true, fanned: true };
+    const t = layoutPiece(placement, g, { kind: "card", discardScroll: pan });
+    const base = baseSize(g);
+    const w = base.w * t.scale;
+    const h = base.h * t.scale;
+    const cx = t.x + base.w / 2;
+    const cy = t.y + base.h / 2;
+    return {
+      opacity: t.opacity,
+      left: cx - w / 2,
+      right: cx + w / 2,
+      top: cy - h / 2,
+      bottom: cy + h / 2,
+    };
+  }
+
+  /** How much of the drawn card lies inside `box`, 0..1 — the weaker of
+   *  the two axes, so a card clear of the box on either one reads 0. */
+  function fractionInside(c: ReturnType<typeof fanCard>, box: Box): number {
+    const w = c.right - c.left;
+    const h = c.bottom - c.top;
+    const overlapX = Math.min(c.right, box.x + box.w) - Math.max(c.left, box.x);
+    const overlapY = Math.min(c.bottom, box.y + box.h) - Math.max(c.top, box.y);
+    return Math.min(
+      w > 0 ? Math.max(0, overlapX) / w : 1,
+      h > 0 ? Math.max(0, overlapY) / h : 1,
+    );
+  }
+
+  it("never draws a card more strongly than the part of it inside the region", () => {
+    for (const vp of VIEWPORTS) {
+      for (const seats of [2, 4, 6]) {
+        // The real game's own geometry call — a reserved band for the
+        // board sheet, and the pile pulled up level with the side seats.
+        const g = resolveTable({
+          seats,
+          width: vp.w,
+          height: vp.h,
+          bottomZone: 140,
+          pileAnchor: 0.34,
+        });
+        for (const count of [12, 20, 30, 45]) {
+          const range = discardMaxScroll(g, count);
+          // Both extremes and the middle: the spill lands at a different
+          // end at each, and the report named both ends.
+          for (const pan of [range / 2, 0, -range / 2]) {
+            for (let i = 0; i < count; i++) {
+              const c = fanCard(i, count, g, pan);
+              const label = `${vp.name}/${seats}seats/${count}cards/pan${Math.round(pan)}/card${i}`;
+              // The 1px slack matches `alongVisibility`'s own sub-pixel
+              // snap, which exists so a fan sized to exactly its box
+              // isn't dimmed by float residue.
+              const allowed = fractionInside(c, g.pileRegion) + 1 / (c.right - c.left);
+              expect(c.opacity, `${label} drawn outside the region`).toBeLessThanOrEqual(allowed);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("draws nothing at all once a card is wholly past the edge", () => {
+    // The bound above still permits a sliver at a sliver's strength.
+    // This is the end state that bound is walking toward: a card carried
+    // right out of the region — under the top pod, under the board sheet
+    // — must be gone, not merely faint.
+    let whollyOut = 0;
+    for (const vp of VIEWPORTS) {
+      for (const seats of [2, 4, 6]) {
+        const g = resolveTable({
+          seats,
+          width: vp.w,
+          height: vp.h,
+          bottomZone: 140,
+          pileAnchor: 0.34,
+        });
+        for (const count of [20, 45]) {
+          const range = discardMaxScroll(g, count);
+          for (const pan of [range / 2, -range / 2]) {
+            for (let i = 0; i < count; i++) {
+              const c = fanCard(i, count, g, pan);
+              if (fractionInside(c, g.pileRegion) > 0) continue;
+              whollyOut++;
+              expect(
+                c.opacity,
+                `${vp.name}/${seats}seats/${count}cards/pan${Math.round(pan)}/card${i}`,
+              ).toBe(0);
+            }
+          }
+        }
+      }
+    }
+    // Not vacuous: these piles really do push cards right out of the
+    // region, which is the whole reason the fade exists. Without this
+    // the test would keep passing if the fan ever stopped overflowing.
+    expect(whollyOut, "no pile in this matrix overflowed — nothing was tested").toBeGreaterThan(20);
+  });
+
+  it("still draws the cards that DO fit at full strength", () => {
+    // The fade must be an edge treatment, not a general dimming of a
+    // deep pile — a fix that hid the spill by washing out the whole fan
+    // would pass the test above and be much worse to play with.
+    for (const vp of VIEWPORTS) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h, bottomZone: 140, pileAnchor: 0.34 });
+      for (const count of [12, 30]) {
+        const range = discardMaxScroll(g, count);
+        const solid = Array.from({ length: count }, (_, i) =>
+          fanCard(i, count, g, range / 2),
+        ).filter((c) => c.opacity === 1);
+        expect(
+          solid.length,
+          `${vp.name} @${count}: a pannable pile must still show a readable run of cards`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("leaves a pile that fits entirely alone", () => {
+    // Opting into panning must not cost a short pile anything.
+    for (const vp of VIEWPORTS) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h, bottomZone: 140, pileAnchor: 0.34 });
+      for (let i = 0; i < 4; i++) {
+        expect(fanCard(i, 4, g, 0).opacity, `${vp.name}/card${i}`).toBe(1);
+      }
+    }
+  });
+});
+
+/**
+ * The hero's own hand pans on exactly the same mechanism, so it has
+ * exactly the same defect available to it — a hand that has swallowed
+ * half the discard pile overflows its zone and the excess runs off both
+ * screen edges. Same fade, checked the same way.
+ */
+describe("hero hand — never draws a card outside the hand zone", () => {
+  function handCard(index: number, count: number, g: ReturnType<typeof resolveTable>, pan: number) {
+    const placement: Placement = { zone: "hand", seat: 0, index, count, faceUp: true };
+    const t = layoutPiece(placement, g, { kind: "card", handScroll: pan, handIndex: index });
+    const base = baseSize(g);
+    const cx = t.x + base.w / 2;
+    return { opacity: t.opacity, left: cx - base.w / 2, right: cx + base.w / 2 };
+  }
+
+  it("never draws a card more strongly than the part of it inside the zone", () => {
+    let faded = 0;
+    for (const vp of VIEWPORTS) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
+      for (const count of [24, 34, 45]) {
+        const range = handFanMaxScroll(g, count);
+        for (const pan of [range / 2, 0, -range / 2]) {
+          for (let i = 0; i < count; i++) {
+            const c = handCard(i, count, g, pan);
+            const zone = g.zones.hand;
+            const w = c.right - c.left;
+            const inside =
+              Math.max(0, Math.min(c.right, zone.x + zone.w) - Math.max(c.left, zone.x)) / w;
+            const label = `${vp.name}/${count}cards/pan${Math.round(pan)}/card${i}`;
+            expect(c.opacity, `${label} drawn outside the hand zone`).toBeLessThanOrEqual(
+              inside + 1 / w,
+            );
+            if (c.opacity < 1) faded++;
+          }
+        }
+      }
+    }
+    expect(faded, "no hand in this matrix overflowed — nothing was tested").toBeGreaterThan(10);
+  });
+
+  it("leaves an ordinary hand completely untouched", () => {
+    // The overwhelmingly common case, and the one every other game is
+    // in permanently: a hand that fits must be drawn exactly as before.
+    for (const vp of VIEWPORTS) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
+      for (const count of [1, 7, 13]) {
+        for (let i = 0; i < count; i++) {
+          expect(handCard(i, count, g, 0).opacity, `${vp.name}/${count}/card${i}`).toBe(1);
         }
       }
     }

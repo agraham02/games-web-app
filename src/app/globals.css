@@ -104,8 +104,19 @@ body {
   font-family: var(--font-sans);
   text-wrap: pretty;
   -webkit-font-smoothing: antialiased;
-  /* A table game never scrolls sideways. */
-  overflow-x: hidden;
+  /* A table game never scrolls, on either axis — and BOTH have to be
+     stated. Per the CSS Overflow spec, setting one axis to a
+     non-`visible` value auto-promotes the other from `visible` to
+     `auto`, so `overflow-x: hidden` alone left `body` a real (if empty)
+     vertical scroll container. On an actual touchscreen that container
+     is a legitimate candidate for the browser's native scroll to claim
+     a vertical swipe BEFORE any JS drag handler sees the pointer,
+     however correctly that handler is written — which is what breaks a
+     pannable pile or hand on a real device. It does not reproduce in
+     devtools emulation, whose synthetic PointerEvents bypass native
+     gesture arbitration entirely; that is precisely why it is easy to
+     miss. Companion to `touch-none` on the felt (TableSurface.tsx). */
+  overflow: hidden;
   overscroll-behavior: none;
 }
 

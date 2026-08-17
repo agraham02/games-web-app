@@ -72,6 +72,50 @@ interface TableState {
    * wired up (nothing currently) never dims anything by omission.
    */
   heroTurnActive: boolean;
+  /**
+   * Pan offset, in px, of the discard pile's own fan — how far it has
+   * been dragged past what fits. See geometry.ts's compress-then-pan
+   * note: a fan compresses only down to a floor, and everything past
+   * that floor becomes a pannable range rather than ever-thinner
+   * slivers. Lives here, not on the pile's component, for exactly the
+   * reason `heroHoverIndex` does — the things that need it are
+   * individual `<Piece>`s several layers down, and only they subscribe
+   * (see `useDiscardScroll`).
+   */
+  /**
+   * `null` means THIS GAME DOES NOT PAN ITS DISCARD PILE, which is not
+   * the same as "pans, currently at 0". Every game but Rummy leaves it
+   * null and keeps the plain fan it always had; the distinction is what
+   * makes compress-then-pan strictly opt-in rather than something every
+   * existing pile silently inherits.
+   */
+  discardScroll: number | null;
+  /**
+   * How many pieces are currently in the discard zone. Derived on every
+   * placements commit, exactly like `board` — never authored.
+   *
+   * It exists because the DECK piece needs it and has no other way to
+   * see it: layout is deliberately O(1) per piece with no sibling
+   * access, and in LANDSCAPE the deck slides aside as the discard fan
+   * grows into the space it shares (see layout.ts's "deck" case). That
+   * is one specific, narrow cross-zone fact, so it gets one narrow
+   * field rather than a general "broadcast every zone's count".
+   */
+  discardCount: number;
+  /** The hero hand's own pan offset. Same null convention as above. */
+  handScroll: number | null;
+  /**
+   * Display order override for the hero's hand: piece id -> position.
+   * `null` means "use the placement's own index", which is every game
+   * but Rummy.
+   *
+   * A view concern, deliberately NOT engine state: how you like your
+   * cards arranged has no bearing on the rules, replays should not
+   * depend on it, and a player must be able to re-sort while a bot is
+   * thinking — which an action routed through the turn loop could not
+   * allow.
+   */
+  handOrder: Record<PieceId, number> | null;
 
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
@@ -84,6 +128,15 @@ interface TableState {
   clearFlags(): void;
   setHeroHoverIndex(index: number | null): void;
   setHeroTurnActive(active: boolean): void;
+  setDiscardScroll(px: number | null): void;
+  setHandScroll(px: number | null): void;
+  setHandOrder(order: Record<PieceId, number> | null): void;
+}
+
+function countInZone(placements: PlacementMap, zone: Placement["zone"]): number {
+  let n = 0;
+  for (const p of Object.values(placements)) if (p.zone === zone) n += 1;
+  return n;
 }
 
 function boundsOf(
@@ -128,6 +181,7 @@ export const useTableStore = create<TableState>((set) => {
   const commit = (s: TableState, placements: PlacementMap) => ({
     placements,
     board: boundsOf(placements, s.ghosts, s.board),
+    discardCount: countInZone(placements, "discard"),
   });
 
   return {
@@ -138,6 +192,10 @@ export const useTableStore = create<TableState>((set) => {
     ghosts: [],
     heroHoverIndex: null,
     heroTurnActive: true,
+    discardScroll: null,
+    discardCount: 0,
+    handScroll: null,
+    handOrder: null,
 
     setGeometry: (geometry) => set({ geometry }),
 
@@ -179,10 +237,28 @@ export const useTableStore = create<TableState>((set) => {
         const next: PlacementMap = {};
         let changed = false;
         for (const [id, p] of Object.entries(s.placements)) {
-          if (p.selected || p.highlighted || p.dimmed || p.fanned || p.hidden || p.motionDelayMs) {
-            const { selected, highlighted, dimmed, fanned, hidden, motionDelayMs, ...rest } = p;
+          if (
+            p.selected ||
+            p.highlighted ||
+            p.tappable ||
+            p.dimmed ||
+            p.fanned ||
+            p.hidden ||
+            p.motionDelayMs
+          ) {
+            const {
+              selected,
+              highlighted,
+              tappable,
+              dimmed,
+              fanned,
+              hidden,
+              motionDelayMs,
+              ...rest
+            } = p;
             void selected;
             void highlighted;
+            void tappable;
             void dimmed;
             void fanned;
             void hidden;
@@ -204,6 +280,13 @@ export const useTableStore = create<TableState>((set) => {
 
     setHeroTurnActive: (active) =>
       set((s) => (s.heroTurnActive === active ? s : { heroTurnActive: active })),
+
+    setDiscardScroll: (px) =>
+      set((s) => (s.discardScroll === px ? s : { discardScroll: px })),
+
+    setHandScroll: (px) => set((s) => (s.handScroll === px ? s : { handScroll: px })),
+
+    setHandOrder: (order) => set({ handOrder: order }),
   };
 });
 
@@ -256,3 +339,38 @@ export const useSetHeroHoverIndex = () => useTableStore((s) => s.setHeroHoverInd
  */
 export const useHeroTurnActive = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.heroTurnActive : true));
+
+/**
+ * Pan/count slices, all on the same enabled-gated pattern as the two
+ * above — a piece that isn't in the relevant zone selects a constant and
+ * therefore never re-renders when the real value changes. That matters
+ * more here than anywhere else in this file: a pan updates on every
+ * pointermove, so an ungated subscription would re-render all 52 pieces
+ * per frame of a drag, which is precisely what this store exists to
+ * prevent.
+ */
+export const useDiscardScroll = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.discardScroll : null));
+export const useSetDiscardScroll = () => useTableStore((s) => s.setDiscardScroll);
+
+/**
+ * Whether this game pans its discard pile at all — a BOOLEAN derived
+ * from the pan value rather than the value itself, which is the whole
+ * point: the deck piece needs to know that panning is in play, but must
+ * not re-render on every frame of an actual pan. Selecting `!== null`
+ * gives a result that only ever changes when a game opts in or out.
+ */
+export const useDiscardPanEnabled = () =>
+  useTableStore((s) => s.discardScroll !== null);
+
+/** Only the DECK piece needs this — see `TableState.discardCount`. */
+export const useDiscardCount = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.discardCount : 0));
+
+export const useHandScroll = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.handScroll : null));
+export const useSetHandScroll = () => useTableStore((s) => s.setHandScroll);
+
+export const useHandOrder = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.handOrder : null));
+export const useSetHandOrder = () => useTableStore((s) => s.setHandOrder);

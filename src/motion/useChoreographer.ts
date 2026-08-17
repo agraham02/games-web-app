@@ -116,7 +116,29 @@ export function useChoreographer({
     // beatOf needs no dealStaggerMs of its own — it only ever reads a
     // step's DURATION, which the override never touches (only `offset`,
     // computed just above, does).
-    const wait = (next?.offset || beatOf(event)) * factor;
+    //
+    // TWO different clocks decide this wait, and the bug history here is
+    // entirely about conflating them.
+    //
+    // `next.offset` is how long the UPCOMING event wants to wait before
+    // it starts. `0` is a deliberate, meaningful value there — it is how
+    // `choreograph` says "these play CONCURRENTLY" (a multi-card draw
+    // batch, `highlight`, `announce`). Reading that 0 as falsy and
+    // substituting a real delay is what turned every multi-card pickup
+    // into a one-by-one crawl.
+    //
+    // But some events ARE pure elapsed time, and their own duration has
+    // to run out no matter what the next event wants. `think` is the
+    // whole category: it renders nothing, it exists solely so an
+    // opponent appears to be deciding. Honouring only `next.offset`
+    // makes every bot act instantaneously — a bot claimed a card in the
+    // same frame as the discard that freed it, which reads as the bot
+    // having known in advance.
+    //
+    // So: wait for whichever is longer. Concurrency is preserved because
+    // ordinary events hold for nothing.
+    const hold = event.t === "think" ? event.ms : 0;
+    const wait = Math.max(hold, next?.offset ?? beatOf(event)) * factor;
 
     timer.current = setTimeout(() => drainRef.current(), Math.max(0, wait));
   }, []);

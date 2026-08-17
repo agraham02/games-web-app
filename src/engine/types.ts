@@ -52,7 +52,19 @@ export type ZoneId =
  */
 export interface Placement {
   zone: ZoneId;
-  /** Owning seat, for hand / collected / seat-anchored zones. */
+  /**
+   * Owning seat, for hand / collected / seat-anchored zones.
+   *
+   * On a piece in a SHARED zone this means the seat that piece is
+   * ATTRIBUTED to, which is not always the seat whose area it sits in.
+   * Rummy's board is the case that makes the distinction real: a meld
+   * belongs to whoever laid it, but any seat may extend ("hit") it, and
+   * the hit card scores for the hitter while still visually belonging to
+   * the original run or set. So on a board piece this is the per-card
+   * CONTRIBUTOR, deliberately independent of `group` (which meld it is
+   * grouped under). Scoring attribution and visual grouping are allowed
+   * to disagree, and these two fields are how they do it.
+   */
   seat?: SeatId;
   /** Position within the zone (or within `group`). */
   index: number;
@@ -64,6 +76,54 @@ export interface Placement {
   selected?: boolean;
   /** Lit as a legal target. */
   highlighted?: boolean;
+  /**
+   * "You may interact with this" — a strictly WEAKER claim than
+   * `highlighted`, which means "this specific piece is known to work."
+   *
+   * The distinction exists because gating a tap on "is this already
+   * known to be legal" forces the player to discover by trial and error
+   * what a piece would even offer before they are allowed to look. A
+   * Rummy discard pile is the motivating case: every card in it is
+   * tappable (tapping stages a cancelable pickup preview), while only
+   * the COMMIT step validates. Letting players explore a reversible
+   * choice costs nothing; making them guess costs a lot.
+   *
+   * Transient, like `selected`/`highlighted` — included in the store's
+   * `clearFlags()`.
+   */
+  tappable?: boolean;
+  /**
+   * Opt out of the touch "first tap previews, second tap acts" gate, so
+   * a single tap always acts immediately even with no hover available.
+   *
+   * That gate exists to stop a fat-fingered, hard-to-undo PLAY on a
+   * touchscreen. It is actively wrong for a tap that only toggles a
+   * reversible selection with a separate action bar committing later
+   * (Rummy's hand cards) — nothing has happened yet, so there is
+   * nothing to protect against, and the extra tap just makes selecting
+   * a card feel broken. Anything that plays a piece directly should NOT
+   * set this.
+   */
+  instantAct?: boolean;
+  /**
+   * Owner tint for a piece in a shared zone — a small colour tab making
+   * "this belongs to seat X" legible without the player first learning a
+   * separate avatar-colour key. Any CSS colour. Cosmetic only; it never
+   * affects layout or interactivity.
+   */
+  accentColour?: string;
+  /**
+   * Short initials rendered in a chip on the piece's top-right corner,
+   * tinted by `accentColour`. For a shared zone where several players'
+   * pieces sit side by side and "whose is this" is not otherwise
+   * answerable from the piece itself — a Rummy board meld, where any
+   * seat may hit any meld and each card scores for whoever played it.
+   *
+   * Deliberately per-PIECE rather than per-group, because that is the
+   * granularity the question actually has: one run can carry cards from
+   * three different players.
+   */
+  ownerTag?: string;
   /** Pushed back as an invalid target during a targeting mode. */
   dimmed?: boolean;
   /**
@@ -89,9 +149,9 @@ export interface Placement {
    * they all land in the same store write — a collected trick, a sweep.
    * Set by applyEvent.ts at collect/sweep time; consumed once by
    * PieceLayer's motion transition. Transient, not structural — grouped
-   * with `selected`/`highlighted`/`dimmed`/`fanned` in the store's
-   * `clearFlags()`, NOT with `cell` (which is deliberately excluded from
-   * that set). "Consumed once" falls out for free: every OTHER event
+   * with `selected`/`highlighted`/`tappable`/`dimmed`/`fanned` in the
+   * store's `clearFlags()`, NOT with `cell` (which is deliberately
+   * excluded from that set). "Consumed once" falls out for free: every OTHER event
    * type's placement write (`deal`, `draw`, `play`, `flip`) leaves this
    * unset, which zeroes it for that piece the next time it moves.
    */

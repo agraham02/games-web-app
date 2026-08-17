@@ -13,7 +13,7 @@
  * down without a bespoke context provider for one hook's output.
  */
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { HERO, type GameDefinition, type PieceId, type SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
@@ -49,6 +49,10 @@ export interface GameHostProps<S, A> {
   /** Games with no hand of hidden pieces (LRC has none) pass 0 to
    * reclaim the bottom strip for their own controls. */
   handZone?: number;
+  /** Additive felt-treatment knobs — see TableSurfaceProps. */
+  topZone?: number;
+  bottomZone?: number;
+  pileAnchor?: number;
   gameTitle: string;
   /** How this game ranks players at the end — LRC has only win/lose, a
    * scored game would report real point totals. Falls back to a plain
@@ -92,6 +96,9 @@ export function GameHost<S, A>({
   players,
   density,
   handZone,
+  topZone,
+  bottomZone,
+  pileAnchor,
   gameTitle,
   standings,
   stats,
@@ -153,6 +160,17 @@ export function GameHost<S, A>({
   );
   const board = (standings ?? winLoseStandings)(live.state, live, seatViews);
 
+  // `pieces` is contractually fixed once `setup` has run (see its own
+  // doc — the runtime calls it once and caches it), so rebuilding a
+  // 52-entry map on every render just to hand it to the dev panel would
+  // quietly undo that. Keyed on the definition, which is the only thing
+  // that can change it.
+  const pieceVocabulary = useMemo(
+    () => definition.pieces(live.rawState),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [definition],
+  );
+
   const pendingSeat = live.pendingReveal ? definition.currentSeat(live.state) : null;
   // Built only while it is actually showing: a game's scorecard reads
   // `state.result`, which is null for most of a round.
@@ -163,6 +181,9 @@ export function GameHost<S, A>({
       seats={runtime.seats}
       density={density}
       handZone={handZone}
+      topZone={topZone}
+      bottomZone={bottomZone}
+      pileAnchor={pileAnchor}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
@@ -209,6 +230,14 @@ export function GameHost<S, A>({
         pendingLabel={
           pendingSeat !== null ? pendingLabel?.(live.state, pendingSeat, live) : null
         }
+        // Every game gets the state editor for free — it works off the
+        // game's own declared piece vocabulary and needs no per-game
+        // code. `rawState`, not `live.state`, because the editor has to
+        // edit what is actually there rather than the hero's redacted
+        // view of it.
+        debugState={live.rawState}
+        pieces={pieceVocabulary}
+        onDebugStateChange={(next) => live.replaceState(next as S)}
       />
 
       {children(live)}

@@ -9,14 +9,38 @@
  * be non-modal — the whole point is reading the board WHILE you look at
  * your hand, which a modal makes impossible.
  *
- * Three snap points, matching the three tiers of Rummy's disclosure:
+ * Snap points are just visible heights in ascending order. Typically:
  *   peek  — a strip above the hand, always present, costs nothing
  *   half  — browse the board without losing sight of your cards
  *   full  — the board is the task
+ *
+ * ONE MOTION VALUE DRIVES THE HEIGHT, THROUGHOUT. That is the whole
+ * design of this file and it replaces a shape that did not work.
+ *
+ * The original tracked the resting height in React state and the live
+ * drag position in a separate Motion `y`, syncing them by hand at drag
+ * start (`y.set()` and `setBoxHeight()` together). Those two updates
+ * land in different commits — `y.set()` applies immediately, a state
+ * setter needs a render — so for one frame the box had its OLD, small
+ * height with the NEW, large offset already applied. The result was a
+ * visual jump larger than the drag that caused it, which read as "the
+ * sheet flies open if you so much as breathe on it".
+ *
+ * Reading the raw pointer offset in `onDrag` and applying it straight to
+ * the same `height` value that renders at rest and animates on settle
+ * leaves no seam for the two to desync across. There is nothing to keep
+ * in sync because there is only one thing.
+ *
+ * A second consequence of the old shape is gone with it: `y` translated
+ * the box without changing its real height, and `translateY` moves where
+ * a box PAINTS, not whether the browser still resolves clicks against
+ * the space it vacated — so an inflated-but-translated rail silently ate
+ * taps on the hand cards underneath it. A real height has no vacated
+ * space.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { motion, useMotionValue, animate, type PanInfo } from "motion/react";
+import { useEffect, useRef } from "react";
+import { motion, useMotionValue, animate } from "motion/react";
 import { TRANSITIONS } from "@/motion/presets";
 
 export interface PeekRailProps {
@@ -46,105 +70,112 @@ export function PeekRail({
   footer,
   offsetBottom = 0,
 }: PeekRailProps) {
+  const smallest = snapPoints[0] ?? 0;
   const tallest = snapPoints[snapPoints.length - 1] ?? 0;
-  const y = useMotionValue(0);
+  const height = useMotionValue(snapPoints[snapIndex] ?? 0);
   const dragging = useRef(false);
 
-  // The section's real CSS height, not just its transform. Framer's
-  // drag needs the full `tallest` range to move through, but leaving
-  // the box that tall AT REST — with `y` merely translating the
-  // "extra" part out of view — does not remove that part from hit
-  // testing: `translateY` moves where a box paints, not whether the
-  // browser still resolves clicks against the space it vacated. Since
-  // this rail sits above the hero's hand, that invisible leftover slice
-  // silently ate every tap on a hand card underneath it. Inflating to
-  // `tallest` only while an actual drag gesture is in progress — when
-  // the pointer is already committed to the rail — keeps the resting
-  // box exactly as tall as what's visible, every other time.
-  const [boxHeight, setBoxHeight] = useState(snapPoints[snapIndex] ?? 0);
-
   // Follow controlled changes, but never fight the user mid-drag.
+  //
+  // Keyed on the resolved target NUMBER, not on `snapPoints` — callers
+  // build that array inline, so it is a fresh identity on every render
+  // and depending on it re-fired this effect (and started a fresh
+  // animation to the height it was already at) on every unrelated
+  // re-render of the page. That is a real source of the sheet feeling
+  // unsettled.
+  const targetHeight = snapPoints[snapIndex] ?? 0;
   useEffect(() => {
     if (dragging.current) return;
-    setBoxHeight(snapPoints[snapIndex] ?? 0);
-    y.set(0);
-  }, [snapIndex, snapPoints, y]);
+    animate(height, targetHeight, TRANSITIONS.ui);
+  }, [targetHeight, height]);
 
-  const startDrag = () => {
+  // Raw pointer events on the grab handle rather than Motion's `drag`.
+  //
+  // Motion's drag always applies a transform to the element it is on,
+  // and this element is simultaneously animating its own `height` — so
+  // the sheet was being translated AND resized from one gesture, which
+  // is the jank. Reading `clientY` directly and feeding only the height
+  // keeps exactly one thing moving.
+  const gesture = useRef<{ id: number; y: number; from: number; moved: boolean } | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragging.current = true;
-    // Grow to the full drag range without a visual jump: height and y
-    // change together so the rendered top edge doesn't move.
-    const current = snapPoints[snapIndex] ?? 0;
-    y.set(tallest - current);
-    setBoxHeight(tallest);
+    gesture.current = { id: e.pointerId, y: e.clientY, from: height.get(), moved: false };
   };
 
-  const settle = (_: unknown, info: PanInfo) => {
-    // Project where a flick would land, so a fast swipe skips a stop
-    // instead of creeping to the neighbouring one.
-    const projected = y.get() + info.velocity.y * 0.12;
-    const visible = tallest - projected;
+  const onPointerMove = (e: React.PointerEvent) => {
+    const g = gesture.current;
+    if (!g || g.id !== e.pointerId) return;
+    const delta = g.y - e.clientY; // Dragging UP makes it taller.
+    if (Math.abs(delta) > 3) g.moved = true;
+    height.set(Math.max(smallest, Math.min(tallest, g.from + delta)));
+  };
 
+  const onPointerUp = (e: React.PointerEvent) => {
+    const g = gesture.current;
+    if (!g || g.id !== e.pointerId) return;
+    gesture.current = null;
+    dragging.current = false;
+
+    // A gesture that never really moved is a TAP — step to the next snap
+    // point, so the sheet is fully usable without dragging at all.
+    if (!g.moved) {
+      animate(height, snapPoints[(snapIndex + 1) % snapPoints.length] ?? 0, TRANSITIONS.ui);
+      onSnapChange((snapIndex + 1) % snapPoints.length);
+      return;
+    }
+
+    const current = height.get();
     let best = 0;
     let bestDist = Infinity;
     snapPoints.forEach((p, i) => {
-      const d = Math.abs(p - visible);
+      const d = Math.abs(p - current);
       if (d < bestDist) {
         bestDist = d;
         best = i;
       }
     });
 
-    animate(y, tallest - (snapPoints[best] ?? 0), {
-      ...TRANSITIONS.ui,
-      onComplete: () => {
-        // Only now — once the settle animation has visually finished —
-        // shrink back to a real, non-inflated box.
-        dragging.current = false;
-        setBoxHeight(snapPoints[best] ?? 0);
-        y.set(0);
-      },
-    });
+    animate(height, snapPoints[best] ?? 0, TRANSITIONS.ui);
     onSnapChange(best);
   };
-
-  const atFull = snapIndex === snapPoints.length - 1;
 
   return (
     <motion.section
       className="absolute right-0 left-0 z-1500 flex flex-col rounded-t-sheet border-t border-brass-400/30 bg-linear-to-b from-felt-800/95 to-felt-900 shadow-[0_-8px_40px_rgb(0_0_0/0.5)] backdrop-blur-lg"
-      style={{ height: boxHeight, y, bottom: offsetBottom }}
-      drag="y"
-      dragConstraints={{ top: 0, bottom: tallest - (snapPoints[0] ?? 0) }}
-      dragElastic={0.04}
-      dragMomentum={false}
-      onDragStart={startDrag}
-      onDragEnd={settle}
+      style={{ height, bottom: offsetBottom }}
     >
-      {/* Grab handle. Tapping it steps through the snap points, so the
-          rail is usable without a drag gesture at all. */}
-      <button
-        type="button"
+      {/* Grab handle — and the only drag surface. Confining the gesture
+          here leaves the sheet's own contents free to scroll normally,
+          which a whole-sheet drag handler fights with. */}
+      <div
+        role="button"
+        tabIndex={0}
         aria-label="Resize board panel"
         className="w-full shrink-0 cursor-grab touch-none px-3 pt-2.5 pb-1.5 active:cursor-grabbing"
-        onClick={() => onSnapChange((snapIndex + 1) % snapPoints.length)}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSnapChange((snapIndex + 1) % snapPoints.length);
+          }
+        }}
       >
         <span className="mx-auto block h-1 w-9 rounded-full bg-bone-50/28" />
-      </button>
-
-      {header ? (
-        <div className="shrink-0 px-3.5 pb-2">{header}</div>
-      ) : null}
-
-      <div
-        className={`min-h-0 flex-1 px-3.5 ${atFull ? "overflow-y-auto" : "overflow-hidden"}`}
-      >
-        {children}
       </div>
 
-      {footer && atFull ? (
-        <div className="shrink-0 px-3.5 pt-2 pb-5">{footer}</div>
-      ) : null}
+      {header ? <div className="shrink-0 px-3.5 pb-2">{header}</div> : null}
+
+      {/* Scrollable at EVERY snap, not just the tallest. A resting height
+          that shows two meld rows still has to let the player reach the
+          rest without first dragging the whole sheet open. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3.5">{children}</div>
+
+      {footer ? <div className="shrink-0 px-3.5 pt-2 pb-5">{footer}</div> : null}
     </motion.section>
   );
 }
