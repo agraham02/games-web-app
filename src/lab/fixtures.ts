@@ -36,26 +36,11 @@ export function makePlayers(
       meta: opts.melds ? `${4 + (i % 5)} cards` : `bid ${1 + (i % 4)}`,
       active: opts.activeSeat === seat,
       thinking: opts.activeSeat === seat,
-      melds: opts.melds ? sampleMelds(seat) : undefined,
     });
   }
   return out;
 }
 
-function sampleMelds(seat: SeatId): string[] {
-  const pool = [
-    ["7♣7♦7♥", "4-5-6♠"],
-    ["J-Q-K♥", "2♠2♦", "9-10-J♣"],
-    ["A♠A♥A♦"],
-    ["3-4-5♦", "K♠K♣"],
-    [],
-    ["8♥8♠", "5-6-7♣", "Q♦Q♥", "10♠10♦"],
-    ["6-7-8♥"],
-    [],
-    ["2-3-4♣", "J♦J♣"],
-  ];
-  return pool[(seat - 1) % pool.length]!;
-}
 
 /* ============================================================
    Card board

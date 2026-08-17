@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
 import { HERO } from "@/engine/types";
 import { lrc, CHIPS_PER_PLAYER } from "./rules";
-import { chipsHeld, diceCountFor, potSize } from "./state";
+import { chipsHeld, diceCountFor, passLeft, passRight, potSize } from "./state";
 import type { LrcState } from "./types";
 
 /** Plays a full game from a seed, bots for every seat including the
@@ -33,11 +33,21 @@ describe("setup", () => {
     }
   });
 
-  it("starts with the hero's turn and no winner", () => {
-    const state = lrc.setup({ seats: 4, rng: createRng(1) });
-    expect(state.turn).toBe(HERO);
-    expect(state.winner).toBeNull();
-    expect(lrc.isOver(state)).toBe(false);
+  it("cuts for who rolls first rather than always the hero", () => {
+    // It used to be a hardcoded HERO, so the player opened every single
+    // game. LRC is pure luck and going first is a real edge, so that is
+    // both unfair and immediately noticeable across a few games.
+    const seen = new Set<number>();
+    for (let seed = 1; seed <= 40; seed++) {
+      const state = lrc.setup({ seats: 4, rng: createRng(seed) });
+      expect(state.turn, `seed ${seed}`).toBeGreaterThanOrEqual(0);
+      expect(state.turn, `seed ${seed}`).toBeLessThan(4);
+      expect(state.winner).toBeNull();
+      expect(lrc.isOver(state)).toBe(false);
+      seen.add(state.turn);
+    }
+    expect(seen.size, "the first roller must not be fixed").toBeGreaterThan(1);
+    expect(seen.has(HERO), "the hero must still get their share of first rolls").toBe(true);
   });
 
   it("rejects seat counts outside 3-10 at the definition level", () => {
@@ -51,6 +61,8 @@ describe("reduce", () => {
     const rng = createRng(2);
     const state = lrc.setup({ seats: 4, rng });
     const before = Object.keys(state.chipOwner).length;
+    // Whoever the cut gave the first roll to — no longer always the hero.
+    const roller = state.turn;
 
     const { state: next } = lrc.reduce(state, {
       t: "roll",
@@ -59,8 +71,10 @@ describe("reduce", () => {
 
     expect(Object.keys(next.chipOwner).length).toBe(before);
     expect(potSize(next)).toBe(1);
-    // Seat 0 started with 3, gave one to each of L/R/pot.
-    expect(chipsHeld(next, HERO)).toBe(0);
+    // The roller started with 3 and gave one to each of L/R/pot.
+    expect(chipsHeld(next, roller)).toBe(0);
+    expect(chipsHeld(next, passLeft(state, roller))).toBe(CHIPS_PER_PLAYER + 1);
+    expect(chipsHeld(next, passRight(state, roller))).toBe(CHIPS_PER_PLAYER + 1);
   });
 
   it("dots move nothing", () => {
@@ -70,15 +84,16 @@ describe("reduce", () => {
   });
 
   it("advances turn anticlockwise, skipping seats with zero chips", () => {
-    // Force seat 1 (hero's left) to zero chips first.
+    // Empty the first roller into the seat on their left.
     let state = lrc.setup({ seats: 4, rng: createRng(4) });
+    const roller = state.turn;
+    const left = passLeft(state, roller);
     state = lrc.reduce(state, { t: "roll", dice: ["L", "L", "L"] }).state;
-    // Seat 0 gave all 3 chips to seat 1 — seat 0 is now at zero, so the
-    // NEXT turn must skip past seat 0 if it ever comes back around.
-    // More directly: seat 1 now holds 6, seat 0 holds 0 — advancing
-    // from seat 3 (say) must never land back on seat 0 with 0 chips.
-    expect(chipsHeld(state, HERO)).toBe(0);
-    expect(chipsHeld(state, 1)).toBe(6);
+    // The roller gave all 3 chips left, so they are now at zero and the
+    // turn must never come back around to them: their neighbour holds 6,
+    // they hold 0, and advancing must always skip a zero-chip seat.
+    expect(chipsHeld(state, roller)).toBe(0);
+    expect(chipsHeld(state, left)).toBe(6);
 
     // Drain seat 1 back to zero too and confirm turn-passing never
     // selects a zero-chip seat as `currentSeat`.
@@ -103,10 +118,11 @@ describe("reduce", () => {
 
   it("declares the sole remaining chip-holder the winner, and fires gameEnd", () => {
     let state = lrc.setup({ seats: 3, rng: createRng(6) });
-    // Force it: seat 0 gives everything away.
+    // Force it: the first roller gives everything away.
+    const roller = state.turn;
     const r1 = lrc.reduce(state, { t: "roll", dice: ["L", "R", "C"] });
     state = r1.state;
-    expect(chipsHeld(state, HERO)).toBe(0);
+    expect(chipsHeld(state, roller)).toBe(0);
     expect(lrc.isOver(state)).toBe(false); // two seats still hold chips
 
     // Drain the other two seats' chips into the pot until one remains.

@@ -33,17 +33,31 @@
  * short, mostly-still gesture still reaches the card underneath as an
  * ordinary tap.
  *
+ * A wheel over the zone pans it too. That is not a nicety — a drag is
+ * the only gesture a touchscreen has, but on a desktop the wheel is the
+ * thing a player reaches for first, and offering only the drag there was
+ * read as "this doesn't scroll" (reported from play). Deliberately not a
+ * scrollbar: browser chrome on a card table looks like a bug, and the
+ * edge chevrons in `PanSurface` already say which way there is more.
+ *
  * Companion setup, without which none of this survives a real
  * touchscreen: `body { overflow: hidden }` on BOTH axes (globals.css)
- * and `touch-action: none` on the felt (TableSurface). See their own
- * comments — a native scroll container will claim a swipe before any JS
- * handler ever sees the pointer.
+ * and `touch-action: none` on the felt (TableSurface). `select-none`
+ * there is the mouse half of the same pair — see its comment.
  */
 
 import { useEffect, useRef, type RefObject } from "react";
 
 /** Movement, in px, before a gesture counts as a pan rather than a tap. */
 const PAN_THRESHOLD = 6;
+
+/**
+ * Wheel notches are reported in wildly different units across browsers
+ * and devices, so the delta is used only for its SIGN and magnitude
+ * ordering, scaled to something that feels like the fan moving with the
+ * wheel rather than leaping.
+ */
+const WHEEL_SCALE = 0.6;
 
 export interface PanZoneOptions {
   /** The region a gesture must start inside. Read geometrically only. */
@@ -86,7 +100,7 @@ export function usePanZone({
     let tracking = false;
     let committed = false;
 
-    const inZone = (e: PointerEvent) => {
+    const inZone = (e: { clientX: number; clientY: number }) => {
       const el = ref.current;
       if (!el) return false;
       const r = el.getBoundingClientRect();
@@ -136,17 +150,35 @@ export function usePanZone({
       committed = false;
     };
 
-    // `passive: false` on move so `preventDefault` is actually honoured;
-    // down/up never prevent anything, so they stay passive.
+    const onWheel = (e: WheelEvent) => {
+      if (!live.current.enabled) return;
+      if (!inZone(e)) return;
+      // A trackpad reports both axes on one gesture; take whichever the
+      // player pushed harder, so a slightly-off-axis swipe still works
+      // instead of doing nothing.
+      const raw = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      if (raw === 0) return;
+      e.preventDefault();
+      const { min: lo, max: hi, value: from, onChange: emit } = live.current;
+      // Scrolling DOWN/RIGHT should walk toward the far end of the fan,
+      // and the stored pan is signed with +max at the near end (see
+      // `fanPanRange`), so the delta subtracts.
+      emit(Math.max(lo, Math.min(hi, from - raw * WHEEL_SCALE)));
+    };
+
+    // `passive: false` on move and wheel so `preventDefault` is actually
+    // honoured; down/up never prevent anything, so they stay passive.
     document.addEventListener("pointerdown", onDown, { passive: true });
     document.addEventListener("pointermove", onMove, { passive: false });
     document.addEventListener("pointerup", onUp, { passive: true });
     document.addEventListener("pointercancel", onUp, { passive: true });
+    document.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
       document.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("wheel", onWheel);
     };
   }, [ref]);
 }

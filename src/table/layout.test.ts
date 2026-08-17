@@ -381,13 +381,19 @@ describe("opponent tile hand — stays clear of the domino line", () => {
  * it pannable) and nothing was hiding the part that spilled, because the
  * piece layer is one flat canvas with no wrapper to clip against.
  *
- * The cards fade themselves out at the boundary instead. The invariant
- * that makes that a fix rather than a softening is: **a card is never
- * drawn more strongly than the fraction of it that is inside the
- * region.** Fully outside is fully gone; half over the edge is half
- * drawn, which is what a masked scroller looks like. The old behaviour
- * fails it at the widest possible margin — opacity 1 with nothing of the
- * card inside at all.
+ * The cards fade themselves out at the boundary instead, on a band
+ * anchored to each card's own CENTRE (`FADE_BAND_FRACTION`). Two crisp
+ * promises come out of that, and they are what is checked here:
+ *
+ *   - **A card whose centre has left the region is not drawn at all.**
+ *     So nothing is ever visible more than half a card past the edge.
+ *   - **A fully drawn card overhangs by at most a few percent of its own
+ *     size** — the band deliberately stops a hair short of the card's
+ *     half-extent so an unfloored fan, whose outermost piece sits exactly
+ *     flush, cannot be dimmed by float residue.
+ *
+ * The old behaviour fails both at the widest possible margin: opacity 1
+ * with the whole card several card-lengths outside.
  */
 describe("discard fan — never draws outside the pile region", () => {
   function fanCard(index: number, count: number, g: ReturnType<typeof resolveTable>, pan: number) {
@@ -407,86 +413,78 @@ describe("discard fan — never draws outside the pile region", () => {
     };
   }
 
-  /** How much of the drawn card lies inside `box`, 0..1 — the weaker of
-   *  the two axes, so a card clear of the box on either one reads 0. */
-  function fractionInside(c: ReturnType<typeof fanCard>, box: Box): number {
-    const w = c.right - c.left;
-    const h = c.bottom - c.top;
-    const overlapX = Math.min(c.right, box.x + box.w) - Math.max(c.left, box.x);
-    const overlapY = Math.min(c.bottom, box.y + box.h) - Math.max(c.top, box.y);
-    return Math.min(
-      w > 0 ? Math.max(0, overlapX) / w : 1,
-      h > 0 ? Math.max(0, overlapY) / h : 1,
-    );
+  /**
+   * How far the drawn card sticks out past `box`, in px, and how far its
+   * CENTRE is outside — measured per axis and reported as the worse of
+   * the two, since a card clear of the box on either axis is off it.
+   */
+  function overhangOf(c: ReturnType<typeof fanCard>, box: Box) {
+    const axis = (lo: number, hi: number, bLo: number, bHi: number) => ({
+      edge: Math.max(bLo - lo, hi - bHi, 0),
+      centre: Math.max(bLo - (lo + hi) / 2, (lo + hi) / 2 - bHi, 0),
+      extent: hi - lo,
+    });
+    const x = axis(c.left, c.right, box.x, box.x + box.w);
+    const y = axis(c.top, c.bottom, box.y, box.y + box.h);
+    return x.edge >= y.edge ? x : y;
   }
 
-  it("never draws a card more strongly than the part of it inside the region", () => {
+  /** The geometry's own tuning, restated: the band stops this far short
+   *  of the card's half-extent, so that much overhang stays fully drawn.
+   *  Plus a pixel for float residue. */
+  const solidSlack = (extent: number) => extent * (0.5 - 0.45) + 1;
+
+  /** Real-game viewport/seat/depth matrix, with the board sheet's band
+   *  reserved exactly as the play page reserves it. */
+  function forEachFanCard(fn: (c: ReturnType<typeof fanCard>, label: string, g: ReturnType<typeof resolveTable>) => void) {
     for (const vp of VIEWPORTS) {
       for (const seats of [2, 4, 6]) {
-        // The real game's own geometry call — a reserved band for the
-        // board sheet, and the pile pulled up level with the side seats.
-        const g = resolveTable({
-          seats,
-          width: vp.w,
-          height: vp.h,
-          bottomZone: 140,
-          pileAnchor: 0.34,
-        });
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, bottomZone: 204 });
         for (const count of [12, 20, 30, 45]) {
           const range = discardMaxScroll(g, count);
           // Both extremes and the middle: the spill lands at a different
           // end at each, and the report named both ends.
           for (const pan of [range / 2, 0, -range / 2]) {
             for (let i = 0; i < count; i++) {
-              const c = fanCard(i, count, g, pan);
-              const label = `${vp.name}/${seats}seats/${count}cards/pan${Math.round(pan)}/card${i}`;
-              // The 1px slack matches `alongVisibility`'s own sub-pixel
-              // snap, which exists so a fan sized to exactly its box
-              // isn't dimmed by float residue.
-              const allowed = fractionInside(c, g.pileRegion) + 1 / (c.right - c.left);
-              expect(c.opacity, `${label} drawn outside the region`).toBeLessThanOrEqual(allowed);
+              fn(
+                fanCard(i, count, g, pan),
+                `${vp.name}/${seats}seats/${count}cards/pan${Math.round(pan)}/card${i}`,
+                g,
+              );
             }
           }
         }
       }
     }
+  }
+
+  it("draws nothing once a card's centre has left the region", () => {
+    let gone = 0;
+    forEachFanCard((c, label, g) => {
+      const o = overhangOf(c, g.pileRegion);
+      if (o.centre > 0) {
+        gone++;
+        expect(c.opacity, `${label}: centre outside the region but still drawn`).toBe(0);
+      }
+      if (c.opacity > 0) {
+        expect(o.edge, `${label}: visible more than half a card past the edge`).toBeLessThanOrEqual(
+          o.extent / 2 + 1,
+        );
+      }
+    });
+    // Not vacuous: these depths really do push cards right out of the
+    // region, which is the whole reason the fade exists.
+    expect(gone, "no pile in this matrix overflowed — nothing was tested").toBeGreaterThan(20);
   });
 
-  it("draws nothing at all once a card is wholly past the edge", () => {
-    // The bound above still permits a sliver at a sliver's strength.
-    // This is the end state that bound is walking toward: a card carried
-    // right out of the region — under the top pod, under the board sheet
-    // — must be gone, not merely faint.
-    let whollyOut = 0;
-    for (const vp of VIEWPORTS) {
-      for (const seats of [2, 4, 6]) {
-        const g = resolveTable({
-          seats,
-          width: vp.w,
-          height: vp.h,
-          bottomZone: 140,
-          pileAnchor: 0.34,
-        });
-        for (const count of [20, 45]) {
-          const range = discardMaxScroll(g, count);
-          for (const pan of [range / 2, -range / 2]) {
-            for (let i = 0; i < count; i++) {
-              const c = fanCard(i, count, g, pan);
-              if (fractionInside(c, g.pileRegion) > 0) continue;
-              whollyOut++;
-              expect(
-                c.opacity,
-                `${vp.name}/${seats}seats/${count}cards/pan${Math.round(pan)}/card${i}`,
-              ).toBe(0);
-            }
-          }
-        }
-      }
-    }
-    // Not vacuous: these piles really do push cards right out of the
-    // region, which is the whole reason the fade exists. Without this
-    // the test would keep passing if the fan ever stopped overflowing.
-    expect(whollyOut, "no pile in this matrix overflowed — nothing was tested").toBeGreaterThan(20);
+  it("only draws a card at full strength while it is essentially inside", () => {
+    forEachFanCard((c, label, g) => {
+      if (c.opacity < 1) return;
+      const o = overhangOf(c, g.pileRegion);
+      expect(o.edge, `${label}: fully drawn while hanging out of the region`).toBeLessThanOrEqual(
+        solidSlack(o.extent),
+      );
+    });
   });
 
   it("still draws the cards that DO fit at full strength", () => {
@@ -494,7 +492,7 @@ describe("discard fan — never draws outside the pile region", () => {
     // deep pile — a fix that hid the spill by washing out the whole fan
     // would pass the test above and be much worse to play with.
     for (const vp of VIEWPORTS) {
-      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h, bottomZone: 140, pileAnchor: 0.34 });
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h, bottomZone: 140 });
       for (const count of [12, 30]) {
         const range = discardMaxScroll(g, count);
         const solid = Array.from({ length: count }, (_, i) =>
@@ -511,7 +509,7 @@ describe("discard fan — never draws outside the pile region", () => {
   it("leaves a pile that fits entirely alone", () => {
     // Opting into panning must not cost a short pile anything.
     for (const vp of VIEWPORTS) {
-      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h, bottomZone: 140, pileAnchor: 0.34 });
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h, bottomZone: 140 });
       for (let i = 0; i < 4; i++) {
         expect(fanCard(i, 4, g, 0).opacity, `${vp.name}/card${i}`).toBe(1);
       }
@@ -534,8 +532,8 @@ describe("hero hand — never draws a card outside the hand zone", () => {
     return { opacity: t.opacity, left: cx - base.w / 2, right: cx + base.w / 2 };
   }
 
-  it("never draws a card more strongly than the part of it inside the zone", () => {
-    let faded = 0;
+  it("draws nothing once a card's centre has left the zone", () => {
+    let gone = 0;
     for (const vp of VIEWPORTS) {
       const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
       for (const count of [24, 34, 45]) {
@@ -544,19 +542,23 @@ describe("hero hand — never draws a card outside the hand zone", () => {
           for (let i = 0; i < count; i++) {
             const c = handCard(i, count, g, pan);
             const zone = g.zones.hand;
-            const w = c.right - c.left;
-            const inside =
-              Math.max(0, Math.min(c.right, zone.x + zone.w) - Math.max(c.left, zone.x)) / w;
+            const cx = (c.left + c.right) / 2;
             const label = `${vp.name}/${count}cards/pan${Math.round(pan)}/card${i}`;
-            expect(c.opacity, `${label} drawn outside the hand zone`).toBeLessThanOrEqual(
-              inside + 1 / w,
-            );
-            if (c.opacity < 1) faded++;
+            if (cx < zone.x || cx > zone.x + zone.w) {
+              gone++;
+              expect(c.opacity, `${label}: centre outside the zone but still drawn`).toBe(0);
+            }
+            if (c.opacity === 1) {
+              const over = Math.max(zone.x - c.left, c.right - (zone.x + zone.w), 0);
+              expect(over, `${label}: fully drawn while hanging out`).toBeLessThanOrEqual(
+                (c.right - c.left) * 0.05 + 1,
+              );
+            }
           }
         }
       }
     }
-    expect(faded, "no hand in this matrix overflowed — nothing was tested").toBeGreaterThan(10);
+    expect(gone, "no hand in this matrix overflowed — nothing was tested").toBeGreaterThan(10);
   });
 
   it("leaves an ordinary hand completely untouched", () => {

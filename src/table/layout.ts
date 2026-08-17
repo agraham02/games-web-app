@@ -543,7 +543,14 @@ export function layoutPiece(
           y: slot.y - base.h / 2 + lift,
           rotate: slot.rotation,
           scale: 1,
-          z: p.selected ? Z_SELECTED : Z_HERO_HAND + handIndex,
+          // Selection does NOT change the stacking order. A fan overlaps,
+          // so which card paints over which has to follow the order the
+          // eye reads along the fan — full stop, in every state. Lifting a
+          // selected card to `Z_SELECTED` made it jump in front of its
+          // right-hand neighbours, so picking cards for a meld visibly
+          // reshuffled the hand's depth as you went. The -18px lift and
+          // the ring already say "selected" without touching z.
+          z: Z_HERO_HAND + handIndex,
           // Same edge fade the discard fan uses, for the same reason —
           // a panned hand overruns its zone too, and the cards it pushes
           // out slide off the screen edges. Gated on `panned` so an

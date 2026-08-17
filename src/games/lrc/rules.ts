@@ -37,12 +37,19 @@ function chipId(seat: SeatId, index: number): PieceId {
 
 export function setup(opts: SetupOptions): LrcState {
   const chipOwner: Record<PieceId, SeatId | "pot"> = {};
+  const all: SeatId[] = [];
   for (let seat = 0; seat < opts.seats; seat++) {
+    all.push(seat);
     for (let i = 0; i < CHIPS_PER_PLAYER; i++) {
       chipOwner[chipId(seat, i)] = seat;
     }
   }
-  return { seats: opts.seats, chipOwner, turn: HERO, winner: null };
+  // A real cut for who rolls first, then plain rotation from there
+  // (`nextActiveSeat`). It used to be a hardcoded `HERO`, which meant the
+  // hero opened every single game — the same thing Spades' own setup was
+  // fixed for. LRC is pure luck, so going first is a real edge, and
+  // always having it is both unfair and immediately noticeable.
+  return { seats: opts.seats, chipOwner, turn: opts.rng.pick(all), winner: null };
 }
 
 export function reduce(

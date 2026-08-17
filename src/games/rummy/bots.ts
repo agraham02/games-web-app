@@ -122,8 +122,35 @@ function chooseDraw(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): Rumm
   return { t: "drawStock" };
 }
 
+/**
+ * How reliably each tier notices that a card in hand fits a meld already
+ * on the table.
+ *
+ * Not flavour — load-bearing. Every tier used to lay off EVERY available
+ * card before discarding, and the consequence was invisible until
+ * playtest: a bot's discard could then never extend a live meld, so
+ * `claimableMeld` was always null on it, so **the hero's claim window
+ * could never open at all.** The whole "Rummy!" interaction was
+ * unreachable, and reported twice as a missing button.
+ *
+ * Missing a lay-off is also just what players do — you do not re-read the
+ * whole board every turn. `sharp` still never misses one, and keeps its
+ * own guard against discarding a card that feeds a meld, so the player's
+ * chance to pounce comes from the weaker seats. That is the right place
+ * for it to come from.
+ */
+const LAYOFF_ATTENTION: Record<Tier, number> = {
+  casual: 0.45,
+  steady: 0.8,
+  sharp: 1,
+};
+
 function chooseMeld(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): RummyAction {
   const hand = state.hands[seat] ?? [];
+  // Rolled once per turn, before either lay-off branch below, so a bot
+  // that "didn't look at the board" this turn is consistent about it
+  // rather than spotting a lay-off only in the fallback path.
+  const spotsLayoffs = rng.next() < LAYOFF_ATTENTION[tier];
 
   // An outstanding pickup obligation is the only legal move there is —
   // and `mandatoryMelds` is the same list `legalActions` builds, so the
@@ -138,7 +165,7 @@ function chooseMeld(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): Rumm
   }
 
   // Laying off first: points on the board can't be caught holding.
-  if (tier !== "casual") {
+  if (tier !== "casual" && spotsLayoffs) {
     const offs = layoffs(state, hand);
     const off = bestOf(offs, (o) => cardValue(o.card), rng);
     if (off) return { t: "extendMeld", meldId: off.meldId, card: off.card };
@@ -148,7 +175,10 @@ function chooseMeld(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): Rumm
   const meld = bestOf(melds, (m) => m.reduce((n, id) => n + cardValue(id), 0), rng);
   if (meld) return { t: "layNewMeld", cards: meld };
 
-  if (tier === "casual") {
+  // Casual would rather start something of its own than tidy up someone
+  // else's meld, so its lay-off is the fallback rather than the opener —
+  // and it only gets here if it looked at the board at all.
+  if (tier === "casual" && spotsLayoffs) {
     const offs = layoffs(state, hand);
     const off = bestOf(offs, (o) => cardValue(o.card), rng);
     if (off) return { t: "extendMeld", meldId: off.meldId, card: off.card };

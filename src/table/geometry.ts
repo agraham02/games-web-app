@@ -83,6 +83,22 @@ export interface TableGeometry {
    */
   pileRegion: Box;
   /**
+   * The y the pile assembly is CENTRED on — deck centre and discard-fan
+   * centre both, so the two read as one row however deep the pile gets.
+   *
+   * A centre line rather than a starting edge, which is the correction
+   * that matters. The fan used to begin at the region's top and grow
+   * downward, which is `flex-start` by another name: a short pile sat
+   * level with the deck and every card after that dragged the fan's
+   * centre further below it. Growing symmetrically about a fixed line
+   * keeps them level at every depth.
+   *
+   * Defaults to the side seats' own mid-y, so the piles sit level with
+   * the pods flanking them, and falls back to the region's centre when
+   * there are no side seats. `ResolveOptions.pileAnchor` overrides it.
+   */
+  pileAxis: number;
+  /**
    * What `ResolveOptions.topZone`/`bottomZone` were actually GRANTED, in
    * px, which is not always what was asked for — a short landscape phone
    * cannot give up 150px above the hand and still have a table left.
@@ -359,12 +375,13 @@ export interface ResolveOptions {
    */
   bottomZone?: number;
   /**
-   * Where the pile assembly sits vertically within `pileRegion`, as a
-   * 0..1 fraction (0 = flush top, 1 = flush bottom). Default 0.5.
+   * Where the pile assembly's CENTRE LINE sits within `pileRegion`, as a
+   * 0..1 fraction (0 = flush top, 1 = flush bottom).
    *
-   * A game whose discard pile FANS DOWNWARD wants its assembly high in
-   * the region, so the fan has somewhere to grow before it has to start
-   * panning. A game with a static pile wants it centred.
+   * Omit it — the default (the side seats' mid-y) is what a game
+   * actually wants, since it puts the piles level with the pods either
+   * side of them. This exists for a table whose seats say nothing useful
+   * about where its piles belong.
    */
   pileAnchor?: number;
 }
@@ -643,51 +660,43 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     hand,
   };
 
-  // Where the pile assembly sits vertically.
+  // The line the pile assembly is centred on.
   //
-  // A fan centres itself inside the box it is given, so this box's own
-  // centre IS the pile's centre. By default that centre lines up with
-  // the SEAT PODS down the sides — the table's real eye level, and where
-  // a player looks for the piles. Deriving it from the seats rather than
-  // from a fraction of the region is what keeps it right as the region
-  // changes shape across densities and seat counts; a hand-tuned
-  // fraction lands correctly on one viewport and drifts on the rest.
+  // By default the SEAT PODS down the sides — the table's real eye level,
+  // and where a player looks for the piles. Deriving it from the seats
+  // rather than from a fraction of the region is what keeps it right as
+  // the region changes shape across densities and seat counts; a
+  // hand-tuned fraction lands correctly on one viewport and drifts on the
+  // rest. `pileAnchor` overrides it for a table whose seats say nothing
+  // useful.
   //
-  // `pileAnchor` overrides it as a plain 0..1 fraction for a game that
-  // wants something else.
+  // Note this is a CENTRE, not the top of a box the fan then grows down
+  // from. That earlier arrangement was `flex-start` by another name: the
+  // deck stayed level with the pods while every extra discard dragged the
+  // fan's own centre further below it. `pileRegion` is left whole, and
+  // `pileAssembly` grows the fan symmetrically about this line.
   const sideSeats = seats.filter((s) => s.anchor === "left" || s.anchor === "right");
-  const seatMidY =
-    sideSeats.length > 0
-      ? sideSeats.reduce((sum, s) => sum + s.y, 0) / sideSeats.length
-      : pileRegion.y + pileRegion.h / 2;
-
-  // The returned box's TOP is where the assembly's first card sits, and
-  // everything below it is room the fan may grow into (see
-  // `pileAssembly`, which sizes the fan to its own content rather than
-  // to this whole height — a fan centres itself in the box it is given,
-  // so handing it all the growth room parks a short pile in the middle
-  // of it, well below the seats).
-  const cardH = spec.card.h;
-  const slack = Math.max(0, pileRegion.h - cardH);
-  const wantedTop =
+  const wantedAxis =
     opts.pileAnchor === undefined
-      ? seatMidY - cardH / 2
-      : pileRegion.y + slack * Math.min(1, Math.max(0, opts.pileAnchor));
-  // Clamped so the assembly can never leave the region it was cleared
-  // for, whatever the seats happen to be doing.
-  const top = Math.min(pileRegion.y + slack, Math.max(pileRegion.y, wantedTop));
-  const anchoredPile: Box = {
-    ...pileRegion,
-    y: top,
-    h: pileRegion.h - (top - pileRegion.y),
-  };
+      ? sideSeats.length > 0
+        ? sideSeats.reduce((sum, s) => sum + s.y, 0) / sideSeats.length
+        : pileRegion.y + pileRegion.h / 2
+      : pileRegion.y + pileRegion.h * Math.min(1, Math.max(0, opts.pileAnchor));
+  // Clamped so a single card on that line still fits the region it was
+  // cleared for, whatever the seats happen to be doing.
+  const halfCard = spec.card.h / 2;
+  const pileAxis = Math.min(
+    Math.max(pileRegion.y + halfCard, wantedAxis),
+    Math.max(pileRegion.y + halfCard, pileRegion.y + pileRegion.h - halfCard),
+  );
 
   return {
     box,
     density,
     seats,
     zones,
-    pileRegion: anchoredPile,
+    pileRegion,
+    pileAxis,
     reserved: { top: topZone, bottom: bottomZone },
     card: spec.card,
     handCard: spec.handCard,
@@ -748,9 +757,10 @@ export interface FanSlot {
   y: number;
   rotation: number;
   /**
-   * How much of this piece is still inside `within`, 0..1, measured
-   * along the spread axis. 1 while it fits entirely, ramping to 0 across
-   * one piece-extent of travel as panning carries it past the edge.
+   * How strongly this piece should be drawn given the box it belongs to,
+   * 0..1, measured along the spread axis. 1 while it sits comfortably
+   * inside, ramping to 0 by the time panning has carried its centre out
+   * to the edge (see `alongVisibility` for the exact band).
    *
    * This is what a fan has instead of a clip. A pannable fan ALWAYS
    * draws pieces outside the box it was given — `minGap` stops it
@@ -760,41 +770,51 @@ export interface FanSlot {
    * (see CLAUDE.md). So the pieces fade themselves out instead, which is
    * both the honest fix and a compositor-only one.
    *
-   * Ramping over one piece-extent rather than snapping at the boundary
-   * is what makes it read as a masked scroller rather than as cards
-   * blinking out of existence. It scales with the pieces, so it needs no
-   * per-density tuning.
+   * Ramping rather than snapping at the boundary is what makes it read
+   * as a masked scroller rather than as cards blinking out of existence.
+   * The band is a fraction of the piece's own extent, so it scales with
+   * the pieces and needs no per-density tuning.
    *
    * Only ever below 1 for a fan using `minGap` — a fan without a
    * compression floor fits by construction.
    */
   visible: number;
   /**
-   * False when this piece has been panned entirely outside `within`.
-   * Exactly `visible > 0`; kept as its own field because "is there
-   * hidden content this way" is a different question from "how far
-   * faded is this one piece", and the edge-fade affordance asks the
-   * first. Never a reason to skip rendering: pieces never unmount.
+   * False once this piece has been panned far enough out of `within` to
+   * stop being drawn at all. Exactly `visible > 0`; kept as its own
+   * field because "is there hidden content this way" is a different
+   * question from "how far faded is this one piece", and the edge-fade
+   * affordance asks the first. Never a reason to skip rendering: pieces
+   * never unmount.
    */
   inView: boolean;
 }
 
 /**
- * How much of a piece of `extent` centred at `centre` lies inside
- * `[lo, hi]`, as 0..1 — 1 while wholly inside, 0 once wholly past, and
- * a linear ramp across the one piece-extent between. Drives `FanSlot.
- * visible`; see there for why a fan fades rather than clips.
+ * How strongly a piece of `extent` centred at `centre` should be drawn
+ * given the box `[lo, hi]` it belongs to, as 0..1.
+ *
+ * Measured from the piece's CENTRE to the nearer edge: solid once that
+ * distance reaches `FADE_BAND_FRACTION` of the piece's own extent, and
+ * zero by the time the centre reaches the edge itself.
+ *
+ * Two properties fall out of anchoring it on the centre. A piece is gone
+ * before it is even half outside — the fade finishes early rather than
+ * trailing a ghost card out into the pods, which is what "bring the
+ * start-to-fade cards in a little" asked for. And a fan with no
+ * compression floor is untouched with room to spare: its outermost piece
+ * sits flush, half an extent from the edge, comfortably past the 0.45
+ * the band needs — so no pixel-snapping guard is required to keep float
+ * residue from dimming every other game's fans.
  */
+const FADE_BAND_FRACTION = 0.45;
+
 function alongVisibility(centre: number, extent: number, lo: number, hi: number): number {
   if (extent <= 0) return 1;
-  const past = Math.max(lo - (centre - extent / 2), centre + extent / 2 - hi, 0);
-  // Snapped below a whole pixel, the same way `fanSpread` snaps its
-  // `overflow` and for the same reason: a fan with no compression floor
-  // ends exactly on the boundary, and the float residue from deriving
-  // its gap by division would otherwise dim every outermost card in the
-  // app by a fifteenth decimal place.
-  if (past < 1) return 1;
-  return Math.max(0, 1 - past / extent);
+  const band = extent * FADE_BAND_FRACTION;
+  if (band <= 0) return 1;
+  const inside = Math.min(centre - lo, hi - centre);
+  return Math.max(0, Math.min(1, inside / band));
 }
 
 export interface FanOptions {
@@ -1128,6 +1148,7 @@ export interface PileAssembly {
 export function pileAssembly(g: TableGeometry, discardCount: number): PileAssembly {
   const region = g.pileRegion;
   const card = g.card;
+  const axis = g.pileAxis;
   const portrait = isPortraitTable(region);
   const minStep = card.w * MIN_DISCARD_STEP_FRACTION;
 
@@ -1147,13 +1168,20 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
     const pairW = card.w * 2 + gap;
     const pairLeft = region.x + Math.max(0, (region.w - pairW) / 2);
     const stepV = card.h * MIN_DISCARD_STEP_FRACTION;
-    // Sized to its CONTENT, capped at the room available. A fan centres
-    // itself inside its box, so giving it the whole region parks a short
-    // pile halfway down the felt instead of up at the seats where the
-    // region's top edge already places it. Once the content exceeds the
-    // room, the cap engages and the excess becomes pan range.
-    const fanH = Math.max(card.h, Math.min(region.h, card.h + stepV * Math.max(0, discardCount - 1)));
-    const fan: Box = { x: pairLeft + card.w + gap, y: region.y, w: card.w, h: fanH };
+    // Sized to its CONTENT, capped at the room available — and the room
+    // available is the SYMMETRIC budget about `pileAxis`, not the whole
+    // region. A fan centres itself in the box it is given, so a box
+    // centred on the axis is a fan centred on the axis, which is a fan
+    // level with the deck at every depth. Taking the whole region instead
+    // would centre a deep fan on the region's middle and let it drift
+    // below the deck as it grew, which is exactly the `flex-start` look
+    // this replaced. Past the cap the excess becomes pan range.
+    const budget = 2 * Math.min(axis - region.y, region.y + region.h - axis);
+    const fanH = Math.max(
+      card.h,
+      Math.min(budget, card.h + stepV * Math.max(0, discardCount - 1)),
+    );
+    const fan: Box = { x: pairLeft + card.w + gap, y: axis - fanH / 2, w: card.w, h: fanH };
     const panRange = fanPanRange({
       count: discardCount,
       available: fanH,
@@ -1164,8 +1192,8 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
     return {
       portrait,
       fan,
-      // Level with the fan's first card, which is level with the seats.
-      deck: { x: pairLeft + card.w / 2, y: region.y + card.h / 2 },
+      // The same line the fan is centred on — one row, two piles.
+      deck: { x: pairLeft + card.w / 2, y: axis },
       minStep: stepV,
       panRange,
       deckMinX: pairLeft + card.w / 2,
@@ -1185,10 +1213,15 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
   const fanW = Math.max(card.w, naturalW);
   const pairW = card.w + gap + fanW;
   const pairLeft = region.x + Math.max(0, (region.w - pairW) / 2);
-  // One card tall: a landscape fan runs sideways, so it needs no
-  // vertical room, and pinning its height to the card keeps its centre
-  // level with the seats (see the portrait branch for the same point).
-  const fan: Box = { x: pairLeft + card.w + gap, y: region.y, w: fanW, h: card.h };
+  // One card tall, centred on `pileAxis`: a landscape fan runs sideways,
+  // so it needs no vertical room, and pinning it to the axis puts it on
+  // the deck's own line (see the portrait branch for the same point).
+  const fan: Box = {
+    x: pairLeft + card.w + gap,
+    y: axis - card.h / 2,
+    w: fanW,
+    h: card.h,
+  };
   const panRange = fanPanRange({
     count: discardCount,
     available: fan.w,
@@ -1203,7 +1236,7 @@ export function pileAssembly(g: TableGeometry, discardCount: number): PileAssemb
     // deck to the region while re-centring the fan is what left the two
     // marooned at opposite ends of the felt — they are one composition
     // and have to be positioned from one origin.
-    deck: { x: pairLeft + card.w / 2, y: region.y + card.h / 2 },
+    deck: { x: pairLeft + card.w / 2, y: axis },
     minStep,
     panRange,
     // The hard left stop is still the region's own edge: the deck may

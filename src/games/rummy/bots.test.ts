@@ -75,17 +75,43 @@ describe("rummy bots — decisions", () => {
     }
   });
 
-  it("lays off onto the board before parting with a card", () => {
+  it("lays off onto the board before parting with a card — but not infallibly", () => {
+    // Load-bearing imperfection, not flavour. Every tier used to lay off
+    // EVERY available card before discarding, which meant a bot's discard
+    // could never extend a live meld — so `claimableMeld` was always null
+    // on it and **the hero's claim window could never open at all.** The
+    // whole "Rummy!" interaction was unreachable, and was reported twice
+    // as a missing button. Missing a lay-off is also just what players
+    // do; `sharp` is the tier that never does.
     const state = fixture({
       phase: "meld",
       hands: { 0: [], 1: ["S8", "CK"], 2: [], 3: [] },
       melds: [meld(1, 2, ["S5", "S6", "S7"])],
       nextMeldId: 2,
     });
-    for (const tier of TIERS) {
-      const action = rummyBots[tier].choose(state, 1, createRng(3));
-      expect(action, tier).toEqual({ t: "extendMeld", meldId: 1, card: "S8" });
-    }
+    const laysOff = (tier: BotDifficulty) => {
+      let n = 0;
+      for (let seed = 1; seed <= 200; seed++) {
+        const action = rummyBots[tier].choose(state, 1, createRng(seed));
+        if (action.t === "extendMeld") {
+          expect(action, tier).toEqual({ t: "extendMeld", meldId: 1, card: "S8" });
+          n++;
+        } else {
+          // The only other reasonable move: it kept S8 and pitched the
+          // king. Never something illegal or self-defeating.
+          expect(action, tier).toEqual({ t: "discard", card: "CK" });
+        }
+      }
+      return n / 200;
+    };
+
+    expect(laysOff("sharp"), "sharp never misses a lay-off").toBe(1);
+    // The weaker tiers spot it often enough to feel competent and miss it
+    // often enough for the player to get a shot at the discard.
+    expect(laysOff("steady")).toBeGreaterThan(0.6);
+    expect(laysOff("steady")).toBeLessThan(1);
+    expect(laysOff("casual")).toBeGreaterThan(0.2);
+    expect(laysOff("casual")).toBeLessThan(0.75);
   });
 
   it("takes a pile dig that hands it a whole meld", () => {

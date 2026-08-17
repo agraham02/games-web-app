@@ -31,10 +31,13 @@
  * means two things share space and are being told who wins, instead of
  * being laid out so they never share it.
  *
- * DISCLOSURE (see ui/disclosure/POLICY.md). Rummy is the game that
- * policy's three-tier pattern was written for. Tier 1 is the ambient
- * meld strip on each seat pod; tier 2 is the board sheet; tier 3 is
- * selecting a card and watching the board filter to what it can join.
+ * DISCLOSURE (see ui/disclosure/POLICY.md). The board sheet is the ONE
+ * place melds live. Each pod used to carry an ambient micro-strip of its
+ * owner's melds as well, and it was cut: it restated, in truncated text,
+ * what the sheet shows properly in real card faces, and a meld filed
+ * under a player is not even a fact about that player — any seat may hit
+ * any meld. Two views of the same thing, one of them worse.
+ *
  * The deal-size prompt and the meld/discard bar are NOT modals — a
  * decision made while looking at your own hand never is.
  */
@@ -46,6 +49,7 @@ import { HERO, type PieceId, type SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import {
   contributorOf,
+  isDeadMeld,
   isValidMeld,
   orderExtensions,
   meldDisplayOrder,
@@ -85,7 +89,7 @@ import {
 } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { PeekRail } from "@/ui/disclosure/PeekRail";
-import { CardFace } from "@/ui/primitives/CardFace";
+import { CardBack, CardFace } from "@/ui/primitives/CardFace";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { TRANSITIONS } from "@/motion/presets";
@@ -1049,6 +1053,9 @@ interface SheetMeld {
   id: number;
   owner: SeatId;
   cards: SheetCard[];
+  /** All four of the rank are down, so nothing can ever join it — the
+   *  table turns that meld over. See `isDeadMeld`. */
+  dead: boolean;
 }
 
 interface OwnerGroup {
@@ -1077,6 +1084,7 @@ function groupByOwner(state: RummyState): OwnerGroup[] {
     g.melds.push({
       id: meld.id,
       owner: meld.owner,
+      dead: isDeadMeld(meld.cards),
       cards: meldDisplayOrder(meld.cards).map((id) => ({
         id,
         contributor: contributorOf(meld, id),
@@ -1097,22 +1105,33 @@ function SheetCardFace({
   w,
   h,
   owner,
+  dead,
 }: {
   card: SheetCard;
   w: number;
   h: number;
   /** The meld's owner — the chip is shown only when they disagree. */
   owner: SeatId;
+  /** The whole meld is closed and gets turned over. */
+  dead?: boolean;
 }) {
   // Tagging every card in a player's own meld with that same player's
   // initials repeats what the group heading already said, on every
   // card. The chip is worth its space only where it CONTRADICTS the
   // grouping — a card someone else hit onto this meld, which is the one
   // thing the heading cannot tell you.
+  //
+  // A dead meld keeps its chips: whose cards they were still decides
+  // whose score they land in, and that is exactly the fact the flipped
+  // face would otherwise take away.
   const foreign = card.contributor !== owner;
   return (
     <span className="relative inline-block shrink-0">
-      <CardFace card={card.id} w={w} h={h} detail="index" />
+      {dead ? (
+        <CardBack w={w} h={h} />
+      ) : (
+        <CardFace card={card.id} w={w} h={h} detail="index" />
+      )}
       {foreign ? (
         <span
           // INSIDE the card's own footprint, not hanging off it. The
@@ -1274,7 +1293,7 @@ function MeldRow({
       style={{ gap }}
     >
       {meld.cards.map((c) => (
-        <SheetCardFace key={c.id} card={c} w={w} h={h} owner={meld.owner} />
+        <SheetCardFace key={c.id} card={c} w={w} h={h} owner={meld.owner} dead={meld.dead} />
       ))}
     </motion.div>
   );
@@ -1296,10 +1315,6 @@ function playerViews(seats: number) {
         meta: `${(state.hands[s] ?? []).length} cards · ${state.scores[s] ?? 0}`,
         active: acting || live.state.turn === s,
         thinking: acting,
-        // POLICY.md tier 1: a compressed, always-visible summary of what
-        // this player has down. Costs nothing and answers "roughly
-        // what's out there?" without opening anything.
-        melds: state.melds.filter((m) => m.owner === s).map((m) => meldLabel(m.cards)),
       });
     }
     return views;

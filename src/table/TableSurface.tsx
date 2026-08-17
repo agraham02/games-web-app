@@ -107,7 +107,15 @@ export function TableSurface({
       // handling, never JS pointer listeners, so it cannot break
       // anything — it is the belt-and-suspenders half of the pair whose
       // other half is `body { overflow: hidden }` in globals.css.
-      className={`felt felt-weave relative touch-none overflow-hidden ${className ?? ""}`}
+      //
+      // `select-none` is its MOUSE counterpart, and `touch-none` does
+      // not cover it. On desktop, dragging the discard fan to pan it
+      // started a native text selection instead: selection begins on
+      // mousedown, and `usePanZone` cannot `preventDefault` it there
+      // without also killing the tap it might still turn out to be. So
+      // the felt opts out of selection entirely — there is no text on a
+      // card table anyone wants to select anyway.
+      className={`felt felt-weave relative touch-none select-none overflow-hidden ${className ?? ""}`}
       style={
         fill === "viewport"
           ? {

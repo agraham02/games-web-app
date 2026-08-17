@@ -9,17 +9,21 @@
  * screen turning into a spreadsheet and without stopping play to find
  * out.
  *
- * Three tiers, each costing strictly more attention than the last:
+ * Three tiers were prototyped here, each costing strictly more attention
+ * than the last:
  *
  *  1. AMBIENT   Each pod carries a micro-strip of that player's melds.
- *               Always on screen, zero interaction, ignorable.
  *  2. PEEK RAIL A strip above the hand listing every meld on the board.
  *               Drag or tap to open. Never covers your own hand.
  *  3. LAY-OFF   Select a card: invalid melds dim, valid ones light and
  *               show exactly where the card lands.
  *
- * The discard pile uses the same idea: eligible depth is lit, the rest
- * is dimmed, and the count is stated in words.
+ * **The shipped game kept only tier 2, and this file is now a record of
+ * what was tried rather than of what is.** Tier 1 restated the sheet in
+ * truncated text and was cut. Tier 3 is exactly the hand-holding the
+ * real game refuses: lighting the melds a selected card can join answers
+ * the question the game is asking. Same for the discard pile's lit
+ * eligible depth below — the real pile lights nothing.
  */
 
 import { useEffect, useMemo, useState } from "react";

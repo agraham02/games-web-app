@@ -52,6 +52,7 @@ import {
   cardsValue,
   contributorOf,
   handDisplayOrder,
+  isDeadMeld,
   isValidMeld,
   meldLabel,
   rummyDeck,
@@ -871,6 +872,11 @@ export function placements(state: RummyState, viewer: SeatId): PlacementMap {
   // `Placement.seat`. `group` carries which meld it belongs to, so
   // scoring attribution and visual grouping stay free to disagree.
   state.melds.forEach((meld) => {
+    // All four of a rank down means nothing can ever join it, and at a
+    // real table that meld gets turned over. Nothing about the rules
+    // changes — `canExtend` already refused a fifth suit — it is just no
+    // longer information anyone needs to keep reading.
+    const dead = isDeadMeld(meld.cards);
     meld.cards.forEach((id, i) => {
       const contributor = contributorOf(meld, id);
       out[id] = {
@@ -879,7 +885,7 @@ export function placements(state: RummyState, viewer: SeatId): PlacementMap {
         group: meld.id,
         index: i,
         count: meld.cards.length,
-        faceUp: true,
+        faceUp: !dead,
         hidden: true,
         // Only when the card is NOT the meld owner's. Tagging every card
         // in your own meld with your own initials says nothing — the

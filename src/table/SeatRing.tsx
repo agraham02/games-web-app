@@ -39,11 +39,6 @@ export interface SeatView {
    * exists for. */
   winning?: boolean;
   /**
-   * Rummy's ambient disclosure tier: a micro-strip of this player's
-   * board melds, always visible at zero interaction cost.
-   */
-  melds?: string[];
-  /**
    * This seat is the HERO's partner — Spades' 2v2 partnership, the first
    * game with any team concept in this app. Purely a rung-1/2 ambient
    * cue (POLICY.md): a small always-visible tag, same weight as `meta`.
@@ -144,8 +139,6 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
           {view.meta}
         </div>
       ) : null}
-
-      {view.melds?.length ? <MeldStrip melds={view.melds} /> : null}
     </motion.div>
   );
 });
@@ -207,30 +200,3 @@ function WinnerCrown() {
   );
 }
 
-/**
- * Tier 1 of Rummy's three-tier disclosure: what this player has on the
- * board, small enough to ignore and close enough to read without any
- * interaction at all.
- */
-function MeldStrip({ melds }: { melds: readonly string[] }) {
-  const shown = melds.slice(0, 2);
-  const extra = melds.length - shown.length;
-
-  return (
-    <div className="flex max-w-full flex-col items-center gap-0.5">
-      {shown.map((m, i) => (
-        <span
-          key={i}
-          className="max-w-full truncate rounded-[3px] bg-brass-400/15 px-1 text-[8px] leading-[1.4] font-bold text-brass-300"
-        >
-          {m}
-        </span>
-      ))}
-      {extra > 0 ? (
-        <span className="text-[8px] leading-none font-bold text-bone-400">
-          +{extra} more
-        </span>
-      ) : null}
-    </div>
-  );
-}

@@ -147,6 +147,20 @@ export function isValidMeld(cards: readonly PieceId[]): boolean {
 }
 
 /**
+ * A meld nobody can ever add to again, which at the table gets turned
+ * face down — the pile of cards that is finished being looked at.
+ *
+ * Only a full set of four qualifies. A long run is technically closed
+ * too once it reaches ace-to-king, but that is not what gets flipped in
+ * a real game: the gesture means "all four of this rank are down", and a
+ * run is still something players read along. `canExtend` already refuses
+ * both, so this is purely how the meld is DRAWN.
+ */
+export function isDeadMeld(cards: readonly PieceId[]): boolean {
+  return cards.length === 4 && isSet(cards);
+}
+
+/**
  * Can `card` be added to this existing meld?
  *
  * A set takes a matching rank in a suit not already represented. A run

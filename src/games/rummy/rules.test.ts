@@ -695,6 +695,18 @@ describe("rummy — playerView", () => {
    Full-match simulation
    ============================================================ */
 
+/**
+ * How many claim windows the last `runMatch` opened.
+ *
+ * Instrumentation, kept because the number 0 was a real bug and nothing
+ * else in the suite could see it: bots used to lay off every extendable
+ * card before discarding, so a bot's discard never left anything
+ * claimable, so the hero's "Rummy!" window was unreachable in play. It
+ * measured 0 across 453 rounds and was reported twice as a missing
+ * button. See `LAYOFF_ATTENTION` in bots.ts.
+ */
+let claimWindowsOpened = 0;
+
 function runMatch(seed: number, seats: number, deep = true, guard = 8000) {
   const game = createRummy({ target: 200 });
   const rng = createRng(seed);
@@ -725,6 +737,7 @@ function runMatch(seed: number, seats: number, deep = true, guard = 8000) {
 
     const before = state;
     ({ state } = game.reduce(state, action));
+    if (state.claimWindow && !before.claimWindow) claimWindowsOpened++;
     expect(state, `seed ${seed}/${seats}: ${JSON.stringify(action)} was a no-op`)
       .not.toBe(before);
 
@@ -771,5 +784,19 @@ describe("rummy — full-match simulation invariants", () => {
   // low-probability interaction bug a handful of fixed seeds does not.
   it("sweeps 200 seeds end to end", { timeout: 30_000 }, () => {
     for (let seed = 1; seed <= 200; seed++) runMatch(seed, 2 + (seed % 5), false);
+  });
+
+  it("opens claim windows often enough for a player to ever see one", () => {
+    // The regression guard for a bug the rest of this suite structurally
+    // could not see. Every bot tier used to lay off every extendable card
+    // before discarding, which made a bot's discard never claimable —
+    // and so made the hero's "Rummy!" window unreachable in real play.
+    // A window opening is not proof the feature is good, but zero of them
+    // is proof it is dead, which is what it measured before.
+    claimWindowsOpened = 0;
+    for (let seed = 1; seed <= 60; seed++) runMatch(seed, 2 + (seed % 5), false);
+    expect(claimWindowsOpened, "no discard was ever claimable across 60 matches").toBeGreaterThan(
+      10,
+    );
   });
 });

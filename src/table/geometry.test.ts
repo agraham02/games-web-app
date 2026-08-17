@@ -291,21 +291,19 @@ describe("fanSlot — compression floor and panning", () => {
     expect(pulled.inView, "panning to the far end must reveal it").toBe(true);
   });
 
-  it("fades a piece out across one piece-extent as panning carries it past the edge", () => {
+  it("fades a piece out as panning carries its centre toward the edge", () => {
     // The fan has no clip — there is no wrapper to put `overflow` on —
     // so a piece panned past the boundary would otherwise draw at full
     // strength under a seat pod, under the board sheet, or off-screen.
-    // The ramp being exactly one piece-extent long is what makes it read
-    // as a masked scroller rather than as cards blinking out.
+    // The band is anchored on the piece's own CENTRE, which is what keeps
+    // the fade from trailing a ghost card out into the pods.
     const count = 30;
     const range = fanPanRange({ count, available: within.w, size: size.w, maxGap: 40, minGap });
-    const at = (i: number, pan: number) =>
-      fanSlot({ index: i, count, within, size, minGap, pan });
 
     // Flush at the near edge: fully solid, and its neighbours inward too.
-    const first = at(0, range / 2);
-    expect(first.visible, "a piece flush against the edge is fully drawn").toBeCloseTo(1, 6);
-    expect(at(4, range / 2).visible).toBeCloseTo(1, 6);
+    const first = fanSlot({ index: 0, count, within, size, minGap, pan: range / 2 });
+    expect(first.visible, "a piece flush against the edge is fully drawn").toBe(1);
+    expect(fanSlot({ index: 4, count, within, size, minGap, pan: range / 2 }).visible).toBe(1);
 
     // `pan` shifts the whole fan rigidly, so driving one piece to a
     // chosen x is just the delta from where it sits unpanned. Measuring
@@ -314,21 +312,29 @@ describe("fanSlot — compression floor and panning", () => {
     const solo = { index: 0, count: 2, within, size, minGap } as const;
     const restX = fanSlot(solo).x;
     const drivenTo = (x: number) => fanSlot({ ...solo, pan: x - restX });
+    const edge = within.x + within.w;
+    const band = size.w * 0.45;
 
-    // Half the piece past the edge is half faded — the ramp is linear in
-    // how much has actually left the box, so it tracks what the eye sees
-    // leaving rather than an arbitrary curve.
-    expect(drivenTo(within.x + within.w).visible).toBeCloseTo(0.5, 6);
-
-    // A full extent past, and it is gone rather than merely faint.
-    const gone = drivenTo(within.x + within.w + size.w / 2);
-    expect(gone.visible, "a piece wholly outside is not drawn at all").toBe(0);
+    // Centre ON the edge is the end of the ramp: gone, not faint. This is
+    // the promise that bounds how far anything is ever visible — half a
+    // piece past the boundary, never more.
+    const gone = drivenTo(edge);
+    expect(gone.visible, "a piece whose centre reaches the edge is not drawn").toBe(0);
     expect(gone.inView).toBe(false);
+
+    // Halfway along the band is half strength — linear in how far the
+    // centre still has to go, so it tracks the card sliding out.
+    expect(drivenTo(edge - band / 2).visible).toBeCloseTo(0.5, 6);
+    // And a whole band inside is already fully solid, even though a few
+    // percent of the piece is technically still over the line — that
+    // deliberate slack is what keeps float residue off every unfloored
+    // fan in the app.
+    expect(drivenTo(edge - band).visible).toBe(1);
 
     // Symmetric at the near edge — panning the other way must not be a
     // second, subtly different code path.
-    expect(drivenTo(within.x).visible).toBeCloseTo(0.5, 6);
-    expect(drivenTo(within.x - size.w / 2).visible).toBe(0);
+    expect(drivenTo(within.x).visible).toBe(0);
+    expect(drivenTo(within.x + band / 2).visible).toBeCloseTo(0.5, 6);
   });
 
   it("never fades a fan that has no compression floor", () => {
@@ -383,9 +389,35 @@ describe("pileRegion", () => {
   });
 
   it("sits the assembly higher when a game asks for it", () => {
-    const centred = resolveTable({ seats: 4, width: 390, height: 844 });
+    const bySeats = resolveTable({ seats: 4, width: 390, height: 844 });
     const high = resolveTable({ seats: 4, width: 390, height: 844, pileAnchor: 0 });
-    expect(high.pileRegion.y).toBeLessThanOrEqual(centred.pileRegion.y);
+    expect(high.pileAxis).toBeLessThan(bySeats.pileAxis);
+  });
+
+  it("puts the pile axis on the side seats' own eye level, inside the region", () => {
+    for (const vp of VIEWPORTS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, bottomZone: 204 });
+        const ctx = `${vp.name}/${seats} seats`;
+        const sides = g.seats.filter((s) => s.anchor === "left" || s.anchor === "right");
+        // Always inside the region by at least half a card, so a single
+        // card on the axis is fully drawn.
+        expect(g.pileAxis, ctx).toBeGreaterThanOrEqual(g.pileRegion.y + g.card.h / 2 - 0.001);
+        expect(g.pileAxis, ctx).toBeLessThanOrEqual(
+          g.pileRegion.y + g.pileRegion.h - g.card.h / 2 + 0.001,
+        );
+        if (sides.length > 0) {
+          // Level with the pods flanking it whenever the clamp allows —
+          // which is the whole reason the axis is derived from the seats
+          // rather than from a fraction of the region.
+          const mid = sides.reduce((sum, s) => sum + s.y, 0) / sides.length;
+          const clamped =
+            mid < g.pileRegion.y + g.card.h / 2 ||
+            mid > g.pileRegion.y + g.pileRegion.h - g.card.h / 2;
+          if (!clamped) expect(g.pileAxis, ctx).toBeCloseTo(mid, 6);
+        }
+      }
+    }
   });
 
   it("reserves the bands a game asks for without ever collapsing the ring", () => {
@@ -438,7 +470,7 @@ describe("pile assembly — portrait and landscape are different, not relabelled
     // Portrait's deck/discard offset axis is PERPENDICULAR to the fan's
     // growth axis, so a growing pile has no reason to push the deck
     // anywhere — and must not.
-    const g = resolveTable({ seats: 4, width: 390, height: 844, pileAnchor: 0.34 });
+    const g = resolveTable({ seats: 4, width: 390, height: 844 });
     if (!isPortraitTable(g.pileRegion)) return;
     const base = pileAssemblyHorizontal(g, 1);
     for (const count of [5, 20, 40]) {
@@ -450,7 +482,7 @@ describe("pile assembly — portrait and landscape are different, not relabelled
   it("slides the deck left as a landscape fan grows, and hard-stops it", () => {
     // Landscape shares one axis for both, so the deck giving ground is
     // the requested flexbox-style behaviour — bounded, never runaway.
-    const g = resolveTable({ seats: 4, width: 1440, height: 900, pileAnchor: 0.34 });
+    const g = resolveTable({ seats: 4, width: 1440, height: 900 });
     if (isPortraitTable(g.pileRegion)) return;
     const a = pileAssembly(g, 1);
     let previous = pileAssemblyHorizontal(g, 1).deckX;
@@ -477,7 +509,7 @@ describe("pile assembly — portrait and landscape are different, not relabelled
       // independent of how far the fan has been panned inside its box.
       const gaps: number[] = [];
       for (const count of [1, 2, 3, 5, 8, 13, 30]) {
-        const g = resolveTable({ seats: 4, width: vp.w, height: vp.h, pileAnchor: 0.34 });
+        const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
         const a = pileAssembly(g, count);
         const { deckX } = pileAssemblyHorizontal(g, count);
         const gapPx = a.fan.x - deckX - g.card.w / 2;
@@ -495,7 +527,7 @@ describe("pile assembly — portrait and landscape are different, not relabelled
 
   it("keeps the pile assembly inside its own region", () => {
     for (const vp of VIEWPORTS) {
-      const g = resolveTable({ seats: 6, width: vp.w, height: vp.h, pileAnchor: 0.34 });
+      const g = resolveTable({ seats: 6, width: vp.w, height: vp.h });
       for (const count of [1, 10, 30]) {
         const a = pileAssembly(g, count);
         const ctx = `${vp.name} @${count}`;
@@ -507,8 +539,33 @@ describe("pile assembly — portrait and landscape are different, not relabelled
     }
   });
 
+  it("keeps the discard fan level with the deck at every depth", () => {
+    // Reported from play: the fan read as `flex-start`. It began at the
+    // region's top edge and grew downward, so a short pile sat level with
+    // the deck and every extra card dragged the fan's own centre further
+    // below it. The two are one row and have to stay one row.
+    for (const vp of VIEWPORTS) {
+      for (const seats of [2, 3, 4, 6]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, bottomZone: 204 });
+        for (const count of [1, 2, 5, 9, 16, 30, 45]) {
+          const a = pileAssembly(g, count);
+          const ctx = `${vp.name}/${seats}seats @${count}`;
+          const fanMid = a.fan.y + a.fan.h / 2;
+          expect(fanMid, `${ctx}: fan drifted off the deck's line`).toBeCloseTo(a.deck.y, 6);
+          expect(a.deck.y, `${ctx}: the pile left its own axis`).toBeCloseTo(g.pileAxis, 6);
+          // And the fan box itself stays inside the region on both axes,
+          // which is what makes that box a usable fade boundary.
+          expect(a.fan.y, ctx).toBeGreaterThanOrEqual(g.pileRegion.y - 0.001);
+          expect(a.fan.y + a.fan.h, ctx).toBeLessThanOrEqual(
+            g.pileRegion.y + g.pileRegion.h + 0.001,
+          );
+        }
+      }
+    }
+  });
+
   it("only reports a pan range once a pile genuinely overflows", () => {
-    const g = resolveTable({ seats: 4, width: 390, height: 844, pileAnchor: 0.34 });
+    const g = resolveTable({ seats: 4, width: 390, height: 844 });
     expect(discardMaxScroll(g, 2)).toBe(0);
     expect(discardMaxScroll(g, 40)).toBeGreaterThan(0);
   });
