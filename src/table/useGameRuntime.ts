@@ -541,13 +541,15 @@ export function useGameRuntime<S, A>(
     if (events.length > 0) {
       choreographer.push(events);
     } else {
-      // A hero action can legitimately produce zero visual events (LRC:
-      // rolling all dots moves nothing). useChoreographer.push bails out
-      // immediately on an empty array without ever calling onIdle, so
-      // nothing would advance the game past this point — the bot path
-      // doesn't hit this because it always prepends a `think` event,
-      // but the hero's own move has nothing playing that role. Calling
-      // onIdle directly is safe here specifically because it reads
+      // Defensive only, at this point — every `reduce` that can
+      // legitimately move nothing (LRC's all-dots roll) is expected to
+      // push a `pause` event instead of returning empty, specifically
+      // so it still gets a beat instead of hitting this branch. This
+      // stays as the backstop for any action that truly produces zero
+      // events: `useChoreographer.push` bails out immediately on an
+      // empty array without ever calling onIdle, so nothing would
+      // advance the game past this point without it. Calling onIdle
+      // directly is safe here specifically because it reads
       // stateRef.current rather than a closed-over value, so there's no
       // staleness risk to firing it synchronously.
       onIdle();

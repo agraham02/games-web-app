@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
-import { lrc } from "./rules";
+import { lrc, startRound } from "./rules";
 import { isEliminated, passLeft, passRight } from "./state";
 import type { LrcState } from "./types";
+
+/** A 5-seat, freshly DEALT state — `setup` alone returns an undealt
+ * skeleton (every chip in the bank), same as Dominoes; every test in
+ * this file needs a real round in progress. */
+function dealt(seats: number, seed: number): LrcState {
+  const rng = createRng(seed);
+  return startRound(lrc.setup({ seats, rng }), rng).state;
+}
 
 /** A 5-seat state with seat 2 forced to zero chips (eliminated) and
  * every other seat left at 3 — built directly rather than by playing
  * moves, so these tests aren't at the mercy of dice rolls. */
 function stateWithSeat2Eliminated(): LrcState {
-  const state = lrc.setup({ seats: 5, rng: createRng(1) });
+  const state = dealt(5, 1);
   const chipOwner = { ...state.chipOwner };
   // Move every chip seat 2 owns to seat 3 instead — seat 2 is now at 0.
   for (const [id, owner] of Object.entries(chipOwner)) {
@@ -18,8 +26,8 @@ function stateWithSeat2Eliminated(): LrcState {
 }
 
 describe("isEliminated", () => {
-  it("is false for every seat at setup", () => {
-    const state = lrc.setup({ seats: 5, rng: createRng(1) });
+  it("is false for every seat once a round is dealt", () => {
+    const state = dealt(5, 1);
     for (let s = 0; s < 5; s++) expect(isEliminated(state, s)).toBe(false);
   });
 
@@ -32,7 +40,7 @@ describe("isEliminated", () => {
 
 describe("passLeft / passRight — the house-rule redirect", () => {
   it("with nobody eliminated, behaves like plain seat+1 / seat-1", () => {
-    const state = lrc.setup({ seats: 5, rng: createRng(1) });
+    const state = dealt(5, 1);
     expect(passLeft(state, 0)).toBe(1);
     expect(passRight(state, 0)).toBe(4);
   });
@@ -71,7 +79,7 @@ describe("passLeft / passRight — the house-rule redirect", () => {
     // Not reachable through real play (isOver would already be true),
     // but the primitive itself must degrade safely rather than loop or
     // throw if it's ever called in that shape.
-    const state = lrc.setup({ seats: 3, rng: createRng(1) });
+    const state = dealt(3, 1);
     const chipOwner = { ...state.chipOwner };
     for (const [id, owner] of Object.entries(chipOwner)) {
       if (owner === 1 || owner === 2) chipOwner[id] = 0;

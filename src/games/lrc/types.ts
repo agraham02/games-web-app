@@ -12,6 +12,14 @@
  * `LrcAction.dice` says. That keeps it a pure function of (state, action)
  * — replay a game from its action log and you need no rng at all, since
  * every roll's outcome is already baked into the log.
+ *
+ * A single pot-win used to BE the whole game. It is now one ROUND of a
+ * match — `startRound` deals fresh chips and cuts fresh for who rolls
+ * first, `scores` accumulates rounds won per seat, and the match ends
+ * once someone reaches `target`. That shape (round/scores/result/winner/
+ * dealt) mirrors Dominoes exactly, which is what lets `useGameRuntime`'s
+ * generic round machinery — `RoundIntro`, `RoundEndScorecard`, the
+ * between-rounds hold — drive LRC for free.
  */
 
 import type { PieceId, SeatId } from "@/engine/types";
@@ -20,12 +28,29 @@ export type DieFace = "L" | "R" | "C" | "dot";
 
 export interface LrcState {
   seats: number;
-  /** Where every physical chip currently sits — the source of truth. */
-  chipOwner: Record<PieceId, SeatId | "pot">;
-  /** Whose turn. Always a seat that currently holds at least one chip. */
+  /** Match target — rounds a seat must WIN to take the match. */
+  target: number;
+  /** 1-based; 0 before the first deal. */
+  round: number;
+  /** Cumulative rounds won per seat. */
+  scores: Record<SeatId, number>;
+  /**
+   * Where every physical chip currently sits. `"bank"` is a chip not yet
+   * dealt into this round — the reserve `startRound` deals FROM, the
+   * same role a boneyard plays for a deck of cards. Every chip starts
+   * there at `setup` and returns there in the sweep before each redeal.
+   */
+  chipOwner: Record<PieceId, SeatId | "pot" | "bank">;
+  /** Whose turn. Always a seat that currently holds at least one chip.
+   * Meaningless before the first deal (`dealt: false`). */
   turn: SeatId;
-  /** Set once `isOver` becomes true. Kept in state so it's cheap to read. */
+  /** Set when a round ends (one seat holds every chip); cleared by
+   * `startRound`. */
+  result: { winner: SeatId } | null;
+  /** Set once a seat's `scores` reaches `target`. */
   winner: SeatId | null;
+  /** False between `setup` and the first `startRound`. */
+  dealt: boolean;
 }
 
 /**

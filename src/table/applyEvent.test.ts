@@ -304,10 +304,10 @@ describe("applyEventToTable — slam", () => {
     useTableStore.getState().reset(board(), meta);
     const seen: SlamFx[] = [];
     const off = onSlam((fx) => seen.push(fx));
-    applyEventToTable({ t: "slam", piece: "6-3", shake: ["0-0", "0-6"] });
+    applyEventToTable({ t: "slam", piece: "6-3", shake: ["0-0", "0-6"], final: false });
     off();
 
-    expect(seen).toEqual([{ piece: "6-3", shake: ["0-0", "0-6"] }]);
+    expect(seen).toEqual([{ piece: "6-3", shake: ["0-0", "0-6"], final: false }]);
   });
 
   it("touches no placement at all, preserving every object identity", () => {
@@ -318,7 +318,7 @@ describe("applyEventToTable — slam", () => {
     useTableStore.getState().reset(board(), meta);
     const before = useTableStore.getState().placements;
 
-    applyEventToTable({ t: "slam", piece: "6-3", shake: ["0-0", "0-6"] });
+    applyEventToTable({ t: "slam", piece: "6-3", shake: ["0-0", "0-6"], final: false });
 
     const after = useTableStore.getState().placements;
     expect(after).toBe(before);
@@ -330,16 +330,16 @@ describe("applyEventToTable — slam", () => {
   it("does not throw when nothing is listening or the pieces are unknown", () => {
     useTableStore.getState().reset({}, {});
     expect(() =>
-      applyEventToTable({ t: "slam", piece: "ghost", shake: ["also-ghost"] }),
+      applyEventToTable({ t: "slam", piece: "ghost", shake: ["also-ghost"], final: false }),
     ).not.toThrow();
   });
 
   it("stops delivering once a listener unsubscribes", () => {
     const seen: SlamFx[] = [];
     const off = onSlam((fx) => seen.push(fx));
-    applyEventToTable({ t: "slam", piece: "6-3", shake: [] });
+    applyEventToTable({ t: "slam", piece: "6-3", shake: [], final: false });
     off();
-    applyEventToTable({ t: "slam", piece: "6-3", shake: [] });
+    applyEventToTable({ t: "slam", piece: "6-3", shake: [], final: false });
     expect(seen).toHaveLength(1);
   });
 });

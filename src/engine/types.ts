@@ -255,8 +255,31 @@ export type GameEvent =
    * badly wrong. Emitting it as a real event rather than firing an
    * animation from a component is what puts it under the choreographer:
    * it obeys `skip()`, the speed multiplier and reduced motion for free.
+   *
+   * `final` marks the tile that ends a round (going out) — visually
+   * louder than an ordinary slam (see `SLAM_KEYFRAMES_FINAL` in
+   * presets.ts), and given its own, longer `choreograph` duration
+   * (`DURATION.slamFinal`) so the extra motion has room to actually play.
    */
-  | { t: "slam"; piece: PieceId; shake: PieceId[] }
+  | { t: "slam"; piece: PieceId; shake: PieceId[]; final: boolean }
+  /**
+   * A deliberate beat with nothing to place. Some legal actions
+   * genuinely move no piece — LRC's roll landing entirely on dots is
+   * the first case — and without this, that turn snapped straight to
+   * the next one with none of the settle time a real move gets,
+   * reading as visibly inconsistent against every roll that DOES move
+   * a chip. `reduce` should push this whenever it would otherwise
+   * return an empty `events` array for an action that was legal and
+   * genuinely happened.
+   *
+   * Carries no `ms` deliberately, unlike `think`: a bot's deliberation
+   * time is a real domain quantity the BOT chooses, but "how long
+   * should a beat with nothing to show last" is a motion decision, not
+   * a rules one — `choreograph` answers it the same way it answers
+   * every other event's duration, from `presets.ts`, not from
+   * whatever the emitting game happened to guess.
+   */
+  | { t: "pause" }
   /**
    * Bot deliberation. A first-class event, not a setTimeout in the UI:
    * it is what makes an opponent feel like a person rather than a

@@ -7,10 +7,19 @@
  * carefully — it is NOT an even split).
  *
  * One deliberate departure from the printed rules: a player who reaches
- * zero chips is out for the rest of the game, not merely skipped until
+ * zero chips is out for the rest of the ROUND, not merely skipped until
  * a later pass happens to reach them again. L/R dice redirect past an
  * eliminated seat to the next one still in — see `passLeft`/`passRight`
- * in state.ts for exactly how.
+ * in state.ts for exactly how. They come back at full strength the
+ * moment the next round deals.
+ *
+ * Played as a MATCH of rounds, not one pot-win — the same shape as
+ * Dominoes. `setup` returns an undealt skeleton (every chip in the
+ * `"bank"`, `dealt: false`); `startRound` sweeps whatever the last round
+ * left, cuts a fresh random seat to roll first, and deals 3 chips to
+ * everyone. A round's winner earns one point toward `target`; nothing
+ * else about a round (chip count, elimination) survives into the next
+ * one.
  */
 
 import type {
@@ -25,37 +34,122 @@ import type {
   SetupOptions,
 } from "@/engine/types";
 import { HERO } from "@/engine/types";
+import type { Rng } from "@/engine/rng";
+import { botName } from "@/games/_shared/botIdentity";
 import type { LrcAction, LrcState } from "./types";
 import { lrcBots } from "./bots";
-import { activeSeats, chipsHeld, nextActiveSeat, ownedChips, passLeft, passRight, potSize } from "./state";
+import {
+  activeSeats,
+  chipsHeld,
+  nextActiveSeat,
+  ownedChips,
+  passLeft,
+  passRight,
+  potSize,
+} from "./state";
 
 export const CHIPS_PER_PLAYER = 3;
+
+/** A match is "first to N rounds won." No printed convention to anchor
+ * a default on (LRC has no target score the way Dominoes' 61/100 do) —
+ * 5 keeps an opening match short without being over in one pot. */
+export const LRC_DEFAULT_TARGET = 5;
+export const LRC_TARGET_MIN = 1;
+export const LRC_TARGET_MAX = 20;
 
 function chipId(seat: SeatId, index: number): PieceId {
   return `chip-${seat}-${index}`;
 }
 
-export function setup(opts: SetupOptions): LrcState {
-  const chipOwner: Record<PieceId, SeatId | "pot"> = {};
-  const all: SeatId[] = [];
-  for (let seat = 0; seat < opts.seats; seat++) {
-    all.push(seat);
-    for (let i = 0; i < CHIPS_PER_PLAYER; i++) {
-      chipOwner[chipId(seat, i)] = seat;
+/** Returns an UNDEALT match: every chip in the bank, nothing owned by
+ * anyone. The deal itself is `startRound`'s job, which is what makes it
+ * ANIMATE — chips fly out from the bank instead of simply appearing
+ * already stacked at each pod the instant the table mounts. */
+export function makeSetup(target: number) {
+  return function setup(opts: SetupOptions): LrcState {
+    const scores: Record<SeatId, number> = {};
+    const chipOwner: Record<PieceId, SeatId | "pot" | "bank"> = {};
+    for (let seat = 0; seat < opts.seats; seat++) {
+      scores[seat] = 0;
+      for (let i = 0; i < CHIPS_PER_PLAYER; i++) chipOwner[chipId(seat, i)] = "bank";
     }
-  }
-  // A real cut for who rolls first, then plain rotation from there
-  // (`nextActiveSeat`). It used to be a hardcoded `HERO`, which meant the
-  // hero opened every single game — the same thing Spades' own setup was
-  // fixed for. LRC is pure luck, so going first is a real edge, and
-  // always having it is both unfair and immediately noticeable.
-  return { seats: opts.seats, chipOwner, turn: opts.rng.pick(all), winner: null };
+    return {
+      seats: opts.seats,
+      target,
+      round: 0,
+      scores,
+      chipOwner,
+      turn: HERO,
+      result: null,
+      winner: null,
+      dealt: false,
+    };
+  };
 }
 
-export function reduce(
-  state: LrcState,
-  action: LrcAction,
-): ReduceResult<LrcState> {
+export function startRound(state: LrcState, rng: Rng): ReduceResult<LrcState> {
+  const events: GameEvent[] = [];
+
+  // Round 2+ inherits every chip from wherever the last round left it —
+  // one seat holding the whole pile, the rest at zero. Sweep it back to
+  // the bank before redealing, mirroring Dominoes' own round-transition
+  // sweep. A no-op on round 1: every chip is already there.
+  const owned = Object.entries(state.chipOwner)
+    .filter(([, owner]) => owner !== "bank")
+    .map(([id]) => id);
+  if (owned.length > 0) events.push({ t: "sweep", pieces: owned, to: "boneyard" });
+
+  const chipOwner: Record<PieceId, SeatId | "pot" | "bank"> = {};
+  const all: SeatId[] = [];
+  for (let seat = 0; seat < state.seats; seat++) {
+    all.push(seat);
+    for (let i = 0; i < CHIPS_PER_PLAYER; i++) chipOwner[chipId(seat, i)] = seat;
+  }
+
+  // A fresh cut every round, not just for the match's first — LCR has no
+  // dealer convention the way a card or domino game does (no highest
+  // double, no rotating dealer button), so there is nothing more
+  // meaningful to hand the lead to than another honest cut. This is also
+  // "ensure the starting player is random" applied to EVERY round, not
+  // only game 1 — the bug it fixes is subtler than a hardcoded HERO: a
+  // rule that only randomised the very first deal would let whichever
+  // seat won round 1 quietly become a fixed opener for round 2 onward if
+  // the implementation ever threaded `opener` through the way Dominoes
+  // does. There is no such threading here at all — every round is an
+  // independent cut.
+  const turn = rng.pick(all);
+
+  const round = state.round + 1;
+  for (let seat = 0; seat < state.seats; seat++) {
+    for (let i = 0; i < CHIPS_PER_PLAYER; i++) {
+      const id = chipId(seat, i);
+      events.push({
+        t: "move",
+        piece: id,
+        // `collected`, not the generic `deal` event's hardcoded `hand` —
+        // a chip never has a hand, it goes straight to a seat's own
+        // pile. `move` carries a full Placement for exactly this, the
+        // same reason Dominoes' played tile bypasses `play` for it.
+        to: { zone: "collected", seat, index: 0, count: 1, faceUp: true },
+      });
+    }
+  }
+
+  events.push({ t: "phase", phase: `round-${round}` });
+  events.push({
+    t: "announce",
+    seat: turn,
+    text: turn === HERO ? "You roll first" : `${botName(turn)} rolls first`,
+    tone: "info",
+  });
+
+  return {
+    state: { ...state, round, chipOwner, turn, result: null, dealt: true },
+    events,
+  };
+}
+
+export function reduce(state: LrcState, action: LrcAction): ReduceResult<LrcState> {
   const seat = state.turn;
   const chipOwner = { ...state.chipOwner };
   const events: GameEvent[] = [];
@@ -90,24 +184,45 @@ export function reduce(
   const stillActive = activeSeats(next);
 
   if (stillActive.length <= 1) {
-    const winner = stillActive[0] ?? seat;
-    next = { ...next, winner };
+    const roundWinner = stillActive[0] ?? seat;
+    const scores = {
+      ...state.scores,
+      [roundWinner]: (state.scores[roundWinner] ?? 0) + 1,
+    };
+    const matchWinner = (scores[roundWinner] ?? 0) >= state.target ? roundWinner : null;
+
     events.push({
       t: "announce",
-      seat: winner,
-      text: winner === HERO ? "You win the pot!" : "Takes the pot",
-      tone: winner === HERO ? "good" : "info",
+      seat: roundWinner,
+      text: roundWinner === HERO ? "You win the pot!" : `${botName(roundWinner)} takes the pot`,
+      tone: roundWinner === HERO ? "good" : "info",
     });
-    events.push({ t: "gameEnd", winner });
+    const deltas: Record<SeatId, number> = {};
+    for (let s = 0; s < state.seats; s++) deltas[s] = s === roundWinner ? 1 : 0;
+    events.push({ t: "score", deltas });
+    events.push({ t: "roundEnd", round: state.round });
+    if (matchWinner !== null) events.push({ t: "gameEnd", winner: matchWinner });
+
+    next = { ...next, scores, result: { winner: roundWinner }, winner: matchWinner };
   } else {
     next = { ...next, turn: nextActiveSeat(next, seat) };
   }
+
+  // A roll landing entirely on dots moves nothing, which is a real,
+  // legal outcome — not an empty batch to special-case away. Without
+  // a `pause` here, this turn would snap straight to the next one with
+  // none of the settle time a roll that DID move a chip gets, reading
+  // as visibly rushed by comparison. See the event's own doc for why
+  // it carries no duration itself — `choreograph` decides that.
+  if (events.length === 0) events.push({ t: "pause" });
 
   return { state: next, events };
 }
 
 export function legalActions(state: LrcState, seat: SeatId): LrcAction[] {
-  if (state.winner !== null || state.turn !== seat) return [];
+  if (!state.dealt || state.result !== null || state.winner !== null || state.turn !== seat) {
+    return [];
+  }
   // Shape sentinel — the real dice are resolved at submission time (see
   // dice.ts / types.ts), not enumerated here.
   return [{ t: "roll", dice: [] }];
@@ -157,9 +272,16 @@ export function placements(state: LrcState): PlacementMap {
 
   const pot = potSize(state);
   let potIndex = 0;
+  const bankTotal = Object.values(state.chipOwner).filter((o) => o === "bank").length;
+  let bankIndex = 0;
 
   for (const [piece, owner] of Object.entries(state.chipOwner)) {
-    if (owner === "pot") {
+    if (owner === "bank") {
+      // The reserve a round deals FROM — reuses the "boneyard" zone
+      // (a plain resting pile, unused by any other part of this game)
+      // rather than inventing a new one for a single game to draw on.
+      out[piece] = { zone: "boneyard", index: bankIndex++, count: bankTotal, faceUp: true };
+    } else if (owner === "pot") {
       out[piece] = { zone: "center", index: potIndex++, count: pot, faceUp: true, fanned: true };
     } else {
       const i = perSeatIndex[owner] ?? 0;
@@ -182,25 +304,36 @@ export function playerView(state: LrcState): LrcState {
 }
 
 export function currentSeat(state: LrcState): SeatId | null {
-  return state.winner === null ? state.turn : null;
+  if (!state.dealt || state.result !== null || state.winner !== null) return null;
+  return state.turn;
+}
+
+export function isRoundOver(state: LrcState): boolean {
+  return state.result !== null;
 }
 
 export function isOver(state: LrcState): boolean {
   return state.winner !== null;
 }
 
-export const lrc: GameDefinition<LrcState, LrcAction> = {
-  id: "lrc",
-  name: "Left Right Center",
-  minSeats: 3,
-  maxSeats: 10,
-  setup,
-  reduce,
-  legalActions,
-  pieces,
-  placements,
-  playerView,
-  currentSeat,
-  isOver,
-  bots: lrcBots,
-};
+export function createLrc(target: number = LRC_DEFAULT_TARGET): GameDefinition<LrcState, LrcAction> {
+  return {
+    id: "lrc",
+    name: "Left Right Center",
+    minSeats: 3,
+    maxSeats: 10,
+    setup: makeSetup(target),
+    reduce,
+    legalActions,
+    pieces,
+    placements,
+    playerView,
+    currentSeat,
+    isOver,
+    startRound,
+    isRoundOver,
+    bots: lrcBots,
+  };
+}
+
+export const lrc = createLrc();

@@ -111,6 +111,15 @@ export function choreograph(
         });
         break;
 
+      case "pause":
+        // Same weight as a single ordinary `move` — DURATION.play, not
+        // a fresh constant — because the whole point is that a turn
+        // which moved nothing should still take roughly as long to
+        // read as a turn that moved one piece. Making this shorter
+        // would just relocate the exact inconsistency it exists to fix.
+        steps.push({ event, offset: 0, duration: DURATION.play * MS });
+        break;
+
       case "sweep":
         // See DURATION.sweep — a short, mostly flat step regardless of
         // how many pieces are in the pile, so a big gather (a full
@@ -131,7 +140,14 @@ export function choreograph(
         // start until the flourish has actually played. Offset 0 so the
         // `move` itself lands in the same frame — the tile has to be
         // travelling while it grows, or the two read as two gestures.
-        steps.push({ event, offset: 0, duration: DURATION.slam * MS });
+        // `final` gets its own, longer duration (`slamFinal`) — a bigger
+        // motion needs more time to read, and this is the one place that
+        // budget is reserved before the next turn is allowed to start.
+        steps.push({
+          event,
+          offset: 0,
+          duration: (event.final ? DURATION.slamFinal : DURATION.slam) * MS,
+        });
         break;
 
       case "think":

@@ -24,6 +24,8 @@ export interface SlamFx {
   piece: PieceId;
   /** Pieces already on the table that the landing rattles. */
   shake: PieceId[];
+  /** The round-ending tile — plays the louder of the two presets. */
+  final: boolean;
 }
 
 type Listener = (fx: SlamFx) => void;

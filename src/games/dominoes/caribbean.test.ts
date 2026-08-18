@@ -536,11 +536,46 @@ describe("caribbean — the slam", () => {
           const inHands = new Set(Object.values(before.hands).flat());
           expect(slam.shake.some((id) => inHands.has(id))).toBe(false);
           expect(slam.shake).not.toContain(slam.piece);
+
+          // `final` has to agree with whether THIS play actually emptied
+          // the hand — never guessed from the odds (going out is ~80%,
+          // not 100%), and never left to default to `false`.
+          const goesOut = (next.hands[seat] ?? []).length === 0;
+          expect(slam.final).toBe(goesOut);
         }
         state = next;
       }
     }
     expect(checked).toBeGreaterThan(10);
+  });
+
+  it("marks the round-ending slam final, and never an ordinary one", () => {
+    let regular = 0;
+    let final = 0;
+    for (let seed = 1; seed <= 60 && (regular === 0 || final === 0); seed++) {
+      const rng = createRng(seed);
+      const def = caribbean({ target: 3 });
+      let state = def.setup({ seats: 4, rng });
+      ({ state } = startRound(state, rng));
+      let guard = 0;
+      while (!def.isOver(state) && guard++ < 4000) {
+        if (def.isRoundOver!(state)) {
+          ({ state } = startRound(state, rng));
+          continue;
+        }
+        const seat = def.currentSeat(state)!;
+        const action = def.bots.steady.choose(def.playerView(state, seat), seat, rng);
+        const { state: next, events } = def.reduce(state, action);
+        for (const e of events) {
+          if (e.t !== "slam") continue;
+          if (e.final) final++;
+          else regular++;
+        }
+        state = next;
+      }
+    }
+    expect(regular).toBeGreaterThan(0);
+    expect(final).toBeGreaterThan(0);
   });
 
   it("is off entirely in classic, even on the going-out tile", () => {

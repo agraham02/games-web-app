@@ -10,18 +10,26 @@
  * from the shared layer.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import { HERO } from "@/engine/types";
+import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameHost } from "@/table/GameHost";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
 import { TurnIndicator } from "@/ui/phases/PhaseScreens";
+import type { ScoreRow } from "@/ui/phases/PhaseScreens";
 import { DiceFace } from "@/ui/primitives/DiceFace";
 import { botColour, botName } from "@/games/_shared/botIdentity";
-import { lrc } from "@/games/lrc/rules";
+import {
+  createLrc,
+  lrc,
+  LRC_DEFAULT_TARGET,
+  LRC_TARGET_MAX,
+  LRC_TARGET_MIN,
+} from "@/games/lrc/rules";
 import { rollAction } from "@/games/lrc/dice";
 import { chipsHeld, diceCountFor, potSize } from "@/games/lrc/state";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
@@ -29,14 +37,19 @@ import { TRANSITIONS } from "@/motion/presets";
 
 export default function LrcPlayPage() {
   const [seats, setSeats] = useState(6);
+  const [target, setTarget] = useState(LRC_DEFAULT_TARGET);
   const [started, setStarted] = useState(false);
   const [gameKey, setGameKey] = useState(0);
+
+  const definition = useMemo(() => createLrc(target), [target]);
 
   if (!started) {
     return (
       <SetupScreen
         seats={seats}
+        target={target}
         onSeatsChange={setSeats}
+        onTargetChange={setTarget}
         onStart={() => setStarted(true)}
       />
     );
@@ -45,12 +58,18 @@ export default function LrcPlayPage() {
   return (
     <GameHost<LrcState, LrcAction>
       key={gameKey}
-      definition={lrc}
+      definition={definition}
       runtime={{ seats }}
       gameTitle="Left Right Center"
       handZone={64} // just enough room for the Roll button, no hand
       players={playerViews}
-      stats={(state) => [{ label: "Pot", value: `${potSize(state)} chips` }]}
+      standings={standings}
+      stats={(state) => [
+        { label: "Round", value: `${state.round}` },
+        { label: "Target", value: `${state.target} rounds` },
+        { label: "Pot", value: `${potSize(state)} chips` },
+      ]}
+      roundSummary={roundSummary}
       pendingLabel={pendingLabel}
       onRematch={() => setGameKey((k) => k + 1)}
       onLobby={() => setStarted(false)}
@@ -58,6 +77,43 @@ export default function LrcPlayPage() {
       {(live) => <LrcControls live={live} />}
     </GameHost>
   );
+}
+
+function standings(state: LrcState, _live: GameRuntime<LrcState, LrcAction>, seats: SeatView[]) {
+  return [
+    { seat: HERO, name: "You", total: state.scores[HERO] ?? 0 },
+    ...seats.map((s) => ({ seat: s.seat, name: s.name, total: state.scores[s.seat] ?? 0 })),
+  ].sort((a, b) => b.total - a.total);
+}
+
+/**
+ * `RoundEndScorecard`'s content — without this the round-hold pause
+ * (`useGameRuntime`'s `showRoundSummary`) elapses and the scorecard's
+ * `show` stays false forever (`GameHost` only builds `card` when a
+ * `roundSummary` prop is supplied), which stalls the match: nothing
+ * ever calls `nextRound()`, since that only happens from the
+ * scorecard's own "Next round" button.
+ */
+function roundSummary(state: LrcState) {
+  const result = state.result;
+  if (!result) return null;
+
+  const name = (seat: number) => (seat === HERO ? "You" : botName(seat));
+  const rows: ScoreRow[] = [];
+  for (let seat = 0; seat < state.seats; seat++) {
+    rows.push({
+      seat,
+      name: name(seat),
+      colour: seat === HERO ? "var(--color-brass-300)" : botColour(seat),
+      detail: seat === result.winner ? "took the pot" : "out",
+      delta: seat === result.winner ? 1 : 0,
+      total: state.scores[seat] ?? 0,
+    });
+  }
+  rows.sort((a, b) => b.total - a.total);
+
+  const title = `${name(result.winner)} ${result.winner === HERO ? "take" : "takes"} the pot`;
+  return { title, rows };
 }
 
 /** DevPanel's game-specific line — see GameHostProps.pendingLabel. */
@@ -313,23 +369,28 @@ function DiceOverlay({
  */
 function SetupScreen({
   seats,
+  target,
   onSeatsChange,
+  onTargetChange,
   onStart,
 }: {
   seats: number;
+  target: number;
   onSeatsChange: (n: number) => void;
+  onTargetChange: (n: number) => void;
   onStart: () => void;
 }) {
   return (
     <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
-        <span className="eyebrow">New game</span>
+        <span className="eyebrow">New match</span>
         <h1 className="font-display text-4xl tracking-wider text-brass-300">
           Left Right Center
         </h1>
         <p className="max-w-xs text-sm text-bone-400">
           Roll, pass chips left and right, or lose them to the pot. Last
-          player holding chips wins it all.
+          player holding chips wins the round — win enough rounds and you
+          take the match.
         </p>
       </div>
 
@@ -343,6 +404,20 @@ function SetupScreen({
           onChange={(e) => onSeatsChange(Number(e.target.value))}
           className="w-full accent-brass-400"
         />
+      </div>
+
+      <div className="flex w-full max-w-xs flex-col gap-2">
+        <span className="eyebrow text-center">Rounds to win</span>
+        <NumberStepper
+          value={target}
+          min={LRC_TARGET_MIN}
+          max={LRC_TARGET_MAX}
+          onChange={onTargetChange}
+          label={target === 1 ? "round" : "rounds"}
+        />
+        <span className="text-center text-[11px] text-bone-500">
+          Each pot won is worth one round. First to {target} takes the match.
+        </span>
       </div>
 
       <button

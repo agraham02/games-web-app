@@ -315,7 +315,12 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
   // through a hand: `state.chain` cannot contain one).
   const keyTile = goingOut && isKeyTile(state, action.tile);
   if (rollsSlam(state, seat, action.tile, goingOut)) {
-    events.push({ t: "slam", piece: action.tile, shake: state.chain.map((t) => t.id) });
+    events.push({
+      t: "slam",
+      piece: action.tile,
+      shake: state.chain.map((t) => t.id),
+      final: goingOut,
+    });
   }
 
   events.push({

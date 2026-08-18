@@ -220,7 +220,7 @@ export function applyEventToTable(event: GameEvent): void {
       // all of that — so `touched` stays false, `reindex` is never
       // called, and its object-identity guarantee is untouched. See
       // fx.ts for why this leaves the store entirely.
-      emitSlam({ piece: event.piece, shake: event.shake });
+      emitSlam({ piece: event.piece, shake: event.shake, final: event.final });
       break;
 
     default:

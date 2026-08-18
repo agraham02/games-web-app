@@ -125,13 +125,13 @@ export default function MotionLab() {
    * emits (`slam`, then the `move` for the same piece) through the real
    * choreographer, so what plays is what a game plays.
    */
-  const slam = () => {
+  const slam = (final: boolean) => () => {
     const hand = pieces("hand", HERO);
     const piece = hand[0];
     if (!piece) return;
     const table = pieces("trick");
     push([
-      { t: "slam", piece, shake: table },
+      { t: "slam", piece, shake: table, final },
       {
         t: "move",
         piece,
@@ -188,7 +188,8 @@ export default function MotionLab() {
             <LabButton onClick={playTrick}>Play trick</LabButton>
             <LabButton onClick={flipHand}>Flip hand</LabButton>
             <LabButton onClick={gather}>Gather</LabButton>
-            <LabButton onClick={slam}>Slam</LabButton>
+            <LabButton onClick={slam(false)}>Slam</LabButton>
+            <LabButton onClick={slam(true)}>Slam (final)</LabButton>
             <LabButton onClick={skip} disabled={!isPlaying}>
               Skip
             </LabButton>

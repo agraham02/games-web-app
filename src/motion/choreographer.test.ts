@@ -104,7 +104,7 @@ describe("choreograph", () => {
 
   describe("slam", () => {
     const pair: GameEvent[] = [
-      { t: "slam", piece: "6-3", shake: ["0-0", "0-6"] },
+      { t: "slam", piece: "6-3", shake: ["0-0", "0-6"], final: false },
       {
         t: "move",
         piece: "6-3",
@@ -121,6 +121,16 @@ describe("choreograph", () => {
       expect(slam!.duration).toBeGreaterThan(0);
     });
 
+    it("gives the round-ending tile its own, longer duration", () => {
+      const finalPair: GameEvent[] = [
+        { t: "slam", piece: "6-3", shake: [], final: true },
+        pair[1]!,
+      ];
+      const [slam] = choreograph(finalPair);
+      expect(slam!.duration).toBe(DURATION.slamFinal * 1000);
+      expect(slam!.duration).toBeGreaterThan(DURATION.slam * 1000);
+    });
+
     it("lets its own move land in the same frame", () => {
       // The tile has to be travelling while it grows. A non-zero offset
       // here would play the two as separate gestures.
@@ -130,6 +140,28 @@ describe("choreograph", () => {
 
     it("budgets the whole flourish before the batch is done", () => {
       expect(totalDuration(choreograph(pair))).toBeGreaterThanOrEqual(DURATION.slam * 1000);
+    });
+  });
+
+  describe("pause", () => {
+    it("takes the same weight as an ordinary single move — the whole point", () => {
+      // The bug this exists to fix: a turn that moved nothing (LRC's
+      // all-dots roll) snapped straight to the next one, reading as
+      // rushed next to a turn that moved a chip. Giving it its own,
+      // SHORTER duration would just relocate that same inconsistency.
+      const [pause] = choreograph([{ t: "pause" }]);
+      const [move] = choreograph([
+        { t: "move", piece: "chip-0-0", to: { zone: "collected", index: 0, count: 1, faceUp: true } },
+      ]);
+      expect(pause!.duration).toBe(move!.duration);
+      expect(pause!.duration).toBe(DURATION.play * 1000);
+    });
+
+    it("starts immediately regardless of what precedes it", () => {
+      // Unlike `deal`/`move`, a run of `pause`s never staggers — there
+      // is only ever one per turn, so there is no "run" to space out.
+      const [, second] = choreograph([{ t: "pause" }, { t: "pause" }]);
+      expect(second!.offset).toBe(0);
     });
   });
 });

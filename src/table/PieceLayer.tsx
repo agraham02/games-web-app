@@ -46,10 +46,15 @@ import {
 } from "./store";
 import {
   SHAKE_KEYFRAMES,
+  SHAKE_KEYFRAMES_FINAL,
   SHAKE_TIMING,
+  SHAKE_TIMING_FINAL,
+  SLAM_FINAL_LAND_MS,
   SLAM_KEYFRAMES,
+  SLAM_KEYFRAMES_FINAL,
   SLAM_LAND_MS,
   SLAM_TIMING,
+  SLAM_TIMING_FINAL,
   prefersReducedMotion,
   supportsHover,
   TRANSITIONS,
@@ -173,13 +178,19 @@ function useSlamFx() {
 
   useEffect(
     () =>
-      onSlam(({ piece, shake }) => {
+      onSlam(({ piece, shake, final }) => {
         const root = scope.current;
         if (!root) return;
         // MotionConfig's reducedMotion governs motion COMPONENTS; this
         // is an imperative call on a plain div, so it needs its own gate
         // or the one animation most worth suppressing would survive.
         if (prefersReducedMotion()) return;
+
+        const slamKeyframes = final ? SLAM_KEYFRAMES_FINAL : SLAM_KEYFRAMES;
+        const slamTiming = final ? SLAM_TIMING_FINAL : SLAM_TIMING;
+        const shakeKeyframes = final ? SHAKE_KEYFRAMES_FINAL : SHAKE_KEYFRAMES;
+        const shakeTiming = final ? SHAKE_TIMING_FINAL : SHAKE_TIMING;
+        const landMs = final ? SLAM_FINAL_LAND_MS : SLAM_LAND_MS;
 
         const target = root.querySelector<HTMLElement>(fxSelector(piece));
         if (target) {
@@ -189,7 +200,7 @@ function useSlamFx() {
           const lifted = target.parentElement;
           const restore = lifted?.style.zIndex ?? "";
           if (lifted) lifted.style.zIndex = String(Z_SLAM);
-          void animate(target, SLAM_KEYFRAMES, SLAM_TIMING).then(() => {
+          void animate(target, slamKeyframes, slamTiming).then(() => {
             if (lifted) lifted.style.zIndex = restore;
           });
         }
@@ -201,12 +212,12 @@ function useSlamFx() {
           .map((id) => root.querySelector<HTMLElement>(fxSelector(id)))
           .filter((el): el is HTMLElement => el !== null);
         if (rattled.length > 0) {
-          void animate(rattled, SHAKE_KEYFRAMES, {
-            ...SHAKE_TIMING,
+          void animate(rattled, shakeKeyframes, {
+            ...shakeTiming,
             // Rattle on IMPACT, not on the wind-up — a board that starts
             // shaking as the arm goes up reads as the table wobbling by
             // itself.
-            delay: SLAM_LAND_MS / 1000,
+            delay: landMs / 1000,
           });
         }
       }),
