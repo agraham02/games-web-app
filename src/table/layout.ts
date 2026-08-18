@@ -597,41 +597,75 @@ export function layoutPiece(
       const pod = POD_SIZE[g.density];
 
       if (isTile) {
-        let anchorX: number;
-        let anchorY: number;
-        // A tile hand never rotates and always fans along screen-x (see
-        // `within` below), so its clearance from the pod is a plain,
-        // AXIS-ALIGNED distance derived straight from the seat's own
-        // `anchor` — never a scalar projected through (ux, uy) and
-        // shared between `anchorX` and `anchorY`, which is what this
-        // used to be and is a coupling that caused two separate bugs:
-        // a SIDE seat's hand needs `fanW`-scaled clearance because it
-        // fans along its own push direction, but that leaking into a
-        // TOP seat's `anchorY` (any seat not dead-centre on its edge —
-        // any edge with 2+ opponents — has a nonzero `ux`) first showed
-        // up as "a fuller hand sinks lower" (the leaked term grew with
-        // hand size), and REMOVING that term still left the coupling:
-        // `anchorY` is `seat.y + uy * inset`, so shrinking `inset` by
-        // dropping `fanW` also shrank the vertical gap itself, nudging
-        // a wide hand a hair closer to the pod even at a fixed size.
-        // Deriving each axis straight from `anchor` has no shared
-        // scalar for either bug to leak through.
-        if (seat.anchor === "left" || seat.anchor === "right") {
-          const dir = seat.anchor === "left" ? 1 : -1;
-          anchorX = seat.x + dir * (pod.w / 2 + fanW / 2 + miniW / 2 + TILE_HAND_GAP);
-          anchorY = seat.y;
-        } else {
-          // "top" is the only anchor left once hero (handled above) and
-          // the two side cases are accounted for.
-          anchorX = seat.x;
-          anchorY = seat.y + (pod.h / 2 + miniH / 2 + TILE_HAND_GAP);
+        // TOP stands its rack upright, unrotated, fanned along screen-x
+        // — a plain, AXIS-ALIGNED clearance derived straight from the
+        // seat's own `anchor`, deliberately never a scalar projected
+        // through (ux, uy): that projection is exactly what caused two
+        // bugs history (see the old note this replaced) — a seat's small
+        // horizontal push component let the hand-width term leak into
+        // the VERTICAL anchor too, so a fuller hand visibly sank lower.
+        if (seat.anchor === "top") {
+          const anchorX = seat.x;
+          const anchorY = seat.y + (pod.h / 2 + miniH / 2 + TILE_HAND_GAP);
+          const slot = fanSlot({
+            index: p.index,
+            count: p.count,
+            within: { x: anchorX - fanW / 2, y: anchorY, w: fanW, h: 0 },
+            size: { w: miniW, h: miniH },
+            maxRotation: 0,
+            arcLift: 0,
+            maxGap: miniW * 0.7,
+          });
+          return {
+            x: slot.x - base.w / 2,
+            y: slot.y - base.h / 2,
+            rotate: slot.rotation,
+            scale: miniScale,
+            z,
+            opacity,
+          };
         }
-        const slot = fanSlot({
+
+        // LEFT/RIGHT: stood on its SHORT side and stacked in a column
+        // along the pod's own edge, rather than reaching straight out
+        // from it — the redesign [[domino-side-seat-hand-overlap]]
+        // tracked. `seat.rotation` (±90°) turns each tile so its long
+        // side runs horizontal, sticking out from the pod by a FIXED
+        // amount (one tile's own length) regardless of how many are in
+        // the rack — exactly the "stop paying for the whole hand's
+        // width, pay for one tile" fix TOP already got, applied to the
+        // other axis. This is also why a long chain got so cramped on a
+        // phone: `line`'s own clearance (geometry.ts's `sideReach`) used
+        // to reserve room for the OLD reaching-outward rack and gave
+        // most of the felt's width to two empty margins.
+        //
+        // Reused wholesale from the card branch below rather than
+        // re-derived: a rotated piece's on-screen footprint swaps w/h
+        // (`tileFootprint`), and `axisReach` is the same "how far does
+        // this box reach along the push direction" helper the pod and a
+        // card hand both already use.
+        const tileFootprint: PieceSize = { w: miniH, h: miniW };
+        const podReach = axisReach(ux, uy, pod);
+        const tileReach = axisReach(ux, uy, tileFootprint);
+        const inset = podReach + tileReach + TILE_HAND_GAP;
+        const anchorX = seat.x + ux * inset;
+        const anchorY = seat.y + uy * inset;
+
+        const slot = radialFanSlot({
+          anchor: { x: anchorX, y: anchorY },
+          // Perpendicular to the push direction — a column, not a row.
+          spread: { x: -uy, y: ux },
+          away: { x: -ux, y: -uy },
           index: p.index,
           count: p.count,
-          within: { x: anchorX - fanW / 2, y: anchorY, w: fanW, h: 0 },
+          spreadWidth: fanW,
+          // Unrotated dimensions: `radialFanSlot` measures spacing along
+          // `spread` from `size.w`, which for an upright tile is its
+          // SHORT side — exactly "pack by the short side," the same
+          // packing TOP's own horizontal row already does.
           size: { w: miniW, h: miniH },
-          maxRotation: 0,
+          baseRotation: seat.rotation,
+          maxTilt: 0,
           arcLift: 0,
           maxGap: miniW * 0.7,
         });

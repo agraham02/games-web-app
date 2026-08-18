@@ -642,23 +642,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const podSize = POD_SIZE[density];
   const miniW = tileShortSide(spec.miniCard);
   const miniH = miniW * 2;
-  const maxFanW = miniW * Math.max(2.4, 7 * 0.9);
   const topBleed = Math.max(
     LINE_BREATHING,
     Math.max(0, podSize.h / 2 - podInset / 2) + miniH + TILE_HAND_GAP + LINE_BREATHING,
   );
-  // A full 7-tile rack genuinely does not fit beside a pod on a narrow
-  // phone with seats on both sides of the board — the real fix is
-  // rotating a side seat's rack to stand along the pod's own edge
-  // instead of reaching straight out from it (dominoes tops out at 4
-  // seats, and only that table ever puts a hand on a side edge at all).
-  // Clamped so `line` can't collapse to nothing chasing a case that has
-  // no real solution without that redesign; the residual gap is a large
-  // hand on a side seat still reaching a little into the chain on the
-  // narrowest phones, not the pod-adjacent overlap this whole change
-  // fixes everywhere else.
-  const sideReach =
-    Math.max(0, podSize.w / 2 - podInset / 2) + maxFanW + miniW / 2 + TILE_HAND_GAP;
+  // A side seat's rack now stands on its short side and stacks in a
+  // COLUMN along the pod's own edge (layout.ts's "hand" case), the same
+  // redesign [[domino-side-seat-hand-overlap]] tracked — so, exactly
+  // like `topBleed` above, this reserves room for ONE rotated tile
+  // (`miniH`, its length once turned sideways), never for the whole
+  // rack. A 7-tile hand and a 1-tile hand reach the same distance past
+  // the pod; only the column's LENGTH grows with the hand, and that runs
+  // parallel to the felt's edge, not into it.
+  const sideReach = Math.max(0, podSize.w / 2 - podInset / 2) + miniH + TILE_HAND_GAP;
   const sideBleed = Math.max(
     LINE_BREATHING,
     Math.min(sideReach + LINE_BREATHING, play.w * 0.3),

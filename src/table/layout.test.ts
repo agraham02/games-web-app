@@ -263,23 +263,19 @@ describe("opponent tile hand — stays clear of the domino line", () => {
     // transparent) base container it's inscribed in — matching how the
     // "domino line" tests above measure a tile via `boardPieceSize`
     // rather than the container it also renders inside.
-    const w = tileShortSide(g.miniCard);
-    const h = w * 2;
+    const short = tileShortSide(g.miniCard);
+    const long = short * 2;
+    // A LEFT/RIGHT seat's rack stands its tiles on their short side
+    // (`t.rotate` is ±90° there — see layout.ts's "hand" case), which
+    // swaps the on-screen AABB. Measuring every seat with the upright
+    // short/long box regardless of rotation would silently under-report
+    // a rotated tile's true reach into `line` — the one direction this
+    // whole test exists to catch.
+    const rotated = Math.round((((t.rotate % 180) + 180) % 180) / 90) === 1;
+    const w = rotated ? long : short;
+    const h = rotated ? short : long;
     return { x: cx - w / 2, y: cy - h / 2, w, h } satisfies Box;
   }
-
-  // A side-anchored seat's rack reaches straight out from its pod along
-  // the SAME axis it fans in (see layout.ts's "hand" case) — there is
-  // no room to fully clear `line` there once the hand gets big on a
-  // FORCED density/viewport mismatch (`wide` tiles pushed onto a phone,
-  // say — the lab preview can do this; `resolveDensity` alone never
-  // would), short of rotating the rack to stand along the pod's edge
-  // instead, which no seat needs today (dominoes tops out at 4 seats,
-  // and only that table ever puts a hand on a side edge at all — see
-  // the matching clamp comment on `sideBleed` in geometry.ts). Top/
-  // bottom seats fan perpendicular to their push and have no such
-  // ceiling, forced mismatch or not.
-  const MAX_HAND_SIDE_SAFE = 3;
 
   it("never overlaps the line zone at any density, seat count, or hand size", () => {
     // This is the bug from the /play/dominoes screenshot: an opponent's
@@ -289,6 +285,22 @@ describe("opponent tile hand — stays clear of the domino line", () => {
     // numbers that quietly drifted apart — this is the permanent
     // guarantee that they can't again, the same role the pod-overlap
     // check above plays for the chain itself.
+    //
+    // Side seats used to be checked only up to 3 tiles, with a rack that
+    // reached straight out from the pod and grew with hand size (see git
+    // history / the [[domino-side-seat-hand-overlap]] memory) — a real
+    // hand-size limit on a real bug. The rotated-rack redesign in
+    // layout.ts makes clearance independent of hand size for every
+    // anchor, so this now sweeps the FULL 7-tile hand for every seat.
+    //
+    // A forced density/viewport mismatch (`wide` tiles pushed onto a
+    // phone, say — a real, supported lab-preview mode; `resolveDensity`
+    // alone never produces one) is a separate axis from hand size and
+    // still excluded for side seats: `sideBleed`'s own clamp
+    // (`play.w * 0.3`, geometry.ts) can legitimately run out of room
+    // for a rotated tile sized for a much bigger density than the
+    // viewport, the same documented, accepted residual the old code
+    // carried. Top seats have never needed this exclusion.
     for (const vp of VIEWPORTS) {
       const natural = resolveDensity(vp.w, vp.h);
       for (const seats of [2, 3, 4]) {
@@ -296,12 +308,8 @@ describe("opponent tile hand — stays clear of the domino line", () => {
           const g = resolveTable({ seats, width: vp.w, height: vp.h, density });
           for (const slot of g.seats) {
             if (slot.isHero) continue;
-            // A forced density/viewport mismatch is a real, supported
-            // lab-preview mode, but only for the seats it was already
-            // proven exact for — see the comment above.
             if (slot.anchor !== "top" && density !== natural) continue;
-            const maxHand = slot.anchor === "top" ? MAX_HAND : MAX_HAND_SIDE_SAFE;
-            for (let count = 1; count <= maxHand; count++) {
+            for (let count = 1; count <= MAX_HAND; count++) {
               for (let index = 0; index < count; index++) {
                 const rect = handRect(g, slot.seat, index, count);
                 const label = `${vp.name}/${seats}seats/${density}/seat${slot.seat}/hand${count}#${index}`;
@@ -314,26 +322,31 @@ describe("opponent tile hand — stays clear of the domino line", () => {
     }
   });
 
-  it("never moves a hand vertically as the hand's tile count changes", () => {
-    // A tile hand fans along screen-x only (see layout.ts's "hand"
-    // case) — its vertical position should be a function of the seat's
-    // pod alone, never of how many tiles are in it. This broke for any
-    // seat not dead-centre on its edge (any edge with 2+ opponents,
-    // e.g. the exact 3-seat/both-on-top table from the /play/dominoes
-    // screenshot): the seat's small horizontal push component let the
-    // hand-width term leak into the vertical anchor too, so a fuller
-    // hand visibly sank lower on screen.
+  it("never moves along the fan's FIXED axis as the hand's tile count changes", () => {
+    // A tile hand fans along one screen axis and its position on the
+    // OTHER axis should be a function of the seat's pod alone, never of
+    // how many tiles are in it — TOP racks fan along x and hold a fixed
+    // y (this broke once, for any seat not dead-centre on its edge: the
+    // seat's small horizontal push component let the hand-width term
+    // leak into the vertical anchor too, so a fuller hand visibly sank
+    // lower on screen). LEFT/RIGHT racks now fan along y instead (the
+    // rotated-column redesign) and so hold a fixed x — the same
+    // invariant, on the axis that is now fixed for them.
     for (const vp of VIEWPORTS) {
       for (const seats of [2, 3, 4]) {
         for (const density of DENSITIES) {
           const g = resolveTable({ seats, width: vp.w, height: vp.h, density });
           for (const slot of g.seats) {
             if (slot.isHero) continue;
-            const centreY = (count: number) => handRect(g, slot.seat, 0, count).y;
-            const baseline = centreY(1);
+            const fixedAxis = slot.anchor === "top" ? "y" : "x";
+            const centre = (count: number) => {
+              const r = handRect(g, slot.seat, 0, count);
+              return fixedAxis === "y" ? r.y : r.x;
+            };
+            const baseline = centre(1);
             for (let count = 2; count <= MAX_HAND; count++) {
               const label = `${vp.name}/${seats}seats/${density}/seat${slot.seat}/hand${count}`;
-              expect(centreY(count), label).toBeCloseTo(baseline, 5);
+              expect(centre(count), label).toBeCloseTo(baseline, 5);
             }
           }
         }

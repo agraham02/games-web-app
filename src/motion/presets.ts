@@ -113,7 +113,7 @@ export const SLAM_LAND_MS = DURATION.slam * SLAM_IMPACT * 1000;
  * `times` puts the impact at SLAM_IMPACT so the rattle lands with it.
  */
 export const SLAM_KEYFRAMES = {
-  scale: [1, 1.5, 1.5, 0.92, 1],
+  scale: [1, 1.9, 1.9, 0.88, 1],
   rotate: [0, -4, -4, 2, 0],
 };
 
@@ -124,13 +124,16 @@ export const SLAM_TIMING = {
 };
 
 /**
- * Every tile already on the board, jolted by the impact. Same numbers as
- * the meld-rejection shake on Rummy's board sheet, deliberately: one
- * shake in the app rather than two that nearly match.
+ * Every tile already on the board, jolted by the impact. Started as the
+ * same numbers as the meld-rejection shake on Rummy's board sheet (one
+ * shake in the app rather than two that nearly match); raised from
+ * ±4/±3px to ±7/±5px on request — a played tile's rattle needed to read
+ * as a real slam's impact, not a nudge, which the smaller Rummy amount
+ * (a refusal, not a physical impact) doesn't need to sell.
  */
 export const SHAKE_KEYFRAMES = {
-  x: [0, -4, 4, -3, 3, 0],
-  y: [0, 2, -1, 1, 0, 0],
+  x: [0, -7, 7, -5, 5, 0],
+  y: [0, 3, -2, 2, 0, 0],
 };
 
 export const SHAKE_TIMING = {
