@@ -14,7 +14,14 @@
 import type { BotDifficulty, BotStrategy, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
 import { tileHas, tilePips } from "@/games/_shared/tiles";
-import { canPlay, drawableTiles, endsAfter, playableTiles } from "./state";
+import {
+  canPlay,
+  drawableTiles,
+  endsAfter,
+  nextSeat,
+  playableTiles,
+  sameSide,
+} from "./state";
 import type { ChainEnd, DomAction, DomState } from "./types";
 
 interface Play {
@@ -62,6 +69,14 @@ function bestOf(
  *    the boneyard next turn, which is worth roughly a pip apiece;
  *  - making BOTH ends the same number narrows what anyone else can
  *    answer with — the standard blocking squeeze.
+ *
+ * The squeeze is the one term that has to know about partners. It is
+ * worth playing because it strangles WHOEVER GOES NEXT, and in Caribbean
+ * team mode that seat is your own partner half the time — turn order
+ * alternates opponent/partner/opponent around the table. Rewarding it
+ * unconditionally had a sharp bot cheerfully blocking its own side, so
+ * it is scored against the seat it actually lands on: a bonus when that
+ * is an opponent, a penalty of the same weight when it is your partner.
  */
 function judge(state: DomState, seat: SeatId, play: Play): number {
   const after = endsAfter(state, play.tile, play.end);
@@ -70,7 +85,9 @@ function judge(state: DomState, seat: SeatId, play: Play): number {
     if (id === play.tile) continue;
     if (tileHas(id, after.left) || tileHas(id, after.right)) cover++;
   }
-  const squeeze = after.left === after.right ? 3 : 0;
+  const squeezes = after.left === after.right;
+  const hitsPartner = sameSide(state, nextSeat(state, seat), seat);
+  const squeeze = squeezes ? (hitsPartner ? -3 : 3) : 0;
   return tilePips(play.tile) + cover * 1.5 + squeeze;
 }
 

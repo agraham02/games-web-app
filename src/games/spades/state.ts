@@ -7,6 +7,7 @@
  */
 
 import type { PieceId, SeatId } from "@/engine/types";
+import { partnerOf, teamOf, teammates } from "@/games/_shared/partnership";
 import { canLeadTrump, legalFollows, type TrickCard } from "@/games/_shared/trickTaking";
 import { effectiveSuit, isTrump } from "./cards";
 import type { Bid, SpadesState } from "./types";
@@ -22,21 +23,11 @@ export function isHidden(id: PieceId): boolean {
   return id === HIDDEN_CARD;
 }
 
-/** Seats sit opposite their partner — 0/2 and 1/3 — which is also where
- * the existing table geometry already seats a lone third opponent (see
- * CLAUDE.md: seat numbering runs the same direction turn order passes),
- * so this needs no layout change to be geometrically true. */
-export function partnerOf(seat: SeatId): SeatId {
-  return (seat + 2) % 4;
-}
-
-export function teamOf(seat: SeatId): 0 | 1 {
-  return (seat % 2) as 0 | 1;
-}
-
-export function teammates(team: 0 | 1): [SeatId, SeatId] {
-  return team === 0 ? [0, 2] : [1, 3];
-}
+/** Partnership seat arithmetic now lives in `_shared/partnership.ts` —
+ * Caribbean dominoes seats its partners identically, and there is no
+ * Spades in `(seat + 2) % 4`. Re-exported here so the dozen call sites
+ * across this game keep reading from the module they already know. */
+export { partnerOf, teamOf, teammates };
 
 /** Turn order runs seat -> seat+1, matching every other game in this app. */
 export function nextSeat(seat: SeatId): SeatId {

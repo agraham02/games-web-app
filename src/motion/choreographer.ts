@@ -124,6 +124,16 @@ export function choreograph(
         });
         break;
 
+      case "slam":
+        // Needs a REAL duration, not the zero a missing case would give
+        // it: a slam rides immediately before the `move` that relocates
+        // the same piece, and the next event after that pair must not
+        // start until the flourish has actually played. Offset 0 so the
+        // `move` itself lands in the same frame — the tile has to be
+        // travelling while it grows, or the two read as two gestures.
+        steps.push({ event, offset: 0, duration: DURATION.slam * MS });
+        break;
+
       case "think":
         // Deliberation is dead air by design — it is what sells a bot as
         // a person rather than a function that returns instantly.

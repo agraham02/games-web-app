@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { choreograph, totalDuration } from "./choreographer";
 import type { GameEvent } from "@/engine/types";
-import { STAGGER } from "./presets";
+import { DURATION, STAGGER } from "./presets";
 
 describe("choreograph", () => {
   it("staggers a run of deals instead of queueing them end to end", () => {
@@ -100,5 +100,36 @@ describe("choreograph", () => {
   it("returns nothing for an empty batch", () => {
     expect(choreograph([])).toEqual([]);
     expect(totalDuration([])).toBe(0);
+  });
+
+  describe("slam", () => {
+    const pair: GameEvent[] = [
+      { t: "slam", piece: "6-3", shake: ["0-0", "0-6"] },
+      {
+        t: "move",
+        piece: "6-3",
+        to: { zone: "line", index: 2, count: 1, faceUp: true },
+      },
+    ];
+
+    it("takes real time, so the next event cannot stomp the flourish", () => {
+      // The failure this guards against is silent: an event with no
+      // `case` in `choreograph` falls through to `default` and gets
+      // duration 0, which lets whatever follows apply in the same frame.
+      const [slam] = choreograph(pair);
+      expect(slam!.duration).toBe(DURATION.slam * 1000);
+      expect(slam!.duration).toBeGreaterThan(0);
+    });
+
+    it("lets its own move land in the same frame", () => {
+      // The tile has to be travelling while it grows. A non-zero offset
+      // here would play the two as separate gestures.
+      const [, move] = choreograph(pair);
+      expect(move!.offset).toBe(0);
+    });
+
+    it("budgets the whole flourish before the batch is done", () => {
+      expect(totalDuration(choreograph(pair))).toBeGreaterThanOrEqual(DURATION.slam * 1000);
+    });
   });
 });

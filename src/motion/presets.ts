@@ -27,6 +27,13 @@ export const DURATION = {
    * before the next, ordinarily-paced deal is allowed to start.
    */
   sweep: 0.16,
+  /**
+   * Caribbean dominoes' slam, start to settled — the tile rising toward
+   * the viewer, the drop, and the board's rattle afterwards. Longer than
+   * any other single-piece gesture because it deliberately is one: the
+   * whole point is that it interrupts the rhythm of ordinary play.
+   */
+  slam: 0.78,
 } as const;
 
 /**
@@ -80,7 +87,60 @@ export const TRANSITIONS = {
   reflow: { duration: 0 },
 } satisfies Record<string, Transition>;
 
-/** Honoured by the choreographer and by <Piece>. */
+/* ============================================================
+   The slam
+   ============================================================ */
+
+/**
+ * When the tile actually hits the table, as a fraction of DURATION.slam.
+ * The board's rattle is delayed to exactly this point — a shake that
+ * starts with the swing rather than the impact reads as the table
+ * wobbling on its own.
+ */
+const SLAM_IMPACT = 0.62;
+
+export const SLAM_LAND_MS = DURATION.slam * SLAM_IMPACT * 1000;
+
+/**
+ * The slammed piece. Purely RELATIVE keyframes, played on a wrapper
+ * INSIDE the positional root — the root owns absolute x/y/scale and its
+ * own spring (which is what actually carries the tile from the hand to
+ * the board), and these compose over the top of it. Nothing here fights
+ * that, exactly as `Flipper`'s rotateY already doesn't.
+ *
+ * Reads as: lift toward the viewer, hang for a beat at the top of the
+ * arc, then come down hard and overshoot into the table before settling.
+ * `times` puts the impact at SLAM_IMPACT so the rattle lands with it.
+ */
+export const SLAM_KEYFRAMES = {
+  scale: [1, 1.5, 1.5, 0.92, 1],
+  rotate: [0, -4, -4, 2, 0],
+};
+
+export const SLAM_TIMING = {
+  duration: DURATION.slam,
+  times: [0, 0.3, 0.48, SLAM_IMPACT, 1],
+  ease: "easeOut" as const,
+};
+
+/**
+ * Every tile already on the board, jolted by the impact. Same numbers as
+ * the meld-rejection shake on Rummy's board sheet, deliberately: one
+ * shake in the app rather than two that nearly match.
+ */
+export const SHAKE_KEYFRAMES = {
+  x: [0, -4, 4, -3, 3, 0],
+  y: [0, 2, -1, 1, 0, 0],
+};
+
+export const SHAKE_TIMING = {
+  duration: 0.35,
+  ease: "easeOut" as const,
+};
+
+/** Honoured by the choreographer, by <Piece>'s slam, and — via
+ * `MotionConfig reducedMotion="user"` in the root layout — by every
+ * motion component's transform animations. */
 export function prefersReducedMotion(): boolean {
   if (typeof window === "undefined") return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;

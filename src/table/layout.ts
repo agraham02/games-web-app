@@ -79,8 +79,15 @@ export function baseSize(g: TableGeometry) {
  * domino is 1:2 and inscribes itself (see TileFace), so every scale in
  * this file has to be computed against the art, not the box, or a tile
  * comes out a third too small everywhere.
+ *
+ * Exported because the same distinction matters OUTSIDE layout: any
+ * effect sized as a fraction of "the piece" has to mean the drawn art or
+ * it lands differently on a tile than on a card. See `handHoverLift` in
+ * PieceLayer, where measuring the hover spread against the box made a
+ * domino rack fan roughly 45% wider than a card hand for the same
+ * constant.
  */
-function artSize(g: TableGeometry, kind: PieceKind | undefined): PieceSize {
+export function artSize(g: TableGeometry, kind: PieceKind | undefined): PieceSize {
   const base = baseSize(g);
   if (kind !== "tile") return base;
   const w = Math.min(base.w, base.h / 2);

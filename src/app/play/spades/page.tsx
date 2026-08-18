@@ -43,6 +43,7 @@ import { useTableStore } from "@/table/store";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { HandZone } from "@/table/HandZone";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { Toggle } from "@/ui/primitives/Toggle";
 import { BlockingDialog } from "@/ui/disclosure";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { createSpades } from "@/games/spades/rules";
@@ -647,38 +648,3 @@ function SetupScreen({
   );
 }
 
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={`flex flex-col gap-0.5 rounded-lg px-3.5 py-2.5 text-left ring-1 ${
-        checked ? "bg-brass-400/18 ring-brass-400/60" : "bg-bone-50/5 ring-bone-50/12"
-      }`}
-    >
-      <span className="flex items-center justify-between">
-        <span className={`text-sm font-bold ${checked ? "text-brass-300" : "text-bone-200"}`}>
-          {label}
-        </span>
-        <span
-          className={`flex h-5 w-9 items-center rounded-full px-0.5 transition-colors ${
-            checked ? "justify-end bg-brass-400" : "justify-start bg-bone-50/15"
-          }`}
-        >
-          <span className="h-4 w-4 rounded-full bg-felt-950" />
-        </span>
-      </span>
-      <span className="text-[11px] text-bone-500">{hint}</span>
-    </button>
-  );
-}

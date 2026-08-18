@@ -44,7 +44,7 @@ import type {
   SetupOptions,
 } from "@/engine/types";
 import { HERO } from "@/engine/types";
-import { createRng, type Rng } from "@/engine/rng";
+import { createRng, hashString, type Rng } from "@/engine/rng";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import {
   MIN_MELD,
@@ -66,7 +66,6 @@ import {
   claimableMeld,
   contributedValue,
   handValue,
-  hashString,
   layableMelds,
   layoffs,
   legalDrawDepths,

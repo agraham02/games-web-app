@@ -71,26 +71,101 @@ export interface ArmState {
   turning: boolean;
 }
 
+/**
+ * Which ruleset is being played.
+ *
+ *  - `classic` — Block & Draw from a double-six set, 7/7/6 hands, a
+ *    boneyard you draw from until it is down to two, scored on the
+ *    losers' pips. Unchanged since this game was written.
+ *  - `caribbean` — the documented Caribbean/Jamaican game: exactly four
+ *    players, all 28 tiles dealt 7 apiece, **no boneyard at all**, and
+ *    you simply pass when you cannot play. Each round won is worth one
+ *    "game" rather than a pile of pips.
+ */
+export type DomMode = "classic" | "caribbean";
+
+/**
+ * Rules chosen at setup. Lives ON state rather than only in the factory
+ * closure, because `reduce`, `legalActions` and every bot are pure
+ * functions of state and never see the closure — the same reason
+ * `SpadesState.rules` exists.
+ *
+ * `teams`, `keyTileBonus` and `sixLove` are Caribbean-only and ignored
+ * in classic.
+ */
+export interface DomRules {
+  mode: DomMode;
+  /** 2v2, partners across (seats 0/2 against 1/3). Cut-throat when false. */
+  teams: boolean;
+  /**
+   * Going out on the "key tile" — the only tile in the set that could
+   * legally have been played, with the two open ends differing — is
+   * worth two games instead of one. Never applies to a double.
+   */
+  keyTileBonus: boolean;
+  /**
+   * The traditional win condition: your score returns to zero whenever
+   * the other side takes a round, so the match is won on a streak.
+   * Team-only, and deliberately so — see `defaultTarget`.
+   */
+  sixLove: boolean;
+}
+
 export interface RoundResult {
   /** How the round finished: someone went out, or nobody could play. */
   kind: "domino" | "blocked";
-  /** Null only on a blocked round tied for lowest pips — then nobody scores. */
+  /**
+   * Null when nobody scored — a classic blocked round tied on pips and
+   * on the lightest tile, or a Caribbean blocked round tied on pips
+   * (which redeals).
+   */
   winner: SeatId | null;
+  /**
+   * Every seat on the winning SIDE — `[winner]` cut-throat, both
+   * partners in team mode. Read structurally by the runtime's
+   * `roundWinningSeats` so both partners' pods are crowned, not just
+   * the one who happened to lay the last tile.
+   */
+  winningSeats: SeatId[] | null;
   /** Pips left in each seat's hand when the round ended. */
   pips: Record<SeatId, number>;
-  /** Awarded to `winner`: the losers' pips minus their own. */
+  /**
+   * Awarded to the winning side. Classic: the losers' pips less their
+   * own. Caribbean: one game, or two on a key tile.
+   */
   points: number;
+  /** Caribbean only — the extra point came from the key-tile rule. */
+  bonus: boolean;
 }
 
 export interface DomState {
   seats: number;
-  /** Match target in points. */
+  rules: DomRules;
+  /**
+   * The match's rng seed, copied once in `setup`. `reduce` receives no
+   * `Rng` (deliberately — see engine/rng.ts), so anything inside it that
+   * needs to look random hashes a key built from this plus the position.
+   * That keeps the result a pure function of the state, so a seed
+   * replays a match's slams exactly as it replays its deals.
+   */
+  seed: number;
+  /**
+   * Match target. Points in classic; rounds won in Caribbean.
+   */
   target: number;
   /** 1-based; 0 before the first deal. */
   round: number;
+  /**
+   * Cumulative score. In team mode this is PER SEAT but always mirrored
+   * across a side's two seats (`scores[0] === scores[2]`), the same
+   * shape and for the same reason as `SpadesState.scores`: a seat's own
+   * number already is its side's number, so every downstream reader —
+   * the win check, the standings, the seat pods — keeps working without
+   * knowing whether teams are on.
+   */
   scores: Record<SeatId, number>;
   hands: Record<SeatId, PieceId[]>;
-  /** Face down, drawn from the front. */
+  /** Face down, drawn from the front. Always empty in Caribbean. */
   boneyard: PieceId[];
   /** Left-to-right order. `chain[0].a` and `chain.at(-1)!.b` are open. */
   chain: PlacedTile[];
@@ -100,10 +175,24 @@ export interface DomState {
   passes: number;
   /** Who leads the next round. */
   opener: SeatId;
+  /**
+   * Who took the LAST round that had a winner — which is not `opener`
+   * (a tied round leaves no winner but does hand the lead back to the
+   * double-six holder) and not `result.winner` (that is cleared and
+   * refilled every round). Only reader is the slam roll, which gives a
+   * player on a winning streak longer odds.
+   */
+  lastRoundWinner: SeatId | null;
   /** Set when the round ends; cleared by `startRound`. */
   result: RoundResult | null;
-  /** Set once someone reaches `target`. */
+  /** Set once a side reaches `target`. */
   winner: SeatId | null;
+  /**
+   * Every seat on the winning side at match end. Structural — the
+   * runtime already reads this field (it was added for Spades' team
+   * win) and the host crowns every seat in it.
+   */
+  winningSeats: SeatId[] | null;
   /** False between `setup` and the first `startRound`. */
   dealt: boolean;
 }

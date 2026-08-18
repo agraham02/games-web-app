@@ -19,9 +19,10 @@ export default function Home() {
         </h1>
         <p className="mt-3 max-w-lg text-sm leading-relaxed text-bone-400">
           Dominoes, Left Right Center, Spades and Rummy 500 have real rules,
-          real bots and a full table. The rest is still exercised through the
-          lab harness: seat geometry, the piece layer, motion pacing and phase
-          screens.
+          real bots and a full table. Dominoes plays two ways — Block &amp; Draw,
+          or the Caribbean game four-handed with the whole set dealt and no
+          boneyard. The rest is still exercised through the lab harness: seat
+          geometry, the piece layer, motion pacing and phase screens.
         </p>
 
         <div className="mt-7 flex flex-wrap gap-3">

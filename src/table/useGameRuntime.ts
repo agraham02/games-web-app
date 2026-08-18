@@ -157,6 +157,22 @@ export interface GameRuntime<S, A> {
    * just never sets this. */
   roundWinner: SeatId | null;
   /**
+   * Every seat on the side that won the just-finished ROUND — the
+   * round-level twin of `winningSeats`, and the same fallback shape:
+   * reads `state.result.winningSeats` if the game sets it, otherwise
+   * wraps `roundWinner`. So a game that never sets the field produces an
+   * IDENTICAL truth table to `=== roundWinner`, which is every existing
+   * game.
+   *
+   * This did not exist until Caribbean dominoes' team mode, and
+   * `winningSeats`' own doc used to say why: no partnership game scored
+   * a single seat at round end. Team dominoes is the first that does —
+   * a partner going out wins the round for both of you — and without
+   * this the crown and the confetti would land on whichever partner
+   * happened to lay the last tile.
+   */
+  roundWinningSeats: SeatId[] | null;
+  /**
    * Every seat on the winning side, known the same instant `winner` is.
    * For a single-winner game this is just `[winner]` (or `null`) — the
    * field exists for PARTNERSHIP games (Spades: a team win is two
@@ -568,6 +584,7 @@ export function useGameRuntime<S, A>(
     winner: isOver ? extractWinner(state) : null,
     winningSeats: isOver ? resolveWinningSeats(state) : null,
     roundWinner: !isOver && roundOver ? extractRoundWinner(state) : null,
+    roundWinningSeats: !isOver && roundOver ? resolveRoundWinningSeats(state) : null,
     showSummary: isOver && gameEndRevealed,
     showRoundSummary: !isOver && roundOver && roundEndRevealed,
     round: extractRound(state),
@@ -626,4 +643,21 @@ function extractRoundWinner<S>(state: S): SeatId | null {
   const maybe = state as unknown as { result?: { winner?: SeatId | null } | null };
   const winner = maybe.result?.winner;
   return typeof winner === "number" ? winner : null;
+}
+
+/**
+ * The round-level twin of `resolveWinningSeats` — same precedence, same
+ * fallback, so a game that sets neither field behaves exactly as before.
+ *
+ * Exported only so that equivalence can be pinned by a test without
+ * standing up the whole runtime: the claim worth proving is that adding
+ * this changed nothing for the four games that came before it, and that
+ * is a property of this function alone.
+ */
+export function resolveRoundWinningSeats<S>(state: S): SeatId[] | null {
+  const maybe = state as unknown as { result?: { winningSeats?: SeatId[] | null } | null };
+  const structural = maybe.result?.winningSeats;
+  if (Array.isArray(structural)) return structural;
+  const single = extractRoundWinner(state);
+  return single !== null ? [single] : null;
 }

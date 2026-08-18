@@ -1,5 +1,33 @@
 /**
- * Dominoes (Block & Draw) — GameDefinition.
+ * Dominoes — GameDefinition. Two rulesets share this file.
+ *
+ * ## Caribbean (`mode: "caribbean"`)
+ *
+ * Verified against pagat.com's Caribbean Dominoes page and gamerules.com's
+ * partner and cut-throat pages. Exactly four players, all 28 tiles dealt
+ * seven apiece, **no boneyard**, and a player who cannot go simply
+ * passes. Playable cut-throat or 2v2 with partners across.
+ *
+ *  - The double-six holder opens the first round; after that the
+ *    previous round's winner opens. A round that ended tied hands the
+ *    lead back to the double-six.
+ *  - Each round won is worth ONE game, not a pile of pips. First side to
+ *    the target takes the match.
+ *  - A blocked round goes to the lowest pip count — and unlike the
+ *    classic game there is no second tiebreak: tied on count is simply a
+ *    tie, which scores nobody and redeals. In team mode two partners
+ *    tied at the lowest count is not a tie at all; their side has the
+ *    lowest count twice and wins it.
+ *  - Optional: the key-tile bonus, and six love. See `DomRules`.
+ *
+ * **The no-boneyard rule needed almost no code.** `drawableTiles` is
+ * `boneyard.length - BONEYARD_FLOOR` floored at zero, and `legalActions`
+ * already ends with "draw if you can, else pass" — so dealing the whole
+ * set leaves an empty boneyard and passing falls out on its own.
+ * `legalActions`, `reduce`'s draw branch and the bots' `forced()` are
+ * untouched by this mode.
+ *
+ * ## Classic Block & Draw (`mode: "classic"`)
  *
  * Rules verified against pagat.com's Draw and Block game pages before
  * writing this. The details worth knowing, because most casual sources
@@ -45,22 +73,34 @@ import { initialArms, placeTile } from "./board";
 import { dominoBots } from "./bots";
 import {
   BONEYARD_FLOOR,
+  CARIBBEAN_SEATS,
   HIDDEN_TILE,
   canPlay,
   defaultTarget,
   drawableTiles,
   handSize,
+  isKeyTile,
   nextSeat,
   openingSeat,
   playableEnds,
   playableTiles,
   pipsInHand,
   lightestTile,
+  rollsSlam,
+  sameSide,
+  sideOf,
 } from "./state";
-import type { ChainEnd, DomAction, DomState, PlacedTile } from "./types";
+import type { ChainEnd, DomAction, DomRules, DomState, PlacedTile } from "./types";
 
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 4;
+
+export const DEFAULT_RULES: DomRules = {
+  mode: "classic",
+  teams: false,
+  keyTileBonus: false,
+  sixLove: false,
+};
 
 function seatName(seat: SeatId): string {
   return seat === HERO ? "You" : botName(seat);
@@ -76,17 +116,24 @@ function seatName(seat: SeatId): string {
  * can only return state, so a game that deals here has its tiles simply
  * appear on the table.
  */
-export function makeSetup(target?: number) {
+export function makeSetup(rules: DomRules, target?: number) {
   return function setup(opts: SetupOptions): DomState {
+    // Caribbean is four-handed by definition — partners across need it,
+    // and the whole set only divides seven ways four times. Forced here
+    // rather than trusted from the caller so a bad `seats` cannot deal a
+    // short hand and silently leave tiles unaccounted for.
+    const seats = rules.mode === "caribbean" ? CARIBBEAN_SEATS : opts.seats;
     const scores: Record<SeatId, number> = {};
     const hands: Record<SeatId, PieceId[]> = {};
-    for (let seat = 0; seat < opts.seats; seat++) {
+    for (let seat = 0; seat < seats; seat++) {
       scores[seat] = 0;
       hands[seat] = [];
     }
     return {
-      seats: opts.seats,
-      target: target ?? defaultTarget(opts.seats),
+      seats,
+      rules,
+      seed: opts.rng.seed,
+      target: target ?? defaultTarget(seats, rules),
       round: 0,
       scores,
       hands,
@@ -96,8 +143,10 @@ export function makeSetup(target?: number) {
       turn: HERO,
       passes: 0,
       opener: HERO,
+      lastRoundWinner: null,
       result: null,
       winner: null,
+      winningSeats: null,
       dealt: false,
     };
   };
@@ -105,7 +154,10 @@ export function makeSetup(target?: number) {
 
 export function startRound(state: DomState, rng: Rng): ReduceResult<DomState> {
   const tiles = rng.shuffle(doubleSixSet());
-  const per = handSize(state.seats);
+  // Caribbean deals all 28, so `boneyard` below comes out empty and the
+  // "draw if you can, else pass" branch in `legalActions` resolves to
+  // pass on its own — that is the entire implementation of "no boneyard".
+  const per = handSize(state.seats, state.rules.mode);
   const hands: Record<SeatId, PieceId[]> = {};
   for (let seat = 0; seat < state.seats; seat++) hands[seat] = [];
 
@@ -152,7 +204,16 @@ export function startRound(state: DomState, rng: Rng): ReduceResult<DomState> {
   const round = state.round + 1;
   // Round one is decided by the tiles; after that the previous winner
   // leads, which `state.opener` already holds.
-  const opener = round === 1 ? openingSeat(hands, state.seats) : state.opener;
+  //
+  // Caribbean adds one case: a round that ended with NOBODY winning
+  // (blocked and tied on count) hands the lead back to the double-six,
+  // exactly as at the start of a match. Gated on the mode so classic —
+  // where a tied block simply moves the lead round the table — keeps the
+  // behaviour it has always had.
+  const reopen =
+    round === 1 ||
+    (state.rules.mode === "caribbean" && (state.result?.winner ?? null) === null);
+  const opener = reopen ? openingSeat(hands, state.seats) : state.opener;
 
   events.push({ t: "phase", phase: `round-${round}` });
   events.push({
@@ -245,6 +306,17 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
     ...state.hands,
     [seat]: (state.hands[seat] ?? []).filter((id) => id !== action.tile),
   };
+  const goingOut = (hands[seat] ?? []).length === 0;
+
+  // Both of these are questions about the board AS IT WAS — `state`, not
+  // `next`. The key tile is a fact about what could still have been
+  // played before this one went down, and the shake ripples through the
+  // tiles already on the line, never through the one arriving (and never
+  // through a hand: `state.chain` cannot contain one).
+  const keyTile = goingOut && isKeyTile(state, action.tile);
+  if (rollsSlam(state, seat, action.tile, goingOut)) {
+    events.push({ t: "slam", piece: action.tile, shake: state.chain.map((t) => t.id) });
+  }
 
   events.push({
     t: "move",
@@ -273,8 +345,8 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
     passes: 0,
   };
 
-  if ((hands[seat] ?? []).length === 0) {
-    return endRound(next, "domino", seat, events);
+  if (goingOut) {
+    return endRound(next, "domino", seat, events, keyTile);
   }
 
   return { state: { ...next, turn: nextSeat(state, seat) }, events };
@@ -310,39 +382,65 @@ function endRound(
   kind: "domino" | "blocked",
   wentOut: SeatId | null,
   events: GameEvent[],
+  keyTile = false,
 ): ReduceResult<DomState> {
+  const caribbean = state.rules.mode === "caribbean";
   const pips: Record<SeatId, number> = {};
   for (let s = 0; s < state.seats; s++) pips[s] = pipsInHand(state, s);
 
   const winner = kind === "domino" ? wentOut : blockedWinner(state, pips);
-  // One formula for both endings: the losers' pips, less your own. Going
-  // out simply makes your own zero.
+  // Whoever laid the last tile wins it for their whole SIDE — the same
+  // one seat in cut-throat, both partners in team mode.
+  const winningSeats = winner !== null ? sideOf(state, winner) : null;
+  const bonus = caribbean && keyTile && state.rules.keyTileBonus;
+
   let points = 0;
   if (winner !== null) {
-    for (let s = 0; s < state.seats; s++) if (s !== winner) points += pips[s] ?? 0;
-    points -= pips[winner] ?? 0;
+    if (caribbean) {
+      // A round is worth one game, whether you went out or simply held
+      // the lightest hand when it blocked. Two on the key tile.
+      points = bonus ? 2 : 1;
+    } else {
+      // Classic: one formula for both endings — the losers' pips, less
+      // your own. Going out simply makes your own zero.
+      for (let s = 0; s < state.seats; s++) if (s !== winner) points += pips[s] ?? 0;
+      points -= pips[winner] ?? 0;
+    }
   }
 
   const scores = { ...state.scores };
-  if (winner !== null) scores[winner] = (scores[winner] ?? 0) + points;
+  if (winningSeats) {
+    for (const s of winningSeats) scores[s] = (scores[s] ?? 0) + points;
+    // Six love: taking a round sends the other side back to nothing, so
+    // the match has to be won on an unbroken streak. Team-only — see
+    // `defaultTarget` for why four-way it does not terminate.
+    if (caribbean && state.rules.sixLove) {
+      for (let s = 0; s < state.seats; s++) {
+        if (!winningSeats.includes(s)) scores[s] = 0;
+      }
+    }
+  }
 
+  // Read off the real change rather than assuming only the winner moved:
+  // six love drops the losing side too, and that is a swing worth
+  // animating. Identical to the old `s === winner ? points : 0` for
+  // every game that does not reset anyone.
   const deltas: Record<SeatId, number> = {};
-  for (let s = 0; s < state.seats; s++) deltas[s] = s === winner ? points : 0;
+  for (let s = 0; s < state.seats; s++) {
+    deltas[s] = (scores[s] ?? 0) - (state.scores[s] ?? 0);
+  }
 
   events.push({
     t: "announce",
     seat: winner ?? undefined,
-    text:
-      winner === null
-        ? "Blocked — tied, nobody scores"
-        : kind === "domino"
-          ? `${seatName(winner)} ${winner === HERO ? "go out" : "goes out"} — ${points}`
-          : `Blocked — ${seatName(winner)} ${winner === HERO ? "win" : "wins"} ${points}`,
-    tone: winner === HERO ? "good" : "info",
+    text: roundAnnouncement(state, kind, winner, points, bonus),
+    tone: winningSeats?.includes(HERO) ? "good" : "info",
   });
   events.push({ t: "score", deltas });
   events.push({ t: "roundEnd", round: state.round });
 
+  // Scores mirror within a side, so asking the representative seat is
+  // asking the side.
   const matchWinner =
     winner !== null && (scores[winner] ?? 0) >= state.target ? winner : null;
   if (matchWinner !== null) {
@@ -353,16 +451,52 @@ function endRound(
     state: {
       ...state,
       scores,
-      result: { kind, winner, pips, points },
+      result: { kind, winner, winningSeats, pips, points, bonus },
       winner: matchWinner,
-      // A tie leaves nobody to lead, so the lead simply moves round.
+      winningSeats: matchWinner !== null ? winningSeats : null,
+      lastRoundWinner: winner ?? state.lastRoundWinner,
+      // A tie leaves nobody to lead, so the lead simply moves round. In
+      // Caribbean `startRound` overrides this anyway and hands the lead
+      // back to the double-six holder.
       opener: winner ?? nextSeat(state, state.opener),
     },
     events,
   };
 }
 
-/** Lowest pips; tied, the lightest single tile; still tied, nobody. */
+function roundAnnouncement(
+  state: DomState,
+  kind: "domino" | "blocked",
+  winner: SeatId | null,
+  points: number,
+  bonus: boolean,
+): string {
+  if (winner === null) {
+    return state.rules.mode === "caribbean"
+      ? "Blocked — tied on count, redeal"
+      : "Blocked — tied, nobody scores";
+  }
+  const name = seatName(winner);
+  const won = winner === HERO ? "win" : "wins";
+  if (state.rules.mode === "caribbean") {
+    if (kind === "blocked") return `Blocked — ${name} ${won} on count`;
+    const out = winner === HERO ? "go out" : "goes out";
+    return bonus ? `${name} ${out} on the key tile — 2` : `${name} ${out}`;
+  }
+  return kind === "domino"
+    ? `${name} ${winner === HERO ? "go out" : "goes out"} — ${points}`
+    : `Blocked — ${name} ${won} ${points}`;
+}
+
+/**
+ * Lowest pips. Classic then breaks a tie on the lightest single tile and
+ * only gives up after that; Caribbean has no such second tiebreak —
+ * level on count is simply a tie, and a tie redeals.
+ *
+ * The one wrinkle is team mode: two PARTNERS tied at the lowest count is
+ * not a tie at all. Their side holds the lowest count twice over, so it
+ * wins, and either partner represents it.
+ */
 function blockedWinner(state: DomState, pips: Record<SeatId, number>): SeatId | null {
   let best: SeatId[] = [];
   let bestPips = Infinity;
@@ -376,6 +510,10 @@ function blockedWinner(state: DomState, pips: Record<SeatId, number>): SeatId | 
     }
   }
   if (best.length === 1) return best[0]!;
+
+  if (state.rules.mode === "caribbean") {
+    return best.every((s) => sameSide(state, s, best[0]!)) ? best[0]! : null;
+  }
 
   let tied: SeatId[] = [];
   let bestTile = Infinity;
@@ -502,13 +640,23 @@ export function isOver(state: DomState): boolean {
   return state.winner !== null;
 }
 
-export function createDominoes(target?: number): GameDefinition<DomState, DomAction> {
+export interface DominoesOptions extends Partial<DomRules> {
+  /** Points in classic, games won in Caribbean. Defaults per mode. */
+  target?: number;
+}
+
+export function createDominoes(
+  opts: DominoesOptions = {},
+): GameDefinition<DomState, DomAction> {
+  const { target, ...rest } = opts;
+  const rules: DomRules = { ...DEFAULT_RULES, ...rest };
+  const caribbean = rules.mode === "caribbean";
   return {
     id: "dominoes",
-    name: "Dominoes",
-    minSeats: MIN_SEATS,
-    maxSeats: MAX_SEATS,
-    setup: makeSetup(target),
+    name: caribbean ? "Caribbean Dominoes" : "Dominoes",
+    minSeats: caribbean ? CARIBBEAN_SEATS : MIN_SEATS,
+    maxSeats: caribbean ? CARIBBEAN_SEATS : MAX_SEATS,
+    setup: makeSetup(rules, target),
     reduce,
     legalActions,
     pieces,

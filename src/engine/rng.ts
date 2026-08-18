@@ -75,3 +75,26 @@ export function createRng(seed: number): Rng {
 export function randomSeed(): number {
   return (Math.random() * 0xffffffff) >>> 0;
 }
+
+/**
+ * FNV-1a, returned as a non-negative 31-bit integer. The one place this
+ * codebase derives "randomness" from data rather than from an `Rng` —
+ * used only where a reducer's purity forbids threading a live generator
+ * in, since `reduce(state, action)` receives no rng by design.
+ *
+ * Hash a key built from facts already ON the state (seed, round, seat,
+ * piece id) and the result is a pure function of the position, so a
+ * replay reproduces it exactly — which is the property that threading a
+ * real generator through `reduce` would have given up.
+ *
+ * Callers: Rummy's in-`reduce` deal shuffle and its bot claim reaction
+ * times; Dominoes' Caribbean slam roll.
+ */
+export function hashString(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h | 0);
+}

@@ -242,6 +242,22 @@ export type GameEvent =
    */
   | { t: "sweep"; pieces: PieceId[]; to: ZoneId }
   /**
+   * A piece is brought down HARD — Caribbean dominoes' slam. Rides
+   * immediately before the `move` that actually relocates the piece, so
+   * the two play as one gesture: the move carries it from hand to board
+   * on the usual spring while this drives the flourish over the top of
+   * it (grow toward the viewer, then a fast drop), and `shake` names the
+   * pieces the landing rattles.
+   *
+   * `shake` is an explicit list rather than "whatever is on the table",
+   * because only the engine knows which pieces were already down when
+   * the tile was played — and a shake that reached into a HAND would be
+   * badly wrong. Emitting it as a real event rather than firing an
+   * animation from a component is what puts it under the choreographer:
+   * it obeys `skip()`, the speed multiplier and reduced motion for free.
+   */
+  | { t: "slam"; piece: PieceId; shake: PieceId[] }
+  /**
    * Bot deliberation. A first-class event, not a setTimeout in the UI:
    * it is what makes an opponent feel like a person rather than a
    * function that returns instantly.

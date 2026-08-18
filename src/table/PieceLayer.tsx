@@ -21,13 +21,13 @@
  * and unmounting components is fragile in a way this is not.
  */
 
-import { memo } from "react";
-import { motion } from "motion/react";
+import { memo, useEffect } from "react";
+import { motion, useAnimate } from "motion/react";
 import { HERO, type PieceId } from "@/engine/types";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
 import { TileBack, TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
-import { baseSize, layoutPiece } from "./layout";
+import { artSize, baseSize, layoutPiece } from "./layout";
 import {
   useBoardView,
   useDiscardCount,
@@ -44,7 +44,17 @@ import {
   useSetHeroHoverIndex,
   useTableStore,
 } from "./store";
-import { supportsHover, TRANSITIONS } from "@/motion/presets";
+import {
+  SHAKE_KEYFRAMES,
+  SHAKE_TIMING,
+  SLAM_KEYFRAMES,
+  SLAM_LAND_MS,
+  SLAM_TIMING,
+  prefersReducedMotion,
+  supportsHover,
+  TRANSITIONS,
+} from "@/motion/presets";
+import { onSlam } from "./fx";
 
 /** Below this on-screen width, pips become mud — draw the simple face. */
 const DETAIL_THRESHOLD_PX = 52;
@@ -62,6 +72,20 @@ const INACTIVE_HAND_SCALE = 0.94;
 const MIN_TAPPABLE_OPACITY = 0.5;
 
 /**
+ * How far the hovered card's neighbours are pushed aside, as a fraction
+ * of the piece's own DRAWN width. Deliberately modest: the push only has
+ * to break the overlap enough to read the hovered card's edge, and a
+ * bigger shove makes the whole hand lurch on every pointer move.
+ *
+ * Measured against `artSize`, not the base box — a domino inscribes
+ * itself in a card-shaped box at roughly 70% of its width, so the same
+ * constant against the box fanned a tile rack visibly wider than a card
+ * hand. See `artSize`'s own doc in layout.ts.
+ */
+const HOVER_SPREAD_NEAR = 0.22;
+const HOVER_SPREAD_FAR = 0.09;
+
+/**
  * Extra lift/scale/x-shift for a hero-hand card at `index`, relative to
  * whichever index is currently hovered (or, on touch, tap-previewed) —
  * the card under the pointer rises and grows most, tapering off over
@@ -71,14 +95,19 @@ const MIN_TAPPABLE_OPACITY = 0.5;
  * buried in — this matters far more once a hand is dense enough to
  * heavily overlap (a big Rummy hand) than it does at Spades' fixed 13.
  *
- * Lift/x-shift are FRACTIONS of the card's own rendered size, not fixed
+ * `artWidth` is the drawn art (see the constants above); `cardHeight`
+ * stays the BASE box height, because the lift is measured against the
+ * slot a piece occupies rather than the ink inside it, and every hand is
+ * laid out on that box.
+ *
+ * Lift/x-shift are FRACTIONS of the piece's own rendered size, not fixed
  * px amounts — a flat px value read as barely-there on `wide` density's
  * much larger cards. Pure and cheap enough not to bother memoizing.
  */
 function handHoverLift(
   index: number,
   hoverIndex: number | null,
-  cardWidth: number,
+  artWidth: number,
   cardHeight: number,
 ): { liftPx: number; xPx: number; scale: number } {
   if (hoverIndex === null) return { liftPx: 0, xPx: 0, scale: 1 };
@@ -88,9 +117,9 @@ function handHoverLift(
     case 0:
       return { liftPx: -cardHeight * 0.32, xPx: 0, scale: 1.08 };
     case 1:
-      return { liftPx: -cardHeight * 0.16, xPx: side * cardWidth * 0.32, scale: 1.04 };
+      return { liftPx: -cardHeight * 0.16, xPx: side * artWidth * HOVER_SPREAD_NEAR, scale: 1.04 };
     case 2:
-      return { liftPx: -cardHeight * 0.06, xPx: side * cardWidth * 0.14, scale: 1.015 };
+      return { liftPx: -cardHeight * 0.06, xPx: side * artWidth * HOVER_SPREAD_FAR, scale: 1.015 };
     default:
       return { liftPx: 0, xPx: 0, scale: 1 };
   }
@@ -100,13 +129,101 @@ export interface PieceLayerProps {
   onPieceTap?: (id: PieceId) => void;
 }
 
+/**
+ * While a piece is being slammed it has to draw over everything —
+ * including the hand it just left and any pod it flies past. Above
+ * `Z_SELECTED` (5000), and set imperatively rather than through the
+ * placement map because it is a hard switch, not something to tween: it
+ * lands on the same frame the grow starts and is put back on the same
+ * frame the piece settles. This is the one place the piece layer touches
+ * z-index outside `layoutPiece`, and it is deliberately transient.
+ */
+const Z_SLAM = 6000;
+
+/**
+ * A piece id, made safe to sit inside a QUOTED attribute selector.
+ * `CSS.escape` is the wrong tool here — it escapes identifiers, not
+ * string contents, so it would turn `6-3` into `6\-3` (which happens to
+ * still match, by accident) and it is not guaranteed to exist outside a
+ * real browser. Inside quotes only the quote and the backslash actually
+ * need escaping.
+ */
+export function fxSelector(id: PieceId): string {
+  return `[data-fx="${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+}
+
+/**
+ * Drives the slam, for the WHOLE layer, from one hook.
+ *
+ * `useAnimate` gives a `scope` ref plus an `animate()` whose CSS
+ * selectors are scoped to it — so one subscription and one hook here can
+ * reach any piece by `[data-fx="<id>"]`, instead of every `<Piece>`
+ * subscribing to an fx channel it will almost never be the target of.
+ * Nothing re-renders when a slam fires; this is exactly the "trigger
+ * animations from events outside React's render cycle" case the hook
+ * exists for.
+ *
+ * It also solves replay for free. A declarative keyframe array set to an
+ * identical value is not guaranteed to run a second time, so slamming
+ * the same tile twice would need a changing token threaded through the
+ * render. Calling `animate()` again simply plays it again.
+ */
+function useSlamFx() {
+  const [scope, animate] = useAnimate<HTMLDivElement>();
+
+  useEffect(
+    () =>
+      onSlam(({ piece, shake }) => {
+        const root = scope.current;
+        if (!root) return;
+        // MotionConfig's reducedMotion governs motion COMPONENTS; this
+        // is an imperative call on a plain div, so it needs its own gate
+        // or the one animation most worth suppressing would survive.
+        if (prefersReducedMotion()) return;
+
+        const target = root.querySelector<HTMLElement>(fxSelector(piece));
+        if (target) {
+          // The piece's own parent — the positional root — is what has
+          // to come forward; lifting the wrapper alone would leave it
+          // inside a stacking context that is still behind the hand.
+          const lifted = target.parentElement;
+          const restore = lifted?.style.zIndex ?? "";
+          if (lifted) lifted.style.zIndex = String(Z_SLAM);
+          void animate(target, SLAM_KEYFRAMES, SLAM_TIMING).then(() => {
+            if (lifted) lifted.style.zIndex = restore;
+          });
+        }
+
+        // Only what was already on the table. The engine decides that
+        // list (see the `slam` event's doc) — a hand tile can never
+        // appear in it, which is the whole point.
+        const rattled = shake
+          .map((id) => root.querySelector<HTMLElement>(fxSelector(id)))
+          .filter((el): el is HTMLElement => el !== null);
+        if (rattled.length > 0) {
+          void animate(rattled, SHAKE_KEYFRAMES, {
+            ...SHAKE_TIMING,
+            // Rattle on IMPACT, not on the wind-up — a board that starts
+            // shaking as the arm goes up reads as the table wobbling by
+            // itself.
+            delay: SLAM_LAND_MS / 1000,
+          });
+        }
+      }),
+    [animate, scope],
+  );
+
+  return scope;
+}
+
 export function PieceLayer({ onPieceTap }: PieceLayerProps) {
   const ids = usePieceIds();
   const geometry = useGeometry();
+  const scope = useSlamFx();
   if (!geometry) return null;
 
   return (
-    <div className="piece-layer">
+    <div className="piece-layer" ref={scope}>
       {ids.map((id) => (
         <Piece key={id} id={id} onTap={onPieceTap} />
       ))}
@@ -212,7 +329,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   const onScreenW = base.w * t.scale;
   const detail = onScreenW < DETAIL_THRESHOLD_PX ? "index" : "full";
   const hover = hoverEligible
-    ? handHoverLift(handIndex, hoverIndex, base.w, base.h)
+    ? handHoverLift(handIndex, hoverIndex, artSize(geometry, meta.kind).w, base.h)
     : { liftPx: 0, xPx: 0, scale: 1 };
   // Settles to a slightly smaller rest size while it isn't the hero's
   // turn at all — see INACTIVE_HAND_SCALE's own doc.
@@ -365,6 +482,24 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         willChange: "transform",
       }}
     >
+      {/* The flourish surface — see `useSlamFx` below. A plain div, not a
+          motion component: it is driven imperatively and only ever by
+          `animate()`, so it costs one DOM node per piece and no extra
+          React work at all. It has to be its OWN element because the
+          root above owns absolute x/y/scale on a spring, and a slam's
+          relative scale keyframes would fight it; composing them on
+          nested elements is the same trick `Flipper`'s rotateY already
+          uses. Kept outside Flipper so its `preserve-3d` context is
+          undisturbed, and outside the highlight glow below so a
+          shake moves the piece rather than its decoration. */}
+      <div
+        data-fx={id}
+        style={{
+          width: base.w,
+          height: base.h,
+          transformOrigin: "center center",
+        }}
+      >
       {meta.kind === "chip" ? (
         // Chips never flip — no game here deals one face down. Skip
         // Flipper's dual-face 3D wrapper entirely: one motion.div
@@ -398,6 +533,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
           />
         </Flipper>
       )}
+      </div>
 
       {placement.highlighted ? (
         <>

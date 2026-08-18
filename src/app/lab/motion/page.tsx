@@ -118,6 +118,28 @@ export default function MotionLab() {
     );
   };
 
+  /**
+   * Caribbean dominoes' slam, on demand. In a real game it is a ~12%
+   * roll on a tile in flight, which is a poor way to look at whether the
+   * timing reads right — here it fires the exact pair of events `reduce`
+   * emits (`slam`, then the `move` for the same piece) through the real
+   * choreographer, so what plays is what a game plays.
+   */
+  const slam = () => {
+    const hand = pieces("hand", HERO);
+    const piece = hand[0];
+    if (!piece) return;
+    const table = pieces("trick");
+    push([
+      { t: "slam", piece, shake: table },
+      {
+        t: "move",
+        piece,
+        to: { zone: "trick", seat: HERO, index: table.length, count: table.length + 1, faceUp: true },
+      },
+    ]);
+  };
+
   return (
     <>
       <LabPanel>
@@ -166,6 +188,7 @@ export default function MotionLab() {
             <LabButton onClick={playTrick}>Play trick</LabButton>
             <LabButton onClick={flipHand}>Flip hand</LabButton>
             <LabButton onClick={gather}>Gather</LabButton>
+            <LabButton onClick={slam}>Slam</LabButton>
             <LabButton onClick={skip} disabled={!isPlaying}>
               Skip
             </LabButton>

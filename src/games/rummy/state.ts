@@ -9,6 +9,7 @@
 
 import type { PieceId, SeatId } from "@/engine/types";
 import { HERO } from "@/engine/types";
+import { hashString } from "@/engine/rng";
 import { HAND_DISPLAY_SUIT_ORDER, RANKS, parseCard } from "@/games/_shared/cards";
 import {
   MIN_MELD,
@@ -171,21 +172,6 @@ export function claimReactions(
       ms: CLAIM_REACTION_MIN + (hashString(`${card}|${state.round}|${discarder}|${seat}`) % span),
     }))
     .sort((a, b) => a.ms - b.ms || a.seat - b.seat);
-}
-
-/**
- * FNV-1a, returned as a non-negative 31-bit integer. The one place this
- * codebase derives "randomness" from data rather than an `Rng` — used
- * only where `reduce`'s purity forbids threading a real generator in
- * (see `claimReactions`, and `rules.ts`'s in-reduce deal shuffle).
- */
-export function hashString(key: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return Math.abs(h | 0);
 }
 
 /** Total cards held across every seat — the stalemate checkpoint's metric. */

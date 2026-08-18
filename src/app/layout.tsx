@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Cinzel, Figtree, Source_Serif_4 } from "next/font/google";
+import { MotionProvider } from "./MotionProvider";
 import "./globals.css";
 
 const cinzel = Cinzel({
@@ -40,7 +41,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${cinzel.variable} ${figtree.variable} ${sourceSerif.variable} h-full antialiased`}
     >
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        <MotionProvider>{children}</MotionProvider>
+      </body>
     </html>
   );
 }

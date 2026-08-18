@@ -20,6 +20,7 @@ import type {
   ZoneId,
 } from "@/engine/types";
 import { STAGGER } from "@/motion/presets";
+import { emitSlam } from "./fx";
 import { useTableStore } from "./store";
 
 /**
@@ -211,6 +212,15 @@ export function applyEventToTable(event: GameEvent): void {
         map[event.piece] = { ...map[event.piece]!, highlighted: event.on };
         touched = true;
       }
+      break;
+
+    case "slam":
+      // Deliberately writes NO placement. A slam changes nothing about
+      // where anything is — the `move` riding immediately after it does
+      // all of that — so `touched` stays false, `reindex` is never
+      // called, and its object-identity guarantee is untouched. See
+      // fx.ts for why this leaves the store entirely.
+      emitSlam({ piece: event.piece, shake: event.shake });
       break;
 
     default:

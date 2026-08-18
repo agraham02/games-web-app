@@ -82,6 +82,8 @@
   --duration-flip: 300ms;
   --duration-ui: 200ms;
   --duration-count: 900ms;
+  /* Caribbean dominoes' slam — rise, drop, and the board's rattle. */
+  --duration-slam: 780ms;
 
   --ease-settle: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);

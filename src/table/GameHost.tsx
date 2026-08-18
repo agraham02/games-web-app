@@ -155,10 +155,13 @@ export function GameHost<S, A>({
   // every seat on the winning SIDE — for Dominoes/LRC that's the same
   // one seat `=== winningSeat` used to check directly; for a partnership
   // game (Spades) it's both members of the winning team, and `roundWinner`
-  // never applies there (see GameRuntime.winningSeats's doc), so the
-  // fallback to `[roundWinner]` only ever actually fires for a
-  // single-winner game.
-  const winningSeats = live.winningSeats ?? (live.roundWinner !== null ? [live.roundWinner] : null);
+  // never applies there (see GameRuntime.winningSeats's doc).
+  //
+  // `roundWinningSeats` already does the "wrap the single winner"
+  // fallback internally, so this reads the same for a single-winner game
+  // (Dominoes cut-throat, LRC) and correctly crowns BOTH partners when a
+  // partnership game scores a round — team dominoes, the first to do so.
+  const winningSeats = live.winningSeats ?? live.roundWinningSeats;
   const seatViews = players(live.state, live).map((view) =>
     winningSeats?.includes(view.seat) ? { ...view, winning: true } : view,
   );

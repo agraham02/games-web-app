@@ -23,7 +23,7 @@ import type { DomAction, DomState } from "./types";
 
 function fresh(seats: number, seed = 7, target = 61) {
   const rng = createRng(seed);
-  const def = createDominoes(target);
+  const def = createDominoes({ target });
   const { state } = startRound(def.setup({ seats, rng }), rng);
   return { def, rng, state };
 }
@@ -31,7 +31,7 @@ function fresh(seats: number, seed = 7, target = 61) {
 /** Runs a whole match with bots, returning the final state. */
 function runMatch(seats: number, seed: number, target = 61): DomState {
   const rng = createRng(seed);
-  const def = createDominoes(target);
+  const def = createDominoes({ target });
   let state = def.setup({ seats, rng });
   ({ state } = startRound(state, rng));
   let guard = 0;
@@ -51,7 +51,7 @@ describe("dominoes — the deal", () => {
   it("deals 7/7/6 for 2/3/4 players and boneyards the rest", () => {
     for (const seats of [2, 3, 4]) {
       const { state } = fresh(seats);
-      const per = handSize(seats);
+      const per = handSize(seats, "classic");
       expect(per).toBe(seats >= 4 ? 6 : 7);
       for (let s = 0; s < seats; s++) expect(state.hands[s]).toHaveLength(per);
       expect(state.boneyard).toHaveLength(28 - per * seats);
@@ -118,7 +118,7 @@ describe("dominoes — playing", () => {
     for (const seats of [2, 3, 4]) {
       for (const seed of [3, 17, 88, 404]) {
         const rng = createRng(seed);
-        const def = createDominoes(61);
+        const def = createDominoes({ target: 61 });
         let state = def.setup({ seats, rng });
         ({ state } = startRound(state, rng));
         let guard = 0;
@@ -164,7 +164,7 @@ describe("dominoes — scoring", () => {
     for (const seats of [2, 3, 4]) {
       for (const seed of [1, 2, 3, 12, 33]) {
         const rng = createRng(seed);
-        const def = createDominoes(10_000); // never reaches the target
+        const def = createDominoes({ target: 10_000 }); // never reaches the target
         let state = def.setup({ seats, rng });
         ({ state } = startRound(state, rng));
         let guard = 0;
@@ -202,7 +202,7 @@ describe("dominoes — scoring", () => {
     // Hand-built rather than fished out of a seed: a blocked round is
     // rare enough that a fuzz run is a poor way to pin its tie-breaks.
     const rng = createRng(1);
-    const def = createDominoes(61);
+    const def = createDominoes({ target: 61 });
     const base = def.setup({ seats: 2, rng });
     const blocked: DomState = {
       ...base,
@@ -223,7 +223,7 @@ describe("dominoes — scoring", () => {
 
   it("scores nobody when a blocked round ties on pips and on lightest tile", () => {
     const rng = createRng(1);
-    const def = createDominoes(61);
+    const def = createDominoes({ target: 61 });
     const base = def.setup({ seats: 2, rng });
     const tied: DomState = {
       ...base,
@@ -258,7 +258,7 @@ describe("dominoes — round transition", () => {
     // holding real tiles — the case a chain-only sweep silently missed:
     // those leftover HAND tiles had no event moving them at all.
     const rng = createRng(909);
-    const def = createDominoes(10_000); // never reaches the target
+    const def = createDominoes({ target: 10_000 }); // never reaches the target
     let state = def.setup({ seats: 3, rng });
     ({ state } = startRound(state, rng));
     let guard = 0;

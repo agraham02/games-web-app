@@ -142,7 +142,7 @@ describe("chip pile clamping — collected", () => {
 /** Real chains, snapshotted after every play of a real round. */
 function chainSnapshots(seats: number, seed: number): PlacedTile[][] {
   const rng = createRng(seed);
-  const def = createDominoes(61);
+  const def = createDominoes({ target: 61 });
   let state = def.setup({ seats, rng });
   ({ state } = def.startRound!(state, rng));
 

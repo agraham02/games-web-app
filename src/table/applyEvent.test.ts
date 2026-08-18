@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyEventToTable, reindex } from "./applyEvent";
+import { onSlam, type SlamFx } from "./fx";
 import { useTableStore } from "./store";
 import { STAGGER } from "@/motion/presets";
 import type { PieceMeta, PlacementMap } from "@/engine/types";
@@ -284,5 +285,61 @@ describe("applyEventToTable — highlight", () => {
     useTableStore.getState().reset({}, {});
     expect(() => applyEventToTable({ t: "highlight", piece: "ghost", on: true })).not.toThrow();
     expect(useTableStore.getState().placements.ghost).toBeUndefined();
+  });
+});
+
+describe("applyEventToTable — slam", () => {
+  const board = (): PlacementMap => ({
+    "0-0": { zone: "line", index: 0, count: 2, faceUp: true },
+    "0-6": { zone: "line", index: 1, count: 2, faceUp: true },
+    "6-3": { zone: "hand", seat: 0, index: 0, count: 1, faceUp: true },
+  });
+  const meta: Record<string, PieceMeta> = {
+    "0-0": { kind: "tile", face: "0-0" },
+    "0-6": { kind: "tile", face: "0-6" },
+    "6-3": { kind: "tile", face: "6-3" },
+  };
+
+  it("reaches the fx channel with the piece and what it rattles", () => {
+    useTableStore.getState().reset(board(), meta);
+    const seen: SlamFx[] = [];
+    const off = onSlam((fx) => seen.push(fx));
+    applyEventToTable({ t: "slam", piece: "6-3", shake: ["0-0", "0-6"] });
+    off();
+
+    expect(seen).toEqual([{ piece: "6-3", shake: ["0-0", "0-6"] }]);
+  });
+
+  it("touches no placement at all, preserving every object identity", () => {
+    // The point of routing this outside the store: a slam moves nothing,
+    // so `reindex` must never run for it. If it did, `reset` would hand
+    // every piece a fresh object and re-render the whole table for what
+    // is purely a flourish.
+    useTableStore.getState().reset(board(), meta);
+    const before = useTableStore.getState().placements;
+
+    applyEventToTable({ t: "slam", piece: "6-3", shake: ["0-0", "0-6"] });
+
+    const after = useTableStore.getState().placements;
+    expect(after).toBe(before);
+    for (const id of Object.keys(before)) {
+      expect(after[id], id).toBe(before[id]);
+    }
+  });
+
+  it("does not throw when nothing is listening or the pieces are unknown", () => {
+    useTableStore.getState().reset({}, {});
+    expect(() =>
+      applyEventToTable({ t: "slam", piece: "ghost", shake: ["also-ghost"] }),
+    ).not.toThrow();
+  });
+
+  it("stops delivering once a listener unsubscribes", () => {
+    const seen: SlamFx[] = [];
+    const off = onSlam((fx) => seen.push(fx));
+    applyEventToTable({ t: "slam", piece: "6-3", shake: [] });
+    off();
+    applyEventToTable({ t: "slam", piece: "6-3", shake: [] });
+    expect(seen).toHaveLength(1);
   });
 });

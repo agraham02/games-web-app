@@ -3,7 +3,7 @@ import { createRng } from "@/engine/rng";
 import { isDouble, parseTile } from "@/games/_shared/tiles";
 import { ARM_REACH, ROW_PITCH, halfExtent, placeTile, tileRect } from "./board";
 import { createDominoes } from "./rules";
-import type { ArmState, ChainEnd, DomAction, PlacedTile } from "./types";
+import type { ArmState, ChainEnd, DomAction, DomMode, PlacedTile } from "./types";
 
 /**
  * The layout engine's guarantees, checked by playing real matches rather
@@ -66,15 +66,18 @@ interface Failure {
  * after each individual play so a bad placement is reported at the
  * moment it is made rather than 40 tiles later.
  */
-function auditMatch(seed: number, seats: number): Failure[] {
+function auditMatch(seed: number, seats: number, mode: DomMode = "classic"): Failure[] {
   const rng = createRng(seed);
-  const def = createDominoes(61);
+  const caribbean = mode === "caribbean";
+  const def = caribbean
+    ? createDominoes({ mode, target: 6 })
+    : createDominoes({ target: 61 });
   let state = def.setup({ seats, rng });
   ({ state } = def.startRound!(state, rng));
 
   const tiers = ["casual", "steady", "sharp"] as const;
   const failures: Failure[] = [];
-  const where = `seed ${seed}, ${seats} seats`;
+  const where = `seed ${seed}, ${seats} seats, ${mode}`;
   // Which arm each tile was laid on, so the half-plane rule can be
   // checked directly. Cleared with the chain at every new round.
   let arm = new Map<string, ChainEnd>();
@@ -176,6 +179,21 @@ describe("domino chain — the layout engine", () => {
     },
     30_000,
   );
+
+  it(
+    "holds for Caribbean too, where the whole set is in play",
+    () => {
+      // Classic never puts more than 26 tiles in reach (two stay in the
+      // boneyard); Caribbean deals all 28. The round still ends the
+      // moment a seat empties, so the ceiling is 25 — but the reachable
+      // chain SHAPES differ, and the board rules have to hold for those
+      // as well, not just for the ones a boneyard game happens to reach.
+      const failures: Failure[] = [];
+      for (const seed of SEEDS) failures.push(...auditMatch(seed, 4, "caribbean"));
+      expect(failures.map((f) => f.detail)).toEqual([]);
+    },
+    30_000,
+  );
 });
 
 describe("domino chain — corner centring", () => {
@@ -216,7 +234,7 @@ describe("domino chain — orientation", () => {
     // matching pips still touch but the wrong numbers face each other —
     // which the pip check above would catch, while this pins down why.
     const rng = createRng(4242);
-    const def = createDominoes(61);
+    const def = createDominoes({ target: 61 });
     let state = def.setup({ seats: 2, rng });
     ({ state } = def.startRound!(state, rng));
 
