@@ -186,6 +186,105 @@ describe("resolveTable", () => {
     const noHand = resolveTable({ seats: 6, width: 390, height: 844, handZone: 0 });
     expect(noHand.zones.play.h).toBeGreaterThan(withHand.zones.play.h);
   });
+
+  it("keeps the community row (poker) inside the play area and clear of every pod, everywhere", () => {
+    for (const vp of VIEWPORTS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        const community = g.zones.community;
+        const ctx = `${vp.name}/${seats} seats (${g.density})`;
+
+        expect(community.w, `${ctx}: collapsed`).toBeGreaterThan(0);
+        expect(community.h, `${ctx}: collapsed`).toBeGreaterThan(0);
+        expect(community.x, `${ctx}: left of the play area`).toBeGreaterThanOrEqual(
+          g.zones.play.x - 0.001,
+        );
+        expect(community.x + community.w, `${ctx}: right of the play area`).toBeLessThanOrEqual(
+          g.zones.play.x + g.zones.play.w + 0.001,
+        );
+        expect(community.y, `${ctx}: above the play area`).toBeGreaterThanOrEqual(
+          g.zones.play.y - 0.001,
+        );
+
+        // The one documented exception, same shape as `pileRegion`'s own:
+        // on a short landscape phone, `play.h` can be too thin to give
+        // the row its full offset above centre without pushing past
+        // `play.y` — the offset clamps down there instead, and pod
+        // clearance is not on offer at that point.
+        const offsetClamped = community.y <= g.zones.play.y + 0.001;
+        if (offsetClamped) continue;
+
+        for (const seat of g.seats) {
+          if (seat.isHero || seat.anchor !== "top") continue;
+          const pod = POD_SIZE[g.density];
+          const podBottom = seat.y + pod.h / 2;
+          expect(podBottom, `${ctx}: seat ${seat.seat}'s pod reaches the community row`)
+            .toBeLessThanOrEqual(community.y + 0.001);
+        }
+      }
+    }
+  });
+
+  it("keeps poker's pot pile below the community row and inside the play area, everywhere", () => {
+    // Regression coverage for a real reported bug: the pot pile used to
+    // share `center` (LRC's table-scaled chip zone), whose chips render
+    // nearly as large as a community card — the pile's own top edge
+    // structurally reached back up into the community row on every
+    // viewport, not just a cramped one, because the two were never
+    // actually distinct BOXES, just an assumption that a small pile
+    // "grows down" from centre. `pot` is now a real zone, geometrically
+    // anchored to `community`'s own bottom edge, so this asserts the
+    // non-overlap directly rather than trusting the assumption again.
+    for (const vp of VIEWPORTS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        const community = g.zones.community;
+        const pot = g.zones.pot;
+        const ctx = `${vp.name}/${seats} seats (${g.density})`;
+
+        expect(pot.w, `${ctx}: collapsed`).toBeGreaterThan(0);
+        expect(pot.h, `${ctx}: collapsed`).toBeGreaterThan(0);
+        expect(pot.y, `${ctx}: pot overlaps the community row`).toBeGreaterThanOrEqual(
+          community.y + community.h - 0.001,
+        );
+        expect(pot.x, `${ctx}: left of the play area`).toBeGreaterThanOrEqual(
+          g.zones.play.x - 0.001,
+        );
+        expect(pot.x + pot.w, `${ctx}: right of the play area`).toBeLessThanOrEqual(
+          g.zones.play.x + g.zones.play.w + 0.001,
+        );
+      }
+    }
+  });
+
+  it("keeps poker's stub/burnt piles below the pot and inside the play area, everywhere", () => {
+    // Same regression shape as the `pot` test above, one band further
+    // down: `stub`/`burnt` replaced Rummy's cy-centred `deck`/`discard`
+    // for poker specifically, precisely because those sit where
+    // `community`/`pot` now do.
+    for (const vp of VIEWPORTS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        const pot = g.zones.pot;
+        const ctx = `${vp.name}/${seats} seats (${g.density})`;
+
+        for (const name of ["stub", "burnt"] as const) {
+          const z = g.zones[name];
+          expect(z.w, `${ctx}: ${name} collapsed`).toBeGreaterThan(0);
+          expect(z.h, `${ctx}: ${name} collapsed`).toBeGreaterThan(0);
+          expect(z.y, `${ctx}: ${name} overlaps the pot`).toBeGreaterThanOrEqual(
+            pot.y + pot.h - 0.001,
+          );
+        }
+        // The two sit side by side, never overlapping each other.
+        const stub = g.zones.stub;
+        const burnt = g.zones.burnt;
+        expect(stub.x + stub.w, `${ctx}: stub overlaps burnt`).toBeLessThanOrEqual(
+          burnt.x + 0.001,
+        );
+      }
+    }
+  });
 });
 
 describe("fanSlot", () => {

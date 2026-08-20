@@ -64,7 +64,11 @@ const Z: Record<string, number> = {
   trick: 400,
   collected: 850,
   hand: 900,
+  community: 940,
+  pot: 945,
   center: 950,
+  stub: 120,
+  burnt: 320,
 };
 const Z_HERO_HAND = 1000;
 const Z_SELECTED = 5000;
@@ -115,6 +119,22 @@ function boxCentreXY(b: Box): { x: number; y: number } {
 
 function boxCentre(b: Box) {
   return { cx: b.x + b.w / 2, cy: b.y + b.h / 2 };
+}
+
+/**
+ * A small, capped, diagonally-lifted face-down stack — the low-emphasis
+ * look poker's `stub` and `burnt` zones both want (see their own
+ * `ZoneName` docs): neither pile is something a player reads card by
+ * card, so a stack reading as "a few cards set aside" is more honest
+ * than spreading them into a fan for no reason. Shared by both cases
+ * below rather than duplicated, since they differ only in which zone
+ * box they read.
+ */
+function miniStackSlot(zone: Box, index: number) {
+  const { cx, cy } = boxCentre(zone);
+  const lift = Math.min(index, 6) * 0.6;
+  const tilt = ((index * 37) % 9) - 4;
+  return { cx: cx + lift, cy: cy - lift, tilt };
 }
 
 /**
@@ -837,6 +857,83 @@ export function layoutPiece(
       );
       const { x, y } = centred(clamped.cx, clamped.cy, g);
       return { x, y, rotate: 0, scale: miniScale, z, opacity };
+    }
+
+    /* --------------------------------------------- community */
+    case "community": {
+      // A fixed row of 5 slots — poker's community cards never overlap
+      // and stay wherever they land once revealed, unlike every fanned
+      // pile in this file. Laid left-to-right across the geometry box
+      // `resolveTable` already sized to fit the play area.
+      const zone = g.zones.community;
+      const gap = g.card.w * 0.15;
+      const totalW = g.card.w * 5 + gap * 4;
+      // On the rare viewport where `resolveTable`'s own clamp engaged
+      // (the box came back narrower than 5 full cards), compress the
+      // GAP first rather than the cards themselves — the same
+      // "compress before you shrink" instinct compress-then-pan's hand
+      // fan already follows.
+      const fit = Math.min(1, zone.w / totalW);
+      const effGap = gap * fit;
+      const rowW = g.card.w * 5 + effGap * 4;
+      const originX = zone.x + zone.w / 2 - rowW / 2 + g.card.w / 2;
+      const ccx = originX + p.index * (g.card.w + effGap);
+      const ccy = zone.y + zone.h / 2;
+      const { x, y } = centred(ccx, ccy, g);
+      return { x, y, rotate: 0, scale: tableScale, z, opacity };
+    }
+
+    /* --------------------------------------------------- pot */
+    case "pot": {
+      // Poker's own decorative pot pile — see engine/types.ts's `ZoneId`
+      // doc for why this is a separate zone from `center` rather than a
+      // retune of it. Drawn at MINI scale (the same size `collected`'s
+      // per-seat piles already use) so a growing pot never competes with
+      // the community row for the same footprint a table-scaled chip
+      // would.
+      //
+      // Grows DOWN from the zone's own top edge, not its centre — a
+      // shallow pot (a chip or two) then sits flush against the gap
+      // below the community row instead of floating mid-box, sized as if
+      // for the deepest pot the table will ever show. Clamped to the
+      // ZONE itself, not the whole play area: `geometry.ts` already sized
+      // that zone to never overlap `community`, so keeping the pile
+      // inside it is what keeps that guarantee true on screen too.
+      const zone = g.zones.pot;
+      const chipSize = g.miniCard.w;
+      const cols = 5;
+      const col = p.index % cols;
+      const row = Math.floor(p.index / cols);
+      const colSpacing = chipSize * 0.8;
+      const rowSpacing = chipSize * 0.85;
+      const rowCount = Math.min(cols, p.count - row * cols);
+
+      const cx = zone.x + zone.w / 2;
+      const px = cx + (col - (rowCount - 1) / 2) * colSpacing;
+      const py = zone.y + chipSize / 2 + row * rowSpacing;
+
+      const clamped = clampToBox(px, py, zone, g.miniCard.w / 2, g.miniCard.h / 2);
+      const { x, y } = centred(clamped.cx, clamped.cy, g);
+      return { x, y, rotate: 0, scale: miniScale, z, opacity };
+    }
+
+    /* --------------------------------------------------- stub */
+    case "stub": {
+      // Poker's own remaining-deck stub — see engine/types.ts's `ZoneId`
+      // doc for why this is a separate zone from Rummy's `"deck"` rather
+      // than a repositioning of it.
+      const { cx, cy, tilt } = miniStackSlot(g.zones.stub, p.index);
+      const { x, y } = centred(cx, cy, g);
+      return { x, y, rotate: tilt, scale: miniScale, z, opacity };
+    }
+
+    /* -------------------------------------------------- burnt */
+    case "burnt": {
+      // Poker's own burn-card pile — see engine/types.ts's `ZoneId` doc
+      // for why this is a separate zone from Rummy's `"discard"`.
+      const { cx, cy, tilt } = miniStackSlot(g.zones.burnt, p.index);
+      const { x, y } = centred(cx, cy, g);
+      return { x, y, rotate: tilt, scale: miniScale, z, opacity };
     }
 
     /* ------------------------------------------------ centre */

@@ -48,6 +48,15 @@ export interface SeatView {
    * abstract, which is why it's a boolean rather than a team index.
    */
   partner?: boolean;
+  /**
+   * Dealer/small-blind/big-blind marker — poker's own addition; every
+   * other game leaves this unset. Deliberately a single badge per seat,
+   * even heads-up (where the button seat is technically also the small
+   * blind): real tables mark it with one disc, and the other seat still
+   * reads unambiguously as the big blind. See `positionBadge` in
+   * `src/games/poker/state.ts` for how it's derived.
+   */
+  badge?: "D" | "SB" | "BB";
 }
 
 function initialsOf(name: string): string {
@@ -122,6 +131,7 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
           {initialsOf(view.name)}
         </div>
         {view.thinking ? <ThinkingRing /> : null}
+        {view.badge ? <PositionBadge label={view.badge} /> : null}
       </div>
 
       <div className={`max-w-full truncate ${s.name} leading-none font-semibold text-bone-50`}>
@@ -142,6 +152,29 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
     </motion.div>
   );
 });
+
+/**
+ * Dealer/small-blind/big-blind marker — poker only; every other game
+ * leaves `SeatView.badge` unset. Rests on the avatar's own corner
+ * rather than appending above it, the same "overlap, don't add height"
+ * reasoning `WinnerCrown`'s own doc gives: a top-row pod's headroom is
+ * thin by design, so this has to fit within the avatar's existing
+ * footprint. Opposite corner from `WinnerCrown` (top) so the two never
+ * fight for the same few pixels on a seat that's both dealer and, on
+ * the final hand, the match winner.
+ */
+function PositionBadge({ label }: { label: "D" | "SB" | "BB" }) {
+  const title = label === "D" ? "Dealer" : label === "SB" ? "Small blind" : "Big blind";
+  return (
+    <div
+      aria-label={title}
+      title={title}
+      className="absolute -right-1 -bottom-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-brass-400 px-1 text-[9px] leading-none font-extrabold text-felt-950 ring-1 ring-felt-950/60"
+    >
+      {label}
+    </div>
+  );
+}
 
 /** Bot deliberation, made visible. */
 function ThinkingRing() {

@@ -35,6 +35,48 @@ export type ZoneId =
   | "collected"
   | "center"
   /**
+   * A fixed row of community-card slots — poker's flop/turn/river.
+   * Unlike every other shared pile, position here is a fixed slot by
+   * `index` (0-4), not a fan: community cards never overlap and are
+   * revealed incrementally (3, then 1, then 1), each staying visible for
+   * the rest of the hand once dealt.
+   */
+  | "community"
+  /**
+   * Poker's own decorative pot pile — deliberately NOT `"center"`.
+   * `"center"` (LRC's pot/dice overlay) draws its chips at table-card
+   * scale, which is fine when nothing else shares that space; poker's
+   * community row does, and a table-scaled chip pile's own footprint
+   * structurally reaches back up past table-centre and into it on every
+   * viewport, not just a cramped one. This zone draws its chips at MINI
+   * scale (the same size LRC's own per-seat `collected` piles already
+   * use) and is geometrically anchored below the community row with a
+   * real gap, so the two can never overlap by construction.
+   */
+  | "pot"
+  /**
+   * Poker's own remaining-deck stub — deliberately NOT `"deck"`.
+   * `"deck"` is Rummy's stock pile, positioned dead centre (`cy`)
+   * because Rummy has nothing else competing for that space. Poker does
+   * (`"community"`/`"pot"` both live there), and unlike Rummy's stock —
+   * whose visible depth is information a player plans around — nobody
+   * acts on how many cards are left in a poker deck, so it doesn't need
+   * a defended, central spot: a small tucked-away pile is enough. See
+   * `"burnt"` for its sibling pile.
+   */
+  | "stub"
+  /**
+   * Poker's burnt cards — one face-down card set aside on every street
+   * transition (see `rules.ts`'s `advanceStreet`). Deliberately NOT
+   * `"discard"` for the same reason `"stub"` is not `"deck"`: Rummy's
+   * discard is a real, centrally-positioned pile a player reads and
+   * reasons about; a poker burn card is never looked at again once set
+   * aside; it needs a real GameEvent to fly to (so the burn itself reads
+   * as a beat, per this build's "nice, clean" street-transition ask) but
+   * not Rummy's contested table-centre real estate afterward.
+   */
+  | "burnt"
+  /**
    * A chain of pieces laid end to end — dominoes' line of play. Unlike
    * every other zone, position here is NOT derived from index/count:
    * where a domino sits depends on the exact run of tiles before it

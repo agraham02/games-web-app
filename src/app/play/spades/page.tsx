@@ -585,6 +585,14 @@ function pendingLabel(state: SpadesState, seat: SeatId): string {
    Setup
    ============================================================ */
 
+/** What each tier actually does — see `estimateTricks`/`choosePlay` in
+ * bots.ts. */
+const SPADES_BLURBS = {
+  casual: "Bids near the floor and plays low — never really counts its hand.",
+  steady: "Bids off a real hand-strength read, and wins tricks as cheaply as it can.",
+  sharp: "Protects its own nil, and won't spend a winner overtaking a partner who already has it.",
+};
+
 function SetupScreen({
   jokers,
   twoOfSpadesHigh,
@@ -630,7 +638,12 @@ function SetupScreen({
         {/* Applies to your partner too — a Spades table is 2v2, and a
             partner who plays a different game from the opponents would be
             a much stranger setting than one difficulty for the table. */}
-        <DifficultyPicker value={difficulty} onChange={onDifficultyChange} label="Table" />
+        <DifficultyPicker
+          value={difficulty}
+          onChange={onDifficultyChange}
+          label="Table"
+          blurbs={SPADES_BLURBS}
+        />
       </div>
 
       <button

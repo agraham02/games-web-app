@@ -1,9 +1,5 @@
 import Link from "next/link";
 
-const GAMES = [
-  { name: "Poker", detail: "2–10 seats · no-limit hold'em", status: "planned" },
-] as const;
-
 export default function Home() {
   return (
     /* The PAGE scrolls, not the body — `body` is `overflow: hidden` on
@@ -18,11 +14,11 @@ export default function Home() {
           Table Games
         </h1>
         <p className="mt-3 max-w-lg text-sm leading-relaxed text-bone-400">
-          Dominoes, Left Right Center, Spades and Rummy 500 have real rules,
-          real bots and a full table. Dominoes plays two ways — Block &amp; Draw,
-          or the Caribbean game four-handed with the whole set dealt and no
-          boneyard. The rest is still exercised through the lab harness: seat
-          geometry, the piece layer, motion pacing and phase screens.
+          Dominoes, Left Right Center, Spades, Rummy 500 and Poker have real
+          rules, real bots and a full table. Dominoes plays two ways — Block
+          &amp; Draw, or the Caribbean game four-handed with the whole set
+          dealt and no boneyard. Poker is no-limit hold&apos;em with real
+          side pots, 2–10 seats.
         </p>
 
         <div className="mt-7 flex flex-wrap gap-3">
@@ -51,34 +47,18 @@ export default function Home() {
             Rummy 500
           </Link>
           <Link
+            href="/play/poker"
+            className="inline-block rounded-lg bg-bone-50/6 px-6 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
+          >
+            Poker
+          </Link>
+          <Link
             href="/lab/seats"
             className="inline-block rounded-lg bg-bone-50/6 px-6 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
           >
             Open the lab
           </Link>
         </div>
-
-        <span className="rule-brass my-10 block" />
-
-        <span className="eyebrow">Games to come</span>
-        <ul className="mt-4 flex flex-col gap-2">
-          {GAMES.map((g) => (
-            <li
-              key={g.name}
-              className="flex items-center justify-between rounded-xl bg-bone-50/4 px-4 py-3 ring-1 ring-bone-50/8"
-            >
-              <span className="flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-bone-50">
-                  {g.name}
-                </span>
-                <span className="text-[11px] text-bone-400">{g.detail}</span>
-              </span>
-              <span className="rounded-full bg-bone-50/6 px-2.5 py-1 text-[10px] font-bold tracking-wider text-bone-400 uppercase">
-                {g.status}
-              </span>
-            </li>
-          ))}
-        </ul>
       </div>
     </main>
   );

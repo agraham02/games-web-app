@@ -1960,6 +1960,13 @@ function pendingLabel(state: RummyState, seat: SeatId): string {
    Setup
    ============================================================ */
 
+/** What each tier actually does — see `LAYOFF_ATTENTION` in bots.ts. */
+const RUMMY_BLURBS = {
+  casual: "Plays it safe and misses things. Good for learning the game.",
+  steady: "Competent and fair. Will punish a loose discard, not every one.",
+  sharp: "Reads the board closely — rarely misses a lay-off, and won't feed your melds.",
+};
+
 function SetupScreen({
   seats,
   onSeats,
@@ -2003,7 +2010,7 @@ function SetupScreen({
           />
         </label>
 
-        <DifficultyPicker value={difficulty} onChange={onDifficulty} />
+        <DifficultyPicker value={difficulty} onChange={onDifficulty} blurbs={RUMMY_BLURBS} />
 
         <div className="flex flex-col items-center gap-2">
           <span className="text-xs font-bold text-bone-200">Play to</span>

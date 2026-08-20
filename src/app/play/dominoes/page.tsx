@@ -689,6 +689,13 @@ function dominoScenarios(live: Live) {
    Setup
    ============================================================ */
 
+/** What each tier actually does — see `judge()` in bots.ts. */
+const DOMINO_BLURBS = {
+  casual: "Plays whatever's in hand, no plan behind it.",
+  steady: "Sheds its heaviest tiles first — enough to punish a careless hand.",
+  sharp: "Keeps its own options open, and squeezes a block when one's going cheap.",
+};
+
 function SetupScreen({
   mode,
   onModeChange,
@@ -856,7 +863,7 @@ function SetupScreen({
       ) : null}
 
       <div className="flex w-full max-w-xs">
-        <DifficultyPicker value={difficulty} onChange={onDifficultyChange} />
+        <DifficultyPicker value={difficulty} onChange={onDifficultyChange} blurbs={DOMINO_BLURBS} />
       </div>
 
       <button
