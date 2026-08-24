@@ -296,6 +296,7 @@ export class RoomRuntime {
       roundWinningSeats: resolveRoundWinningSeats(after),
       seatNames,
       botSeats,
+      lastAction: safeLastAction(frame.lastAction, truthAfter),
     };
   }
 
@@ -479,4 +480,28 @@ function fingerprint(state: unknown): string {
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return hash.toString(16);
+}
+
+/**
+ * An action is safe to forward only if every piece it names is one this
+ * viewer may already identify.
+ *
+ * Checked by scanning the serialised action for concealed ids rather than
+ * by understanding any game's action shape — there are five games and the
+ * shapes have nothing in common, and a per-game allowlist is a thing to
+ * forget to update. Withholding one costs a screen a flourish; forwarding
+ * one leaks a card.
+ */
+function safeLastAction(
+  last: { seat: SeatId; action: unknown } | null,
+  truth: PlacementMap,
+): { seat: SeatId; action: unknown } | null {
+  if (!last) return null;
+  const wire = JSON.stringify(last.action);
+  if (wire === undefined) return null;
+  for (const [id, placement] of Object.entries(truth)) {
+    if (placement.faceUp) continue;
+    if (wire.includes(`"${id}"`)) return null;
+  }
+  return last;
 }

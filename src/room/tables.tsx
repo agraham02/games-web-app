@@ -22,6 +22,7 @@ import type { GameId } from "@/session/registry";
 import type { FrameView, RoomView } from "@/session/protocol";
 import type { RoomApi } from "./useRoom";
 import { DominoesOnline } from "./tables/DominoesOnline";
+import { LrcOnline } from "./tables/LrcOnline";
 import { PokerOnline } from "./tables/PokerOnline";
 import { SpadesOnline } from "./tables/SpadesOnline";
 
@@ -46,6 +47,7 @@ export const TABLES: Partial<Record<GameId, OnlineTableComponent>> = {
   spades: SpadesOnline,
   poker: PokerOnline,
   dominoes: DominoesOnline,
+  lrc: LrcOnline,
 };
 
 export function tableFor(gameId: GameId | null): OnlineTableComponent | null {

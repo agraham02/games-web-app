@@ -224,6 +224,19 @@ function GamePicker({ api }: { api: RoomApi }) {
             </div>
           ) : null}
 
+          {entry.id === "lrc" ? (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-bone-200">Rounds to win</span>
+              <NumberStepper
+                value={(room.settings.target as number) ?? 3}
+                min={1}
+                max={20}
+                onChange={(v) => leader && update(entry.id, { ...room.settings, target: v })}
+                label="rounds to win"
+              />
+            </div>
+          ) : null}
+
           {entry.id === "dominoes" ? (
             <>
               <div className="flex flex-wrap gap-2">

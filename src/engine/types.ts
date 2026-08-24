@@ -438,6 +438,22 @@ export interface GameDefinition<S, A> {
   /** Redacts hidden information. Bots for seat N only ever see view(N). */
   playerView(state: S, viewer: SeatId): S;
 
+  /**
+   * Resolves any randomness a submitted action carries, authoritatively.
+   *
+   * `reduce` takes no rng on purpose, so a game whose move has a random
+   * OUTCOME has to bake that outcome into the action before reducing —
+   * LRC's roll is `{t:"roll", dice:[...]}`, already decided. Offline the
+   * client resolving that is harmless, because offline the client IS the
+   * authority. Online it is a cheat vector: a player who can author their
+   * own dice can choose them.
+   *
+   * So the session re-resolves every human action through this before it
+   * reduces, and whatever the client sent is discarded. Implement it only
+   * if a human action can carry a random outcome; nearly nothing does.
+   */
+  completeAction?(state: S, action: A, seat: SeatId, rng: Rng): A;
+
   currentSeat(state: S): SeatId | null;
   isOver(state: S): boolean;
 

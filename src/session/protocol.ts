@@ -145,6 +145,18 @@ export interface FrameView {
   seatNames: Array<string | null>;
   /** Which seats a bot is currently playing — drives the "away" pod treatment. */
   botSeats: SeatId[];
+  /**
+   * The move that produced this frame, for a screen that needs to show
+   * WHAT just happened rather than only its effect — LRC's dice overlay
+   * reads the roll off it.
+   *
+   * Null when the action names something this viewer is not allowed to
+   * identify. Spades' blind-nil exchange is the case: the action carries
+   * the two cards being passed, and those are concealed from the
+   * receiving side, so shipping the action would hand over exactly what
+   * the redaction elsewhere is protecting.
+   */
+  lastAction: { seat: SeatId; action: unknown } | null;
 }
 
 export type ServerErrorCode = RoomError | "no-room" | "bad-message" | "no-such-room" | "rate-limited";

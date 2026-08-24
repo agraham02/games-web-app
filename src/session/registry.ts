@@ -38,13 +38,11 @@ export interface GameEntry {
   /**
    * Whether this game is playable in a ROOM.
    *
-   * Two different things make this false. LRC has no
-   * online TABLE yet — the engine and the server handle them fine, but a
-   * room could not draw them, so offering them would deal a real game onto
-   * a screen showing a different one. `src/room/tables.test.tsx` holds the
-   * two lists together so that cannot silently happen again.
+   * `src/room/tables.test.tsx` holds this list and the room's table
+   * registry together, so a game can never be offered that the client
+   * cannot actually draw.
    *
-   * Rummy 500 is false for a deeper reason, and will stay false longer:
+   * Rummy 500 is the one that is false, and for a rules reason:
    * `currentSeat` returns `HERO` outright while a claim window is open,
    * `startRound` branches on `dealer === HERO`, and the claim race is
    * timed by a `setTimeout` in the play page rather than by anything the
@@ -148,7 +146,7 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 3,
     maxSeats: 10,
     defaultSeats: 6,
-    online: false,
+    online: true,
     teams: () => false,
     parse: (raw) => ({ target: int(raw.target, 1, 20, 3) }),
     create: (s) => createLrc(s.target as number),

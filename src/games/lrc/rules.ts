@@ -35,6 +35,8 @@ import type {
 } from "@/engine/types";
 import { HERO } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
+import { rollAction } from "./dice";
+import { diceCountFor } from "./state";
 import type { LrcAction, LrcState } from "./types";
 import { lrcBots } from "./bots";
 import {
@@ -159,8 +161,16 @@ export function reduce(state: LrcState, action: LrcAction): ReduceResult<LrcStat
   // oldest-held first — a stable pre-roll snapshot, so a later die in
   // this same roll never double-claims a chip an earlier die already
   // moved away.
+  // A beat before anything moves, so the dice can be READ before the
+  // chips they decided start flying. This used to be done by the play
+  // screen holding its own roll back for the length of the tumble, which
+  // it could only do because it had rolled the dice itself — and rolling
+  // your own dice is exactly what an online player must not do. Making it
+  // an event puts the beat under the choreographer, where it obeys skip,
+  // the speed multiplier and reduced motion like every other pause.
   const owned = ownedChips(state, seat);
   let cursor = 0;
+  if (action.dice.length > 0) events.push({ t: "pause" });
 
   for (const face of action.dice) {
     if (face === "dot") continue;
@@ -306,6 +316,22 @@ export function playerView(state: LrcState): LrcState {
   return state;
 }
 
+/**
+ * Rolls the dice for real, discarding whatever the client sent.
+ *
+ * LRC is the only game in this app whose human action carries a random
+ * outcome, so it is the only one that needs this. Offline it changes
+ * nothing that matters — the same generator resolves it either way — but
+ * it is what stops an online player from choosing their own roll.
+ *
+ * The dice COUNT is a function of state (how many chips you still hold),
+ * so it is derived here rather than trusted from the action.
+ */
+export function completeAction(state: LrcState, action: LrcAction, seat: SeatId, rng: Rng): LrcAction {
+  if (action.t !== "roll") return action;
+  return rollAction(rng, diceCountFor(state, seat));
+}
+
 export function currentSeat(state: LrcState): SeatId | null {
   if (!state.dealt || state.result !== null || state.winner !== null) return null;
   return state.turn;
@@ -331,6 +357,9 @@ export function createLrc(target: number = LRC_DEFAULT_TARGET): GameDefinition<L
     pieces,
     placements,
     playerView,
+    // Bound to the state at submit time: the number of dice depends on how
+    // many chips the seat still holds, which only the state knows.
+    completeAction,
     currentSeat,
     isOver,
     startRound,

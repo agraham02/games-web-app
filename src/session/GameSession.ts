@@ -329,9 +329,18 @@ export class GameSession<S, A> {
       return { ok: false, reason: "not-your-turn" };
     }
 
-    const { state: next, events } = this.definition.reduce(this.state, action);
+    // Anything random in the action is re-resolved here, against the
+    // session's own generator, and whatever the client sent is thrown
+    // away. Doing it unconditionally rather than only when the value
+    // looks missing is the point: a client that can supply a roll can
+    // supply a good one.
+    const resolved = this.definition.completeAction
+      ? this.definition.completeAction(this.state, action, seat, this.rng)
+      : action;
+
+    const { state: next, events } = this.definition.reduce(this.state, resolved);
     this.state = next;
-    this.last = { seat, action };
+    this.last = { seat, action: resolved };
     this.emit(events, null);
     return { ok: true, animated: events.length > 0 };
   }

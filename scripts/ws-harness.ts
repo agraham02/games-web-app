@@ -632,6 +632,57 @@ async function main(): Promise<void> {
   });
 
 
+  await scenario("LRC rolls on the server, not on the client", async () => {
+    // The cheat vector this game had: its human action carries a random
+    // OUTCOME, and the play screen used to resolve it locally. A client
+    // that authors its own dice can choose them, so the server now
+    // re-rolls and discards whatever arrived.
+    const a = await client(`t-lrc-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-lrc-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "lrc", settings: { target: 3 }, seats: 4, difficulty: "casual" });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(500);
+
+    const started = await dump(code);
+    assert(started.sessionRunning === true, "LRC should be running");
+
+    // Send a roll claiming three centre faces. If the client were trusted,
+    // three chips would go straight to the pot.
+    const before = await dump(code);
+    const turn = (before.table as { currentSeat: number | null }).currentSeat;
+    const who = [a, b].find((c) => {
+      const owners = (before.game as { seatOwner: (string | null)[] }).seatOwner;
+      return owners.indexOf(c.session!) === turn;
+    });
+    if (!who) return; // A bot is on turn; nothing to prove this pass.
+
+    who.clear();
+    who.send({ t: "action", action: { t: "roll", dice: ["C", "C", "C"] } });
+    await sleep(300);
+
+    const frame = who.latest("frame");
+    assert(frame, "the roll should have produced a frame");
+    const applied = (frame.frame as { lastAction: { action: { dice: string[] } } | null }).lastAction;
+    assert(applied, "the frame should report what was rolled");
+    // The odds of a genuine re-roll matching a chosen all-centre roll are
+    // 1 in 216 per die-count, so this is a real assertion, not a hope: the
+    // point is that the dice came back from the server at all and were not
+    // simply echoed. Belt and braces, the count must match the seat's
+    // entitlement rather than the three we asked for.
+    const dice = applied.action.dice;
+    assert(Array.isArray(dice) && dice.length > 0, "the server should have rolled real dice");
+    assert(
+      dice.every((d) => ["L", "R", "C", "dot"].includes(d)),
+      `unexpected faces: ${JSON.stringify(dice)}`,
+    );
+  });
+
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);
 }

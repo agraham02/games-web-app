@@ -216,10 +216,9 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     submitAction: (action) => opts.submit(action),
     rng,
     skip: choreographer.skip,
-    // Frames are per-viewer and carry no action log. Nothing Spades reads
-    // needs it; LRC's play screen does (it shows the dice that were just
-    // rolled), which is one of the things to settle when LRC goes online.
-    lastAction: null,
+    // Withheld by the server when the action names a piece this viewer
+    // may not identify — see `safeLastAction`.
+    lastAction: applied.lastAction as { seat: SeatId; action: A } | null,
     // Both meaningless here: the server owns the clock, so there is never a
     // turn sitting locally waiting to be revealed.
     pendingReveal: false,
