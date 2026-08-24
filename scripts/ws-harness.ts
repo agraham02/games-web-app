@@ -594,6 +594,44 @@ async function main(): Promise<void> {
   });
 
 
+  await scenario("Dominoes runs online, with the boneyard concealed", async () => {
+    // A third game, and the one whose hidden pile is not a deck: the
+    // boneyard is drawn from during play, so it has to stay concealed
+    // after the deal rather than only through it.
+    const a = await client(`t-dom-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-dom-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "dominoes", settings: { mode: "classic" }, seats: 4, difficulty: "casual" });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(500);
+
+    const state = await dump(code);
+    assert(state.sessionRunning === true, "dominoes should be running");
+
+    const frame = a.latest("frame");
+    assert(frame, "Ada should have been dealt in");
+    const f = frame.frame as {
+      seat: number;
+      state: { hands: Record<string, string[]>; boneyard: string[] };
+      placements: Record<string, unknown>;
+    };
+    // Her own hand is real; everybody else's and the boneyard are not.
+    const mine = f.state.hands[String(f.seat)] ?? [];
+    assert(mine.length > 0 && !mine.includes("?"), "Ada should hold real tiles");
+    for (const [seat, hand] of Object.entries(f.state.hands)) {
+      if (Number(seat) === f.seat) continue;
+      assert(hand.every((t) => t === "?"), `seat ${seat}'s tiles leaked`);
+    }
+    assert(f.state.boneyard.every((t) => t === "?"), "the boneyard leaked");
+    const standIns = Object.keys(f.placements).filter((k) => k.startsWith("#"));
+    assert(standIns.length > 0, "concealed tiles should render as stand-ins");
+  });
+
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);
 }

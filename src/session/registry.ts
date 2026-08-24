@@ -38,7 +38,7 @@ export interface GameEntry {
   /**
    * Whether this game is playable in a ROOM.
    *
-   * Two different things make this false. Dominoes and LRC have no
+   * Two different things make this false. LRC has no
    * online TABLE yet — the engine and the server handle them fine, but a
    * room could not draw them, so offering them would deal a real game onto
    * a screen showing a different one. `src/room/tables.test.tsx` holds the
@@ -109,7 +109,7 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 4,
     defaultSeats: 4,
-    online: false,
+    online: true,
     teams: (s) => s.mode === "caribbean" && s.teams === true,
     parse: (raw) => {
       const mode = pick(raw.mode, ["classic", "caribbean"] as const, "classic");

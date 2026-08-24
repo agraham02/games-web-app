@@ -224,6 +224,55 @@ function GamePicker({ api }: { api: RoomApi }) {
             </div>
           ) : null}
 
+          {entry.id === "dominoes" ? (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {(["classic", "caribbean"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={!leader}
+                    onClick={() =>
+                      update(entry.id, { ...room.settings, mode }, mode === "caribbean" ? 4 : room.seats)
+                    }
+                    className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                      (room.settings.mode ?? "classic") === mode
+                        ? "bg-brass-400 text-felt-950"
+                        : "bg-bone-50/6 text-bone-300 ring-1 ring-bone-50/16"
+                    }`}
+                  >
+                    {mode === "classic" ? "Block & Draw" : "Caribbean"}
+                  </button>
+                ))}
+              </div>
+              {room.settings.mode === "caribbean" ? (
+                <>
+                  <Toggle
+                    label="Teams"
+                    hint="Partners across the table — seats 1 and 3 against 2 and 4."
+                    checked={room.settings.teams === true}
+                    disabled={!leader}
+                    onChange={(v) => update(entry.id, { ...room.settings, teams: v })}
+                  />
+                  <Toggle
+                    label="Key tile bonus"
+                    hint="Going out on the only tile that could have been played is worth two games."
+                    checked={room.settings.keyTileBonus === true}
+                    disabled={!leader}
+                    onChange={(v) => update(entry.id, { ...room.settings, keyTileBonus: v })}
+                  />
+                  <Toggle
+                    label="Six love"
+                    hint="Your score returns to zero whenever the other side takes a round."
+                    checked={room.settings.sixLove === true}
+                    disabled={!leader}
+                    onChange={(v) => update(entry.id, { ...room.settings, sixLove: v })}
+                  />
+                </>
+              ) : null}
+            </>
+          ) : null}
+
           {entry.id === "poker" ? (
             <>
               <div className="flex items-center justify-between gap-3">
