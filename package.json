@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "tsx watch --clear-screen=false server.ts",
     "build": "next build",
-    "start": "next start",
+    "start": "cross-env NODE_ENV=production tsx server.ts",
     "lint": "eslint src --max-warnings=0",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "dev:next": "next dev",
+    "harness": "tsx scripts/ws-harness.ts"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -24,6 +26,7 @@
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.6.0",
     "vaul": "^1.1.2",
+    "ws": "^8.21.3",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -33,10 +36,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.12",
     "typescript": "^5",
     "vitest": "^3.2.7"
   }

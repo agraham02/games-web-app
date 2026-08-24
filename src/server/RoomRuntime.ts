@@ -1,0 +1,482 @@
+/**
+ * One room, live: its state machine, its game session, and everyone
+ * currently attached to it.
+ *
+ * Everything genuinely hard about multiplayer that is not pure logic lives
+ * here, and it is worth naming what those things are before reading on.
+ *
+ * **Nobody waits for a slow client.** Frames are pushed and forgotten. A
+ * client that cannot keep up gets its backlog dropped and the newest frame
+ * instead, which it can apply on its own because every frame is a complete
+ * snapshot rather than a delta. So a player on a bad connection sees the
+ * table jump to the present rather than crawl through history, and the
+ * other five players never notice they were there.
+ *
+ * **Every recipient gets a different payload.** The same server-side turn
+ * produces a different `state`, `placements` and even `events` for each
+ * viewer, because each is redacted for that seat. This is the one place
+ * those diverge, and the one place a mistake would hand somebody else's
+ * hand to a spectator.
+ *
+ * **The session is told who is human, not who is connected.** A seat is
+ * played by a bot whenever its owner is disconnected OR has stepped back to
+ * the lobby, and the changeover is immediate — `isSeatLive` is a live read,
+ * so the very next turn routes to a bot with no reshuffling of state.
+ */
+
+import type { BotDifficulty, PieceId, PieceMeta, PlacementMap, SeatId } from "@/engine/types";
+import type { Rng } from "@/engine/rng";
+import { GameSession, type SessionFrame } from "@/session/GameSession";
+import { gameEntry, type GameId, type RawSettings } from "@/session/registry";
+import { projectEvents, redactPlacements } from "@/session/redact";
+import {
+  applyCommand,
+  connectedCount,
+  isSeatLive,
+  openSeats,
+  orderedMembers,
+  seatOf,
+  type Room,
+  type RoomCommand,
+  type RoomEffect,
+  type RoomError,
+  type SessionId,
+} from "@/session/room";
+import {
+  extractRound,
+  extractRoundWinner,
+  extractWinner,
+  resolveRoundWinningSeats,
+  resolveWinningSeats,
+} from "@/session/structural";
+import type { FrameView, MemberView, RoomView, ServerMessage } from "@/session/protocol";
+import type { Clock } from "@/session/clock";
+import { log } from "./log";
+
+/**
+ * The seat a spectator "occupies". Every game's `placements` and
+ * `playerView` compare `seat === viewer` to decide what is face-up, so a
+ * viewer number that matches no seat yields a table with every hand face
+ * down — which is exactly a spectator's entitlement, achieved without a
+ * single game knowing spectators exist.
+ */
+export const SPECTATOR_SEAT: SeatId = -1;
+
+/**
+ * How far behind a socket may fall before it is caught up rather than fed.
+ * Measured in bytes still queued by the transport, which is the only
+ * honest signal available: a client that has stopped reading shows up as a
+ * send buffer that never drains.
+ */
+const BACKPRESSURE_BYTES = 256 * 1024;
+
+export interface Connection {
+  send(message: ServerMessage): void;
+  close(): void;
+  /** Bytes written but not yet flushed to the network. */
+  bufferedAmount(): number;
+}
+
+export interface RoomRuntimeOptions {
+  room: Room;
+  clock: Clock;
+  rng: Rng;
+  /** Called when the room has no reason to exist any more. */
+  onEmpty: (code: string) => void;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySession = GameSession<any, any>;
+
+export class RoomRuntime {
+  room: Room;
+
+  private readonly clock: Clock;
+  private readonly rng: Rng;
+  private readonly onEmpty: (code: string) => void;
+  private readonly connections = new Map<SessionId, Connection>();
+
+  private session: AnySession | null = null;
+  /**
+   * The state as it stood before the frame currently being processed.
+   * Redaction needs both sides: `projectEvents` works out that a card was
+   * concealed a moment ago and is public now by comparing them, which is
+   * what tells it to send an `unmask` ahead of the play.
+   */
+  private previous: unknown = null;
+
+  constructor(opts: RoomRuntimeOptions) {
+    this.room = opts.room;
+    this.clock = opts.clock;
+    this.rng = opts.rng;
+    this.onEmpty = opts.onEmpty;
+  }
+
+  get code(): string {
+    return this.room.code;
+  }
+
+  get hasGame(): boolean {
+    return this.session !== null;
+  }
+
+  /* ---------- connections ---------- */
+
+  attach(session: SessionId, connection: Connection): void {
+    // A second tab for the same identity replaces the first rather than
+    // doubling it: the seat belongs to the person, not to the socket, and
+    // two live sockets for one seat would double every frame and leave
+    // "who is really here" ambiguous on disconnect.
+    const existing = this.connections.get(session);
+    if (existing && existing !== connection) existing.close();
+    this.connections.set(session, connection);
+    this.command(session, { t: "setConnected", connected: true });
+    this.broadcastRoom();
+    this.sendCurrentFrame(session);
+  }
+
+  detach(session: SessionId): void {
+    this.connections.delete(session);
+    if (this.room.members[session]) {
+      this.command(session, { t: "setConnected", connected: false });
+    }
+    this.broadcastRoom();
+    if (connectedCount(this.room) === 0) this.onEmpty(this.room.code);
+  }
+
+  isAttached(session: SessionId): boolean {
+    return this.connections.has(session);
+  }
+
+  /* ---------- commands ---------- */
+
+  /**
+   * Runs one room command and carries out whatever it asks for.
+   *
+   * Serialised by construction — this is ordinary synchronous JavaScript,
+   * so two clients racing the same action genuinely observe each other's
+   * results rather than interleaving halfway through. That is what makes
+   * the simultaneous-start case resolve correctly without a lock.
+   */
+  command(session: SessionId, command: RoomCommand): { ok: true } | { ok: false; error: RoomError } {
+    const result = applyCommand(this.room, command, {
+      actor: session,
+      now: this.clock.now(),
+      rng: this.rng,
+    });
+    if (!result.ok) {
+      log.debug("command refused", {
+        room: this.code,
+        session,
+        event: command.t,
+        error: result.error,
+      });
+      return result;
+    }
+
+    this.room = result.room;
+    for (const effect of result.effects) this.runEffect(effect);
+    log.info("command", { room: this.code, session, event: command.t });
+    return { ok: true };
+  }
+
+  private runEffect(effect: RoomEffect): void {
+    switch (effect.t) {
+      case "startSession":
+        this.startSession(effect.gameId, effect.settings, effect.seats, effect.difficulty);
+        break;
+      case "stopSession":
+        log.info("session stopped", { room: this.code, event: effect.reason });
+        this.stopSession();
+        break;
+      case "notice":
+        this.notify(effect.text);
+        break;
+    }
+  }
+
+  /* ---------- the game ---------- */
+
+  private startSession(
+    gameId: GameId,
+    settings: RawSettings,
+    seats: number,
+    difficulty: BotDifficulty,
+  ): void {
+    this.stopSession();
+    const definition = gameEntry(gameId).create(settings);
+    this.previous = null;
+
+    const session: AnySession = new GameSession({
+      definition,
+      seats,
+      difficulty: Array.from({ length: seats }, () => difficulty),
+      clock: this.clock,
+      // The live read that makes bot takeover instant. Asked fresh on every
+      // turn, so a player dropping between two turns is picked up by a bot
+      // on the very next one with nothing to reconcile.
+      isSeatLive: (seat) => isSeatLive(this.room, seat),
+      emit: (frame) => this.onFrame(frame),
+    });
+
+    this.session = session;
+    this.previous = session.snapshot();
+    session.start();
+  }
+
+  private stopSession(): void {
+    this.session?.dispose();
+    this.session = null;
+    this.previous = null;
+  }
+
+  /**
+   * A settled batch from the session, fanned out one redaction per viewer.
+   *
+   * The server settles immediately after broadcasting rather than waiting
+   * for anyone to acknowledge. That is the whole of "a slow client never
+   * bogs down the table": the authoritative clock keeps its own time, and
+   * catching up is the laggard's problem to solve locally.
+   */
+  private onFrame(frame: SessionFrame<unknown>): void {
+    const session = this.session;
+    if (!session) return;
+
+    const after = session.snapshot();
+    const before = this.previous ?? after;
+
+    for (const [viewer, connection] of this.connections) {
+      if (!this.room.game?.present.includes(viewer)) continue;
+      const view = this.buildFrame(frame, viewer, before, after);
+      this.push(connection, { t: "frame", frame: view });
+    }
+
+    this.previous = after;
+    session.settled();
+  }
+
+  private buildFrame(
+    frame: SessionFrame<unknown>,
+    viewer: SessionId,
+    before: unknown,
+    after: unknown,
+  ): FrameView {
+    const session = this.session!;
+    const definition = session.definition;
+    const seat = seatOf(this.room, viewer);
+    const asSeat = seat ?? SPECTATOR_SEAT;
+
+    const truthBefore: PlacementMap = definition.placements(before, asSeat);
+    const truthAfter: PlacementMap = definition.placements(after, asSeat);
+    const { placements, meta } = redactPlacements(truthAfter, session.pieceMeta());
+
+    const game = this.room.game;
+    const seatNames: Array<string | null> = Array.from({ length: game?.seats ?? 0 }, (_, i) => {
+      const owner = game?.seatOwner[i];
+      return owner ? (this.room.members[owner]?.name ?? null) : null;
+    });
+    const botSeats: SeatId[] = [];
+    for (let i = 0; i < (game?.seats ?? 0); i++) if (!isSeatLive(this.room, i)) botSeats.push(i);
+
+    return {
+      seq: frame.seq,
+      events: projectEvents(frame.events, truthBefore, truthAfter),
+      state: definition.playerView(after, asSeat),
+      placements,
+      meta: meta as Record<PieceId, PieceMeta>,
+      seat,
+      currentSeat: definition.currentSeat(after),
+      round: extractRound(after),
+      dealtRound: frame.dealtRound,
+      isOver: definition.isOver(after),
+      isRoundOver: definition.isRoundOver?.(after) ?? false,
+      winner: definition.isOver(after) ? extractWinner(after) : null,
+      winningSeats: definition.isOver(after) ? resolveWinningSeats(after) : null,
+      roundWinner: extractRoundWinner(after),
+      roundWinningSeats: resolveRoundWinningSeats(after),
+      seatNames,
+      botSeats,
+    };
+  }
+
+  /** Re-sends the table's current position to one viewer — the whole of reconnection. */
+  sendCurrentFrame(viewer: SessionId): void {
+    const session = this.session;
+    const connection = this.connections.get(viewer);
+    if (!session || !connection) return;
+    if (!this.room.game?.present.includes(viewer)) return;
+
+    const now = session.snapshot();
+    // No events: nothing "happened", this is a position. The client
+    // reconciles its board from `placements` and carries on. That frames
+    // are whole snapshots rather than deltas is what makes reconnection
+    // this cheap — there is no log to replay.
+    this.push(connection, {
+      t: "frame",
+      frame: this.buildFrame({ seq: 0, events: [], lastAction: null, dealtRound: null }, viewer, now, now),
+    });
+  }
+
+  submitAction(session: SessionId, action: unknown): { ok: boolean; error?: string } {
+    if (!this.session) return { ok: false, error: "no-game-running" };
+    const seat = seatOf(this.room, session);
+    if (seat === null) return { ok: false, error: "not-in-game" };
+    // A spectator has no seat, so they never reach here; a seated player
+    // who is not on turn is refused by the session's own gate.
+    const result = this.session.submit(seat, action);
+    if (!result.ok) return { ok: false, error: result.reason };
+    if (!result.animated) this.session.settled();
+    return { ok: true };
+  }
+
+  nextRound(session: SessionId): void {
+    if (!this.session) return;
+    if (seatOf(this.room, session) === null) return;
+    this.session.nextRound();
+  }
+
+  /* ---------- fan-out ---------- */
+
+  /**
+   * Sends to one socket, dropping the message if that socket has stopped
+   * draining. Silence beats a queue that grows without bound: the next
+   * frame is a full snapshot, so anything skipped is superseded rather
+   * than lost.
+   */
+  private push(connection: Connection, message: ServerMessage): void {
+    if (connection.bufferedAmount() > BACKPRESSURE_BYTES) {
+      log.warn("dropping frame for a backed-up socket", { room: this.code });
+      return;
+    }
+    connection.send(message);
+  }
+
+  /** Same text to everyone attached — a room notice is public by nature. */
+  private notify(text: string): void {
+    for (const connection of this.connections.values()) {
+      this.push(connection, { t: "notice", text });
+    }
+  }
+
+  broadcastRoom(): void {
+    for (const [session, connection] of this.connections) {
+      this.push(connection, { t: "room", room: this.viewFor(session) });
+    }
+  }
+
+  /**
+   * The room as one member is allowed to see it.
+   *
+   * `pending` is the field that matters: it carries the names of people
+   * knocking on a private room, and only the leader — the one person who
+   * can act on them — is shown the list.
+   */
+  viewFor(session: SessionId): RoomView {
+    const room = this.room;
+    const isLeader = room.leader === session;
+    const game = room.game;
+
+    const members: MemberView[] = orderedMembers(room).map((m) => ({
+      session: m.session,
+      name: m.name,
+      connected: m.connected,
+      seat: seatOf(room, m.session),
+      spectating: Boolean(game?.present.includes(m.session)) && seatOf(room, m.session) === null,
+      team: room.teams?.[m.session] ?? null,
+      isLeader: room.leader === m.session,
+    }));
+
+    return {
+      code: room.code,
+      privacy: room.privacy,
+      you: session,
+      youAreLeader: isLeader,
+      members,
+      pending: isLeader
+        ? Object.values(room.pending).map((p) => ({ session: p.session, name: p.name }))
+        : [],
+      gameId: room.gameId,
+      settings: room.settings,
+      seats: room.seats,
+      difficulty: room.difficulty,
+      gameRunning: game !== null,
+      openSeats: openSeats(room),
+      inGame: Boolean(game?.present.includes(session)),
+    };
+  }
+
+  send(session: SessionId, message: ServerMessage): void {
+    const connection = this.connections.get(session);
+    if (connection) this.push(connection, message);
+  }
+
+  /**
+   * Hangs up on one client deliberately — fault injection for reconnection
+   * tests, which otherwise have to wait for a real network to misbehave at
+   * exactly the right moment.
+   *
+   * Closes the socket rather than quietly forgetting it, so the client sees
+   * a genuine disconnect and takes its real reconnect path instead of a
+   * simulated one.
+   */
+  dropConnection(session: SessionId): void {
+    const connection = this.connections.get(session);
+    if (!connection) return;
+    connection.close();
+    this.detach(session);
+  }
+
+  /** For the debug endpoint — the authoritative truth, never redacted. */
+  debugDump(): Record<string, unknown> {
+    return {
+      code: this.room.code,
+      privacy: this.room.privacy,
+      leader: this.room.leader,
+      members: this.room.members,
+      pending: this.room.pending,
+      gameId: this.room.gameId,
+      settings: this.room.settings,
+      seats: this.room.seats,
+      teams: this.room.teams,
+      game: this.room.game,
+      attached: [...this.connections.keys()],
+      sessionRunning: this.session !== null,
+      liveSeats: this.room.game
+        ? Array.from({ length: this.room.game.seats }, (_, i) => isSeatLive(this.room, i))
+        : [],
+      // Enough of the table for a test to assert that something did or did
+      // not move, without publishing the actual cards — this endpoint is
+      // dev-only, but a dump that casually included every hand would be
+      // one careless deploy away from being the leak it exists to detect.
+      table: this.session
+        ? {
+            currentSeat: this.session.definition.currentSeat(this.session.snapshot()),
+            round: extractRound(this.session.snapshot()),
+            isOver: this.session.definition.isOver(this.session.snapshot()),
+            fingerprint: fingerprint(this.session.snapshot()),
+          }
+        : null,
+    };
+  }
+
+  dispose(): void {
+    this.stopSession();
+    for (const connection of this.connections.values()) connection.close();
+    this.connections.clear();
+  }
+}
+
+/**
+ * A cheap, order-stable digest of a game state, so a test can say "nothing
+ * moved" without needing to understand any game's shape — and without the
+ * dump having to carry the state itself.
+ */
+function fingerprint(state: unknown): string {
+  const json = JSON.stringify(state) ?? "";
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < json.length; i++) {
+    hash ^= json.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16);
+}
