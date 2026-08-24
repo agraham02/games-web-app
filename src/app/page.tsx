@@ -23,10 +23,16 @@ export default function Home() {
 
         <div className="mt-7 flex flex-wrap gap-3">
           <Link
-            href="/play/dominoes"
+            href="/room"
             className="inline-block rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-6 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
           >
-            Play Dominoes →
+            Play with friends →
+          </Link>
+          <Link
+            href="/play/dominoes"
+            className="inline-block rounded-lg bg-bone-50/6 px-6 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
+          >
+            Dominoes
           </Link>
           <Link
             href="/play/lrc"
