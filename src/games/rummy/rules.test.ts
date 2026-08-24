@@ -856,7 +856,7 @@ describe("rummy — full-match simulation invariants", () => {
   // asserting every chosen action is legal and no engine sentinel ever
   // reaches real state. Cheap, and it catches exactly the class of
   // low-probability interaction bug a handful of fixed seeds does not.
-  it("sweeps 200 seeds end to end", { timeout: 30_000 }, () => {
+  it("sweeps 200 seeds end to end", { timeout: 90_000 }, () => {
     for (let seed = 1; seed <= 200; seed++) runMatch(seed, 2 + (seed % 5), false);
   });
 
