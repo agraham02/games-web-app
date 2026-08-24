@@ -24,17 +24,18 @@
  * `revealBotTurn`/`onIdle` machinery paces it exactly like a fold.
  *
  * Chip visuals are deliberately simple, per this build's own product
- * decision: stacks/bets/pot are HUD text (the authoritative numbers,
- * moved via the ordinary `{t:"score"}` event every game uses), and a
- * SINGLE plain pile of decorative chip pieces sits in `zone: "pot"` (its
+ * decision: stacks/bets/pot are all HUD text (the authoritative numbers,
+ * moved via the ordinary `{t:"score"}` event every game uses) — no chip
+ * pieces at all, no per-seat piles, no proportional bet-to-chip-count
+ * choreography, no dedicated chip GameEvents. An earlier version placed
+ * a single decorative fanned pile of chip pieces in `zone: "pot"` (its
  * own mini-scale zone, not LRC's table-scaled `"center"` — see
- * engine/types.ts's `ZoneId` doc), sized straight off the pot total in
- * `placements()` — no per-seat piles, no proportional bet-to-chip-count
- * choreography, no dedicated chip GameEvents at all. A piece's position
- * is driven by React/Motion off whatever `placements()` returns after
- * every batch regardless of whether an explicit event named it, so the
- * pile still visibly grows and shrinks with the pot; it just isn't
- * individually choreographed the way a card's flight is.
+ * engine/types.ts's `ZoneId` doc), sized off the pot total; a live
+ * playtest reported it visually overlapping the community row above it
+ * on an ordinary pot, so it was dropped for a plain pot-total badge (the
+ * page reads the same `"pot"` zone box directly off table geometry,
+ * outside `placements()`, since there's no piece involved). `pieces()`
+ * therefore declares only the standard deck now, no chip pool.
  */
 
 import type {
@@ -68,7 +69,6 @@ import {
   liveMatchSeats,
   nextButton,
   postflopOrder,
-  potTotal,
   preflopOrder,
   seatHoleCards,
   seatOrderAfter,
@@ -94,20 +94,6 @@ export const MAX_STARTING_STACK = 20000;
  * convention as Rummy/Spades' own `HIDDEN_CARD`, suffixed to stay unique
  * per hidden card since this is a Record key, not an array slot. */
 const HIDDEN_CARD_PREFIX = "??";
-
-// Purely decorative — the real pot total is always the HUD text, never
-// this pile's count (see this file's own header doc). Kept deliberately
-// small and SQRT-scaled rather than linear in `pot / bigBlind`: a live
-// playtest showed the pile maxing out (6 rows, in a 5-column grid) at a
-// completely ordinary pot size and visually swallowing the community
-// row above it. sqrt growth still visibly grows the pile for a small
-// pot but only reaches the (now much smaller) cap on a genuinely huge
-// multi-way pot, so it reads as "a real pile" without ever dominating
-// the felt.
-const POT_CHIP_POOL = 12;
-function potChipId(i: number): PieceId {
-  return `pchip-${i}`;
-}
 
 const STREET_AFTER: Record<Exclude<PokerStreet, "river">, PokerStreet> = {
   preflop: "flop",
@@ -596,14 +582,13 @@ export function isRoundOver(state: PokerState): boolean {
   return state.result !== null;
 }
 
-// No `state` param: the piece SET is entirely fixed (a standard deck
-// plus the decorative chip pool) regardless of seat count or match
-// state — same "fewer params than the declared type" idiom LRC's own
-// no-viewer `placements` uses, which TS's structural typing allows.
+// No `state` param: the piece SET is entirely fixed (a standard deck)
+// regardless of seat count or match state — same "fewer params than the
+// declared type" idiom LRC's own no-viewer `placements` uses, which TS's
+// structural typing allows.
 export function pieces(): Record<PieceId, PieceMeta> {
   const out: Record<PieceId, PieceMeta> = {};
   for (const card of standardDeck()) out[card.id] = { kind: "card", face: card.id };
-  for (let i = 0; i < POT_CHIP_POOL; i++) out[potChipId(i)] = { kind: "chip", face: "gold" };
   return out;
 }
 
@@ -648,19 +633,6 @@ export function placements(state: PokerState, viewer: SeatId): PlacementMap {
     hole.forEach((id, i) => {
       out[id] = { zone: "hand", seat, index: i, count: hole.length, faceUp };
     });
-  }
-
-  const pot = potTotal(state);
-  const potChips = Math.max(
-    0,
-    Math.min(POT_CHIP_POOL, Math.round(Math.sqrt(Math.max(0, pot) / state.bigBlind))),
-  );
-  for (let i = 0; i < POT_CHIP_POOL; i++) {
-    const id = potChipId(i);
-    out[id] =
-      i < potChips
-        ? { zone: "pot", index: i, count: potChips, faceUp: true, fanned: true }
-        : { zone: "boneyard", index: i - potChips, count: POT_CHIP_POOL - potChips, faceUp: true };
   }
 
   return out;

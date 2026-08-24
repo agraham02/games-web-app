@@ -60,10 +60,10 @@ export type ZoneName =
   | "boneyard"
   | "hand"
   /** A fixed 5-slot row for poker's community cards — see `resolveTable`
-   * for why it sits above `center`'s own pot pile rather than needing a
-   * second independent "middle of the table" guess. */
+   * for why it sits above `center`'s own pot readout rather than needing
+   * a second independent "middle of the table" guess. */
   | "community"
-  /** Poker's own mini-scale pot pile, anchored below `community` — see
+  /** Poker's own pot-total badge box, anchored below `community` — see
    * `engine/types.ts`'s `ZoneId` doc for why this is not `"center"`. */
   | "pot"
   /** Poker's own remaining-deck stub, tucked beside `burnt` below `pot`
@@ -624,16 +624,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   );
   const communityBottom = cy - communityOffset - communityH / 2 + communityH;
 
-  // Pot: a small pile of decorative chip pieces, sized off `miniCard`
-  // (see `ZoneName`'s doc) so it reads as a chip pile rather than a
-  // second row of playing cards. Anchored to `community`'s own actual
-  // bottom edge plus a real gap — not to a fraction of `cy` the way an
-  // earlier version assumed — so the two zones cannot overlap regardless
-  // of how little vertical room a viewport leaves: if there isn't enough
-  // room below the community row for every row the pile could ever need,
-  // the BOX shrinks to what's actually there rather than reaching down
-  // past `play`'s own bottom edge, the same "give ground on the
-  // tightest viewport" trade `pileRegion` already makes.
+  // Pot: box for the pot-total badge, sized off `miniCard` (see
+  // `ZoneName`'s doc) — originally to hold a small fanned chip pile,
+  // kept as the box's footprint now that the pile has been replaced by
+  // a plain "$" readout (see `engine/types.ts`'s `ZoneId` doc), since a
+  // single-line badge fits it with room to spare and the anchoring below
+  // is the part that actually matters. Anchored to `community`'s own
+  // actual bottom edge plus a real gap — not to a fraction of `cy` the
+  // way an earlier version assumed — so the two zones cannot overlap
+  // regardless of how little vertical room a viewport leaves: if there
+  // isn't enough room below the community row for the box's wanted
+  // height, the BOX shrinks to what's actually there rather than
+  // reaching down past `play`'s own bottom edge, the same "give ground
+  // on the tightest viewport" trade `pileRegion` already makes.
   const potGap = spec.miniCard.h * 0.3;
   const potRows = 3;
   const potHWanted = spec.miniCard.w * (1 + 0.85 * (potRows - 1));

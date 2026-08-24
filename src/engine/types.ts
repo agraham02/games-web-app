@@ -43,15 +43,16 @@ export type ZoneId =
    */
   | "community"
   /**
-   * Poker's own decorative pot pile — deliberately NOT `"center"`.
-   * `"center"` (LRC's pot/dice overlay) draws its chips at table-card
-   * scale, which is fine when nothing else shares that space; poker's
-   * community row does, and a table-scaled chip pile's own footprint
-   * structurally reaches back up past table-centre and into it on every
-   * viewport, not just a cramped one. This zone draws its chips at MINI
-   * scale (the same size LRC's own per-seat `collected` piles already
-   * use) and is geometrically anchored below the community row with a
-   * real gap, so the two can never overlap by construction.
+   * Poker's own pot-total readout — deliberately NOT `"center"`.
+   * `"center"` (LRC's pot/dice overlay) draws at table-card scale, which
+   * is fine when nothing else shares that space; poker's community row
+   * does. No pieces are placed here — a decorative fanned chip pile used
+   * to live in this zone and was dropped for a plain "$" total instead
+   * (simpler, and structurally can't reweave into the community row the
+   * way a growing fan could) — but the zone stays: it's still what a
+   * game-specific pot badge reads its box from, geometrically anchored
+   * below the community row with a real gap so the two can never overlap
+   * by construction.
    */
   | "pot"
   /**

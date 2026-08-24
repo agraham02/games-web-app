@@ -44,6 +44,7 @@ import type { PokerAction, PokerState } from "@/games/poker/types";
 import { GameHost } from "@/table/GameHost";
 import { HandZone } from "@/table/HandZone";
 import type { SeatView } from "@/table/SeatRing";
+import { useGeometry } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { InfoSheet } from "@/ui/disclosure";
 import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
@@ -211,6 +212,8 @@ function PokerControls({ live }: { live: Live }) {
 
   return (
     <>
+      <PotBadge state={state} />
+
       <HandZone
         bar={showdownPending ? <ShowMuckBar live={live} /> : undefined}
         left={
@@ -237,6 +240,36 @@ function PokerControls({ live }: { live: Live }) {
 
       <HandRankingsSheet open={hintsOpen} onClose={() => setHintsOpen(false)} state={state} />
     </>
+  );
+}
+
+/**
+ * The pot total — plain text, not a chip pile. An earlier version placed
+ * a decorative fanned pile of chip pieces in the `"pot"` zone; a live
+ * playtest reported it overlapping the community row above it on an
+ * ordinary pot, so it was dropped for this instead (see rules.ts's own
+ * header doc). No piece is involved, so this reads the same `"pot"`
+ * zone's box straight off table geometry rather than going through
+ * `placements()`/`PieceLayer` — geometry.ts still anchors that box below
+ * `community` with a real gap, so the two can't overlap by construction
+ * regardless of viewport.
+ */
+function PotBadge({ state }: { state: PokerState }) {
+  const geometry = useGeometry();
+  const pot = potTotal(state);
+  const box = geometry?.zones.pot;
+  if (!box || pot <= 0) return null;
+
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute z-1200 flex items-center justify-center"
+      style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+    >
+      <span className="rounded-full bg-felt-950/80 px-3 py-1.5 text-xs font-extrabold tnum text-brass-300 ring-1 ring-brass-400/30 shadow-e1">
+        Pot ${pot}
+      </span>
+    </div>
   );
 }
 
