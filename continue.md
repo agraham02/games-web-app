@@ -1,99 +1,68 @@
-# Continue — session handoff (2026-08-17)
+# Continue — session handoff (2026-08-24)
 
-Four of five games are real and playtested: LRC, Dominoes, Spades, Rummy
-500. Poker is the only one left, unbuilt. `npm run check` clean at **360
-tests**. This file is a fresh handoff — the blow-by-blow of how Rummy got
-here across ~13 playtest rounds is in git history and in memory (start
-from [[rummy-implementation]] and follow its `[[links]]`), not repeated
-here.
+All five games are real. Four of them — Spades, Poker, Dominoes and LRC —
+also play online in a room against other people. `npm run check` clean at
+**615 tests**; `npm run harness` at 18 scenarios; `npm run e2e` at 6.
 
-## Where things stand
+The multiplayer architecture is in CLAUDE.md and not repeated here. This
+is what is worth knowing before touching it.
 
-**Rummy 500** is feature-complete and has had the most scrutiny of any
-game in this app — real-money-feeling mechanics (the claim race), a
-correctness-vs-reachability bug (the claim window was dead for a whole
-session before anyone noticed), house-rule edge cases (a set closing at
-three cards), and a full pass on responsive layout. Nothing known-broken
-remains. Two things worth a deliberate look next time you're in it:
+## What is done
 
-- **Round-win confetti was never confirmed fixed.** The likely cause (the
-  `cardPoints` tens-scoring bug feeding a wrong `result.winner`) was
-  fixed a long time ago in this session, and there's a test that a hero
-  who scores most is reported as the winner — but nobody has watched a
-  round end since and confirmed the confetti actually fires. Cheap to
-  check, worth doing before assuming it's fine.
-- The board sheet's expanded-card scaling (`expandedCardSize` in
-  `page.tsx`) was retuned this session against real numbers (0.72 floor,
-  capped by the panel's actual content width) but only verified by
-  reading the math, not by eye at a real 15+ meld board. If Rummy ever
-  gets a long-match playtest, that's the screen to watch.
+- **One engine, two drivers.** `GameSession` is the turn loop with no
+  React in it. `useGameRuntime` drives it in a browser, `RoomRuntime` on
+  the server. Same rules, same bots, same code.
+- **Rooms**: 4-letter codes, public or private with approval, a party
+  leader with real powers, teams, spectators, bot takeover on
+  disconnect, identity-keyed seat reclaiming, one-minute expiry.
+- **Redaction** filters hidden information before it is sent, not in the
+  UI. `/lab/redact` audits it per seat.
+- **Four test layers**, each blind to what the one below it catches —
+  see CLAUDE.md's "Testing it".
 
-**Spades, Dominoes, LRC** all got shared-layer improvements this session
-(bot difficulty, dealer/opener randomness audit, responsive menus,
-bigger phone cards) but no game-specific playtest — they should still be
-in the state the last dedicated session left them
-([[spades-implementation]]).
+## What is not
 
-## Standing conventions worth knowing before touching anything
+- **Rummy 500 is offline only**, and it is a rules problem rather than a
+  wiring one. `currentSeat` returns `HERO` outright while a claim window
+  is open, `startRound` branches on `dealer === HERO`, and the claim race
+  is timed by a `setTimeout` in the play page rather than by anything the
+  server could adjudicate. Poker's `pendingShowdown` — which routes every
+  seat, bot or human, through an ordinary turn — is the pattern to copy.
+- **Nobody has played an online game by hand.** Six browser tests drive
+  the real thing and pass, but no human has sat at an online table and
+  looked at it. That is the single biggest gap.
+- **LRC's roll changed and wants an eye on it.** It used to resolve the
+  dice on the client and hold the submit back for the length of the
+  tumble. The dice are now rolled by whoever owns the game, and the beat
+  comes from a `pause` the engine emits. The tumble was shortened to
+  match. It is correct; whether it FEELS right is unverified.
+- **No deploy config.** Custom server, so it needs a Node host.
 
-These are the load-bearing ones; CLAUDE.md has the full architectural
-picture.
+## Things that bit, and would bite again
 
-- **Bot difficulty is a real, wired setting now**, on all four games —
-  `DifficultyPicker` (shared 3-stop slider) + `botTable(seats, tier)`,
-  one tier for the whole table. It used to default to `steady`
-  everywhere with nothing ever overriding it, silently. If a future
-  "opponents feel the same regardless of difficulty" report comes in,
-  check whether the SETUP SCREEN is actually passing `difficulty` through
-  — that exact silent-no-op is what happened here.
-- **A pannable fan cannot be clipped and never should be layered with
-  more decoration without checking `FanSlot.visible` first.** See
-  [[pannable-fan-has-no-clip]] — this bit twice (the fan itself, then
-  `StagedRing` following it out from under a pod).
-- **`Placement.dimmed`/`highlighted`/`tappable` exist specifically so a
-  game can offer interaction without revealing legality.** See
-  [[no-hand-holding-ui]] before adding any affordance that might leak
-  what's playable.
-- **Don't offer a decline button when accepting is free.** Rummy's claim
-  bar had a "Pass" button until the user asked "who would want to pass
-  up free points?" — and the honest answer was nobody, ever, in any
-  state. See [[no-free-choice-buttons]].
-- **A component's `transition` prop in Motion applies to its `exit`
-  too.** A `repeat: Infinity` animation used as both the resting state
-  and the exit means the exit never completes and `AnimatePresence`
-  never unmounts the element — it looked like a leftover pulse running
-  forever behind cards that had already flipped. See
-  [[motion-exit-inherits-transition]].
-- **When "is this closed / exhausted / complete" depends on cards that
-  aren't in the collection you're asking about, you cannot answer from
-  that collection's own members.** Rummy's "is this meld dead" question
-  needed the whole board, not the one meld — a 3-ace set is closed the
-  instant the 4th ace lands in someone else's RUN. See
-  [[rummy-dead-meld-needs-whole-board]].
-- **`DevPanel` takes a generic `scenarios` slot** — labelled one-shot
-  callbacks a game supplies for states that are correct but hard to
-  reach naturally (Rummy's claim window fires on the order of once every
-  dozen rounds). Reach for this before accepting "untestable without
-  grinding" for any future feature.
-
-## Known non-issues, in case they come up again
-
-- **LRC has no difficulty control, deliberately.** Rolling is the only
-  legal action and the dice are random — `lrcBots`' tiers differ only in
-  pacing, so a slider that changes nothing but reaction speed would
-  promise a difference the game doesn't have.
-- **Landscape Rummy on a short phone shows a rotate prompt, not a
-  layout.** A side-rail version was built, measured, and worked
-  (86px → 223px of table) — then scrapped at the user's request rather
-  than kept as a second layout to maintain. It's recoverable from git
-  (`PeekRail`'s `edge` prop, `ResolveOptions.sideZone`) if ever wanted
-  back. See [[short-viewport-has-no-budget]].
+- **Each redaction bug was found by doing the next thing, not by more
+  tests on the last one.** A second game exposed the deal-event leak; a
+  real browser exposed the missing hand. Both had green unit tests.
+- **A client-side navigation remounts the room screen** while the socket
+  stays open. The connection replays its last hello/room/frame to a new
+  subscriber for exactly this reason. Do not make room state
+  component-local again.
+- **Mocking the router hid a fatal bug.** The jsdom tests mock
+  `next/navigation`, so `replace` was a no-op and creating a room
+  appeared to work. Anything that depends on real navigation needs the
+  browser layer.
+- **The lobby and the table registry can drift.** One decides what may be
+  STARTED (and the server enforces it), the other what can be DRAWN. They
+  cannot be merged — one is imported by the server, the other is React —
+  so `src/room/tables.test.tsx` holds them together.
+- **`npm run check` used to be unreliable** and is not any more: the
+  suite defaults to `node` and only five files opt into jsdom. If it
+  starts timing out again, look at environment setup time before
+  suspecting a test.
 
 ## Next up
 
-Poker (NL Hold'em) is the only unbuilt game. Nothing in this repo has
-scoped it yet — no engine sketch, no UI decisions made. Read
-`CLAUDE.md`'s "Adding a game" checklist and the shared-layer
-`[[rummy-implementation]]` note on what groundwork already exists
-(compress-then-pan, `HandZone`, the generic dev state editor, the
-`scenarios` slot) before re-deriving any of it.
+Rummy's claim race is the obvious remaining piece of work, and the only
+one that needs engine surgery rather than wiring. Everything else on the
+list is polish: a human playtest of an online table, LRC's roll timing,
+and somewhere to deploy it.

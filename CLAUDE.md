@@ -1,22 +1,29 @@
 # Table Games — architecture
 
-Single-player web app hosting five table games against bots: Dominoes
-(Block & Draw, and the Caribbean game), Spades, Rummy 500, Poker (NL
-Hold'em), Left Right Center. Priority is UI/UX — real-table motion,
-distinct phase screens, and Rummy's board information shown without
-clutter.
+Web app hosting five table games, alone against bots or in a room with
+other people: Dominoes (Block & Draw, and the Caribbean game), Spades,
+Rummy 500, Poker (NL Hold'em), Left Right Center. Priority is UI/UX —
+real-table motion, distinct phase screens, and Rummy's board information
+shown without clutter.
 
-**Status: four of five games are real.** Left Right Center, Dominoes,
-Spades and Rummy 500 have full rules, bots and play screens. Poker is
-the one still unbuilt. The shared layer is additionally exercised
-through `/lab`.
+**Status: all five games are real**, with full rules, bots and play
+screens. Four of them — Spades, Poker, Dominoes and LRC — also run
+online in a room. Rummy 500 is single-player only, and for a rules
+reason rather than a wiring one (see `session/registry.ts`). The shared
+layer is additionally exercised through `/lab`.
 
 ```
-npm run dev      # play at /play/rummy, lab at /lab/seats
+npm run dev      # server + app on one port: /play/rummy, /room, /lab/seats
 npm run check    # typecheck + lint + test
+npm run harness  # adversarial WebSocket scenarios (needs `npm run dev`)
+npm run e2e      # several real browsers, one real server
 ```
 
-## The two decisions everything rests on
+`npm run dev` boots `server.ts`, not `next dev`: rooms are live objects
+with timers and open sockets, so the app needs a process that stays up.
+That rules out serverless deploys — it runs anywhere Node runs.
+
+## The decisions everything rests on
 
 ### 1. The engine emits events, not just state
 
@@ -68,6 +75,77 @@ resize, and 52 simultaneous transitions across mounting and unmounting
 components is fragile in a way this is not. This is also why card faces
 are HTML+CSS ([CardFace.tsx](src/ui/primitives/CardFace.tsx)) rather
 than SVG or image assets.
+
+### 3. One engine, two drivers
+
+`GameSession` ([session/GameSession.ts](src/session/GameSession.ts)) is
+the turn loop with no React in it: it deals, reduces, runs bots and
+decides whose turn is next. `useGameRuntime` drives it in a browser;
+`RoomRuntime` drives it on the server. Same code, same rules, same bots.
+
+The division that keeps it honest: **the session decides WHAT happens
+next, the driver decides WHEN it is allowed to.** That is why `settled()`
+is a call the driver makes rather than something the session does for
+itself — a browser settles when an animation finishes, a server the
+moment it has broadcast.
+
+Two substitutions make multiplayer possible at all, and both are one
+line: `setTimeout` became an injected `Clock`, and `seat === HERO` became
+`isSeatLive(seat)`. Offline the latter is true for seat 0 alone, which is
+exactly the old behaviour.
+
+### Hidden information is filtered before it is sent
+
+`placements(state, viewer)` decides what a seat may SEE;
+[session/redact.ts](src/session/redact.ts) enforces what it may therefore
+IDENTIFY. The rule is deliberately blunt, because a subtle one would
+eventually be got wrong: **a piece drawn face-down is a piece whose
+identity the viewer does not get.** No exceptions, no per-game opt-outs.
+
+Three things have gone wrong here already, all worth knowing:
+
+- **`playerView` leaked the future.** Poker returned `deck` and Rummy
+  returned `stock` intact — the undrawn cards in order, worth more than
+  any hand. Unnoticed because single-player never sends a view anywhere.
+- **Concealment was judged from the wrong end.** `projectEvents` looked
+  only at placements BEFORE a batch, so a card with no prior placement
+  kept its real id — which is every card in an opening deal. Spades hid
+  it (it places its deck first); Poker exposed it.
+- **A frame carried meta for stand-ins only**, so `PieceLayer` drew
+  nothing for the viewer's own face-up cards. Every unit test passed and
+  the table was empty. Only a real browser caught it.
+
+The pattern: each was found by doing the NEXT thing (a second game, a
+real browser), not by more tests on the last one.
+
+### `HERO` is a default, not a fact
+
+Seats are laid out by POSITION and labelled from the viewer, so pinning
+somebody else bottom-centre is a relabelling rather than a second layout
+(`ResolveOptions.viewerSeat`). Everything downstream still speaks in real
+seat ids, which is what stops each game's own state — hands, bids, scores
+— from needing to be rewritten per viewer. `viewerSeat: null` is a
+spectator; `undefined` means "no opinion" and stays seat 0.
+
+A game's play screen therefore splits: `page.tsx` is the offline shell,
+`table.tsx` is the table content, and the only thing that differs between
+them is a `View` — who is looking, and what everyone is called.
+
+### Testing it
+
+Four layers, and each exists because the one below it is blind to
+something:
+
+1. `npm run check` — engine, session and room logic, all pure.
+2. `npm run harness` — adversarial WebSocket traffic a UI would never
+   send: malformed frames, out-of-turn moves, two clients racing. Asserts
+   against `/debug/room/:code`, the authoritative state, because a
+   client's view is derived and could itself be wrong.
+3. `npm run e2e` — several real browsers on one real server.
+4. `/lab/redact` — one frozen deal from any seat, with an audit strip.
+   Looking right is not enough: a face-down card whose real id is still
+   in the store looks perfect and is completely broken.
+
 
 ## Layout
 
@@ -221,8 +299,12 @@ src/
   ui/         primitives/ (faces), phases/ (round & game screens),
               disclosure/ (rail, toast, sheets) — see POLICY.md
   lab/        harness fixtures and chrome
-app/play/     lrc · dominoes · spades · rummy
-app/lab/      seats · motion · tokens · phases · rummy
+  session/    transport-agnostic: the loop, redaction, rooms, the wire
+  server/     Node only — never imported from src/app
+  room/       the client: connection, lobby, per-game online tables
+app/play/     lrc · dominoes · spades · rummy · poker
+app/room/     the lobby and the online table
+app/lab/      seats · motion · tokens · phases · rummy · redact
 ```
 
 The dev panel also takes `scenarios` — labelled one-shot callbacks a game
