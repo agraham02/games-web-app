@@ -74,6 +74,25 @@ function socketUrl(): string {
 }
 
 export class RoomConnection {
+  /**
+   * The last of each thing the server told us, replayed to any new
+   * subscriber.
+   *
+   * Without this, a client-side navigation is fatal. Creating a room
+   * moves the address bar to `/room/ABCD`, which remounts the screen with
+   * fresh React state — but the socket is already open and already
+   * handshook, so nothing re-sends the roster and the new mount sits on
+   * "Connecting…" forever, holding a live connection to a room it is in.
+   *
+   * Caching them here rather than lifting the state into a store keeps the
+   * ownership honest: these are the last things the SERVER said, and the
+   * connection is what heard them. Replaying a frame is safe because a
+   * frame is a whole snapshot rather than a step.
+   */
+  session: string | null = null;
+  lastRoom: unknown = null;
+  lastFrame: unknown = null;
+
   private socket: WebSocket | null = null;
   private attempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -93,6 +112,15 @@ export class RoomConnection {
 
   subscribe(listener: ConnectionListener): () => void {
     this.listeners.add(listener);
+    // Catch the newcomer up on what it missed. Order matters: `hello`
+    // establishes identity, and the room and frame are meaningless before
+    // it — the same order the server sends them in.
+    if (this.session) {
+      listener.onMessage({ t: "hello", session: this.session, protocol: PROTOCOL_VERSION });
+    }
+    if (this.lastRoom) listener.onMessage(this.lastRoom as ServerMessage);
+    if (this.lastFrame) listener.onMessage(this.lastFrame as ServerMessage);
+    listener.onStatus(this.status);
     return () => this.listeners.delete(listener);
   }
 
@@ -120,6 +148,7 @@ export class RoomConnection {
       } catch {
         return; // Nothing useful to do with a frame we cannot read.
       }
+      this.remember(message);
       for (const listener of this.listeners) listener.onMessage(message);
     };
 
@@ -152,6 +181,30 @@ export class RoomConnection {
   send(message: ClientMessage): void {
     if (this.socket?.readyState === WebSocket.OPEN) this.raw(message);
     else this.queue.push(message);
+  }
+
+  /** Keeps whatever a remount would otherwise have to ask for again. */
+  private remember(message: ServerMessage): void {
+    switch (message.t) {
+      case "hello":
+        this.session = message.session;
+        break;
+      case "room":
+        this.lastRoom = message;
+        // A room view supersedes any frame from a game that is no longer
+        // running, or the next mount would replay a table nobody is at.
+        if (!message.room.gameRunning) this.lastFrame = null;
+        break;
+      case "frame":
+        this.lastFrame = message;
+        break;
+      case "left":
+        this.lastRoom = null;
+        this.lastFrame = null;
+        break;
+      default:
+        break;
+    }
   }
 
   private raw(message: ClientMessage): void {

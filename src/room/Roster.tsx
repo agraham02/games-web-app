@@ -87,7 +87,7 @@ export function Roster({
   onAssignTeam,
 }: RosterProps) {
   return (
-    <ul className="flex w-full flex-col gap-1.5">
+    <ul aria-label="Room members" className="flex w-full flex-col gap-1.5">
       {members.map((m) => {
         const isYou = m.session === you;
         return (

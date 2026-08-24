@@ -268,7 +268,23 @@ export class RoomRuntime {
 
     const truthBefore: PlacementMap = definition.placements(before, asSeat);
     const truthAfter: PlacementMap = definition.placements(after, asSeat);
-    const { placements, meta } = redactPlacements(truthAfter, session.pieceMeta());
+    const allMeta = session.pieceMeta();
+    const { placements, meta: standInMeta } = redactPlacements(truthAfter, allMeta);
+
+    // Meta for everything on this viewer's board, not just the stand-ins.
+    //
+    // Sending only the stand-ins left every face-up piece without a
+    // `PieceMeta`, and `PieceLayer` renders nothing for a piece it cannot
+    // describe — so an online table drew all 39 concealed cards and none
+    // of the viewer's own thirteen. Their whole hand was missing.
+    //
+    // It leaks nothing: these are exactly the pieces the redaction has
+    // already decided this seat may identify, and a card they can name is
+    // a card whose face they are entitled to.
+    const meta: Record<PieceId, PieceMeta> = { ...standInMeta };
+    for (const id of Object.keys(placements)) {
+      if (!meta[id] && allMeta[id]) meta[id] = allMeta[id];
+    }
 
     const game = this.room.game;
     const seatNames: Array<string | null> = Array.from({ length: game?.seats ?? 0 }, (_, i) => {
@@ -283,7 +299,7 @@ export class RoomRuntime {
       events: projectEvents(frame.events, truthBefore, truthAfter),
       state: definition.playerView(after, asSeat),
       placements,
-      meta: meta as Record<PieceId, PieceMeta>,
+      meta,
       seat,
       currentSeat: definition.currentSeat(after),
       round: extractRound(after),
