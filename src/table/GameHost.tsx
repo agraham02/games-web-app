@@ -87,15 +87,59 @@ export interface GameHostProps<S, A> {
   pendingLabel?: (state: S, seat: SeatId, live: GameRuntime<S, A>) => string;
   onRematch?: () => void;
   onLobby?: () => void;
+  /**
+   * Which seat is looking at this table. Omit offline — it defaults to the
+   * hero at seat 0. `null` is a spectator, who owns no hand.
+   */
+  viewerSeat?: SeatId | null;
   children: (live: GameRuntime<S, A>) => React.ReactNode;
 }
 
 /** Optional callout under a round's scores — "blocked", "nobody scored". */
 export type RoundNote = { tone: "warn" | "info"; title: string; body: string };
 
+/**
+ * The offline host: it owns the game.
+ *
+ * Split from `GameHostView` below when rooms arrived, because a hook
+ * cannot be skipped. An online table is driven by frames from a server and
+ * has no local session at all — calling `useGameRuntime` "but ignoring it"
+ * would deal a second, private game in the background and pace bots
+ * against nobody.
+ */
 export function GameHost<S, A>({
   definition,
   runtime,
+  ...rest
+}: GameHostProps<S, A>) {
+  const devSettings = useDevSettings();
+  const live = useGameRuntime(definition, {
+    ...runtime,
+    autoAdvance: !devSettings.manualMode,
+    speed: devSettings.speed,
+    turnHoldMs: devSettings.turnHoldMs,
+    endHoldMs: devSettings.endHoldMs,
+    roundHoldMs: devSettings.roundHoldMs,
+    // The store keeps the intuitive "higher = faster" multiplier (see
+    // its own doc); useChoreographer wants the raw ms it's actually
+    // built around, so the conversion happens right at this boundary.
+    dealStaggerMs: DEFAULT_DEAL_STAGGER_MS / devSettings.dealSpeed,
+  });
+  return <GameHostView<S, A> definition={definition} runtime={runtime} live={live} {...rest} />;
+}
+
+/**
+ * Everything a host renders, given a runtime from somewhere.
+ *
+ * Offline that runtime is `useGameRuntime`'s; online it is
+ * `useOnlineRuntime`'s, built from server frames. Neither this component
+ * nor anything below it can tell the difference, which is the whole reason
+ * the online path needed no new table code.
+ */
+export function GameHostView<S, A>({
+  definition,
+  runtime,
+  live,
   players,
   density,
   handZone,
@@ -111,21 +155,9 @@ export function GameHost<S, A>({
   pendingLabel,
   onRematch,
   onLobby,
+  viewerSeat,
   children,
-}: GameHostProps<S, A>) {
-  const devSettings = useDevSettings();
-  const live = useGameRuntime(definition, {
-    ...runtime,
-    autoAdvance: !devSettings.manualMode,
-    speed: devSettings.speed,
-    turnHoldMs: devSettings.turnHoldMs,
-    endHoldMs: devSettings.endHoldMs,
-    roundHoldMs: devSettings.roundHoldMs,
-    // The store keeps the intuitive "higher = faster" multiplier (see
-    // its own doc); useChoreographer wants the raw ms it's actually
-    // built around, so the conversion happens right at this boundary.
-    dealStaggerMs: DEFAULT_DEAL_STAGGER_MS / devSettings.dealSpeed,
-  });
+}: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
   // Synced into the shared table store, not read as a prop threaded
   // through PieceLayer — the piece that actually needs this (a hero-hand
   // card, in any game) lives several components below here, and a
@@ -191,10 +223,17 @@ export function GameHost<S, A>({
       topZone={topZone}
       bottomZone={bottomZone}
       pileAnchor={pileAnchor}
+      viewerSeat={viewerSeat}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
-      <HeroWinFlourish show={winningSeats?.includes(HERO) ?? false} />
+      <HeroWinFlourish
+        show={
+          // A spectator has no side to celebrate, so confetti for one would
+          // be confetti for a game they are not in.
+          viewerSeat !== null && (winningSeats?.includes(viewerSeat ?? HERO) ?? false)
+        }
+      />
       <GameToaster />
 
       {/* Was already a finished component (see /lab/phases) but nothing

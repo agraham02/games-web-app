@@ -77,6 +77,8 @@ export interface TableGeometry {
   box: Box;
   density: Density;
   seats: SeatSlot[];
+  /** See `ResolveOptions.viewerSeat`. Echoed so layout needs no second source. */
+  viewerSeat: SeatId | null;
   zones: Record<ZoneName, Box>;
   /**
    * The box a growing pile assembly (deck + fanned discard) may occupy.
@@ -451,10 +453,31 @@ export interface ResolveOptions {
    * about where its piles belong.
    */
   pileAnchor?: number;
+  /**
+   * Whose point of view the table is drawn from. Defaults to seat 0, which
+   * is every offline game.
+   *
+   * Seats are laid out by POSITION and then labelled, so pinning a
+   * different viewer bottom-centre is a relabelling rather than a second
+   * layout: position 0 is always "the person looking at this screen", and
+   * the seat ids walk anticlockwise from there. Everything downstream
+   * still speaks in real seat ids, which is what keeps a game's own state
+   * — hands, bids, scores, all keyed by seat — from needing to be rewritten
+   * per viewer.
+   *
+   * `null` is a spectator: nobody is at the bottom, no hand belongs to the
+   * viewer, and every seat gets a pod.
+   */
+  viewerSeat?: SeatId | null;
 }
 
 export function resolveTable(opts: ResolveOptions): TableGeometry {
   const { seats: seatCount, width, height } = opts;
+  // `undefined` means "no opinion", which is the offline default of seat 0.
+  // `null` is a deliberate spectator and is NOT the same thing.
+  const viewerSeat = opts.viewerSeat === undefined ? HERO : opts.viewerSeat;
+  const seatBase = viewerSeat ?? HERO;
+  const watching = viewerSeat === null;
   const density = opts.density ?? resolveDensity(width, height);
   const spec = DENSITY[density];
 
@@ -540,21 +563,30 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
 
   const seats: SeatSlot[] = [
     {
-      seat: HERO,
+      seat: seatBase,
       x: width / 2,
-      y: height - handZone / 2,
+      // A spectator has no hand strip to sit above, so the bottom pod
+      // would be centred on the very edge of the viewport and half of it
+      // would be off screen. It gets the same inset every other edge uses.
+      y: watching ? height - podInset / 2 : height - handZone / 2,
       anchor: "bottom",
       rotation: 0,
-      isHero: true,
+      isHero: !watching,
     },
   ];
 
-  let seat: SeatId = 1;
+  /**
+   * Position index, not a seat id. The two coincide offline because the
+   * viewer is seat 0; online they do not, and conflating them is what
+   * would put somebody else's cards in your hand.
+   */
+  let position = 1;
+  const seatAt = (i: number): SeatId => (i + seatBase) % seatCount;
 
   // Left edge, bottom to top — the hero's immediate left comes first.
   for (let i = 0; i < nLeft; i++) {
     seats.push({
-      seat: seat++,
+      seat: seatAt(position++),
       x: ringLeft + podInset / 2,
       y: ringBottom - ((i + 0.5) / nLeft) * sideH,
       anchor: "left",
@@ -566,7 +598,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // Top edge, left to right.
   for (let i = 0; i < nTop; i++) {
     seats.push({
-      seat: seat++,
+      seat: seatAt(position++),
       x: topLeft + ((i + 0.5) / nTop) * topW,
       y: ringTop + podInset / 2,
       anchor: "top",
@@ -578,7 +610,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // Right edge, top to bottom — ends at the hero's immediate right.
   for (let i = 0; i < nRight; i++) {
     seats.push({
-      seat: seat++,
+      seat: seatAt(position++),
       x: ringRight - podInset / 2,
       y: sideTop + ((i + 0.5) / nRight) * sideH,
       anchor: "right",
@@ -852,6 +884,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     box,
     density,
     seats,
+    viewerSeat,
     zones,
     pileRegion,
     pileAxis,

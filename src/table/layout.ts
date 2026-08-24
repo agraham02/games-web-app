@@ -518,12 +518,15 @@ export function layoutPiece(
     /* -------------------------------------------------- hand */
     case "hand": {
       const seatId: SeatId = p.seat ?? HERO;
+      // Whose hand gets the big bottom strip. Online this is not seat 0,
+      // and for a spectator it is nobody — every hand is an opponent's.
+      const viewerSeat = g.viewerSeat;
       // Cards overlap in a fanned arc, which is how you hold cards.
       // Dominoes do not fan — you stand them in a rack, edge to edge and
       // upright — so a tile hand is a flat, evenly spaced row.
       const isTile = ctx?.kind === "tile";
 
-      if (seatId === HERO) {
+      if (viewerSeat !== null && seatId === viewerSeat) {
         // The boneyard shares this strip (see geometry's `boneyard`), so
         // a tile hand keeps clear of it. Card games have no such pile
         // and keep the full width.

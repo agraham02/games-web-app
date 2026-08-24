@@ -756,3 +756,71 @@ describe("pile assembly — portrait and landscape are different, not relabelled
     }
   });
 });
+
+describe("viewer-relative seating", () => {
+  /**
+   * Online, the person looking at the screen is rarely seat 0. Rather than
+   * teach every game to renumber its own state per viewer — hands, bids and
+   * scores are all keyed by seat — the table lays seats out by POSITION and
+   * labels them from the viewer. Position 0 is always "you".
+   */
+  const box = { seats: 4, width: 1024, height: 768 };
+
+  it("puts the viewer bottom-centre whoever they are", () => {
+    for (const viewer of [0, 1, 2, 3]) {
+      const g = resolveTable({ ...box, viewerSeat: viewer });
+      const bottom = g.seats.find((s) => s.anchor === "bottom")!;
+      expect(bottom.seat).toBe(viewer);
+      expect(bottom.isHero).toBe(true);
+      expect(bottom.x).toBeCloseTo(box.width / 2, 0);
+    }
+  });
+
+  it("keeps every seat present and distinct under rotation", () => {
+    for (const viewer of [0, 1, 2, 3]) {
+      const g = resolveTable({ ...box, viewerSeat: viewer });
+      const ids = g.seats.map((s) => s.seat).sort();
+      expect(ids).toEqual([0, 1, 2, 3]);
+    }
+  });
+
+  it("preserves who sits to your left regardless of your seat number", () => {
+    // Numbering runs anticlockwise from the hero, so the seat one higher
+    // than yours is always on your left. That relationship is the whole
+    // point of rotating rather than renumbering, and a partnership game
+    // depends on it: partners must stay across the table.
+    for (const viewer of [0, 1, 2, 3]) {
+      const g = resolveTable({ ...box, viewerSeat: viewer });
+      const left = g.seats.find((s) => s.anchor === "left")!;
+      const top = g.seats.find((s) => s.anchor === "top")!;
+      expect(left.seat).toBe((viewer + 1) % 4);
+      expect(top.seat).toBe((viewer + 2) % 4); // your partner, across
+    }
+  });
+
+  it("defaults to seat 0 when nobody says otherwise", () => {
+    // Every offline game relies on this, so it is worth pinning that
+    // `undefined` and an explicit 0 are the same table.
+    const implicit = resolveTable(box);
+    const explicit = resolveTable({ ...box, viewerSeat: 0 });
+    expect(implicit.seats).toEqual(explicit.seats);
+    expect(implicit.viewerSeat).toBe(0);
+  });
+
+  it("gives a spectator no hero and a pod at every seat", () => {
+    // `null` is deliberately not the same as `undefined`: one is somebody
+    // watching, the other is nobody having said.
+    const g = resolveTable({ ...box, viewerSeat: null });
+    expect(g.viewerSeat).toBeNull();
+    expect(g.seats.every((s) => !s.isHero)).toBe(true);
+    expect(g.seats.map((s) => s.seat).sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it("keeps a spectator's bottom pod fully on screen", () => {
+    // With no hand strip to sit above, the bottom pod would otherwise be
+    // centred on the viewport edge with half of it cut off.
+    const g = resolveTable({ ...box, viewerSeat: null, handZone: 0 });
+    const bottom = g.seats.find((s) => s.anchor === "bottom")!;
+    expect(bottom.y).toBeLessThan(box.height);
+  });
+});
