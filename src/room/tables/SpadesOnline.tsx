@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A room's game, on screen.
+ * Spades, in a room.
  *
  * Almost nothing here is new, and that is the point of the four stages
  * that came before it: `GameHost` renders the table, `SpadesTable`
@@ -20,7 +20,6 @@
 import { useMemo } from "react";
 import type { SeatId } from "@/engine/types";
 import { GAMES } from "@/session/registry";
-import type { FrameView, RoomView } from "@/session/protocol";
 import type { SpadesAction, SpadesState } from "@/games/spades/types";
 import { botColour } from "@/games/_shared/botIdentity";
 import { GameHostView } from "@/table/GameHost";
@@ -35,25 +34,18 @@ import {
   statsFor,
   type SpadesView,
 } from "@/app/play/spades/table";
-import { tintFor } from "./Roster";
-import { useOnlineRuntime } from "./useOnlineRuntime";
-import type { RoomApi } from "./useRoom";
+import { tintFor } from "../Roster";
+import { useOnlineRuntime } from "../useOnlineRuntime";
+import type { OnlineTableProps } from "../tables";
 
-export function OnlineTable({
+export function SpadesOnline({
   api,
   room,
   frame,
   held,
   onToggleHeld,
   onClearHeld,
-}: {
-  api: RoomApi;
-  room: RoomView;
-  frame: FrameView;
-  held: string[];
-  onToggleHeld: (id: string) => void;
-  onClearHeld: () => void;
-}) {
+}: OnlineTableProps) {
   const definition = useMemo(() => {
     const entry = GAMES[room.gameId ?? "spades"];
     return entry.create(room.settings);

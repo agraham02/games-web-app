@@ -23,7 +23,7 @@ import { Button } from "@/ui/primitives/Button";
 import { CodeInput, TextField } from "@/ui/primitives/TextField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { Lobby } from "./Lobby";
-import { OnlineTable } from "./OnlineTable";
+import { tableFor } from "./tables";
 import { useRoom } from "./useRoom";
 
 const NAME_KEY = "table-games.display-name";
@@ -75,15 +75,25 @@ export function RoomScreen({ code }: { code?: string }) {
         </Centred>
       ) : api.phase === "idle" ? (
         <Entry api={api} initialCode={code} />
-      ) : api.room && api.room.inGame && api.frame ? (
-        <OnlineTable
-          api={api}
-          room={api.room}
-          frame={api.frame}
-          held={held}
-          onToggleHeld={toggleHeld}
-          onClearHeld={() => setHeld([])}
-        />
+      ) : api.room && api.room.inGame && api.frame && tableFor(api.room.gameId) ? (
+        // Looked up rather than hardcoded: the room may be running any
+        // game, and a table that assumed one would render the wrong one.
+        // `tableFor` returning null falls through to the lobby, which is
+        // the honest answer for a game with no table yet — and a test
+        // stops the registry from ever offering one.
+        (() => {
+          const Table = tableFor(api.room.gameId)!;
+          return (
+            <Table
+              api={api}
+              room={api.room}
+              frame={api.frame}
+              held={held}
+              onToggleHeld={toggleHeld}
+              onClearHeld={() => setHeld([])}
+            />
+          );
+        })()
       ) : (
         <Lobby api={api} />
       )}

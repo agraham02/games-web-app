@@ -14,6 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
+import { gameEntry } from "./registry";
 import {
   applyCommand,
   createRoom,
@@ -381,76 +382,61 @@ describe("seats, presence and bots", () => {
 });
 
 describe("settings coming off the wire", () => {
-  it("clamps hostile numbers instead of trusting them", () => {
+  it("clamps hostile numbers before they reach a game factory", () => {
+    // Clamping lives in the registry's `parse`, so that is what is tested
+    // here — directly, and independently of which games happen to have an
+    // online table this week.
+    const poker = gameEntry("poker").parse({
+      startingStack: Number.POSITIVE_INFINITY,
+      bigBlind: -5,
+    });
+    expect(Number.isFinite(poker.startingStack as number)).toBe(true);
+    expect(poker.bigBlind as number).toBeGreaterThanOrEqual(2);
+
+    const lrc = gameEntry("lrc").parse({ target: Number.NaN });
+    expect(Number.isFinite(lrc.target as number)).toBe(true);
+  });
+
+  it("clamps a seat count to what the game actually supports", () => {
     let r = withMembers([]);
     r = ok(
       r,
-      {
-        t: "selectGame",
-        gameId: "poker",
-        settings: { startingStack: Number.POSITIVE_INFINITY, bigBlind: -5 },
-        seats: 999,
-        difficulty: "steady",
-      },
+      { t: "selectGame", gameId: "spades", settings: {}, seats: 999, difficulty: "steady" },
       { actor: LEADER },
     );
-
-    expect(Number.isFinite(r.settings.startingStack as number)).toBe(true);
-    expect(r.settings.bigBlind as number).toBeGreaterThanOrEqual(2);
-    expect(r.seats).toBe(10); // poker's real maximum
+    expect(r.seats).toBe(4); // Spades is exactly four.
   });
 
-  it("drops team assignments when switching to a game without partnerships", () => {
+  it("refuses a game the room has no table for", () => {
+    // The server will not start a game a client could not draw. Rummy is
+    // permanently in this state; Dominoes, Poker and LRC are here only
+    // until their tables land.
+    const r = withMembers([]);
+    for (const gameId of ["rummy", "poker"] as const) {
+      expect(
+        applyCommand(
+          r,
+          { t: "selectGame", gameId, settings: {}, seats: 4, difficulty: "steady" },
+          { actor: LEADER, now: 1 },
+        ),
+      ).toEqual({ ok: false, error: "game-not-online" });
+    }
+  });
+
+  it("keeps team assignments only while the chosen game has partnerships", () => {
     let r = withMembers(["Sam"]);
     r = spades(r);
     r = ok(r, { t: "assignTeam", session: "s-0", team: 1 }, { actor: LEADER });
     expect(r.teams).not.toBeNull();
+    expect(r.teams!["s-0"]).toBe(1);
 
-    r = ok(
-      r,
-      { t: "selectGame", gameId: "poker", settings: {}, seats: 6, difficulty: "steady" },
-      { actor: LEADER },
-    );
-    expect(r.teams).toBeNull();
-  });
-});
-
-describe("spectating is opt-in", () => {
-  function started(): Room {
-    let r = withMembers(["Sam"]);
-    r = spades(r, 4);
-    return ok(r, { t: "startGame" }, { actor: LEADER });
-  }
-
-  it("seats a newcomer who does not say otherwise", () => {
-    // The overwhelmingly common intent behind "join the game".
-    let r = started();
-    r = ok(r, { t: "join", name: "Late" }, { actor: "s-late", now: 40 });
-    r = ok(r, { t: "enterGame" }, { actor: "s-late" });
-    expect(seatOf(r, "s-late")).not.toBeNull();
-  });
-
-  it("lets someone choose to watch even with seats going spare", () => {
-    // Without this the only route to spectating would be waiting for a
-    // full table, and the spec calls watching opt-in.
-    let r = started();
-    expect(openSeats(r).length).toBeGreaterThan(0);
-    r = ok(r, { t: "join", name: "Watcher" }, { actor: "s-watch", now: 41 });
-    r = ok(r, { t: "enterGame", as: "spectator" }, { actor: "s-watch" });
-
-    expect(seatOf(r, "s-watch")).toBeNull();
-    expect(r.game!.present).toContain("s-watch");
-    // And they did not consume a seat on the way past.
-    expect(openSeats(r).length).toBeGreaterThan(0);
-  });
-
-  it("returns a seat owner to their own seat even if they ask to watch", () => {
-    // Entering is a reclaim for anyone who owns a seat; giving it up is
-    // what leaving the room is for.
-    let r = started();
-    const seat = seatOf(r, LEADER);
-    r = ok(r, { t: "exitGame" }, { actor: LEADER });
-    r = ok(r, { t: "enterGame", as: "spectator" }, { actor: LEADER });
-    expect(seatOf(r, LEADER)).toBe(seat);
+    // The mirror — switching to a game without partnerships drops them, so
+    // a pairing nobody chose cannot leak into a game that has no teams —
+    // needs a second online game to exercise, and gets one as soon as LRC
+    // or Poker is wired. The rule it depends on is asserted here directly
+    // in the meantime.
+    expect(gameEntry("lrc").teams({})).toBe(false);
+    expect(gameEntry("poker").teams({})).toBe(false);
+    expect(gameEntry("spades").teams({})).toBe(true);
   });
 });

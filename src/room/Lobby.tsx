@@ -20,7 +20,7 @@
 import { Check, Copy, Lock, LockOpen, Shuffle, X } from "lucide-react";
 import { useState } from "react";
 import type { BotDifficulty } from "@/engine/types";
-import { GAMES, onlineGames, type GameId } from "@/session/registry";
+import { GAMES, GAME_IDS, onlineGames, type GameId } from "@/session/registry";
 import { Button } from "@/ui/primitives/Button";
 import { DifficultyPicker, type DifficultyBlurbs } from "@/ui/primitives/DifficultyPicker";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
@@ -167,6 +167,7 @@ function GamePicker({ api }: { api: RoomApi }) {
   const room = api.room!;
   const leader = room.youAreLeader;
   const games = onlineGames();
+  const offline = GAME_IDS.map((id) => GAMES[id]).filter((g) => !g.online);
   const entry = room.gameId ? GAMES[room.gameId] : null;
 
   const update = (gameId: GameId, settings = room.settings, seats = room.seats, diff = room.difficulty) =>
@@ -194,12 +195,19 @@ function GamePicker({ api }: { api: RoomApi }) {
         ))}
       </div>
       {/*
-        Rummy is absent above rather than shown disabled, and that is the
-        one exception to this screen's dim-don't-hide rule: it is not
-        unavailable to YOU, it is not available at all yet, and a greyed
-        button invites a question the lobby cannot answer.
+        Games with no online table are absent above rather than shown
+        disabled, and that is the one exception to this screen's
+        dim-don't-hide rule: they are not unavailable to YOU, they are not
+        available at all yet, and a greyed button invites a question the
+        lobby cannot answer. Named in prose instead, from the same list, so
+        this line cannot go stale as they are wired up.
       */}
-      <p className="text-xs text-bone-600">Rummy 500 is single-player only for now.</p>
+      {offline.length > 0 ? (
+        <p className="text-xs text-bone-600">
+          {offline.map((g) => g.name).join(", ")}{" "}
+          {offline.length === 1 ? "is" : "are"} single-player only for now.
+        </p>
+      ) : null}
 
       {entry ? (
         <div className="flex w-full flex-col gap-3">

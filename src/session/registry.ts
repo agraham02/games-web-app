@@ -36,13 +36,20 @@ export interface GameEntry {
   maxSeats: number;
   defaultSeats: number;
   /**
-   * Whether this game is playable in a ROOM. Rummy 500 is deliberately
-   * false: `currentSeat` returns `HERO` outright while a claim window is
-   * open, `startRound` branches on `dealer === HERO`, and the claim race
-   * is timed by a `setTimeout` in the play page rather than by anything
-   * the server could adjudicate. Those are rules-level seat-0 assumptions,
-   * not a wiring gap, and unpicking them is its own piece of work. It
-   * stays fully playable offline in the meantime.
+   * Whether this game is playable in a ROOM.
+   *
+   * Two different things make this false. Dominoes, Poker and LRC have no
+   * online TABLE yet — the engine and the server handle them fine, but a
+   * room could not draw them, so offering them would deal a real game onto
+   * a screen showing a different one. `src/room/tables.test.tsx` holds the
+   * two lists together so that cannot silently happen again.
+   *
+   * Rummy 500 is false for a deeper reason, and will stay false longer:
+   * `currentSeat` returns `HERO` outright while a claim window is open,
+   * `startRound` branches on `dealer === HERO`, and the claim race is
+   * timed by a `setTimeout` in the play page rather than by anything the
+   * server could adjudicate. Those are rules-level seat-0 assumptions, not
+   * a wiring gap. It stays fully playable offline.
    */
   online: boolean;
   /** Whether the lobby should offer team assignment for this game. */
@@ -102,7 +109,7 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 4,
     defaultSeats: 4,
-    online: true,
+    online: false,
     teams: (s) => s.mode === "caribbean" && s.teams === true,
     parse: (raw) => {
       const mode = pick(raw.mode, ["classic", "caribbean"] as const, "classic");
@@ -126,7 +133,7 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 10,
     defaultSeats: 6,
-    online: true,
+    online: false,
     teams: () => false,
     parse: (raw) => ({
       startingStack: int(raw.startingStack, 100, 100_000, 5_000),
@@ -141,7 +148,7 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 3,
     maxSeats: 10,
     defaultSeats: 6,
-    online: true,
+    online: false,
     teams: () => false,
     parse: (raw) => ({ target: int(raw.target, 1, 20, 3) }),
     create: (s) => createLrc(s.target as number),
