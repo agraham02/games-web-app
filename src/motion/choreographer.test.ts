@@ -164,4 +164,25 @@ describe("choreograph", () => {
       expect(second!.offset).toBe(0);
     });
   });
+
+  describe("unmask", () => {
+    it("costs nothing, so the play behind it lands in the same frame", () => {
+      // A redaction-layer event, not a gesture. If it took a real
+      // duration the card would visibly sit in the opponent's hand for a
+      // beat before flying out, splitting one motion into two.
+      const [step] = choreograph([
+        { t: "unmask", piece: "S-A", at: { zone: "hand", seat: 3, index: 0, count: 1, faceUp: false } },
+      ]);
+      expect(step!.offset).toBe(0);
+      expect(step!.duration).toBe(0);
+    });
+
+    it("does not delay the event it rides in front of", () => {
+      const steps = choreograph([
+        { t: "unmask", piece: "S-A", at: { zone: "hand", seat: 3, index: 0, count: 1, faceUp: false } },
+        { t: "play", piece: "S-A", from: 3, to: "trick" },
+      ]);
+      expect(steps[1]!.offset).toBe(0);
+    });
+  });
 });

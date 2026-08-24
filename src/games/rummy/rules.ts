@@ -965,7 +965,18 @@ export function playerView(state: RummyState, viewer: SeatId): RummyState {
     const hand = state.hands[seat] ?? [];
     hands[seat] = seat === viewer ? [...hand] : hand.map(() => HIDDEN_CARD);
   }
-  return { ...state, hands };
+  // The stock is every card still to be drawn, in the exact order it will
+  // come out — strictly more valuable than seeing an opponent's hand, and
+  // it was passing through untouched while the hands beside it were being
+  // carefully masked.
+  //
+  // Unlike a hand, these placeholders have to be DISTINCT: `legalActions`
+  // builds a `Set` from the stock, and collapsing every card to one id the
+  // way hands do would shrink that set to a single element and misreport
+  // how much stock is left. What is legitimately public is the depth, so
+  // the count is preserved exactly.
+  const stock = state.stock.map((_, i) => `${HIDDEN_CARD}s${i}`);
+  return { ...state, hands, stock };
 }
 
 export function standingsOf(state: RummyState) {

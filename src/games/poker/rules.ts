@@ -651,7 +651,19 @@ export function playerView(state: PokerState, viewer: SeatId): PokerState {
     const revealed = typeof owner === "number" && isHoleCardsRevealed(state, owner);
     cardOwner[isOpponentHole && !revealed ? `${HIDDEN_CARD_PREFIX}${hidden++}` : id] = owner;
   }
-  return { ...state, cardOwner };
+  // `deck` is the ENTIRE remaining runout in dealt order — every future
+  // flop, turn and river, in sequence. Left intact it made this function's
+  // careful hole-card redaction beside the point: anyone holding the view
+  // could read the board before it fell. It went unnoticed because
+  // single-player never sends a view anywhere, and the one consumer is a
+  // bot nobody suspected of cheating.
+  //
+  // Only the COUNT is public (a stub pile has a visible depth), so the ids
+  // become the same anonymous placeholders the hole cards use. Nothing
+  // reads them: `reduce` deals from the true state, and `placements` uses
+  // them as keys and for `length`, both of which survive substitution.
+  const deck = state.deck.map(() => `${HIDDEN_CARD_PREFIX}${hidden++}`);
+  return { ...state, cardOwner, deck };
 }
 
 export function createPoker(

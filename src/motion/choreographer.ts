@@ -111,6 +111,16 @@ export function choreograph(
         });
         break;
 
+      case "unmask":
+        // Zero and zero, deliberately. This is bookkeeping, not motion:
+        // it puts a piece the viewer had only seen the back of onto the
+        // board at the slot it already occupied, so that the `play`
+        // immediately after it has something real to animate out of the
+        // hand. Giving it a duration would insert a visible hitch in the
+        // middle of what has to read as one gesture.
+        steps.push({ event, offset: 0, duration: 0 });
+        break;
+
       case "pause":
         // Same weight as a single ordinary `move` — DURATION.play, not
         // a fresh constant — because the whole point is that a turn

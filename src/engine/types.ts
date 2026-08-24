@@ -306,6 +306,24 @@ export type GameEvent =
    */
   | { t: "slam"; piece: PieceId; shake: PieceId[]; final: boolean }
   /**
+   * A piece the viewer could not previously identify enters their picture
+   * at the position it already occupies.
+   *
+   * Emitted ONLY by the multiplayer redaction layer (`session/redact.ts`),
+   * never by a game's own `reduce` — a game has no notion of a viewer who
+   * was being kept in the dark. When an opponent plays from a concealed
+   * hand, the watching client holds an anonymous stand-in in that slot and
+   * has never seen the real card; this puts the real piece exactly where
+   * the stand-in was so the `play` that follows can fly out of the hand
+   * rather than popping into being on the table.
+   *
+   * Rides immediately in front of that play with zero offset and zero
+   * duration, so the two land in the same frame — the same shape `slam`
+   * uses to ride in front of its own `move`, and for the same reason: two
+   * events, one gesture.
+   */
+  | { t: "unmask"; piece: PieceId; at: Placement }
+  /**
    * A deliberate beat with nothing to place. Some legal actions
    * genuinely move no piece — LRC's roll landing entirely on dots is
    * the first case — and without this, that turn snapped straight to
