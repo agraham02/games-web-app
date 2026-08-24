@@ -219,7 +219,9 @@ export function startRound(state: DomState, rng: Rng): ReduceResult<DomState> {
   events.push({
     t: "announce",
     seat: opener,
-    text: opener === HERO ? "You lead" : `${botName(opener)} leads`,
+    actor: opener,
+    text: "leads",
+    selfText: "lead",
     tone: "info",
   });
 
@@ -270,7 +272,7 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
       faceUp: seat === HERO,
     });
     if (seat !== HERO) {
-      events.push({ t: "announce", seat, text: `${botName(seat)} draws`, tone: "info" });
+      events.push({ t: "announce", seat, actor: seat, text: "drew", tone: "info" });
     }
     // The turn does not move — they still have to play or draw again.
     return {
@@ -337,7 +339,9 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
     events.push({
       t: "announce",
       seat,
-      text: `${botName(seat)} plays ${action.tile.replace("-", "–")}`,
+      actor: seat,
+      text: `plays ${action.tile.replace("-", "–")}`,
+      selfText: `play ${action.tile.replace("-", "–")}`,
       tone: "info",
     });
   }

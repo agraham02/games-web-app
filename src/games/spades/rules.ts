@@ -85,7 +85,9 @@ function leadAnnounce(seat: SeatId): GameEvent {
   return {
     t: "announce",
     seat,
-    text: seat === HERO ? "You lead" : `${botName(seat)} leads`,
+    actor: seat,
+    text: "leads",
+    selfText: "lead",
     tone: "info",
   };
 }
@@ -241,7 +243,9 @@ export function startRound(state: SpadesState, rng: Rng): ReduceResult<SpadesSta
   events.push({
     t: "announce",
     seat: leader,
-    text: leader === HERO ? "Your bid" : `${botName(leader)} bids first`,
+    actor: leader,
+    text: "bids first",
+    selfText: "bid first",
     tone: "info",
   });
 
@@ -389,7 +393,14 @@ function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
   }
 
   if (seat !== HERO) {
-    events.push({ t: "announce", seat, text: `${botName(seat)} bids ${describeBid(bid)}`, tone: "info" });
+    events.push({
+      t: "announce",
+      seat,
+      actor: seat,
+      text: `bids ${describeBid(bid)}`,
+      selfText: `bid ${describeBid(bid)}`,
+      tone: "info",
+    });
   }
   if (isTeamBlindBid) {
     events.push({
@@ -549,7 +560,14 @@ function reducePlay(state: SpadesState, card: PieceId): ReduceResult<SpadesState
 
   const events: GameEvent[] = [{ t: "play", piece: card, from: seat, to: "trick" }];
   if (seat !== HERO) {
-    events.push({ t: "announce", seat, text: `${botName(seat)} plays ${spadesCardLabel(card)}`, tone: "info" });
+    events.push({
+      t: "announce",
+      seat,
+      actor: seat,
+      text: `plays ${spadesCardLabel(card)}`,
+      selfText: `play ${spadesCardLabel(card)}`,
+      tone: "info",
+    });
   }
 
   let next: SpadesState = { ...state, hands, trick, ledSuit, trumpBroken };
@@ -578,7 +596,9 @@ function reducePlay(state: SpadesState, card: PieceId): ReduceResult<SpadesState
   events.push({
     t: "announce",
     seat: winner,
-    text: winner === HERO ? "You take the trick" : `${botName(winner)} takes the trick`,
+    actor: winner,
+    text: "takes the trick",
+    selfText: "take the trick",
     tone: winner === HERO ? "good" : "info",
   });
 

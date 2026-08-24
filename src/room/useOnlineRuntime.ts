@@ -28,6 +28,7 @@ import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
 import type { FrameView } from "@/session/protocol";
 import { announce } from "@/ui/disclosure";
+import { composeAnnounce } from "@/session/announce";
 import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -49,9 +50,21 @@ const DEFAULT_END_HOLD_MS = 1200;
 const DEFAULT_ROUND_HOLD_MS = 1000;
 const ROUND_INTRO_HOLD_MS = 3000;
 
-function surfaceEvent(event: GameEvent): void {
-  if (event.t === "announce") announce(event.text, event.tone);
-  applyEventToTable(event);
+/**
+ * Composing needs to know who is watching, which changes per room — so
+ * unlike the offline runtime's module-level version, this is built per
+ * frame from the seat names the server sent with it.
+ */
+function surfaceEventFor(frame: FrameView) {
+  return (event: GameEvent): void => {
+    if (event.t === "announce") {
+      announce(
+        composeAnnounce(event, frame.seat, (seat) => frame.seatNames[seat] ?? `Seat ${seat + 1}`),
+        event.tone,
+      );
+    }
+    applyEventToTable(event);
+  };
 }
 
 export interface OnlineRuntimeOptions {
@@ -103,8 +116,20 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     pump();
   };
 
+  // Read through a ref so the resolver always matches the frame being
+  // played, without rebuilding the choreographer (and losing its queue)
+  // every time a frame lands.
+  const applyRef = useRef<(event: GameEvent) => void>(applyEventToTable);
+  // Declared BEFORE the frame effect below, and that ordering is
+  // load-bearing: effects run in declaration order, so on the commit that
+  // delivers a frame this is current before `pump` pushes its events into
+  // the choreographer and the first one is applied.
+  useEffect(() => {
+    applyRef.current = frame ? surfaceEventFor(frame) : applyEventToTable;
+  });
+
   const choreographer = useChoreographer({
-    apply: surfaceEvent,
+    apply: (event) => applyRef.current(event),
     onIdle: settle,
     speed: opts.speed,
     dealStaggerMs: opts.dealStaggerMs,

@@ -402,7 +402,8 @@ function reduceLayNewMeld(state: RummyState, cards: readonly PieceId[]): ReduceR
   events.push({
     t: "announce",
     seat,
-    text: `${seat === HERO ? "You" : "Melded"} ${meldLabel(cards)}`.trim(),
+    actor: seat,
+    text: `melded ${meldLabel(cards)}`,
     tone: seat === HERO ? "good" : "info",
   });
 

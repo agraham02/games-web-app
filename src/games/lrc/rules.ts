@@ -35,7 +35,6 @@ import type {
 } from "@/engine/types";
 import { HERO } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { botName } from "@/games/_shared/botIdentity";
 import type { LrcAction, LrcState } from "./types";
 import { lrcBots } from "./bots";
 import {
@@ -139,7 +138,9 @@ export function startRound(state: LrcState, rng: Rng): ReduceResult<LrcState> {
   events.push({
     t: "announce",
     seat: turn,
-    text: turn === HERO ? "You roll first" : `${botName(turn)} rolls first`,
+    actor: turn,
+    text: "rolls first",
+    selfText: "roll first",
     tone: "info",
   });
 
@@ -194,7 +195,9 @@ export function reduce(state: LrcState, action: LrcAction): ReduceResult<LrcStat
     events.push({
       t: "announce",
       seat: roundWinner,
-      text: roundWinner === HERO ? "You win the pot!" : `${botName(roundWinner)} takes the pot`,
+      actor: roundWinner,
+      text: "takes the pot",
+      selfText: "win the pot!",
       tone: roundWinner === HERO ? "good" : "info",
     });
     const deltas: Record<SeatId, number> = {};

@@ -348,7 +348,33 @@ export type GameEvent =
    */
   | { t: "think"; seat: SeatId; ms: number }
   /** Surfaced as a toast. Never blocks. */
-  | { t: "announce"; seat?: SeatId; text: string; tone?: Tone }
+  /**
+   * Surfaced as a toast. Never blocks.
+   *
+   * `actor` is how a line gets a NAME without the engine knowing any
+   * names. Offline that hardly mattered — one human, always seat 0, so
+   * `seat === HERO ? "You" : botName(seat)` was correct by construction.
+   * In a room it is wrong twice over: every viewer needs their own "You",
+   * and everybody else needs the name of the person actually sitting
+   * there rather than the bot name that seat would have had.
+   *
+   * So the engine writes the PREDICATE and names the actor by seat; the
+   * client composes. `selfText` exists because English will not let one
+   * template cover both — "Sam leads" and "You lead" differ in the verb,
+   * not just the subject — so a line whose verb changes supplies the
+   * second-person form alongside. Most do not need it: past tense agrees
+   * either way, which is what POLICY already asks toasts to use.
+   */
+  | {
+      t: "announce";
+      seat?: SeatId;
+      text: string;
+      tone?: Tone;
+      /** Whose line this is. The client prefixes their name. */
+      actor?: SeatId;
+      /** The `text` to use when the actor is the viewer. */
+      selfText?: string;
+    }
   | { t: "phase"; phase: string }
   | { t: "score"; deltas: Record<SeatId, number> }
   | { t: "roundEnd"; round: number }

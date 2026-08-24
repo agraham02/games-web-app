@@ -45,6 +45,8 @@ import type { Rng } from "@/engine/rng";
 import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
 import { announce } from "@/ui/disclosure";
+import { botName } from "@/games/_shared/botIdentity";
+import { composeAnnounce } from "@/session/announce";
 import {
   DEFAULT_TURN_HOLD_MS,
   GameSession,
@@ -104,7 +106,14 @@ const ROUND_INTRO_HOLD_MS = 3000;
  * and applyEvent should stay a pure placement reducer.
  */
 function surfaceEvent(event: GameEvent): void {
-  if (event.t === "announce") announce(event.text, event.tone);
+  if (event.t === "announce") {
+    // Offline the viewer is always seat 0 and everybody else is a bot, so
+    // the name table is the bot table. Composing here rather than in the
+    // engine is what lets the same event read as "You led" on one screen
+    // and "Ada led" on another — which is the whole point online, and
+    // costs nothing here.
+    announce(composeAnnounce(event, HERO, botName), event.tone);
+  }
   applyEventToTable(event);
 }
 
