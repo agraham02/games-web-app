@@ -106,15 +106,40 @@ export function redactPlacements(
 }
 
 /**
- * The id a viewer knows a piece by, given the true placements at some
- * moment. A piece with no placement at all (not yet dealt, or already
- * gone) keeps its real id — there is nothing to conceal about a piece
- * that is not on the table.
+ * How a piece should be named to this viewer across one batch.
+ *
+ * The subtle case, and the one that leaked: a piece with no placement
+ * BEFORE the batch. "Not on the table yet, so nothing to conceal" sounds
+ * right and is wrong — an opening deal is exactly that, and the card is
+ * face-down in somebody else's hand the instant it lands. Poker showed it
+ * plainly (its pre-deal state places no cards at all, so every hole card
+ * went out under its real id) while Spades hid it, because Spades does
+ * place its deck before dealing and so happened to take the safe branch.
+ *
+ * So visibility is judged over BOTH ends of the batch, not just the start.
  */
-function visibleId(piece: PieceId, truth: PlacementMap): PieceId {
-  const at = truth[piece];
-  if (!at || at.faceUp) return piece;
-  return sentinelFor(at);
+type Naming =
+  /** Concealed throughout. Never the real id. */
+  | { kind: "conceal"; id: PieceId }
+  /** Concealed a moment ago, public now — needs an `unmask` in front. */
+  | { kind: "reveal"; at: Placement }
+  /** Public at both ends; the real id was never a secret. */
+  | { kind: "public" };
+
+function namingFor(piece: PieceId, before: PlacementMap, after: PlacementMap): Naming {
+  const was = before[piece];
+  const now = after[piece];
+  const hiddenBefore = Boolean(was) && !was!.faceUp;
+  const hiddenAfter = Boolean(now) && !now!.faceUp;
+
+  if (hiddenBefore && !hiddenAfter) return { kind: "reveal", at: { ...was! } };
+  if (hiddenBefore || hiddenAfter) {
+    // Named by where it WAS when it already existed, so the stand-in the
+    // viewer is looking at is the one that moves; by where it lands when
+    // it is new to the table, which is the deal case.
+    return { kind: "conceal", id: sentinelFor(hiddenBefore ? was! : now!) };
+  }
+  return { kind: "public" };
 }
 
 /** Every piece id an event names, for the generic rewrite below. */
@@ -192,24 +217,17 @@ export function projectEvents(
   for (const event of events) {
     // Announcements are prose the engine wrote about the table; they name
     // no pieces and are already public.
-    const named = piecesOf(event);
-
-    for (const piece of named) {
-      const wasHidden = Boolean(before[piece]) && !before[piece]!.faceUp;
-      const nowVisible = !after[piece] || after[piece]!.faceUp;
-      if (wasHidden && nowVisible) {
-        out.push({ t: "unmask", piece, at: { ...before[piece]! } });
-      }
+    for (const piece of piecesOf(event)) {
+      const naming = namingFor(piece, before, after);
+      if (naming.kind === "reveal") out.push({ t: "unmask", piece, at: naming.at });
     }
 
     out.push(
       withPiece(event, (id) => {
-        // A piece revealed by this very batch must travel under its real
-        // id — the `unmask` above just put it on the board under that id.
-        const wasHidden = Boolean(before[id]) && !before[id]!.faceUp;
-        const nowVisible = !after[id] || after[id]!.faceUp;
-        if (wasHidden && nowVisible) return id;
-        return visibleId(id, before);
+        const naming = namingFor(id, before, after);
+        // A revealed piece travels under its real id — the `unmask` just
+        // put that exact id on the board for it to move from.
+        return naming.kind === "conceal" ? naming.id : id;
       }),
     );
   }

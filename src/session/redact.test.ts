@@ -201,6 +201,54 @@ describe("projectEvents", () => {
     expect(wire).not.toContain("S-K");
   });
 
+  it("conceals a piece that was not on the table before the batch at all", () => {
+    // The case that leaked every poker hole card. "Not placed yet, so
+    // nothing to conceal" is wrong for a deal: the card is face-down in
+    // somebody else's hand the moment it lands, and naming it in the deal
+    // event hands it over regardless of `faceUp: false`.
+    const before: PlacementMap = {};
+    const after: PlacementMap = { "H10": hand(1, 0, 2, false) };
+    const out = projectEvents(
+      [{ t: "deal", piece: "H10", to: 1, faceUp: false }],
+      before,
+      after,
+    );
+    expect(JSON.stringify(out)).not.toContain("H10");
+    // And it is still a deal to seat 1 — the motion is unchanged, only
+    // the identity is withheld.
+    expect(out[0]).toMatchObject({ t: "deal", to: 1, faceUp: false });
+  });
+
+  it("still names a card dealt face-up to the viewer themselves", () => {
+    const before: PlacementMap = {};
+    const after: PlacementMap = { "HQ": hand(0, 0, 2, true) };
+    const out = projectEvents([{ t: "deal", piece: "HQ", to: 0, faceUp: true }], before, after);
+    expect(out).toEqual([{ t: "deal", piece: "HQ", to: 0, faceUp: true }]);
+  });
+
+  it("conceals a whole poker deal from every seat but the one it belongs to", () => {
+    // End to end against the game that exposed the bug. Poker places no
+    // cards at all before dealing, which is what made its pre-batch
+    // placements empty and took the unsafe branch.
+    const poker = createPoker();
+    const rng = createRng(31337);
+    const base = poker.setup({ seats: 4, rng });
+    const { state: after, events } = poker.startRound!(base, rng);
+
+    for (const viewer of [0, 1, 2, 3]) {
+      const out = projectEvents(
+        events,
+        poker.placements(base, viewer),
+        poker.placements(after, viewer),
+      );
+      const wire = JSON.stringify(out);
+      for (const [id, owner] of Object.entries(after.cardOwner)) {
+        if (typeof owner !== "number" || owner === viewer) continue;
+        expect(wire).not.toContain(`"${id}"`);
+      }
+    }
+  });
+
   it("never emits a real id for a piece the viewer cannot see, across a real deal", () => {
     // End to end against a genuine Spades deal: take the events a real
     // round produces and assert the projection for seat 0 names no card

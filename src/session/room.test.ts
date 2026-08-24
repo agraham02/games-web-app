@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
-import { gameEntry } from "./registry";
+import { GAMES, GAME_IDS, gameEntry } from "./registry";
 import {
   applyCommand,
   createRoom,
@@ -408,11 +408,13 @@ describe("settings coming off the wire", () => {
   });
 
   it("refuses a game the room has no table for", () => {
-    // The server will not start a game a client could not draw. Rummy is
-    // permanently in this state; Dominoes, Poker and LRC are here only
-    // until their tables land.
+    // Derived from the registry rather than naming games, so this cannot
+    // go stale as they are wired up one at a time — which it did, once.
     const r = withMembers([]);
-    for (const gameId of ["rummy", "poker"] as const) {
+    const offline = GAME_IDS.filter((id) => !GAMES[id].online);
+    expect(offline.length).toBeGreaterThan(0);
+
+    for (const gameId of offline) {
       expect(
         applyCommand(
           r,
@@ -423,20 +425,25 @@ describe("settings coming off the wire", () => {
     }
   });
 
-  it("keeps team assignments only while the chosen game has partnerships", () => {
+  it("drops team assignments when switching to a game without partnerships", () => {
+    // A pairing nobody chose must not leak into a game that has no teams.
+    // This needed a second online game to exercise at all, and Poker being
+    // wired is what finally supplied one.
     let r = withMembers(["Sam"]);
     r = spades(r);
     r = ok(r, { t: "assignTeam", session: "s-0", team: 1 }, { actor: LEADER });
     expect(r.teams).not.toBeNull();
     expect(r.teams!["s-0"]).toBe(1);
 
-    // The mirror — switching to a game without partnerships drops them, so
-    // a pairing nobody chose cannot leak into a game that has no teams —
-    // needs a second online game to exercise, and gets one as soon as LRC
-    // or Poker is wired. The rule it depends on is asserted here directly
-    // in the meantime.
-    expect(gameEntry("lrc").teams({})).toBe(false);
-    expect(gameEntry("poker").teams({})).toBe(false);
-    expect(gameEntry("spades").teams({})).toBe(true);
+    r = ok(
+      r,
+      { t: "selectGame", gameId: "poker", settings: {}, seats: 6, difficulty: "steady" },
+      { actor: LEADER },
+    );
+    expect(r.teams).toBeNull();
+
+    // And back again: choosing a partnership game offers teams once more.
+    r = spades(r);
+    expect(r.teams).not.toBeNull();
   });
 });

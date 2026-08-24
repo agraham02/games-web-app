@@ -21,6 +21,7 @@
 import type { GameId } from "@/session/registry";
 import type { FrameView, RoomView } from "@/session/protocol";
 import type { RoomApi } from "./useRoom";
+import { PokerOnline } from "./tables/PokerOnline";
 import { SpadesOnline } from "./tables/SpadesOnline";
 
 /**
@@ -42,6 +43,7 @@ export type OnlineTableComponent = (props: OnlineTableProps) => React.ReactNode;
 
 export const TABLES: Partial<Record<GameId, OnlineTableComponent>> = {
   spades: SpadesOnline,
+  poker: PokerOnline,
 };
 
 export function tableFor(gameId: GameId | null): OnlineTableComponent | null {

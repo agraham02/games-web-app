@@ -224,6 +224,35 @@ function GamePicker({ api }: { api: RoomApi }) {
             </div>
           ) : null}
 
+          {entry.id === "poker" ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-bone-200">Starting stack</span>
+                <NumberStepper
+                  value={(room.settings.startingStack as number) ?? 5000}
+                  min={100}
+                  max={100_000}
+                  step={500}
+                  onChange={(v) =>
+                    leader && update(entry.id, { ...room.settings, startingStack: v })
+                  }
+                  label="starting stack"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-bone-200">Big blind</span>
+                <NumberStepper
+                  value={(room.settings.bigBlind as number) ?? 50}
+                  min={2}
+                  max={1000}
+                  step={10}
+                  onChange={(v) => leader && update(entry.id, { ...room.settings, bigBlind: v })}
+                  label="big blind"
+                />
+              </div>
+            </>
+          ) : null}
+
           {entry.id === "spades" ? (
             <>
               <Toggle

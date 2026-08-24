@@ -540,6 +540,60 @@ async function main(): Promise<void> {
   });
 
 
+  await scenario("a second game (Poker) runs online through the same seam", async () => {
+    // The table registry's real test: a room can run a game that is not
+    // the one everything was first built around, and each player is dealt
+    // their own hole cards and nobody else's.
+    const a = await client(`t-poker-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-poker-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({
+      t: "selectGame",
+      gameId: "poker",
+      settings: { startingStack: 5000, bigBlind: 50 },
+      seats: 4,
+      difficulty: "casual",
+    });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(500);
+
+    const state = await dump(code);
+    assert(state.sessionRunning === true, "poker should be running");
+    assert((state.table as { round: number } | null) !== null, "there should be a table");
+
+    for (const c of [a, b]) {
+      const frame = c.latest("frame");
+      assert(frame, "each player should have been dealt in");
+      const f = frame.frame as { seat: number; placements: Record<string, unknown> };
+      assert(f.seat !== null, "each should have a seat");
+      // Two hole cards face up for them, the rest of the deck concealed.
+      const standIns = Object.keys(f.placements).filter((k) => k.startsWith("#"));
+      assert(standIns.length > 0, "opponents' cards must be concealed");
+    }
+
+    // And no player is sent another player's hole cards.
+    const truth = await dump(code);
+    void truth;
+    const seenByA = JSON.stringify(a.inbox);
+    const bFrame = b.latest("frame")!.frame as {
+      state: { cardOwner: Record<string, unknown> };
+      seat: number;
+    };
+    const bsOwn = Object.entries(bFrame.state.cardOwner)
+      .filter(([, owner]) => owner === bFrame.seat)
+      .map(([id]) => id)
+      .filter((id) => !id.startsWith("?"));
+    assert(bsOwn.length === 2, `expected Bo to hold two hole cards, saw ${bsOwn.length}`);
+    for (const card of bsOwn) {
+      assert(!seenByA.includes(`"${card}"`), `Ada was sent Bo's hole card ${card}`);
+    }
+  });
+
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);
 }
