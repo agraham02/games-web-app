@@ -18,6 +18,7 @@ export default defineConfig({
     // The five that DO render opt in with a `@vitest-environment jsdom`
     // docblock at the top of the file. Add one if you write a test that
     // touches the DOM; the failure if you forget is immediate and obvious.
+    setupFiles: ["./vitest.setup.ts"],
     environment: "node",
     globals: true,
     include: ["src/**/*.test.{ts,tsx}"],

@@ -191,3 +191,15 @@ export function roomConnection(): RoomConnection {
   if (!shared) shared = new RoomConnection();
   return shared;
 }
+
+/**
+ * Drops the shared connection so the next call builds a fresh one.
+ *
+ * For tests only. A module-level singleton is right in a browser — one
+ * tab, one identity — but it means one test's socket would otherwise be
+ * handed to the next, along with everything it had already received.
+ */
+export function __resetRoomConnectionForTests(): void {
+  shared?.close();
+  shared = null;
+}
