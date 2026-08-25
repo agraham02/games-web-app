@@ -22,6 +22,7 @@ import {
   makeCode,
   openSeats,
   seatOf,
+  teamIndex,
   type Room,
   type RoomCommand,
   type RoomContext,
@@ -445,5 +446,48 @@ describe("settings coming off the wire", () => {
     // And back again: choosing a partnership game offers teams once more.
     r = spades(r);
     expect(r.teams).not.toBeNull();
+  });
+});
+
+describe("teamIndex", () => {
+  /**
+   * The values that reach this are not all reachable over a socket —
+   * `JSON.stringify` flattens `NaN` and `Infinity` to `null` and the
+   * parser turns those away — but this is a pure function on a public
+   * export, and the seating code calls it on whatever a room happens to
+   * hold. So it is pinned here rather than only where a client can get at
+   * it.
+   */
+  it("turns anything at all into a real team", () => {
+    for (const [input, expected] of [
+      [0, 0],
+      [1, 1],
+      [2, 0],
+      [3, 1],
+      [-1, 1],
+      [-2, 0],
+      [0.5, 1],
+      [-0.4, 0],
+      [NaN, 0],
+      [Infinity, 0],
+      [-Infinity, 0],
+      [Number.MAX_SAFE_INTEGER, 1],
+    ] as const) {
+      expect(teamIndex(input)).toBe(expected);
+    }
+    for (const junk of [undefined, null, "1", {}, []]) {
+      expect(teamIndex(junk)).toBe(0);
+    }
+  });
+
+  it("only ever returns something usable as an array index", () => {
+    // The actual contract: `seatMembers` does `queues[teamIndex(...)]`,
+    // and an index that is negative or fractional is `undefined` there.
+    for (const input of [-1, 0.5, NaN, Infinity, -7.9, 1e21]) {
+      const index = teamIndex(input);
+      expect(Number.isInteger(index)).toBe(true);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThanOrEqual(1);
+    }
   });
 });

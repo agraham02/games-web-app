@@ -250,6 +250,25 @@ export function nameTaken(room: Room, name: string, except?: SessionId): boolean
   );
 }
 
+/**
+ * Forces anything at all into a real team index, 0 or 1.
+ *
+ * `team % 2` looks like it does this and does not: `-1 % 2` is `-1` and
+ * `0.5 % 2` is `0.5`, both of which are perfectly good numbers and
+ * neither of which is a team. `seatMembers` then indexes its queue array
+ * with one, gets `undefined`, and throws — which used to take the whole
+ * process down, because a leader is allowed to send `assignTeam` and
+ * nothing between the socket and here was checking.
+ *
+ * Applied at BOTH ends deliberately: once where a client's number is
+ * stored, so a bad one never enters the room, and once where it is read,
+ * so a room that acquired one some other way still seats everybody.
+ */
+export function teamIndex(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.abs(Math.round(value)) % 2;
+}
+
 export function cleanName(raw: string): string {
   // Collapse whitespace so " Sam " and "Sam" cannot both exist, and so a
   // name of nothing but spaces fails the emptiness check below.
@@ -346,8 +365,7 @@ function seatMembers(
     const leftovers: SessionId[] = [];
 
     for (const m of members) {
-      const team = room.teams?.[m.session] ?? 0;
-      const queue = queues[team % 2]!;
+      const queue = queues[teamIndex(room.teams?.[m.session])]!;
       const seat = queue.shift();
       if (seat === undefined) leftovers.push(m.session);
       else seatOwner[seat] = m.session;
@@ -594,7 +612,10 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       if (room.teams === null) return fail("no-game-selected");
       return {
         ok: true,
-        room: { ...room, teams: { ...room.teams, [command.session]: command.team % 2 } },
+        room: {
+          ...room,
+          teams: { ...room.teams, [command.session]: teamIndex(command.team) },
+        },
         effects,
       };
     }
