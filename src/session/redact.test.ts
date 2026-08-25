@@ -308,7 +308,11 @@ describe("playerView — what the redacted STATE may contain", () => {
     const rummy = createRummy();
     const rng = createRng(818);
     const base = rummy.setup({ seats: 4, rng });
-    const { state } = rummy.startRound!(base, rng);
+    // `startRound` deals nothing any more — it parks on the dealer's own
+    // hand-size choice, whoever the dealer is — so the cards only exist
+    // once that choice is made.
+    const opened = rummy.startRound!(base, rng).state;
+    const state = rummy.reduce(opened, { t: "chooseDealSize", size: 7 }).state;
 
     expect(state.stock.length).toBeGreaterThan(0);
     const view = rummy.playerView(state, 0);

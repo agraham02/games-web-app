@@ -207,14 +207,30 @@ describe("starting a game", () => {
   });
 
   it("refuses a game that is not wired for online play", () => {
-    const r = withMembers([]);
-    expect(
-      applyCommand(
-        r,
-        { t: "selectGame", gameId: "rummy", settings: {}, seats: 4, difficulty: "steady" },
-        { actor: LEADER, now: 1 },
-      ),
-    ).toEqual({ ok: false, error: "game-not-online" });
+    // Every game is online now — Rummy was the last one in — so there is
+    // no longer a real game that trips this guard. The guard still has to
+    // work: a game half-wired is exactly the state this repo has been in
+    // four times, and shipping a lobby that offers an unplayable table is
+    // the failure it exists to stop.
+    //
+    // So the flag is flipped for the length of the test rather than the
+    // assertion being deleted. Deleting it would mean the next game added
+    // in pieces has nothing watching it.
+    const entry = GAMES.rummy;
+    const wasOnline = entry.online;
+    entry.online = false;
+    try {
+      const r = withMembers([]);
+      expect(
+        applyCommand(
+          r,
+          { t: "selectGame", gameId: "rummy", settings: {}, seats: 4, difficulty: "steady" },
+          { actor: LEADER, now: 1 },
+        ),
+      ).toEqual({ ok: false, error: "game-not-online" });
+    } finally {
+      entry.online = wasOnline;
+    }
   });
 
   it("asks the runtime to stand up a session with the agreed shape", () => {
@@ -408,12 +424,15 @@ describe("settings coming off the wire", () => {
     expect(r.seats).toBe(4); // Spades is exactly four.
   });
 
-  it("refuses a game the room has no table for", () => {
+  it("refuses any game the room has no table for", () => {
     // Derived from the registry rather than naming games, so this cannot
     // go stale as they are wired up one at a time — which it did, once.
+    //
+    // The list is empty today, and that is the answer rather than a gap:
+    // all five games are playable in a room. The loop stays because it is
+    // the thing that will catch the sixth.
     const r = withMembers([]);
     const offline = GAME_IDS.filter((id) => !GAMES[id].online);
-    expect(offline.length).toBeGreaterThan(0);
 
     for (const gameId of offline) {
       expect(

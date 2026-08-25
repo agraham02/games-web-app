@@ -58,10 +58,12 @@ const ROUND_INTRO_HOLD_MS = 3000;
 function surfaceEventFor(frame: FrameView) {
   return (event: GameEvent): void => {
     if (event.t === "announce") {
-      announce(
-        composeAnnounce(event, frame.seat, (seat) => frame.seatNames[seat] ?? `Seat ${seat + 1}`),
-        event.tone,
+      const { text, tone } = composeAnnounce(
+        event,
+        frame.seat,
+        (seat) => frame.seatNames[seat] ?? `Seat ${seat + 1}`,
       );
+      announce(text, tone);
     }
     applyEventToTable(event);
   };

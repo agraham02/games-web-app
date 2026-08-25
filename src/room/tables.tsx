@@ -24,6 +24,7 @@ import type { RoomApi } from "./useRoom";
 import { DominoesOnline } from "./tables/DominoesOnline";
 import { LrcOnline } from "./tables/LrcOnline";
 import { PokerOnline } from "./tables/PokerOnline";
+import { RummyOnline } from "./tables/RummyOnline";
 import { SpadesOnline } from "./tables/SpadesOnline";
 
 /**
@@ -43,11 +44,18 @@ export interface OnlineTableProps {
 
 export type OnlineTableComponent = (props: OnlineTableProps) => React.ReactNode;
 
+/**
+ * All five, and the last one in was Rummy. It sat out not because the
+ * room could not draw it but because its RULES answered "the human" with
+ * seat 0 in three places — see the note on `GameEntry.online`.
+ */
+
 export const TABLES: Partial<Record<GameId, OnlineTableComponent>> = {
   spades: SpadesOnline,
   poker: PokerOnline,
   dominoes: DominoesOnline,
   lrc: LrcOnline,
+  rummy: RummyOnline,
 };
 
 export function tableFor(gameId: GameId | null): OnlineTableComponent | null {

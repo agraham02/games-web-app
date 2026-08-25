@@ -17,6 +17,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION, type RoomView, type ServerMessage } from "@/session/protocol";
+import { GAMES, GAME_IDS } from "@/session/registry";
 import { RoomScreen } from "./RoomScreen";
 import { __resetRoomConnectionForTests } from "./connection";
 
@@ -215,11 +216,26 @@ describe("the room client", () => {
       expect(socket().lastSent("approve")).toMatchObject({ session: "knocker" });
     });
 
-    it("names the games it cannot draw rather than offering them", async () => {
-      // Rummy has rules-level seat-0 assumptions and no online table.
+    it("offers every game the registry calls online, and says so about the rest", async () => {
+      // All five are online now — Rummy was the last, and needed its RULES
+      // changed rather than its wiring. So the lobby offers all of them
+      // and the "single-player only" note has nothing to name.
+      //
+      // Driven off the registry rather than a hardcoded list, because the
+      // bug this guards is precisely the two lists drifting apart: it is
+      // the same assertion whether the answer is five, four or six.
       await enterLobby();
-      expect(screen.queryByRole("button", { name: /^Rummy 500$/ })).toBeNull();
-      expect(screen.getByText(/single-player only/i)).toBeInTheDocument();
+      const offline = GAME_IDS.filter((id) => !GAMES[id].online);
+
+      for (const id of GAME_IDS) {
+        const button = screen.queryByRole("button", { name: GAMES[id].name });
+        if (GAMES[id].online) expect(button, `${id} should be offered`).not.toBeNull();
+        else expect(button, `${id} cannot be drawn`).toBeNull();
+      }
+
+      const note = screen.queryByText(/single-player only/i);
+      if (offline.length === 0) expect(note).toBeNull();
+      else expect(note).toBeInTheDocument();
     });
 
     it("offers a seat or a seat-free watch once a game is running", async () => {

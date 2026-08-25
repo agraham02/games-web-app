@@ -599,7 +599,8 @@ function reducePlay(state: SpadesState, card: PieceId): ReduceResult<SpadesState
     actor: winner,
     text: "takes the trick",
     selfText: "take the trick",
-    tone: winner === HERO ? "good" : "info",
+    tone: "info",
+    selfTone: "good",
   });
 
   const tricksWon = { ...state.tricksWon, [winner]: (state.tricksWon[winner] ?? 0) + 1 };

@@ -195,6 +195,98 @@ test.describe("a room, in real browsers", () => {
     await two.close();
   });
 
+
+  test("Rummy deals both players a real table, and the dealer is asked", async ({ browser }) => {
+    // Rummy was the last game to go online and the only one that needed
+    // its RULES changed to get there, so it gets a browser test of its
+    // own. Two things are checked that nothing below this layer can see:
+    // that a second person actually gets a table drawn for them, and that
+    // the hand they are holding is their own.
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    await ada.getByRole("button", { name: "Rummy 500" }).click();
+    await ada.getByRole("button", { name: /start rummy 500/i }).click();
+
+    for (const page of [ada, bo]) {
+      await expect(page.getByRole("button", { name: /step away/i })).toBeVisible();
+    }
+
+    // Whoever is dealing is asked for a hand size, and that is a real
+    // turn now whoever holds it — a bot dealer answers on its own, a
+    // human dealer is offered the stepper. Which of the four it is comes
+    // from a genuine random cut, so this waits for a Deal button to
+    // appear on EITHER page and presses it, or for neither to need one.
+    //
+    // Counting pieces is not enough to know the deal happened, and that
+    // is the trap this test fell into first: before a deal Rummy places
+    // all 52 cards in the stock, face down. Fifty-two anonymous
+    // stand-ins look exactly like a full table until you ask how many of
+    // them anybody can name.
+    const dealt = async (page: Page) =>
+      (
+        await page
+          .locator("[data-fx]")
+          .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-fx") ?? ""))
+      ).some((id) => !id.startsWith("#"));
+
+    for (let tick = 0; tick < 40; tick++) {
+      if (await dealt(ada)) break;
+      for (const page of [ada, bo]) {
+        const deal = page.getByRole("button", { name: /^Deal$/ });
+        if (await deal.isVisible().catch(() => false)) await deal.click();
+      }
+      await ada.waitForTimeout(500);
+    }
+
+    for (const page of [ada, bo]) {
+      await expect
+        .poll(async () => page.locator("[data-fx]").count(), { timeout: 25_000 })
+        .toBeGreaterThan(20);
+    }
+
+    // And the redaction holds, read straight off the DOM: a concealed
+    // piece renders as an anonymous stand-in, so the ids each browser can
+    // actually name are the cards it is entitled to.
+    //
+    // Disjointness is the WRONG assertion here, unlike in Spades where a
+    // hand is the only thing face up. Rummy has real public cards — the
+    // top of the discard, and every meld on the board — and both players
+    // are supposed to be able to name those. Asserting no overlap failed
+    // on the upcard, correctly.
+    //
+    // What must hold is that each player has cards of their own that the
+    // other cannot name, and that no card is private to both.
+    const nameable = async (page: Page) =>
+      new Set(
+        (
+          await page
+            .locator("[data-fx]")
+            .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-fx") ?? ""))
+        ).filter((id) => !id.startsWith("#")),
+      );
+
+    const adaCards = await nameable(ada);
+    const boCards = await nameable(bo);
+    const onlyAda = [...adaCards].filter((id) => !boCards.has(id));
+    const onlyBo = [...boCards].filter((id) => !adaCards.has(id));
+
+    expect(onlyAda.length, "Ada should hold cards Bo cannot see").toBeGreaterThan(0);
+    expect(onlyBo.length, "Bo should hold cards Ada cannot see").toBeGreaterThan(0);
+    // The two private sets are disjoint by construction; this states it,
+    // because the failure that matters is one hand appearing in both.
+    for (const card of onlyBo) {
+      expect(adaCards.has(card), `${card} was private to Bo and visible to Ada`).toBe(false);
+    }
+
+    await one.close();
+    await two.close();
+  });
+
   test("a private room holds a newcomer until the leader lets them in", async ({ browser }) => {
     const one = await browser.newContext();
     const two = await browser.newContext();

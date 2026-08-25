@@ -374,6 +374,18 @@ export type GameEvent =
       actor?: SeatId;
       /** The `text` to use when the actor is the viewer. */
       selfText?: string;
+      /**
+       * The `tone` to use when the actor is the viewer.
+       *
+       * Same problem as `selfText` and the same shape of answer. "Takes
+       * the trick" is good news to exactly one person at the table and
+       * neutral news to everyone else, and games were writing
+       * `tone: winner === HERO ? "good" : "info"` — which offline is
+       * correct by construction and online colours the toast for the
+       * wrong player. The engine states both readings; the client picks
+       * the one that belongs to whoever is looking.
+       */
+      selfTone?: Tone;
     }
   | { t: "phase"; phase: string }
   | { t: "score"; deltas: Record<SeatId, number> }
@@ -453,6 +465,30 @@ export interface GameDefinition<S, A> {
    * if a human action can carry a random outcome; nearly nothing does.
    */
   completeAction?(state: S, action: A, seat: SeatId, rng: Rng): A;
+
+  /**
+   * What to do for a LIVE seat that does not act in time, and how long
+   * to wait. Return null when this seat may take as long as it likes.
+   *
+   * Almost nothing needs one. A game where the table simply waits for you
+   * is the normal case and is fine: everybody else is waiting on a person
+   * who is right there. This exists for the case where they are NOT —
+   * Rummy's claim race, where a discarded card is offered to several
+   * seats at once and the whole table is parked until each answers.
+   *
+   * That was resolved by a `setTimeout` on the play page, which worked
+   * exactly as long as the page was the only authority. Online it is a
+   * stall waiting to happen: a backgrounded tab has its timers throttled
+   * to about one a minute, so one player switching apps mid-race froze
+   * the game for everyone else. A client-side clock cannot be what makes
+   * a shared table progress.
+   *
+   * So the driver enforces it. The client still runs its own countdown —
+   * it is what draws the ring — but it is now a nicety rather than the
+   * mechanism, and the two are deliberately not tuned to fire together
+   * (see Rummy's `CLAIM_GRACE_MS`).
+   */
+  deadline?(state: S, seat: SeatId): { ms: number; action: A } | null;
 
   currentSeat(state: S): SeatId | null;
   isOver(state: S): boolean;

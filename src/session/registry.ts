@@ -42,12 +42,13 @@ export interface GameEntry {
    * registry together, so a game can never be offered that the client
    * cannot actually draw.
    *
-   * Rummy 500 is the one that is false, and for a rules reason:
-   * `currentSeat` returns `HERO` outright while a claim window is open,
-   * `startRound` branches on `dealer === HERO`, and the claim race is
-   * timed by a `setTimeout` in the play page rather than by anything the
-   * server could adjudicate. Those are rules-level seat-0 assumptions, not
-   * a wiring gap. It stays fully playable offline.
+   * All five are true now. Rummy was the last, and the reason it took
+   * longest is worth keeping: its blockers were rules-level, not wiring.
+   * `currentSeat` returned `HERO` outright during a claim window,
+   * `startRound` branched on `dealer === HERO`, and the claim race was
+   * timed by a `setTimeout` in the play page — none of which a server
+   * could adjudicate. See `openClaimWindow` for how the race became a
+   * property of state instead.
    */
   online: boolean;
   /** Whether the lobby should offer team assignment for this game. */
@@ -158,7 +159,7 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 6,
     defaultSeats: 4,
-    online: false,
+    online: true,
     teams: () => false,
     parse: (raw) => ({ target: int(raw.target, 100, 2_000, 500) }),
     create: (s) => createRummy({ target: s.target as number }),

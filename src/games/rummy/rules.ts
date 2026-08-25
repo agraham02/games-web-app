@@ -62,8 +62,11 @@ import {
   DEFAULT_TARGET,
   MAX_SEATS,
   MIN_SEATS,
+  CLAIM_GRACE_MS,
+  claimDeadlineMs,
   claimReactions,
   claimableMeld,
+  inClaimRace,
   contributedValue,
   handValue,
   layableMelds,
@@ -103,6 +106,21 @@ const NO_PROGRESS_LAPS = 20;
  */
 const CLAIM_SETTLE_MS = 220;
 
+/**
+ * The starting value of the stalemate checkpoint: "no total has been
+ * recorded yet, so the first one always counts as progress".
+ *
+ * `Infinity` said that perfectly and could not survive the wire.
+ * `JSON.stringify(Infinity)` is `null`, so the first round-trip through a
+ * socket turned the checkpoint into something `total < checkpoint`
+ * compares false against — every turn would read as no-progress and the
+ * round would call itself blocked after twenty laps of perfectly good
+ * play. Offline nothing serialised the state and nothing noticed.
+ *
+ * A large finite number says the same thing and travels.
+ */
+const NO_CHECKPOINT = Number.MAX_SAFE_INTEGER;
+
 /* ============================================================
    Setup and the deal
    ============================================================ */
@@ -141,7 +159,7 @@ export function makeSetup(target: number) {
       mandatory: null,
       claimWindow: null,
       scores,
-      handTotalCheckpoint: Infinity,
+      handTotalCheckpoint: NO_CHECKPOINT,
       noProgressStreak: 0,
       result: null,
       winner: null,
@@ -151,10 +169,15 @@ export function makeSetup(target: number) {
 
 /**
  * Opens a round. Sweeps the previous one away, rotates the dealer, and
- * then either asks the dealer for a hand size (human) or picks one and
- * deals immediately (bot).
+ * asks that dealer for a hand size.
+ *
+ * Takes no randomness of its own any more, and the missing `rng` is the
+ * visible edge of the change: the shuffle now happens in
+ * `chooseDealSize`, because that is the action that actually deals. The
+ * parameter stays because `GameDefinition.startRound` is shaped that way
+ * for the four games that do deal here.
  */
-export function startRound(state: RummyState, rng: Rng): ReduceResult<RummyState> {
+export function startRound(state: RummyState, _rng: Rng): ReduceResult<RummyState> {
   const events: GameEvent[] = [];
   const round = state.round + 1;
   const dealer = round === 1 ? state.dealer : nextSeat(state, state.dealer);
@@ -188,39 +211,29 @@ export function startRound(state: RummyState, rng: Rng): ReduceResult<RummyState
     melds: [],
     mandatory: null,
     claimWindow: null,
-    handTotalCheckpoint: Infinity,
+    handTotalCheckpoint: NO_CHECKPOINT,
     noProgressStreak: 0,
     result: null,
   };
 
   events.push({ t: "phase", phase: `round-${round}` });
 
-  if (dealer === HERO) {
-    // A human dealer decides in their own time. `currentSeat` parks on
-    // them, `legalActions` offers the sizes, and `chooseDealSize` is
-    // what actually deals.
-    return {
-      state: { ...cleared, dealSizePending: HERO },
-      events,
-    };
-  }
-
-  // A bot dealer has no "turn" to spend on this, so it resolves inline
-  // and the deal happens in this same call.
-  const size = botDealSize(cleared, rng);
-  const dealt = dealCards(cleared, size, rng, events);
-  return { state: dealt, events };
-}
-
-function botDealSize(state: RummyState, rng: Rng): number {
-  const sizes = validDealSizes(state.seats);
-  // Middling hands make the best games — big enough to hold a plan,
-  // small enough that the stock lasts. Bots pick from the middle band
-  // rather than uniformly across a range whose ends are both dull.
-  const lo = Math.floor(sizes.length * 0.35);
-  const hi = Math.max(lo, Math.floor(sizes.length * 0.75));
-  const band = sizes.slice(lo, hi + 1);
-  return band.length > 0 ? rng.pick(band) : (sizes[sizes.length - 1] ?? 7);
+  // The dealer decides, whoever the dealer is. `currentSeat` parks on
+  // them, `legalActions` offers the sizes, and `chooseDealSize` is what
+  // actually deals.
+  //
+  // This used to branch on `dealer === HERO` and resolve a BOT dealer's
+  // choice inline, in this same call, on the reasoning that a bot has no
+  // turn to spend on it. That reasoning does not survive a second human:
+  // online, seat 3 may be the dealer and is every bit as entitled to
+  // choose as seat 0 was. Parking unconditionally deletes the question —
+  // the session already knows how to run a seat that no human is sitting
+  // in, and `rummyBots.choose` has answered `dealSizePending` all along,
+  // so a bot dealer now simply takes a turn like any other.
+  return {
+    state: { ...cleared, dealSizePending: dealer },
+    events,
+  };
 }
 
 /** Shuffles, deals `size` to each seat, turns one card up. Mutates `events`. */
@@ -291,9 +304,9 @@ export function reduce(state: RummyState, action: RummyAction): ReduceResult<Rum
     case "discard":
       return reduceDiscard(state, action.card);
     case "claim":
-      return reduceClaim(state);
+      return reduceClaim(state, action.seat);
     case "passClaim":
-      return reducePassClaim(state);
+      return reducePassClaim(state, action.seat);
   }
 }
 
@@ -404,7 +417,8 @@ function reduceLayNewMeld(state: RummyState, cards: readonly PieceId[]): ReduceR
     seat,
     actor: seat,
     text: `melded ${meldLabel(cards)}`,
-    tone: seat === HERO ? "good" : "info",
+    tone: "info",
+    selfTone: "good",
   });
 
   const next: RummyState = {
@@ -498,11 +512,20 @@ function reduceDiscard(state: RummyState, card: PieceId): ReduceResult<RummyStat
 }
 
 /**
- * Offers a just-discarded card to whoever can use it, then advances.
+ * Offers a just-discarded card to everyone who can use it.
  *
- * The hero gets FIRST REFUSAL whenever they are eligible, even if a bot
- * is too. A real player should never feel sniped by a bot on a card they
- * were not given a chance to see.
+ * There is no branch here any more, and losing it is the point. It used
+ * to ask whether the HERO discarded: if they had not, the window opened
+ * for them alone and carried the bots' clocks along for the page to race;
+ * if they had, there was nobody to open a window for and the fastest bot
+ * simply took it. Both halves were the same assumption — that there is
+ * one human and they sit at seat 0.
+ *
+ * Now the window opens for every eligible seat, always, and who is
+ * sitting in them is nobody's business here. The session runs a bot for
+ * an empty seat when its reaction time comes up; a seat with a person in
+ * it gets the claim bar and races the same clock. `advanceTurn` happens
+ * when the last of them has answered.
  */
 function openClaimWindow(
   state: RummyState,
@@ -513,109 +536,94 @@ function openClaimWindow(
   const meld = claimableMeld(state, card);
   if (!meld) return advanceTurn(state, events);
 
-  const bots = claimReactions(state, card, discarder);
+  const pending = claimReactions(state, card, discarder);
+  if (pending.length === 0) return advanceTurn(state, events);
 
-  if (discarder !== HERO) {
-    // The hero is in the race, so the window opens and carries the bots'
-    // clocks with it. The page runs the shortest of them against the
-    // hero's own; whoever gets there first wins. The hero no longer has a
-    // guaranteed refusal — that was a queue dressed up as a contest.
-    return {
-      state: {
-        ...state,
-        claimWindow: { discard: card, discarder, meldId: meld.id, bots },
-      },
-      events,
-    };
-  }
-
-  // The hero discarded it, so there is nobody to open a window for and no
-  // page timer to spend the wait. The winning bot's own reaction time
-  // becomes the pause instead.
-  return resolveBotClaim(state, card, discarder, events, bots);
+  return {
+    state: {
+      ...state,
+      claimWindow: { discard: card, discarder, meldId: meld.id, pending },
+    },
+    events,
+  };
 }
 
 /**
- * Resolves a claim among the bots. Called either because the hero was
- * not eligible, or because they declined.
+ * One seat takes the card.
+ *
+ * The claimer is named by the action rather than read off `currentSeat`,
+ * because a claim window entitles several seats at once and the one who
+ * got there first is not necessarily the one the pacing was waiting on.
+ * `completeAction` is what makes that name trustworthy.
  */
-function resolveBotClaim(
-  state: RummyState,
-  card: PieceId,
-  discarder: SeatId,
-  events: GameEvent[],
-  /** The race, when the caller has already run it. */
-  reactions?: ReadonlyArray<{ seat: SeatId; ms: number }>,
-): ReduceResult<RummyState> {
-  const meld = claimableMeld(state, card);
-  if (!meld) return advanceTurn(state, events);
-
-  const bots = reactions ?? claimReactions(state, card, discarder);
-  const winner = bots[0];
-  if (!winner) return advanceTurn(state, events);
-  const claimer = winner.seat;
-
-  // A REAL beat before the claim plays out. The state transition below is
-  // synchronous, and without a pause the claim lands in the same instant
-  // as the discard that caused it — which reads as "the bot already knew
-  // and grabbed it before I saw what happened", and was reported exactly
-  // that way once.
-  events.push({
-    t: "think",
-    seat: claimer,
-    ms: reactions ? winner.ms : CLAIM_SETTLE_MS,
-  });
-
-  const pile = state.discard;
-  const taken: RummyState = {
-    ...state,
-    discard: pile.slice(0, -1),
-    hands: { ...state.hands, [claimer]: [...(state.hands[claimer] ?? []), card] },
-  };
-  events.push({ t: "draw", piece: card, from: "discard", to: claimer, faceUp: false });
-
-  const next = applyExtend(taken, meld, card, claimer);
-  events.push({ t: "play", piece: card, from: claimer, to: "board", group: meld.id });
-  events.push({ t: "announce", seat: claimer, text: `claimed ${meldLabel([card])}`, tone: "info" });
-
-  // A claim that empties the claimer's hand does not go out either —
-  // same rule as any other lay-off. `advanceTurn` handles what happens
-  // when play comes back round to them.
-  return advanceTurn(noteProgress(next), events);
-}
-
-function reduceClaim(state: RummyState): ReduceResult<RummyState> {
+function reduceClaim(state: RummyState, seat: SeatId): ReduceResult<RummyState> {
   const window = state.claimWindow;
   if (!window) return { state, events: [] };
+  if (!window.pending.some((p) => p.seat === seat)) return { state, events: [] };
+
   const meld = meldById(state, window.meldId);
   if (!meld || !canExtend(meld.cards, window.discard)) {
-    return reducePassClaim(state);
+    return reducePassClaim(state, seat);
   }
 
-  const events: GameEvent[] = [
-    { t: "draw", piece: window.discard, from: "discard", to: HERO, faceUp: true },
-  ];
+  const events: GameEvent[] = [];
+  // A bot's own reaction time is the beat before its claim lands. A seat
+  // with a person in it has already spent that time in the real world
+  // deciding, so the `think` is worth nothing there — but the engine
+  // cannot tell the two apart and must not try. The session is what
+  // knows, and it simply never asks a live seat to think: this event is
+  // only ever produced for a seat the session is playing itself.
+  //
+  // A human claim therefore carries a `think` too, and it is harmless —
+  // `choreograph` gives a `think` for a seat the viewer is sitting in the
+  // same beat it gives any other, and the alternative is a rule about
+  // liveness in a file that must not have one.
+  const reaction = window.pending.find((p) => p.seat === seat);
+  if (reaction) events.push({ t: "think", seat, ms: CLAIM_SETTLE_MS });
+
+  events.push({ t: "draw", piece: window.discard, from: "discard", to: seat, faceUp: true });
+
   const taken: RummyState = {
     ...state,
     claimWindow: null,
     discard: state.discard.slice(0, -1),
-    hands: { ...state.hands, [HERO]: [...(state.hands[HERO] ?? []), window.discard] },
+    hands: { ...state.hands, [seat]: [...(state.hands[seat] ?? []), window.discard] },
   };
-  const next = applyExtend(taken, meld, window.discard, HERO);
-  events.push({ t: "play", piece: window.discard, from: HERO, to: "board", group: meld.id });
+  const next = applyExtend(taken, meld, window.discard, seat);
+  events.push({ t: "play", piece: window.discard, from: seat, to: "board", group: meld.id });
+  events.push({
+    t: "announce",
+    seat,
+    actor: seat,
+    text: `claimed ${meldLabel([window.discard])}`,
+    selfText: `claimed ${meldLabel([window.discard])}`,
+    tone: "info",
+  });
 
+  // A claim that empties the claimer's hand does not go out — same rule
+  // as any other lay-off. `advanceTurn` handles what happens when play
+  // comes back round to them.
   return advanceTurn(noteProgress(next), events);
 }
 
-function reducePassClaim(state: RummyState): ReduceResult<RummyState> {
+/**
+ * One seat gives up its place in the race.
+ *
+ * The window stays open for whoever is left, which is what makes this a
+ * race rather than a queue: a seat declining does not hand the card to
+ * the next in line, it just stops being a contender. When the last one
+ * has answered, play moves on.
+ */
+function reducePassClaim(state: RummyState, seat: SeatId): ReduceResult<RummyState> {
   const window = state.claimWindow;
   if (!window) return { state, events: [] };
-  const cleared: RummyState = { ...state, claimWindow: null };
-  // The hero lost the race (or declined it). The bots' clocks were fixed
-  // when the window opened, so the winner is already decided — pass the
-  // same list back rather than re-deriving it, and take the short settle
-  // beat, since the page has already spent the real wait.
-  return resolveBotClaim(cleared, window.discard, window.discarder, [], window.bots);
+  if (!window.pending.some((p) => p.seat === seat)) return { state, events: [] };
+
+  const pending = window.pending.filter((p) => p.seat !== seat);
+  if (pending.length === 0) {
+    return advanceTurn({ ...state, claimWindow: null }, []);
+  }
+  return { state: { ...state, claimWindow: { ...window, pending } }, events: [] };
 }
 
 /* ============================================================
@@ -750,13 +758,71 @@ function endRound(
    Definition surface
    ============================================================ */
 
+/**
+ * Stamps a claim with the seat that actually submitted it.
+ *
+ * `claim` and `passClaim` are the only actions in this game that name
+ * their own seat, because a claim window entitles several seats at once
+ * and `currentSeat` can only name one. That makes the field a thing a
+ * client could lie about — "pass for seat 2" would knock a rival out of
+ * the race — so it is overwritten here with the seat the session knows
+ * submitted, and whatever arrived is discarded unread.
+ *
+ * The same seam LRC uses to re-roll its dice, for the same reason: the
+ * one piece of an action a client must not be trusted with.
+ */
+export function completeAction(
+  _state: RummyState,
+  action: RummyAction,
+  seat: SeatId,
+): RummyAction {
+  if (action.t !== "claim" && action.t !== "passClaim") return action;
+  return { ...action, seat };
+}
+
+/**
+ * A live seat's deadline, which Rummy has exactly one of.
+ *
+ * Only during a claim race, and only for a seat that is in it. Everywhere
+ * else the table waits for you as long as you like, which is right: every
+ * other decision in this game is yours alone and nobody is blocked behind
+ * it.
+ *
+ * A race is the exception because it parks the WHOLE table until each
+ * entitled seat answers. That used to be resolved by a `setTimeout` on
+ * the play page — fine when the page was the only authority, and a stall
+ * waiting to happen online, since a backgrounded tab throttles its timers
+ * to roughly one a minute.
+ *
+ * The action is a pass rather than a claim, and the distinction matters:
+ * a person who did not answer LOST the race, which is a real outcome and
+ * the whole point of the mechanic. A seat nobody is at is a different
+ * case entirely and never reaches here — the session plays its bot, and
+ * `chooseClaim` takes the card.
+ */
+export function deadline(
+  state: RummyState,
+  seat: SeatId,
+): { ms: number; action: RummyAction } | null {
+  if (!inClaimRace(state, seat)) return null;
+  return {
+    ms: claimDeadlineMs(state, seat) + CLAIM_GRACE_MS,
+    action: { t: "passClaim", seat },
+  };
+}
+
 export function currentSeat(state: RummyState): SeatId | null {
   if (state.result !== null || state.winner !== null) return null;
   // Both of these seize the turn regardless of `phase`, exactly the way
   // Spades' `exchange` does — they are sub-decisions layered over the
   // turn loop, not extra phases inside it.
   if (state.dealSizePending !== null) return state.dealSizePending;
-  if (state.claimWindow !== null) return HERO;
+  // The soonest seat still in the race. This is who the PACING waits on
+  // — the seat a bot would be run for — and deliberately not the only
+  // seat entitled to act: `legalActions` says yes to every seat still
+  // pending, so a human further down the list can still beat this one to
+  // the card by being quick. That is what makes it a race.
+  if (state.claimWindow !== null) return state.claimWindow.pending[0]?.seat ?? null;
   if (!state.dealt) return null;
   return state.turn;
 }
@@ -770,14 +836,22 @@ export function isRoundOver(state: RummyState): boolean {
 }
 
 export function legalActions(state: RummyState, seat: SeatId): RummyAction[] {
+  // Checked BEFORE the turn gate, because this is the one place in the
+  // game where more than one seat is entitled at the same instant.
+  // `GameSession.submit` asks this function rather than `currentSeat` for
+  // exactly this case.
+  if (state.claimWindow !== null) {
+    if (!state.claimWindow.pending.some((p) => p.seat === seat)) return [];
+    return [
+      { t: "claim", seat },
+      { t: "passClaim", seat },
+    ];
+  }
+
   if (currentSeat(state) !== seat) return [];
 
   if (state.dealSizePending !== null) {
     return validDealSizes(state.seats).map((size) => ({ t: "chooseDealSize", size }));
-  }
-
-  if (state.claimWindow !== null) {
-    return [{ t: "claim" }, { t: "passClaim" }];
   }
 
   const hand = state.hands[seat] ?? [];
@@ -1002,6 +1076,8 @@ export function createRummy(
     pieces,
     placements,
     playerView,
+    completeAction,
+    deadline,
     currentSeat,
     isOver,
     startRound,

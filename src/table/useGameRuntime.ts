@@ -112,7 +112,8 @@ function surfaceEvent(event: GameEvent): void {
     // engine is what lets the same event read as "You led" on one screen
     // and "Ada led" on another — which is the whole point online, and
     // costs nothing here.
-    announce(composeAnnounce(event, HERO, botName), event.tone);
+    const { text, tone } = composeAnnounce(event, HERO, botName);
+    announce(text, tone);
   }
   applyEventToTable(event);
 }

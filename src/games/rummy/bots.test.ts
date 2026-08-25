@@ -46,11 +46,11 @@ describe("rummy bots — legality", () => {
           }
           const seat = game.currentSeat(state)!;
           const legal = game.legalActions(state, seat);
-          if (state.claimWindow) {
-            // Bots never face one — drive it and move on.
-            ({ state } = game.reduce(state, { t: "passClaim" }));
-            continue;
-          }
+          // A claim window used to be stepped past here, on the grounds
+          // that bots never faced one — their claims resolved inline
+          // inside `reduce`. They face them now, as an ordinary turn, so
+          // the window is exercised through `choose` like everything else
+          // and this loop no longer knows it exists.
           const action = game.bots[tier].choose(game.playerView(state, seat), seat, rng);
           expect(legal, `${tier} seed ${seed}: illegal ${JSON.stringify(action)}`)
             .toContainEqual(action);

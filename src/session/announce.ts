@@ -8,7 +8,7 @@
  * somebody plays both in one sitting.
  */
 
-import type { GameEvent, SeatId } from "@/engine/types";
+import type { GameEvent, SeatId, Tone } from "@/engine/types";
 
 export type AnnounceEvent = Extract<GameEvent, { t: "announce" }>;
 
@@ -19,21 +19,27 @@ export type AnnounceEvent = Extract<GameEvent, { t: "announce" }>;
 export type NameForSeat = (seat: SeatId) => string;
 
 /**
- * Composes the toast text.
+ * Composes the toast — both the words and the colour.
  *
- * An announcement with no `actor` is already a whole sentence and is
- * returned untouched — "Nobody could play" belongs to the table, not to a
- * person, and prefixing it with a name would be wrong.
+ * They resolve together because they are the same decision made twice.
+ * A line reads differently depending on whether it is about you, and so
+ * does its tone: "takes the trick" is good news to exactly one person at
+ * the table. Offline that person is always seat 0 and both could be
+ * decided in the engine; online neither can.
+ *
+ * An announcement with no `actor` belongs to the table rather than to a
+ * person — "Nobody could play" — and is returned untouched, name and all.
  */
 export function composeAnnounce(
   event: AnnounceEvent,
   viewerSeat: SeatId | null,
   nameFor: NameForSeat,
-): string {
-  if (event.actor === undefined) return event.text;
+): { text: string; tone: Tone | undefined } {
+  if (event.actor === undefined) return { text: event.text, tone: event.tone };
 
   const isViewer = viewerSeat !== null && event.actor === viewerSeat;
   const name = isViewer ? "You" : nameFor(event.actor);
   const body = isViewer && event.selfText !== undefined ? event.selfText : event.text;
-  return `${name} ${body}`;
+  const tone = isViewer && event.selfTone !== undefined ? event.selfTone : event.tone;
+  return { text: `${name} ${body}`, tone };
 }

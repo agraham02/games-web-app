@@ -22,16 +22,16 @@ const nameFor = (seat: number) => NAMES[seat] ?? `Seat ${seat + 1}`;
 describe("composeAnnounce", () => {
   it("names the actor for everyone else and says 'You' to the actor", () => {
     const event: AnnounceEvent = { t: "announce", actor: 2, text: "takes the trick" };
-    expect(composeAnnounce(event, 0, nameFor)).toBe("Cy takes the trick");
-    expect(composeAnnounce(event, 2, nameFor)).toBe("You takes the trick");
+    expect(composeAnnounce(event, 0, nameFor).text).toBe("Cy takes the trick");
+    expect(composeAnnounce(event, 2, nameFor).text).toBe("You takes the trick");
   });
 
   it("uses the second-person form where the verb disagrees", () => {
     // The whole reason `selfText` exists: "Ada leads" and "You lead" differ
     // in the verb, not just the subject, and no single template covers both.
     const event: AnnounceEvent = { t: "announce", actor: 1, text: "leads", selfText: "lead" };
-    expect(composeAnnounce(event, 0, nameFor)).toBe("Bo leads");
-    expect(composeAnnounce(event, 1, nameFor)).toBe("You lead");
+    expect(composeAnnounce(event, 0, nameFor).text).toBe("Bo leads");
+    expect(composeAnnounce(event, 1, nameFor).text).toBe("You lead");
   });
 
   it("leaves a line that belongs to the table alone", () => {
@@ -39,13 +39,13 @@ describe("composeAnnounce", () => {
     // with a name would be wrong, so an actor-less announcement is returned
     // untouched.
     const event: AnnounceEvent = { t: "announce", text: "Nobody could play" };
-    expect(composeAnnounce(event, 0, nameFor)).toBe("Nobody could play");
+    expect(composeAnnounce(event, 0, nameFor).text).toBe("Nobody could play");
   });
 
   it("says a real name to a spectator, never 'You'", () => {
     // A spectator has no seat, so nothing at the table is theirs.
     const event: AnnounceEvent = { t: "announce", actor: 0, text: "leads", selfText: "lead" };
-    expect(composeAnnounce(event, null, nameFor)).toBe("Ada leads");
+    expect(composeAnnounce(event, null, nameFor).text).toBe("Ada leads");
   });
 
   it("reads correctly from every seat's point of view, over a real deal", () => {
@@ -61,8 +61,8 @@ describe("composeAnnounce", () => {
 
     for (const event of announcements) {
       if (event.actor === undefined) continue;
-      const asActor = composeAnnounce(event, event.actor, nameFor);
-      const asOther = composeAnnounce(event, ((event.actor + 1) % 4) as number, nameFor);
+      const asActor = composeAnnounce(event, event.actor, nameFor).text;
+      const asOther = composeAnnounce(event, ((event.actor + 1) % 4) as number, nameFor).text;
       expect(asActor.startsWith("You ")).toBe(true);
       expect(asOther.startsWith(nameFor(event.actor))).toBe(true);
       // And no engine text still carries a baked-in name.
@@ -100,5 +100,41 @@ describe("no game bakes a name into announcement text any more", () => {
     for (const event of announcements) {
       expect(event.text).not.toMatch(/\b(Mia|Sam|Kofi|Jo|Ada|Rui|Nia|Tomas|Elle)\b/);
     }
+  });
+});
+
+describe("tone, which is also per-viewer", () => {
+  const nameFor = (seat: number) => ["Ada", "Bo", "Cy", "Di"][seat] ?? `Seat ${seat}`;
+
+  it("gives the actor their own tone and everybody else the neutral one", () => {
+    // "Takes the trick" is good news to exactly one person at the table.
+    // Games used to write `tone: winner === HERO ? "good" : "info"`, which
+    // is correct offline by construction and colours the toast for the
+    // wrong player the moment a second human sits down.
+    const event = {
+      t: "announce",
+      actor: 2,
+      text: "takes the trick",
+      selfText: "take the trick",
+      tone: "info",
+      selfTone: "good",
+    } as const;
+
+    expect(composeAnnounce(event, 2, nameFor)).toEqual({
+      text: "You take the trick",
+      tone: "good",
+    });
+    expect(composeAnnounce(event, 0, nameFor)).toEqual({
+      text: "Cy takes the trick",
+      tone: "info",
+    });
+    // A spectator is nobody's actor, so they get the table's reading.
+    expect(composeAnnounce(event, null, nameFor).tone).toBe("info");
+  });
+
+  it("falls back to the one tone when a line has only one", () => {
+    const event = { t: "announce", actor: 1, text: "passes", tone: "info" } as const;
+    expect(composeAnnounce(event, 1, nameFor).tone).toBe("info");
+    expect(composeAnnounce(event, 0, nameFor).tone).toBe("info");
   });
 });

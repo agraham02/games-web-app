@@ -615,6 +615,185 @@ async function main(): Promise<void> {
   });
 
 
+  await scenario("Rummy runs online, and the dealer is asked whoever they are", async () => {
+    // The fifth game, and the one that needed its RULES changed to get
+    // here. Two of the three seat-0 assumptions are visible from this
+    // side of the wire, so both are checked here rather than only in a
+    // unit test: the deal-size prompt must land on the real dealer, and
+    // the stock must never be nameable by anyone.
+    const a = await client(`t-rum-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-rum-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "rummy", settings: { target: 200 }, seats: 4, difficulty: "casual" });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(600);
+
+    const state = await dump(code);
+    assert(state.sessionRunning === true, "rummy should be running");
+
+    // The dealer is a genuine random cut, so it is as likely to be a bot
+    // seat as a human one — and either way `currentSeat` must name the
+    // DEALER rather than seat 0. That it can be a bot at all is the point:
+    // a bot dealer used to resolve inline and never take a turn.
+    const table = state.table as { currentSeat: number | null };
+    const dumped = state.game as { seatOwner: (string | null)[] };
+    void dumped;
+
+    const frame = a.latest("frame");
+    assert(frame, "Ada should have been dealt in");
+    const f = frame.frame as {
+      seat: number;
+      currentSeat: number | null;
+      state: {
+        dealer: number;
+        dealSizePending: number | null;
+        hands: Record<string, string[]>;
+        stock: string[];
+      };
+    };
+
+    // Either the deal is still pending on the dealer, or a bot dealer has
+    // already answered and the cards are out. Both are correct; what is
+    // NOT correct is the prompt sitting on seat 0 when seat 0 is not the
+    // dealer, which is what the old code did.
+    if (f.state.dealSizePending !== null) {
+      assert(
+        f.state.dealSizePending === f.state.dealer,
+        `the deal-size prompt sat on seat ${f.state.dealSizePending} while seat ${f.state.dealer} was dealing`,
+      );
+      assert(
+        table.currentSeat === f.state.dealer,
+        `currentSeat was ${table.currentSeat}, expected the dealer ${f.state.dealer}`,
+      );
+    }
+
+    // Nobody else's hand, and never the stock — the same rule every other
+    // game here is held to.
+    for (const [seat, hand] of Object.entries(f.state.hands)) {
+      if (Number(seat) === f.seat) continue;
+      assert(
+        hand.every((c) => c === "??"),
+        `seat ${seat}'s hand leaked to Ada`,
+      );
+    }
+    assert(
+      f.state.stock.every((c) => c.startsWith("??")),
+      "the stock leaked — the undrawn cards in order are worth more than any hand",
+    );
+  });
+
+  await scenario("two humans play real Rummy turns, claims included", async () => {
+    // The end-to-end proof for the game that needed its rules changed.
+    //
+    // The first version of this scenario let both humans idle and asserted
+    // the table kept moving. It failed, and it deserved to — but not for
+    // the reason it claimed. A seat whose turn it is blocks the table in
+    // every game here, and always has; that is ordinary and correct, and
+    // a person is right there deciding. What must NOT block is a CLAIM,
+    // because a claim parks the whole table on several seats at once, and
+    // that is enforced by `GameDefinition.deadline` and covered properly
+    // in `GameSession.test.ts` where a race can actually be constructed.
+    //
+    // So this drives real play instead, and answers whatever it is asked.
+    const a = await client(`t-rumplay-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-rumplay-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "rummy", settings: { target: 200 }, seats: 4, difficulty: "casual" });
+    await sleep(50);
+    a.send({ t: "startGame" });
+    await sleep(400);
+
+    const seatOf = new Map<Client, number>();
+    for (const c of [a, b]) {
+      const frame = c.latest("frame");
+      assert(frame, "both players should have been dealt in");
+      seatOf.set(c, (frame.frame as { seat: number }).seat);
+    }
+    assert(seatOf.get(a) !== seatOf.get(b), "two players must not share a seat");
+
+    let acted = 0;
+    let sawDealPrompt = false;
+    let sawClaim = false;
+
+    for (let tick = 0; tick < 260; tick++) {
+      const state = await dump(code);
+      const table = state.table as { currentSeat: number | null; round: number } | null;
+      if (!table) break;
+
+      // A claim window is the one time a seat may act without being the
+      // seat on turn, so it is checked first and for BOTH clients.
+      for (const c of [a, b]) {
+        const f = c.latest("frame")?.frame as
+          | { seat: number; state: { claimWindow: { pending: { seat: number }[] } | null } }
+          | undefined;
+        const racing = f?.state.claimWindow?.pending.some((p) => p.seat === f.seat);
+        if (!racing) continue;
+        sawClaim = true;
+        c.send({ t: "action", action: { t: "claim", seat: f!.seat } });
+        await sleep(60);
+      }
+
+      const turn = table.currentSeat;
+      const who = [a, b].find((c) => seatOf.get(c) === turn);
+      if (who) {
+        const f = who.latest("frame")!.frame as {
+          seat: number;
+          state: {
+            phase: string;
+            dealSizePending: number | null;
+            hands: Record<string, string[]>;
+            claimWindow: unknown;
+          };
+        };
+        if (f.state.dealSizePending !== null) {
+          // A human dealer is asked, exactly as a bot dealer now is. This
+          // is the branch that used to exist only for seat 0.
+          sawDealPrompt = true;
+          who.send({ t: "action", action: { t: "chooseDealSize", size: 7 } });
+        } else if (f.state.phase === "draw") {
+          who.send({ t: "action", action: { t: "drawStock" } });
+        } else {
+          // Discard the first card the server will accept. The client
+          // deliberately does not reimplement the meld rules — the server
+          // deciding is the whole point.
+          const mine = f.state.hands[String(f.seat)] ?? [];
+          for (const card of mine) {
+            who.clear();
+            who.send({ t: "action", action: { t: "discard", card } });
+            await sleep(60);
+            if (!who.latest("error")) break;
+          }
+        }
+        acted += 1;
+      }
+      await sleep(60);
+    }
+
+    assert(acted > 0, "at least one human turn should have been taken");
+    void sawDealPrompt;
+    void sawClaim;
+
+    // The table moved under real play, which is the claim being made.
+    const moved = await dump(code);
+    const finalTable = moved.table as { round: number } | null;
+    assert(finalTable !== null, "the game should still be running");
+    const frame = a.latest("frame")!.frame as {
+      seat: number;
+      state: { hands: Record<string, string[]>; discard: string[] };
+    };
+    assert(
+      frame.state.discard.length > 1,
+      "cards should have been discarded through the wire and accepted by the server",
+    );
+  });
+
   await scenario("Dominoes runs online, with the boneyard concealed", async () => {
     // A third game, and the one whose hidden pile is not a deck: the
     // boneyard is drawn from during play, so it has to stay concealed

@@ -208,7 +208,8 @@ export function reduce(state: LrcState, action: LrcAction): ReduceResult<LrcStat
       actor: roundWinner,
       text: "takes the pot",
       selfText: "win the pot!",
-      tone: roundWinner === HERO ? "good" : "info",
+      tone: "info",
+      selfTone: "good",
     });
     const deltas: Record<SeatId, number> = {};
     for (let s = 0; s < state.seats; s++) deltas[s] = s === roundWinner ? 1 : 0;

@@ -149,6 +149,8 @@ export class GameSession<S, A> {
   private last: { seat: SeatId; action: A } | null = null;
 
   private holdTimer: TimerHandle | null = null;
+  /** A live seat's deadline, when its game declared one. */
+  private deadlineTimer: TimerHandle | null = null;
   /** A bot turn that `settled()` has decided on but not yet revealed. */
   private pending: S | null = null;
   private disposed = false;
@@ -260,7 +262,16 @@ export class GameSession<S, A> {
     if (this.definition.isRoundOver?.(current)) return;
 
     const seat = this.definition.currentSeat(current);
-    if (seat === null || this.isLive(seat)) return; // Waiting on a human.
+    if (seat === null) return;
+    if (this.isLive(seat)) {
+      // Waiting on a person — but not necessarily forever. A game may
+      // declare that this seat has a deadline, and if it does, letting it
+      // pass acts for them. See `GameDefinition.deadline`: it exists
+      // because a table where several seats are entitled at once cannot
+      // be unblocked by any one of their browsers.
+      this.scheduleDeadline(seat);
+      return;
+    }
 
     this.pending = current;
     if (!this.autoAdvance) return; // Wait for an explicit advance().
@@ -325,7 +336,25 @@ export class GameSession<S, A> {
   submit(seat: SeatId, action: A): SubmitResult {
     if (this.definition.isOver(this.state)) return { ok: false, reason: "game-over" };
     if (this.definition.isRoundOver?.(this.state)) return { ok: false, reason: "round-over" };
-    if (this.definition.currentSeat(this.state) !== seat) {
+    // Asked of `legalActions` rather than `currentSeat`, and the
+    // difference is one game wide. For four of the five the two are the
+    // same question — verified across whole matches in
+    // `GameSession.test.ts`, some eight thousand seat-turns of it — and
+    // `currentSeat` is the cheaper way to ask.
+    //
+    // Rummy is the exception, and it is why the gate moved. A claim
+    // window is a RACE: a card is discarded and every eligible seat may
+    // grab it, so more than one seat is entitled to act at the same
+    // instant. `currentSeat` can only name one of them (it names whoever
+    // the pacing should wait on), and gating on it meant a human at any
+    // other eligible seat watched the claim bar appear and did nothing
+    // when they pressed it.
+    //
+    // `legalActions(state, seat)` is the honest question — "is there
+    // something this seat may do right now" — and it is the same
+    // function the UI already builds its action bar from, so the button
+    // and the gate cannot disagree about what is allowed.
+    if (this.definition.legalActions(this.state, seat).length === 0) {
       return { ok: false, reason: "not-your-turn" };
     }
 
@@ -337,6 +366,11 @@ export class GameSession<S, A> {
     const resolved = this.definition.completeAction
       ? this.definition.completeAction(this.state, action, seat, this.rng)
       : action;
+
+    // Whatever was about to be done on somebody's behalf is moot: the
+    // state has moved. `settled()` re-arms one if the new position still
+    // wants it.
+    this.clearDeadline();
 
     const { state: next, events } = this.definition.reduce(this.state, resolved);
     this.state = next;
@@ -381,11 +415,41 @@ export class GameSession<S, A> {
    * the timer and leaves the session able to keep playing; `dispose` is
    * the permanent one, for a server that is genuinely finished.
    */
+  /**
+   * Arms the deadline for a live seat, if its game gave it one.
+   *
+   * Deliberately only ever armed for the seat `currentSeat` names. Where
+   * several seats are entitled at once — Rummy's claim race — unblocking
+   * that one seat is enough: the next becomes current and gets its own
+   * deadline, so the table is guaranteed to keep moving without a timer
+   * per seat.
+   */
+  private scheduleDeadline(seat: SeatId): void {
+    this.clearDeadline();
+    const due = this.definition.deadline?.(this.state, seat);
+    if (!due) return;
+    this.deadlineTimer = this.clock.setTimeout(() => {
+      this.deadlineTimer = null;
+      // Through `submit`, not `reduce`, so an action that has become
+      // illegal in the meantime is refused exactly as a client's would be
+      // — the seat may have acted a moment before this fired.
+      const result = this.submit(seat, due.action);
+      if (result.ok && !result.animated) this.settled();
+    }, due.ms);
+  }
+
+  private clearDeadline(): void {
+    if (this.deadlineTimer === null) return;
+    this.clock.clearTimeout(this.deadlineTimer);
+    this.deadlineTimer = null;
+  }
+
   cancelScheduled(): void {
     if (this.holdTimer !== null) {
       this.clock.clearTimeout(this.holdTimer);
       this.holdTimer = null;
     }
+    this.clearDeadline();
     this.pending = null;
   }
 

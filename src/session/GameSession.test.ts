@@ -10,7 +10,10 @@ import { describe, expect, it } from "vitest";
 import { createSpades } from "@/games/spades/rules";
 import type { SpadesAction } from "@/games/spades/types";
 import { createLrc } from "@/games/lrc/rules";
+import { createRummy } from "@/games/rummy/rules";
+import { claimReactions } from "@/games/rummy/state";
 import type { GameDefinition, SeatId } from "@/engine/types";
+import { GAMES, GAME_IDS, type GameId } from "./registry";
 import { GameSession, type SessionFrame } from "./GameSession";
 import { TestClock } from "./clock";
 
@@ -217,5 +220,210 @@ describe("GameSession — the loop outside React", () => {
     clock.drain();
 
     expect(frames.length).toBe(settled); // Nothing fired after disposal.
+  });
+});
+
+/* ============================================================
+   The submit gate
+   ============================================================ */
+
+describe("legalActions as the submit gate", () => {
+  /**
+   * `submit` used to ask `currentSeat(state) === seat` and now asks
+   * whether the seat has any legal action at all. The two must stay the
+   * same question everywhere except where a game deliberately widens it,
+   * or the change quietly becomes a way to act out of turn.
+   *
+   * Rummy is the deliberate exception: a claim window is a race, and
+   * several seats are entitled to grab the card at the same instant. It
+   * is skipped here and asserted properly in Rummy's own rules test.
+   */
+  const SEATS: Record<GameId, number> = {
+    spades: 4,
+    dominoes: 4,
+    poker: 6,
+    lrc: 6,
+    rummy: 4,
+  };
+
+  for (const gameId of GAME_IDS) {
+    it(`${gameId}: no seat may act that is not the one on turn`, () => {
+      const entry = GAMES[gameId];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
+      const clock = new TestClock();
+      const session = new GameSession({
+        definition,
+        seats: SEATS[gameId],
+        seed: 31,
+        clock,
+        isSeatLive: () => false,
+        turnHoldMs: () => 0,
+      });
+
+      const wrong: string[] = [];
+      let checks = 0;
+      session.setEmit(() => {
+        const state = session.snapshot() as { claimWindow?: unknown };
+        if (gameId === "rummy" && state.claimWindow) return;
+        const current = definition.currentSeat(state);
+        for (let seat = 0; seat < SEATS[gameId]; seat++) {
+          checks++;
+          const mayAct = definition.legalActions(state, seat).length > 0;
+          if (mayAct !== (current === seat)) {
+            wrong.push(`seat ${seat}: legalActions=${mayAct} currentSeat=${current === seat}`);
+          }
+        }
+      });
+
+      session.start();
+      for (let turn = 0; turn < 400 && !definition.isOver(session.snapshot()); turn++) {
+        session.settled();
+        clock.advance(10);
+        if (definition.isRoundOver?.(session.snapshot())) session.nextRound();
+      }
+
+      expect(checks).toBeGreaterThan(100);
+      expect([...new Set(wrong)].slice(0, 4)).toEqual([]);
+    });
+  }
+});
+
+/* ============================================================
+   Deadlines
+   ============================================================ */
+
+describe("a live seat that never answers", () => {
+  /**
+   * The rule this enforces: a table with several people at it must not be
+   * unblockable by any one of their browsers.
+   *
+   * Rummy's claim race is the case. A discard is offered to every
+   * eligible seat at once, and the whole table is parked until each
+   * answers — so the page ran a `setTimeout` and submitted `passClaim`
+   * when it expired. That works exactly as long as the page is the only
+   * authority. Online it is a stall waiting to happen: a backgrounded tab
+   * throttles its timers to about one a minute, so one player switching
+   * apps mid-race froze the game for everybody else.
+   *
+   * The ws harness found it, which is the layer that should have: it
+   * drives real sockets with no page behind them, so a table that only
+   * moves because a browser is running stops dead.
+   */
+  it("is acted for, so the table keeps moving", () => {
+    const clock = new TestClock();
+    const rummy = createRummy({ target: 200 });
+    const session = new GameSession({
+      definition: rummy,
+      seats: 4,
+      seed: 4242,
+      clock,
+      // Everybody is a live human who never does anything — the worst
+      // case, and the one a client-side timer cannot rescue.
+      isSeatLive: () => true,
+      turnHoldMs: () => 0,
+    });
+
+    session.start();
+    session.settled();
+    // Nobody submits anything, ever. Without a deadline the loop parks on
+    // the dealer's hand-size choice and stays there.
+    clock.advance(120_000);
+
+    // A seat with no deadline (the deal-size choice) legitimately waits
+    // forever, so the state here is still undealt — and that is correct.
+    // What must NOT happen is a claim race parking the same way.
+    expect(rummy.currentSeat(session.snapshot())).not.toBeNull();
+  });
+
+  it("passes a claim for a seat that lets its window run out", () => {
+    const clock = new TestClock();
+    const rummy = createRummy({ target: 200 });
+    const session = new GameSession({
+      definition: rummy,
+      seats: 4,
+      seed: 4242,
+      clock,
+      isSeatLive: () => true,
+      turnHoldMs: () => 0,
+    });
+
+    // Build the race directly. Reaching one by playing takes about twelve
+    // rounds, which is what `rummyScenarios` exists for on the dev panel.
+    const base = session.snapshot();
+    const racing = {
+      ...base,
+      dealt: true,
+      dealSizePending: null,
+      phase: "draw" as const,
+      turn: 2,
+      melds: [{ id: 1, owner: 1, cards: ["S5", "S6", "S7"], hitBy: {} }],
+      nextMeldId: 2,
+      discard: ["S8"],
+      claimWindow: {
+        discard: "S8",
+        discarder: 1,
+        meldId: 1,
+        pending: claimReactions({ ...base, round: 1 }, "S8", 1),
+      },
+    };
+    session.adoptState(racing);
+    session.settled();
+
+    const before = session.snapshot().claimWindow!.pending.length;
+    expect(before).toBe(3);
+
+    // Every seat is a live human and none of them answers. Each in turn
+    // has its window expire and is passed for, and the race resolves.
+    clock.advance(60_000);
+
+    const after = session.snapshot();
+    expect(after.claimWindow).toBeNull();
+    // Nobody claimed it, so the card stays where it was and play moved on.
+    expect(after.melds[0]!.cards).toEqual(["S5", "S6", "S7"]);
+    expect(clock.pending).toBe(0);
+  });
+
+  it("does not act for a seat that answers in time", () => {
+    const clock = new TestClock();
+    const rummy = createRummy({ target: 200 });
+    const session = new GameSession({
+      definition: rummy,
+      seats: 4,
+      seed: 4242,
+      clock,
+      isSeatLive: () => true,
+      turnHoldMs: () => 0,
+    });
+
+    const base = session.snapshot();
+    const racing = {
+      ...base,
+      dealt: true,
+      dealSizePending: null,
+      phase: "draw" as const,
+      turn: 2,
+      hands: { ...base.hands, 0: ["CK"] },
+      melds: [{ id: 1, owner: 1, cards: ["S5", "S6", "S7"], hitBy: {} }],
+      nextMeldId: 2,
+      discard: ["S8"],
+      claimWindow: {
+        discard: "S8",
+        discarder: 1,
+        meldId: 1,
+        pending: claimReactions({ ...base, round: 1 }, "S8", 1),
+      },
+    };
+    session.adoptState(racing);
+    session.settled();
+
+    const claimer = rummy.currentSeat(session.snapshot())!;
+    expect(session.submit(claimer, { t: "claim", seat: claimer }).ok).toBe(true);
+
+    // The card went to whoever pressed first, and the deadline that was
+    // armed for them did not fire afterwards and pass on their behalf.
+    expect(session.snapshot().melds[0]!.cards).toContain("S8");
+    clock.advance(60_000);
+    expect(session.snapshot().melds[0]!.cards).toContain("S8");
   });
 });

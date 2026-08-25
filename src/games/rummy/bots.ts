@@ -222,6 +222,30 @@ function chooseDiscard(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): R
   return { t: "discard", card: card ?? hand[0]! };
 }
 
+/**
+ * Whether to take a card the window is offering.
+ *
+ * Always, and that is not laziness. A claim costs nothing — the card
+ * goes straight onto the board, its value counts toward the claimer's
+ * contribution, and the turn order is undisturbed — so declining one is
+ * strictly worse than taking it. The interesting decision was never
+ * whether to claim; it is whether the bot NOTICED the card was
+ * claimable, and that is already modelled, at the other end, by
+ * `LAYOFF_ATTENTION` deciding whether a discard feeds a live meld at all.
+ *
+ * The `passClaim` branch exists because the window can outlive the meld
+ * that made it claimable — a seat ahead in the race may have extended
+ * the same meld into deadness — and a bot with no legal claim must still
+ * answer, or the window never closes.
+ */
+function chooseClaim(state: RummyState, seat: SeatId): RummyAction {
+  const window = state.claimWindow;
+  if (!window) return { t: "passClaim", seat };
+  const meld = state.melds.find((m) => m.id === window.meldId);
+  if (!meld || !canExtend(meld.cards, window.discard)) return { t: "passClaim", seat };
+  return { t: "claim", seat };
+}
+
 /* ============================================================
    Strategy objects
    ============================================================ */
@@ -234,13 +258,24 @@ function makeBot(
   return {
     id,
     choose(state, seat, rng) {
+      // A claim window is now a real turn for a bot, not something that
+      // resolved inline inside `reduce`. It has to come first: a window
+      // seizes the turn regardless of `phase`, so reading `phase` here
+      // would answer a question nobody asked.
+      if (state.claimWindow !== null) return chooseClaim(state, seat);
       if (state.dealSizePending !== null) return chooseDealSize(state, rng);
-      // A bot never sees a claim window — its claims resolve inline
-      // inside `reduce` — so there is no branch for one here.
       if (state.phase === "draw") return chooseDraw(state, seat, rng, tier);
       return chooseMeld(state, seat, rng, tier);
     },
     thinkMs(state, seat, rng) {
+      // A claim's beat is not this bot's pace — it is the reaction time
+      // drawn for this seat when the window opened, which is the number
+      // the race is actually run on. Spending anything else here would
+      // let a bot arrive at a different moment than the one every other
+      // seat is racing against.
+      const claiming = state.claimWindow?.pending.find((p) => p.seat === seat);
+      if (claiming) return claiming.ms;
+
       const beat = pace(rng);
       // Drawing with no pile option, or melding under an obligation, is
       // not a real decision — don't make the player watch one.

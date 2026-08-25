@@ -286,8 +286,11 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
     events.push({
       t: "announce",
       seat,
-      text: `${seatName(seat)} ${seat === HERO ? "pass" : "passes"}`,
-      tone: seat === HERO ? "bad" : "info",
+      actor: seat,
+      text: "passes",
+      selfText: "pass",
+      tone: "info",
+      selfTone: "bad",
     });
     // Everyone in succession — nobody can move, so the round is blocked.
     if (passes >= state.seats) {

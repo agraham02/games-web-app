@@ -7,10 +7,9 @@ real-table motion, distinct phase screens, and Rummy's board information
 shown without clutter.
 
 **Status: all five games are real**, with full rules, bots and play
-screens. Four of them — Spades, Poker, Dominoes and LRC — also run
-online in a room. Rummy 500 is single-player only, and for a rules
-reason rather than a wiring one (see `session/registry.ts`). The shared
-layer is additionally exercised through `/lab`.
+screens, and **all five run online in a room**. Rummy was the last in,
+and needed its rules changed rather than its wiring — see "A claim is a
+race" below. The shared layer is additionally exercised through `/lab`.
 
 ```
 npm run dev      # server + app on one port: /play/rummy, /room, /lab/seats
@@ -117,6 +116,44 @@ Three things have gone wrong here already, all worth knowing:
 
 The pattern: each was found by doing the NEXT thing (a second game, a
 real browser), not by more tests on the last one.
+
+### A claim is a race, and a race needs two things the turn loop lacks
+
+Rummy sat out of online play longest, and not for a wiring reason. Three
+places in its rules answered "the human" with seat 0: `startRound`
+resolved a bot dealer's hand size inline and parked only for `HERO`,
+`currentSeat` handed the turn to `HERO` outright whenever a claim window
+opened, and the race itself was timed by a `setTimeout` on the play page.
+
+The deal size was the easy one — park on the dealer, whoever it is, and
+let the session run a bot for a seat nobody is at, which is what it does
+for every other turn. The claim needed two genuinely new things.
+
+**More than one seat may act at once.** `currentSeat` can only name one,
+so `GameSession.submit` now gates on `legalActions(state, seat)` being
+non-empty instead. For four of the five games those are the same question
+— asserted across whole matches in `GameSession.test.ts`, some eight
+thousand seat-turns of it — and `currentSeat` remains what the PACING
+waits on. Rummy's claim window is where they diverge: it names every
+eligible seat, `currentSeat` returns the soonest, and all of them are
+entitled. A human three deep in the queue can still beat the bot at the
+front by being quick, which is the whole mechanic.
+
+**A live seat cannot be allowed to stall the table.** `GameDefinition`
+gained `deadline?(state, seat)`: what to do for a seat that does not
+answer, and how long to wait. Almost nothing needs one — a game where
+everyone waits on the person whose turn it is is the normal case, and
+fine. A race is not: it parks the whole table on several seats at once.
+That used to be resolved by the page's own timer, which works exactly as
+long as the page is the only authority; online, a backgrounded tab has
+its timers throttled to about one a minute, so one player switching apps
+froze the game for everybody. The client still draws its ring, but it is
+a nicety now rather than the mechanism, and the two clocks are
+deliberately not tuned to fire together (`CLAIM_GRACE_MS`).
+
+**The ws harness found the stall**, which is the layer that should have:
+it drives real sockets with no browser behind them, so a table that only
+moves because a page is running stops dead.
 
 ### `HERO` is a default, not a fact
 
@@ -358,6 +395,9 @@ a difference the game doesn't have.
    [engine/types.ts](src/engine/types.ts) under `src/games/<id>/`.
 2. Emit events from `reduce` for everything the table should show.
 3. Provide `placements(state, viewer)` — the choreographer reconciles
-   against it, so a missed event self-corrects instead of desyncing.
+   against it, so a missed event self-corrects instead of desyncing. It
+   is also the authority for FACING: `projectEvents` corrects each
+   event's `faceUp` against it per viewer, so `faceUp: seat === HERO` in
+   a deal stays correct offline and online both.
 4. Compose the existing phase shells; only the slot content is new.
 5. Add bots per `BotDifficulty`. `thinkMs` is part of the feel.
