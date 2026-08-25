@@ -463,6 +463,52 @@ function withoutPublicHistory(state: unknown, gameId: GameId): unknown {
   return copy;
 }
 
+describe("facing, from a seat that is not zero", () => {
+  /**
+   * Every game writes `faceUp: seat === HERO` when it deals, because
+   * offline that is exactly right. Online it is right for one player and
+   * wrong for everybody else — and the symptom is not a leak but its
+   * opposite: a seat-2 player watched all thirteen of their own cards
+   * deal face DOWN, then snap face up when the batch reconciled.
+   *
+   * Nothing caught it. The unit tests all deal to seat 0, the redaction
+   * tests only ever ask whether too MUCH was shown, and the browser test
+   * counts nameable ids rather than looking at them.
+   */
+  for (const gameId of GAME_IDS) {
+    it(`${gameId}: a player is dealt their own cards face up wherever they sit`, () => {
+      const entry = GAMES[gameId];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
+      const rng = createRng(7);
+      const base = definition.setup({ seats: 4, rng });
+      const opened = definition.startRound?.(base, rng);
+      if (!opened) return; // A game that deals nothing has nothing to face.
+
+      for (const viewer of [1, 2, 3]) {
+        const truth = definition.placements(opened.state, viewer);
+        const projected = projectEvents(
+          opened.events,
+          definition.placements(base, viewer),
+          truth,
+        );
+
+        for (const event of projected) {
+          if (event.t !== "deal" && event.t !== "draw" && event.t !== "flip") continue;
+          const landed = truth[event.piece];
+          if (!landed) continue;
+          // The event and the board it reconciles against must agree, or
+          // the deal animates one way and then corrects itself.
+          expect({ piece: event.piece, faceUp: event.faceUp }).toEqual({
+            piece: event.piece,
+            faceUp: landed.faceUp,
+          });
+        }
+      }
+    });
+  }
+});
+
 describe("the whole frame, every game, every turn", () => {
   const SEATS: Record<GameId, number> = {
     spades: 4,

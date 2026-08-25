@@ -162,6 +162,32 @@ function piecesOf(event: GameEvent): PieceId[] {
   }
 }
 
+/**
+ * Corrects an event's `faceUp` to what THIS viewer is entitled to see.
+ *
+ * A game writes `faceUp: seat === HERO` when it deals, because offline
+ * that is exactly right — there is one human and they sit at seat 0.
+ * Online it is right for one player and wrong for everybody else: a seat-2
+ * player watched all thirteen of their own cards deal face DOWN and then
+ * snap face up when the batch reconciled against `placements`. Every
+ * online game had this, on every deal, for every seat but 0.
+ *
+ * The authority is the same one the rest of this module uses:
+ * `placements(state, viewer)` is the game saying what this seat may SEE.
+ * If the card ends the batch face-up in their picture, the event that put
+ * it there should say so.
+ *
+ * Only applied to a piece the viewer can still NAME. A concealed piece
+ * keeps `faceUp: false` regardless — its stand-in has no face to show,
+ * and this must never be the thing that reveals one.
+ */
+function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
+  if (event.t !== "deal" && event.t !== "draw" && event.t !== "flip") return event;
+  const landed = after[event.piece];
+  if (!landed || landed.faceUp === event.faceUp) return event;
+  return { ...event, faceUp: landed.faceUp };
+}
+
 function withPiece(event: GameEvent, map: (id: PieceId) => PieceId): GameEvent {
   switch (event.t) {
     case "deal":
@@ -222,8 +248,10 @@ export function projectEvents(
       if (naming.kind === "reveal") out.push({ t: "unmask", piece, at: naming.at });
     }
 
+    // Facing is corrected BEFORE the id is swapped, so it can be looked
+    // up by the real piece — a sentinel has no entry in `after`.
     out.push(
-      withPiece(event, (id) => {
+      withPiece(withFacing(event, after), (id) => {
         const naming = namingFor(id, before, after);
         // A revealed piece travels under its real id — the `unmask` just
         // put that exact id on the board for it to move from.
