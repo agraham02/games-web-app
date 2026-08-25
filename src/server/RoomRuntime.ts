@@ -135,7 +135,27 @@ export class RoomRuntime {
     this.sendCurrentFrame(session);
   }
 
-  detach(session: SessionId): void {
+  /**
+   * Lets go of one member's socket.
+   *
+   * `connection` names WHICH socket is going, and passing it is what makes
+   * a second tab survivable. `attach` replaces a duplicate identity's old
+   * socket with the new one under the same key, and `ws.close()` is
+   * asynchronous — so the old socket's close event lands AFTER the
+   * replacement is already in the map. Deleting by session id alone
+   * therefore evicted the tab that had just arrived: the server decided the
+   * player was gone, a bot took their seat, and both tabs went quiet while
+   * the person sat looking at the table.
+   *
+   * Omitting `connection` is the deliberate unconditional form, for a kick
+   * or a room being torn down, where the point is that whoever is on the
+   * other end goes regardless of which socket they hold.
+   */
+  detach(session: SessionId, connection?: Connection): void {
+    const current = this.connections.get(session);
+    if (!current) return;
+    if (connection && current !== connection) return;
+
     this.connections.delete(session);
     if (this.room.members[session]) {
       this.command(session, { t: "setConnected", connected: false });
@@ -440,7 +460,7 @@ export class RoomRuntime {
     const connection = this.connections.get(session);
     if (!connection) return;
     connection.close();
-    this.detach(session);
+    this.detach(session, connection);
   }
 
   /** For the debug endpoint — the authoritative truth, never redacted. */

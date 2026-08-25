@@ -67,7 +67,36 @@ export class Router {
     private readonly now: () => number,
   ) {}
 
+  /**
+   * The boundary between one client's message and the process.
+   *
+   * Everything a socket can reach is behind this, and it is a `try` for a
+   * blunt reason: before it existed there was nothing at all. A room
+   * command that threw — and one did, on a team index of `-1`, which a
+   * leader is entirely allowed to send — escaped `applyCommand`, escaped
+   * this router, escaped the `ws` message listener, and became an uncaught
+   * exception that took every live room in the process with it. One
+   * player's malformed frame ended everybody else's game.
+   *
+   * Catching leaves consistent state rather than papering over a mess:
+   * `RoomRuntime.command` assigns `this.room` only after `applyCommand`
+   * has returned, so a throw part-way through leaves the room exactly as
+   * it was. The client is told, the server logs it, and the other five
+   * people at the table never find out.
+   */
   onMessage(peer: Peer, raw: string): void {
+    try {
+      this.route(peer, raw);
+    } catch (error) {
+      log.error("message handler threw", {
+        session: peer.session ?? undefined,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.fail(peer, "bad-message", "that request could not be handled");
+    }
+  }
+
+  private route(peer: Peer, raw: string): void {
     if (raw.length > MAX_MESSAGE_BYTES) {
       this.fail(peer, "bad-message", "message too large");
       return;
@@ -141,9 +170,21 @@ export class Router {
           this.fail(peer, ok.error, ok.error, message.reqId);
           return;
         }
-        this.registry.displace(session);
+        // Told first, let go of second: `left` goes down this peer's own
+        // socket, but the roster broadcast inside `detach` must not.
         peer.connection.send({ t: "left", reason: "left" });
-        runtime.broadcastRoom();
+        // Forgetting the room is not the same as the room forgetting them.
+        // Without this the socket stayed in the runtime's fan-out map, so a
+        // departed player kept receiving roster updates for a room they had
+        // left — and `useRoom` acts on a `room` message, so the next thing
+        // anybody did in that room dragged them back into its lobby.
+        //
+        // It also strands the room itself: `onEmpty` is reachable only
+        // through here, so a room everybody politely LEFT (as opposed to
+        // dropping out of) was never handed to the reaper and held its code
+        // and its memory for the life of the process.
+        runtime.detach(session, peer.connection);
+        this.registry.displace(session);
         return;
       }
 
@@ -162,6 +203,8 @@ export class Router {
         // addressable through this room at all.
         if (command.t === "kick") {
           runtime.send(command.session, { t: "left", reason: "kicked" });
+          // Unconditional detach — whichever socket they hold, they are out.
+          runtime.detach(command.session);
           this.registry.displace(command.session);
         }
         // Approval is the moment a waiting socket becomes a member's
@@ -180,11 +223,23 @@ export class Router {
     }
   }
 
+  /**
+   * Guarded for the same reason as `onMessage`, and with less recourse: a
+   * socket closing is not a request anybody is waiting on an answer to, so
+   * a throw here would be a crash with no user-visible cause at all.
+   */
   onClose(peer: Peer): void {
     if (!peer.session) return;
-    this.awaiting.delete(peer.session);
-    const runtime = this.registry.roomOf(peer.session);
-    runtime?.detach(peer.session);
+    try {
+      this.awaiting.delete(peer.session);
+      const runtime = this.registry.roomOf(peer.session);
+      runtime?.detach(peer.session, peer.connection);
+    } catch (error) {
+      log.error("close handler threw", {
+        session: peer.session,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
@@ -197,6 +252,23 @@ export class Router {
    * special handling anywhere — it falls out of admitting the identity
    * rather than the socket.
    */
+  /**
+   * Takes a peer out of whatever room it is currently in, if any.
+   *
+   * One person is in one room. Nothing downstream — not the registry's
+   * `located` map, not a seat reservation, not the roster — is built to
+   * represent somebody in two, and the failure mode if they are is quiet:
+   * two rooms both broadcasting at one socket, each overwriting the
+   * other's view of where its owner is.
+   */
+  private leaveCurrentRoom(peer: Peer, session: SessionId): void {
+    const existing = this.registry.roomOf(session);
+    if (!existing) return;
+    existing.command(session, { t: "leave" });
+    existing.detach(session, peer.connection);
+    this.registry.displace(session);
+  }
+
   private admit(session: SessionId, code: string): void {
     const waiting = this.awaiting.get(session);
     this.awaiting.delete(session);
@@ -242,14 +314,7 @@ export class Router {
   }
 
   private createRoom(peer: Peer, session: SessionId, name: string, reqId?: string): void {
-    const existing = this.registry.roomOf(session);
-    if (existing) {
-      // Leaving first keeps one person out of two rooms, which nothing
-      // downstream is built to represent.
-      existing.command(session, { t: "leave" });
-      existing.broadcastRoom();
-      this.registry.displace(session);
-    }
+    this.leaveCurrentRoom(peer, session);
 
     const runtime = this.registry.create(session, name.trim().slice(0, 20) || "Player");
     this.registry.place(session, runtime.code);
@@ -269,6 +334,11 @@ export class Router {
       this.fail(peer, "no-such-room", "no room with that code", reqId);
       return;
     }
+
+    // Checked before joining, not after: a client that skips the UI and
+    // sends `joinRoom` while already seated somewhere would otherwise be a
+    // member of two rooms at once, holding a seat in each.
+    if (this.registry.roomOf(session) !== runtime) this.leaveCurrentRoom(peer, session);
 
     const result = runtime.command(session, { t: "join", name });
     if (!result.ok) {

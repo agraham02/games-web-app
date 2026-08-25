@@ -314,4 +314,181 @@ describe("the server, in process", () => {
       expect(Object.keys(runtime.room.members)).toHaveLength(2);
     });
   });
+
+  /* ============================================================
+     The connection lifecycle
+     ============================================================ */
+
+  /**
+   * Four bugs lived in here, and they shared a shape: the room's map of
+   * sockets was updated on some paths and not others, so the server's idea
+   * of who it was talking to drifted from the truth. None of them were
+   * visible from a client — the symptoms were a bot taking a seat somebody
+   * was sitting in, a lobby reappearing over a game, and rooms that never
+   * died.
+   */
+  describe("sockets, and who the room thinks is holding them", () => {
+    it("survives a second tab for the same person", () => {
+      // `attach` closes the old socket and stores the new one under the
+      // same session key. `ws.close()` is asynchronous, so the old
+      // socket's close event arrives AFTER the replacement is in the map —
+      // and a detach that deleted by session id alone evicted the tab that
+      // had just arrived. The player was marked gone and a bot took their
+      // seat while they sat looking at the table.
+      const firstTab = host();
+      const runtime = registry.get(firstTab.code)!;
+      const session = registry.sessionFor("host");
+
+      const secondTab = peerFor("host");
+      expect(runtime.isAttached(session)).toBe(true);
+      expect(firstTab.conn.closed).toBe(true);
+
+      // Now the first tab's close event lands, late, as it really does.
+      router.onClose(firstTab.peer);
+
+      expect(runtime.isAttached(session)).toBe(true);
+      expect(runtime.room.members[session]!.connected).toBe(true);
+      // And the surviving socket is the new one.
+      secondTab.conn.clear();
+      runtime.broadcastRoom();
+      expect(secondTab.conn.last("room")).toBeDefined();
+    });
+
+    it("stops talking to somebody who left", () => {
+      // The socket stayed in the room's fan-out map after `leaveRoom`, so
+      // the next thing anybody did in that room sent a roster update to a
+      // player who had gone — and the client acts on a `room` message, so
+      // it dragged them back into a lobby they had deliberately left.
+      const { peer: hostPeer, code } = host();
+      const { peer: guest, conn: guestConn } = peerFor("guest");
+      send(guest, { t: "joinRoom", code, name: "Bo" });
+
+      send(guest, { t: "leaveRoom" });
+      expect(guestConn.last("left")).toBeDefined();
+
+      guestConn.clear();
+      send(hostPeer, { t: "rename", name: "Adaline" });
+      expect(guestConn.all("room")).toHaveLength(0);
+    });
+
+    it("reaps a room everybody politely left, not just one they dropped out of", () => {
+      // `onEmpty` is only reachable through `detach`, and leaving never
+      // called it — so a room whose members all pressed "leave" was never
+      // handed to the reaper and held its code for the life of the process.
+      const { peer } = host();
+      expect(registry.size).toBe(1);
+
+      send(peer, { t: "leaveRoom" });
+      clock.advance(EMPTY_ROOM_TTL_MS + 1);
+
+      expect(registry.size).toBe(0);
+    });
+
+    it("stops talking to somebody it kicked", () => {
+      const { peer: hostPeer, code } = host();
+      const { peer: guest, conn: guestConn } = peerFor("guest");
+      send(guest, { t: "joinRoom", code, name: "Bo" });
+
+      send(hostPeer, { t: "kick", session: registry.sessionFor("guest") });
+      expect(guestConn.last("left")!.reason).toBe("kicked");
+
+      guestConn.clear();
+      send(hostPeer, { t: "rename", name: "Adaline" });
+      expect(guestConn.all("room")).toHaveLength(0);
+    });
+
+    it("keeps one person in one room when they make a new one", () => {
+      const { peer, code: first } = host();
+      const firstRoom = registry.get(first)!;
+      const session = registry.sessionFor("host");
+
+      send(peer, { t: "createRoom", name: "Ada" });
+      const second = registry.roomOf(session)!;
+
+      expect(second.code).not.toBe(first);
+      expect(firstRoom.isAttached(session)).toBe(false);
+      expect(firstRoom.room.members[session]).toBeUndefined();
+    });
+
+    it("keeps one person in one room when they join another", () => {
+      const other = host("other");
+      const { peer, code: mine } = host("mover");
+      const session = registry.sessionFor("mover");
+
+      send(peer, { t: "joinRoom", code: other.code, name: "Mover" });
+
+      expect(registry.roomOf(session)!.code).toBe(other.code);
+      expect(registry.get(mine)?.room.members[session]).toBeUndefined();
+    });
+  });
+
+  /* ============================================================
+     Hostile input
+     ============================================================ */
+
+  describe("input nobody sane would send", () => {
+    /**
+     * Each value gets its own room, and that matters: assigning a team
+     * overwrites the last one, so a loop that assigned all of them to one
+     * player would only ever start a game with whichever came last — and
+     * `-0 % 2` is `-0`, which is a perfectly good array index. The first
+     * version of this test did exactly that and passed against the bug.
+     */
+    // NaN and Infinity are absent on purpose: `JSON.stringify` turns both
+    // into `null`, so the parser rejects the message and they can never
+    // arrive this way. They are covered directly on `teamIndex` instead.
+    it.each([-1, 0.5, 1e21, -0, Number.MIN_SAFE_INTEGER])(
+      "does not die on a team index of %p",
+      (team) => {
+        // `team % 2` is `-1` for `-1` and `0.5` for `0.5`, and
+        // `seatMembers` indexed its queue array with the result —
+        // `undefined.shift()`. That threw all the way out through the ws
+        // message listener and took every live room in the process with
+        // it, on a message a leader is perfectly entitled to send.
+        const token = `host-${String(team)}`;
+        const { peer, code } = host(token);
+        const guestToken = `guest-${String(team)}`;
+        const { peer: guest } = peerFor(guestToken);
+        send(guest, { t: "joinRoom", code, name: `Bo${String(team)}` });
+        send(peer, {
+          t: "selectGame",
+          gameId: "spades",
+          settings: {},
+          seats: 4,
+          difficulty: "steady",
+        });
+
+        send(peer, { t: "assignTeam", session: registry.sessionFor(guestToken), team });
+        send(peer, { t: "startGame" });
+
+        const runtime = registry.get(code)!;
+        expect(runtime.hasGame).toBe(true);
+        // Both of them got a seat — a bad index must not cost anybody one.
+        expect(runtime.room.game!.seatOwner.filter(Boolean)).toHaveLength(2);
+        // And what was stored is a real team, not whatever arrived.
+        expect(runtime.room.teams![registry.sessionFor(guestToken)]).toBeOneOf([0, 1]);
+      },
+    );
+
+    it("answers a handler that throws instead of taking the process down", () => {
+      // The boundary itself, tested by making a command throw on purpose.
+      // What matters is not this particular explosion but that ANY of them
+      // stays inside one peer's request.
+      const { peer, conn, code } = host();
+      const runtime = registry.get(code)!;
+      const exploded = new Error("boom");
+      const original = runtime.broadcastRoom.bind(runtime);
+      runtime.broadcastRoom = () => {
+        throw exploded;
+      };
+
+      conn.clear();
+      expect(() => send(peer, { t: "rename", name: "Adaline" })).not.toThrow();
+      expect(conn.last("error")).toBeDefined();
+
+      runtime.broadcastRoom = original;
+      // And the room is still usable afterwards.
+      expect(() => send(peer, { t: "rename", name: "Ada" })).not.toThrow();
+    });
+  });
 });
