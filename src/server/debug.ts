@@ -84,7 +84,16 @@ export function handleDebugRequest(
   // Reconnection tests need a disconnect they can cause at a known moment;
   // waiting on a real network to drop at the right time is how a test suite
   // becomes flaky.
+  //
+  // POST specifically. It was answering any verb, which made a GET to this
+  // path — a pasted link, a browser prefetching, a crawler on a dev box —
+  // enough to disconnect a player mid-hand. Nothing that ACTS belongs on a
+  // verb the web treats as safe to retry on its own.
   if (parts[0] === "drop" && parts[1] && parts[2]) {
+    if (req.method !== "POST") {
+      json(res, 405, { error: "use POST" });
+      return true;
+    }
     const runtime = registry.get(parts[1]);
     if (!runtime) {
       json(res, 404, { error: "no such room" });

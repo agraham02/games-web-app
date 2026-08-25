@@ -591,6 +591,27 @@ async function main(): Promise<void> {
     for (const card of bsOwn) {
       assert(!seenByA.includes(`"${card}"`), `Ada was sent Bo's hole card ${card}`);
     }
+
+    // The assertion above is the obvious one and it is not enough — it
+    // passed for months while the deck went out in the clear. A player
+    // does not have to be TOLD an opponent's cards if they can name every
+    // OTHER card in the deck: whatever is left over is the hand.
+    //
+    // So this counts what Ada can name. Two hole cards, at most five
+    // community cards and at most three burns is ten; anything beyond
+    // that means the stub is being described to her, and the elimination
+    // is available. Checked on the wire rather than in a unit test
+    // because this is the layer that sees what the socket actually
+    // carried.
+    const aFrame = a.latest("frame")!.frame as {
+      state: { cardOwner: Record<string, unknown> };
+    };
+    const nameableByA = Object.keys(aFrame.state.cardOwner).filter((id) => !id.startsWith("?"));
+    assert(
+      nameableByA.length <= 10,
+      `Ada can name ${nameableByA.length} cards; at most 10 are hers to see, ` +
+        `so the rest of the deck is being published: ${nameableByA.join(",")}`,
+    );
   });
 
 
