@@ -11,11 +11,14 @@
 
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
-import type { GameEvent, PlacementMap } from "@/engine/types";
+import type { GameDefinition, GameEvent, PieceId, PlacementMap } from "@/engine/types";
 import { createSpades } from "@/games/spades/rules";
 import { createPoker } from "@/games/poker/rules";
 import { createDominoes } from "@/games/dominoes/rules";
 import { createRummy } from "@/games/rummy/rules";
+import { GAME_IDS, GAMES, type GameId } from "./registry";
+import { GameSession } from "./GameSession";
+import { TestClock } from "./clock";
 import { isSentinel, projectEvents, redactPlacements } from "./redact";
 
 /** Deals a real game and returns the true placements plus piece meta. */
@@ -336,6 +339,36 @@ describe("playerView — what the redacted STATE may contain", () => {
     expect(new Set(view.deck).size).toBe(state.deck.length);
   });
 
+  it("poker: heads-up, the opponent's hand cannot be deduced by elimination", () => {
+    // The sharpest form of the leak, and the reason `cardOwner` matters
+    // as much as `deck` did. A player does not need to be TOLD an
+    // opponent's cards if they can name every other card in the deck:
+    // whatever is left over is the hand. With two seats that is exact.
+    const poker = createPoker();
+    const rng = createRng(5);
+    const base = poker.setup({ seats: 2, rng });
+    const { state } = poker.startRound!(base, rng);
+
+    const view = poker.playerView(state, 0);
+    const nameable = new Set(
+      Object.keys(view.cardOwner).filter((id) => !id.startsWith("??")),
+    );
+    const unnameable = Object.keys(state.cardOwner)
+      .filter((id) => !nameable.has(id))
+      .sort();
+    const opponentHand = Object.entries(state.cardOwner)
+      .filter(([, owner]) => owner === 1)
+      .map(([id]) => id)
+      .sort();
+
+    expect(opponentHand).toHaveLength(2);
+    // The set seat 0 cannot name has to be BIGGER than seat 1's hand —
+    // the stub and the burns have to be in there too, or elimination
+    // does the leaking that redaction was supposed to prevent.
+    expect(unnameable).not.toEqual(opponentHand);
+    expect(unnameable.length).toBeGreaterThan(opponentHand.length + 40);
+  });
+
   it("dominoes: the boneyard stays face down", () => {
     const dominoes = createDominoes();
     const rng = createRng(1234);
@@ -348,4 +381,168 @@ describe("playerView — what the redacted STATE may contain", () => {
     }
     expect(view.boneyard).toHaveLength(state.boneyard.length);
   });
+});
+
+/* ============================================================
+   The invariant, over every game and every frame of a match
+   ============================================================ */
+
+/**
+ * Everything above this point checks a FIELD. That is how poker's leak
+ * survived being fixed: `playerView` was taught to mask `state.deck`, a
+ * test was written asserting `view.deck` held no real ids, and the same
+ * cards went on shipping under `state.cardOwner` — which nobody was
+ * looking at, because the bug had been found somewhere else. The test
+ * was shaped like the bug instead of like the rule.
+ *
+ * So this asserts the rule: **no id the viewer may not identify appears
+ * anywhere in the frame they are sent** — state, placements and events
+ * together, every frame of a real match, in all five games, for an
+ * opponent and for a spectator.
+ *
+ * "May not identify" is read off the game's own `placements(state,
+ * viewer)`, the same source `redactPlacements` consults, so a game that
+ * changes its mind about what is face-down brings this test with it
+ * rather than needing to be kept in step by hand.
+ */
+
+/**
+ * Where a piece id can actually hide in each part of a frame.
+ *
+ * `state` and `events` are searched as raw JSON, because a game's state
+ * has no fixed shape and an event's payload is half game-specific — a
+ * structural walk would have to know all five.
+ *
+ * `placements` is searched by KEY ONLY, and that is exact rather than
+ * lenient: not one field of `Placement` is typed `PieceId` (they are
+ * zone, seat, index, count and presentation), so the key is the entire
+ * identity channel. Searching its values instead produces false
+ * positives that look alarming and are not — `ownerTag` holds a player's
+ * two-letter initials, so a bot called Sam tags cards "SA" and a blunt
+ * substring search reports the Ace of Spades leaking on every board
+ * meld in Rummy.
+ */
+function frameNames(
+  payload: { state: unknown; placements: PlacementMap; events: GameEvent[] },
+  id: PieceId,
+): boolean {
+  const quoted = `"${id}"`;
+  if (Object.keys(payload.placements).includes(id)) return true;
+  return (
+    (JSON.stringify(payload.state) ?? "").includes(quoted) ||
+    JSON.stringify(payload.events).includes(quoted)
+  );
+}
+
+/**
+ * State a game may keep in the clear even though its placements are
+ * face-down, because the cards passed through public view on their way
+ * there. Concealing these would be theatre — every player watched them
+ * land, and an attentive one has them written down.
+ *
+ * Narrow on purpose. Anything added here needs the same argument made
+ * out loud: not "the UI does not show it" but "everyone already saw it".
+ */
+const PUBLIC_ONCE_SEEN: Partial<Record<GameId, string[]>> = {
+  /** Tricks already taken — every card was played face-up to win them. */
+  spades: ["won"],
+  /**
+   * A mandatory pickup and the discards that came with it. Taking from
+   * the pile in Rummy 500 is done openly and takes everything above the
+   * card you want, so the whole pool was face-up in front of the table
+   * before it reached anybody's hand.
+   */
+  rummy: ["mandatory"],
+};
+
+function withoutPublicHistory(state: unknown, gameId: GameId): unknown {
+  const drop = PUBLIC_ONCE_SEEN[gameId];
+  if (!drop || typeof state !== "object" || state === null) return state;
+  const copy = { ...(state as Record<string, unknown>) };
+  for (const key of drop) delete copy[key];
+  return copy;
+}
+
+describe("the whole frame, every game, every turn", () => {
+  const SEATS: Record<GameId, number> = {
+    spades: 4,
+    dominoes: 4,
+    poker: 6,
+    lrc: 6,
+    rummy: 4,
+  };
+
+  /**
+   * LRC is the one game with nothing to hide: chips and dice are face-up
+   * on the table and there is no hand to conceal. Asserted rather than
+   * skipped, so if it ever grows a hidden zone this test says so instead
+   * of quietly continuing to pass on an empty search.
+   */
+  const CONCEALS: Record<GameId, boolean> = {
+    spades: true,
+    dominoes: true,
+    poker: true,
+    lrc: false,
+    rummy: true,
+  };
+
+  for (const gameId of GAME_IDS) {
+    it(`${gameId}: names nothing an opponent or a spectator may not identify`, () => {
+      const entry = GAMES[gameId];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
+      const clock = new TestClock();
+      const session = new GameSession({
+        definition,
+        seats: SEATS[gameId],
+        seed: 99,
+        clock,
+        // Every seat a bot, so the clock alone plays the match out.
+        isSeatLive: () => false,
+        turnHoldMs: () => 0,
+      });
+
+      const leaks: string[] = [];
+      let checked = 0;
+      let previous: unknown = session.snapshot();
+
+      session.setEmit((frame) => {
+        const after = session.snapshot();
+        // -1 is `SPECTATOR_SEAT`: a viewer number matching no seat, which
+        // is how a spectator gets a table with every hand face down.
+        for (const viewer of [-1, 1]) {
+          const truthBefore = definition.placements(previous, viewer);
+          const truthAfter = definition.placements(after, viewer);
+          const forbidden = Object.entries(truthAfter)
+            .filter(([, placement]) => !placement.faceUp)
+            .map(([id]) => id);
+          if (forbidden.length === 0) continue;
+          checked++;
+
+          const payload = {
+            state: withoutPublicHistory(definition.playerView(after, viewer), gameId),
+            placements: redactPlacements(truthAfter, session.pieceMeta()).placements,
+            events: projectEvents(frame.events, truthBefore, truthAfter),
+          };
+
+          for (const id of forbidden) {
+            if (frameNames(payload, id)) leaks.push(`viewer ${viewer} was sent ${id}`);
+          }
+        }
+        previous = after;
+      });
+
+      session.start();
+      for (let turn = 0; turn < 300 && !definition.isOver(session.snapshot()); turn++) {
+        session.settled();
+        clock.advance(10);
+        if (definition.isRoundOver?.(session.snapshot())) session.nextRound();
+      }
+
+      // Guards the guard: a game that dealt nothing would pass vacuously.
+      if (CONCEALS[gameId]) expect(checked).toBeGreaterThan(20);
+      else expect(checked).toBe(0);
+      expect(leaks.slice(0, 5)).toEqual([]);
+    });
+  }
 });

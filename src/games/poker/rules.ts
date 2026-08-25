@@ -638,31 +638,72 @@ export function placements(state: PokerState, viewer: SeatId): PlacementMap {
   return out;
 }
 
-/** Redacts every OTHER seat's still-hidden hole cards, the same
- * contractual guarantee Rummy/Spades enforce for their own concealed
- * hands ("bots for seat N only ever see view(N)") — poker is this app's
- * first game where that guarantee is load-bearing on every single turn,
- * not just an occasional blind-bid exchange. */
+/**
+ * Can this viewer legitimately put a NAME to this card?
+ *
+ * The question `playerView` turns on, and it is asked of the owner rather
+ * than the card because ownership is what decides visibility in Hold'em:
+ *
+ *  - the board is face-up in front of everybody
+ *  - your own hole cards are yours to read
+ *  - an opponent's are theirs until a showdown reveals them
+ *  - the stub and the burn cards are nobody's, and stay that way
+ *
+ * That last line is the one that was missing, and it cost more than it
+ * looks: `cardOwner` is keyed by card id, so leaving the stub in the
+ * clear published the identity of every undealt card. Heads-up that is
+ * the whole game — the two ids a player CANNOT name are, by elimination,
+ * exactly their opponent's hand. Masking `state.deck` (which carries the
+ * order) did nothing about it, because the set was never in `deck` at
+ * all; it was in the keys of this map.
+ */
+function isIdentifiable(
+  state: PokerState,
+  owner: PokerState["cardOwner"][PieceId],
+  viewer: SeatId,
+): boolean {
+  if (owner === "community") return true;
+  if (owner === "deck" || owner === "burnt") return false;
+  return owner === viewer || isHoleCardsRevealed(state, owner);
+}
+
+/**
+ * The state as one seat is allowed to read it.
+ *
+ * Every card the viewer may not identify — an opponent's hole cards, the
+ * undealt stub, the burns — has its id replaced by an anonymous
+ * placeholder, in both `cardOwner` and `deck`. What survives is
+ * everything the redaction is not about: how many cards are where, who
+ * owns them, and what the pile depths are. A stub of 37 is public; WHICH
+ * 37 is not.
+ *
+ * The same placeholder is used for a card in both places, so the view
+ * stays internally consistent — `placements` reads the stub off `deck`
+ * and the burns off `cardOwner`, and a view whose two halves disagreed
+ * about a card's id would be a trap for whoever called it next.
+ *
+ * Nothing downstream reads these ids: `reduce` deals from the true state
+ * on the server, bots pick their own hole cards out by owner, and the
+ * table keys placements by whatever this returns.
+ */
 export function playerView(state: PokerState, viewer: SeatId): PokerState {
-  const cardOwner: PokerState["cardOwner"] = {};
   let hidden = 0;
+  const masked = new Map<PieceId, PieceId>();
+  const nameFor = (id: PieceId, owner: PokerState["cardOwner"][PieceId]): PieceId => {
+    if (isIdentifiable(state, owner, viewer)) return id;
+    const existing = masked.get(id);
+    if (existing !== undefined) return existing;
+    const stand = `${HIDDEN_CARD_PREFIX}${hidden++}`;
+    masked.set(id, stand);
+    return stand;
+  };
+
+  const cardOwner: PokerState["cardOwner"] = {};
   for (const [id, owner] of Object.entries(state.cardOwner)) {
-    const isOpponentHole = typeof owner === "number" && owner !== viewer;
-    const revealed = typeof owner === "number" && isHoleCardsRevealed(state, owner);
-    cardOwner[isOpponentHole && !revealed ? `${HIDDEN_CARD_PREFIX}${hidden++}` : id] = owner;
+    cardOwner[nameFor(id, owner)] = owner;
   }
-  // `deck` is the ENTIRE remaining runout in dealt order — every future
-  // flop, turn and river, in sequence. Left intact it made this function's
-  // careful hole-card redaction beside the point: anyone holding the view
-  // could read the board before it fell. It went unnoticed because
-  // single-player never sends a view anywhere, and the one consumer is a
-  // bot nobody suspected of cheating.
-  //
-  // Only the COUNT is public (a stub pile has a visible depth), so the ids
-  // become the same anonymous placeholders the hole cards use. Nothing
-  // reads them: `reduce` deals from the true state, and `placements` uses
-  // them as keys and for `length`, both of which survive substitution.
-  const deck = state.deck.map(() => `${HIDDEN_CARD_PREFIX}${hidden++}`);
+  const deck = state.deck.map((id) => nameFor(id, state.cardOwner[id] ?? "deck"));
+
   return { ...state, cardOwner, deck };
 }
 
