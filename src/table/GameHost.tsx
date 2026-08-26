@@ -92,6 +92,22 @@ export interface GameHostProps<S, A> {
    * hero at seat 0. `null` is a spectator, who owns no hand.
    */
   viewerSeat?: SeatId | null;
+  /**
+   * True when the runtime is a server's frames rather than a local
+   * session. The only thing it changes is the dev panel, which is hidden.
+   *
+   * Not squeamishness about clutter — every control on that panel is
+   * inert online and says nothing about it. `advance` and `replaceState`
+   * are documented no-ops in `useOnlineRuntime` (the server owns the
+   * clock and the state), `pendingReveal` is always false, and no online
+   * table threads the pacing sliders through. So it renders a manual-turn
+   * toggle that does not step, a state editor whose edits are discarded,
+   * and five sliders that move nothing.
+   *
+   * A dev tool that lies is worse than no dev tool, and this is precisely
+   * the one somebody reaches for when an online table looks wrong.
+   */
+  serverDriven?: boolean;
   children: (live: GameRuntime<S, A>) => React.ReactNode;
 }
 
@@ -156,6 +172,7 @@ export function GameHostView<S, A>({
   onRematch,
   onLobby,
   viewerSeat,
+  serverDriven,
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
   // Synced into the shared table store, not read as a prop threaded
@@ -270,6 +287,7 @@ export function GameHostView<S, A>({
         onLobby={onLobby}
       />
 
+      {serverDriven ? null : (
       <DevPanel
         pendingReveal={live.pendingReveal}
         advance={live.advance}
@@ -286,6 +304,7 @@ export function GameHostView<S, A>({
         onDebugStateChange={(next) => live.replaceState(next as S)}
         scenarios={scenarios?.(live)}
       />
+      )}
 
       {children(live)}
     </TableSurface>

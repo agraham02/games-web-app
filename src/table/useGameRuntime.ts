@@ -436,7 +436,24 @@ export function useGameRuntime<S, A>(
   // mount with the initial placements (avoids racing the store).
   const started = useRef(false);
   useEffect(() => {
-    if (started.current) return;
+    if (started.current) {
+      // StrictMode ran mount -> cleanup -> mount against this same
+      // session, and the cleanup above cancelled whatever was scheduled.
+      // Re-settling re-arms the loop from wherever it actually is.
+      //
+      // Without this the game could die on its very first turn, and the
+      // way it happened is worth keeping. The hazard needs the opening
+      // batch to drain SYNCHRONOUSLY — then `settled()` runs inside this
+      // effect, schedules a bot's turn, and the cleanup that follows
+      // immediately kills it while this guard makes the second mount a
+      // no-op. Every game's opening deal used to be dozens of real
+      // animations, so the drain was always async and the cleanup always
+      // ran first; it only became reachable when Rummy's `startRound`
+      // stopped dealing and began emitting a single zero-duration
+      // `phase` instead. A bot dealer then never dealt at all.
+      session.settled();
+      return;
+    }
     started.current = true;
     useTableStore.getState().reset(definition.placements(session.snapshot(), HERO), pieceMeta);
     // `start()` covers both shapes. A game with rounds hasn't dealt yet,

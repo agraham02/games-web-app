@@ -80,6 +80,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "poker"].name}
         viewerSeat={frame.seat}
+        serverDriven
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}

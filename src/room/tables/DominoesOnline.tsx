@@ -88,6 +88,7 @@ export function DominoesOnline({
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "dominoes"].name}
         viewerSeat={frame.seat}
+        serverDriven
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}

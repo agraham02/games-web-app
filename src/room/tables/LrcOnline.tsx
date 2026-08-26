@@ -80,6 +80,7 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "lrc"].name}
         viewerSeat={frame.seat}
+        serverDriven
         handZone={0}
         live={live}
         players={(state, l) => playerViews(view, state, l)}

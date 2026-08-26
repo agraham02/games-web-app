@@ -96,6 +96,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "rummy"].name}
         viewerSeat={frame.seat}
+        serverDriven
         live={live}
         bottomZone={handHeaderHeight(vh) + SHEET_PEEK_H}
         players={playerViews(view, room.seats)}

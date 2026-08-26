@@ -15,6 +15,7 @@
  * choreographer rather than racing them, and still stops on the hero.
  */
 
+import { StrictMode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameDefinition } from "@/engine/types";
@@ -173,5 +174,52 @@ describe("useGameRuntime — every game still runs through the extracted session
       vi.advanceTimersByTime(20_000);
     });
     expect(result.current.rawState).not.toBe(before);
+  });
+
+  describe("StrictMode's double mount", () => {
+    /**
+     * React runs mount -> cleanup -> mount in development, against the same
+     * session object. That cleanup cancels whatever turn was scheduled, and
+     * the `started` ref makes the second mount a no-op — so unless the
+     * second mount RE-ARMS the loop, the game dies before its first bot
+     * turn.
+     *
+     * It went unreachable for a long time by luck. The hazard needs the
+     * opening batch to drain SYNCHRONOUSLY, so that `settled()` runs inside
+     * the mount effect and schedules a turn the cleanup immediately kills.
+     * Every game's opening deal was dozens of real animations, so the drain
+     * was always async and the cleanup always ran first. Rummy's
+     * `startRound` stopped dealing when the deal-size choice became a real
+     * turn for any seat, and its opening batch became a single
+     * zero-duration `phase` — at which point a bot dealer never dealt at
+     * all, and the table sat at "stock empty" forever.
+     *
+     * Found by running the app, which is the only place StrictMode is on.
+     */
+    for (const { name, definition } of GAMES) {
+      it(`${name}: still runs its first bot turn after a double mount`, () => {
+        const { result, rerender } = renderHook(
+          () => useGameRuntime(definition, { seats: SEATS, seed: 4242 }),
+          { wrapper: StrictMode },
+        );
+        rerender();
+
+        // Let every hold, think and animation resolve.
+        act(() => {
+          vi.advanceTimersByTime(30_000);
+        });
+
+        const state = result.current.rawState as Record<string, unknown>;
+        const seat = definition.currentSeat(state);
+        // Either a human is being waited on, or the game is over. What must
+        // NOT happen is the loop parking on a seat no human occupies — that
+        // is a turn nobody will ever take.
+        const parkedOnABot = seat !== null && seat !== HERO;
+        expect(
+          parkedOnABot,
+          `${name} parked on seat ${seat}, which no human is sitting in`,
+        ).toBe(false);
+      });
+    }
   });
 });
