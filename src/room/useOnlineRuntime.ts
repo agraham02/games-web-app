@@ -84,6 +84,19 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   const { frame } = opts;
 
   const [applied, setApplied] = useState<FrameView | null>(null);
+  /**
+   * Who acted, published the moment their frame ARRIVES rather than when
+   * it finishes animating.
+   *
+   * Every game lights its seat pods from `lastAction` — deliberately, so
+   * the glow follows what is being SHOWN rather than `state.turn`, which
+   * already names the next actor the instant `reduce` runs. Taking it off
+   * `applied` made it a whole animation late: the pod lit for the person
+   * who moved BEFORE the one you were watching, so the highlight read as
+   * running a turn behind. `useGameRuntime` has always set this in its
+   * frame handler; this is the same thing in the same place.
+   */
+  const [lastAction, setLastAction] = useState<FrameView["lastAction"]>(null);
   const [dealingRound, setDealingRound] = useState<number | null>(null);
   const [gameEndRevealed, setGameEndRevealed] = useState(false);
   const [roundEndRevealed, setRoundEndRevealed] = useState(false);
@@ -154,6 +167,18 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
 
     const next = backlog.shift()!;
     playing.current = next;
+    setLastAction(next.lastAction);
+    // Learned BEFORE the events play, not after them.
+    //
+    // A frame's meta describes every piece this viewer may name once the
+    // batch is over, which includes any card an opponent is about to
+    // reveal by playing it. `PieceLayer` draws nothing for a piece it
+    // cannot describe, so waiting for the settle meant the `unmask` at
+    // the head of that gesture rendered nothing, the move had no painted
+    // origin, and the card appeared on the table rather than leaving a
+    // hand. Merging is safe: meta names only pieces the redaction has
+    // already decided this seat may identify, and it moves nothing.
+    useTableStore.getState().learnMeta(next.meta);
     if (next.dealtRound !== null) setDealingRound(next.dealtRound);
     if (next.isRoundOver === false) setRoundEndRevealed(false);
 
@@ -220,7 +245,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     skip: choreographer.skip,
     // Withheld by the server when the action names a piece this viewer
     // may not identify — see `safeLastAction`.
-    lastAction: applied.lastAction as { seat: SeatId; action: A } | null,
+    lastAction: lastAction as { seat: SeatId; action: A } | null,
     // Both meaningless here: the server owns the clock, so there is never a
     // turn sitting locally waiting to be revealed.
     pendingReveal: false,

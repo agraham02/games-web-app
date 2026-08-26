@@ -96,7 +96,13 @@ export function pendingLabel(view: PokerView, state: PokerState, seat: SeatId): 
 
 export function playerViews(view: PokerView, state: PokerState, live: Live): SeatView[] {
   const out: SeatView[] = [];
-  for (let seat = 1; seat < state.seats; seat++) {
+  // Every seat but the VIEWER's own. This counted from 1 for a long time,
+  // which is the same thing exactly as long as the viewer is seat 0 —
+  // and online they are not. A player at seat 1 got no pod for seat 0
+  // (the party leader simply had no nameplate) and a redundant one for
+  // themselves.
+  for (let seat = 0; seat < state.seats; seat++) {
+    if (seat === view.viewerSeat) continue;
     const inHand = seat in state.folded;
     // Busted from the whole MATCH, not merely folded this hand — see
     // `isAllIn`'s own caution in state.ts: a 0 stack mid-hand usually

@@ -166,18 +166,32 @@ describe("choreograph", () => {
   });
 
   describe("unmask", () => {
-    it("costs nothing, so the play behind it lands in the same frame", () => {
-      // A redaction-layer event, not a gesture. If it took a real
-      // duration the card would visibly sit in the opponent's hand for a
-      // beat before flying out, splitting one motion into two.
+    it("takes long enough to be painted before anything moves it", () => {
+      // This asserted a duration of ZERO, on the reasoning that a
+      // redaction-layer event is bookkeeping rather than a gesture and a
+      // real duration would split one motion into two. The reasoning
+      // missed what an unmask actually introduces: a piece this viewer
+      // has NEVER seen. `<Piece>` mounts with `initial={false}`, so it
+      // snaps to wherever it is first painted — and with a duration of
+      // zero the move landed in the same paint, making the destination
+      // the first painted position. Motion had nothing to animate from
+      // and the card materialised on the table instead of leaving a
+      // hand, which is the opposite of what the zero was protecting.
+      //
+      // Short enough to read as one gesture against `DURATION.play`.
       const [step] = choreograph([
         { t: "unmask", piece: "S-A", at: { zone: "hand", seat: 3, index: 0, count: 1, faceUp: false } },
       ]);
       expect(step!.offset).toBe(0);
-      expect(step!.duration).toBe(0);
+      expect(step!.duration).toBeGreaterThan(0);
+      expect(step!.duration).toBeLessThan(DURATION.play * 1000 / 2);
     });
 
-    it("does not delay the event it rides in front of", () => {
+    it("rides with the gesture rather than queueing in front of it", () => {
+      // Zero OFFSET is still right: the two are one motion. It is the
+      // DRAIN that holds for an unmask's duration (see
+      // `useChoreographer`), the same way it does for `think` — so this
+      // stays 0 and the wait comes from the event's own time.
       const steps = choreograph([
         { t: "unmask", piece: "S-A", at: { zone: "hand", seat: 3, index: 0, count: 1, faceUp: false } },
         { t: "play", piece: "S-A", from: 3, to: "trick" },

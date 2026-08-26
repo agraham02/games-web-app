@@ -22,6 +22,28 @@ export interface TimedStep {
 
 const MS = 1000;
 
+/**
+ * How long an `unmask` occupies before the event that moves the piece is
+ * allowed to run.
+ *
+ * Zero looks right and is not. An unmask puts a piece the viewer has
+ * never seen onto the board at the slot it is about to leave, and a
+ * `<Piece>` mounts with `initial={false}` — it SNAPS to wherever it is
+ * first rendered. If the move lands before that mount has been painted,
+ * the piece's first painted position is its destination, so Motion has
+ * nothing to animate from and the card simply appears on the table.
+ *
+ * That is what an opponent's play looked like online: the tile did not
+ * fly out of their hand, it materialised in the middle of the board. The
+ * fix is one painted frame at the origin, and this is deliberately a
+ * couple of them rather than one — a device dropping frames under a deal
+ * would otherwise fall back to the same snap.
+ *
+ * Small enough to be invisible against `DURATION.play` (300ms), and it
+ * only ever costs anything on a move somebody else made.
+ */
+const UNMASK_SETTLE = 50;
+
 export interface ChoreographOptions {
   /**
    * Overrides `STAGGER.deal` (ms between one deal event starting and the
@@ -112,13 +134,14 @@ export function choreograph(
         break;
 
       case "unmask":
-        // Zero and zero, deliberately. This is bookkeeping, not motion:
-        // it puts a piece the viewer had only seen the back of onto the
-        // board at the slot it already occupied, so that the `play`
-        // immediately after it has something real to animate out of the
-        // hand. Giving it a duration would insert a visible hitch in the
-        // middle of what has to read as one gesture.
-        steps.push({ event, offset: 0, duration: 0 });
+        // Zero OFFSET, because this rides with the gesture rather than
+        // queueing behind it — but a real duration, because the piece it
+        // introduces has to be painted at its origin before anything
+        // moves it. See `UNMASK_SETTLE`: with a duration of zero the
+        // card materialised on the board instead of flying out of the
+        // hand it came from, which is exactly the hitch the zero was
+        // meant to avoid.
+        steps.push({ event, offset: 0, duration: UNMASK_SETTLE });
         break;
 
       case "pause":

@@ -108,7 +108,7 @@ export function useChoreographer({
     // batch at once — a real deal was landing every ~beatOf(deal) (≈74%
     // of a single card's flight, ~270ms) rather than every
     // `dealStaggerMs`, more than 4x slower than intended.
-    const [, next] = choreograph(
+    const [current, next] = choreograph(
       [event, queue.current[0]!],
       { dealStaggerMs: dealStaggerRef.current },
     );
@@ -137,7 +137,22 @@ export function useChoreographer({
     //
     // So: wait for whichever is longer. Concurrency is preserved because
     // ordinary events hold for nothing.
-    const hold = event.t === "think" ? event.ms : 0;
+    // `unmask` joins `think` in that category, for a different reason:
+    // not that it renders nothing, but that what it renders has to reach
+    // the screen. It introduces a piece this viewer has never seen, and
+    // `<Piece>` mounts with `initial={false}` — so if the move that
+    // follows lands in the same paint, the piece's first painted
+    // position IS its destination and Motion has nothing to animate
+    // from. The card appears on the table instead of leaving a hand.
+    //
+    // Its own duration, read back off `choreograph` rather than
+    // duplicated here, so the number has one home.
+    const hold =
+      event.t === "think"
+        ? event.ms
+        : event.t === "unmask"
+          ? (current?.duration ?? 0)
+          : 0;
     const wait = Math.max(hold, next?.offset ?? beatOf(event)) * factor;
 
     timer.current = setTimeout(() => drainRef.current(), Math.max(0, wait));

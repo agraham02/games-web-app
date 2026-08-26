@@ -333,7 +333,13 @@ function BoneyardCount({ view, state }: { view: DomView; state: DomState }) {
 export function playerViews(view: DomView, state: DomState, live: Live): SeatView[] {
   const out: SeatView[] = [];
   const hero = state.rules.teams ? partnerOf(view.viewerSeat) : null;
-  for (let seat = 1; seat < state.seats; seat++) {
+  // Every seat but the VIEWER's own. This counted from 1 for a long time,
+  // which is the same thing exactly as long as the viewer is seat 0 —
+  // and online they are not. A player at seat 1 got no pod for seat 0
+  // (the party leader simply had no nameplate) and a redundant one for
+  // themselves.
+  for (let seat = 0; seat < state.seats; seat++) {
+    if (seat === view.viewerSeat) continue;
     const tiles = state.hands[seat]?.length ?? 0;
     // Keyed off `lastAction`, not `state.turn`: `turn` already names the
     // NEXT actor the instant reduce runs, so highlighting from it makes

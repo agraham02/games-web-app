@@ -623,3 +623,92 @@ describe("chip pile clamping — center (the pot)", () => {
     }
   });
 });
+
+
+describe("hands, laid out from a seat that is not zero", () => {
+  /**
+   * `TableGeometry.seats` is ordered by POSITION — index 0 is always the
+   * bottom-centre chair and the rest walk the ring. `layoutPiece` used to
+   * index it with a SEAT id, which is the same thing exactly as long as
+   * the viewer is seat 0, and silently returns somebody else's chair the
+   * moment they are not.
+   *
+   * Online it was plainly visible and nobody was looking: a player at
+   * seat 1 saw every opponent's hand one position out, and seat 0's hand
+   * wrapped around to index 0 — the viewer's OWN chair — so the party
+   * leader's tiles were drawn face-down underneath the player's hand.
+   *
+   * Asserted through `layoutPiece` rather than against `slotForSeat`
+   * directly, because the bug was in the caller and a test of the helper
+   * alone would have passed throughout.
+   */
+  const centreOf = (placement: Placement, g: ReturnType<typeof resolveTable>) => {
+    const t = layoutPiece(placement, g);
+    const base = baseSize(g);
+    return { x: t.x + base.w / 2, y: t.y + base.h / 2 };
+  };
+
+  for (const seatCount of [4, 6]) {
+    for (const viewerSeat of [0, 1, 2, 3]) {
+      it(`${seatCount} seats, viewed from seat ${viewerSeat}: every hand sits at its own pod`, () => {
+        const g = resolveTable({
+          seats: seatCount,
+          width: 1440,
+          height: 900,
+          density: "wide",
+          viewerSeat,
+        });
+
+        for (const slot of g.seats) {
+          if (slot.isHero) continue;
+          const hand: Placement = {
+            zone: "hand",
+            seat: slot.seat,
+            index: 0,
+            count: 5,
+            faceUp: false,
+          };
+          const { x, y } = centreOf(hand, g);
+          // Pulled toward the table centre from the pod, so this is a
+          // generous radius rather than an exact point — what it rules
+          // out is the hand being at a DIFFERENT seat's chair, and the
+          // chairs are much further apart than this.
+          const distance = Math.hypot(x - slot.x, y - slot.y);
+          const nearer = g.seats
+            .filter((other) => other.seat !== slot.seat && !other.isHero)
+            .map((other) => Math.hypot(x - other.x, y - other.y));
+          expect(
+            nearer.every((d) => d > distance),
+            `seat ${slot.seat}'s hand is nearer somebody else's pod`,
+          ).toBe(true);
+        }
+      });
+    }
+  }
+
+  it("never lays another seat's hand on top of the viewer's own", () => {
+    // The specific symptom that was reported: face-down tiles rendering
+    // underneath the player's own hand, because seat 0 wrapped to the
+    // hero slot.
+    const g = resolveTable({
+      seats: 4,
+      width: 1120,
+      height: 1650,
+      density: "wide",
+      viewerSeat: 1,
+    });
+    const hero = g.seats.find((slot) => slot.isHero)!;
+
+    for (const slot of g.seats) {
+      if (slot.isHero) continue;
+      const { x, y } = centreOf(
+        { zone: "hand", seat: slot.seat, index: 0, count: 5, faceUp: false },
+        g,
+      );
+      expect(
+        Math.hypot(x - hero.x, y - hero.y),
+        `seat ${slot.seat}'s hand landed in the viewer's own chair`,
+      ).toBeGreaterThan(200);
+    }
+  });
+});

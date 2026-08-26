@@ -73,6 +73,25 @@ export type ZoneName =
    * `ZoneId` doc for why this is not `"discard"`. */
   | "burnt";
 
+/**
+ * Where a given SEAT is sitting, from this viewer's chair.
+ *
+ * `TableGeometry.seats` is ordered by POSITION, not by seat id — index 0
+ * is always the bottom-centre chair and the rest walk the ring from
+ * there. Offline the two coincide, because the viewer is seat 0 and
+ * `seatAt(i)` is the identity; online they do not, and indexing the array
+ * with a seat id silently returns somebody else's chair.
+ *
+ * It did exactly that. A player at seat 1 saw every opponent's hand one
+ * position out — seat 2's tiles on the top edge instead of the left,
+ * seat 3's on the right instead of the top — and seat 0's hand wrapped
+ * around to index 0, which is the viewer's OWN chair, so the leader's
+ * tiles were drawn face-down underneath the player's hand.
+ */
+export function slotForSeat(geometry: TableGeometry, seat: SeatId): SeatSlot | undefined {
+  return geometry.seats.find((slot) => slot.seat === seat);
+}
+
 export interface TableGeometry {
   box: Box;
   density: Density;

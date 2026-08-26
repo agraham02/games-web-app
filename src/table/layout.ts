@@ -21,6 +21,7 @@ import {
   pileAssembly,
   pileAssemblyHorizontal,
   radialFanSlot,
+  slotForSeat,
   tileShortSide,
   MAX_DISCARD_STEP_FRACTION,
   MIN_HAND_GAP_FRACTION,
@@ -402,7 +403,7 @@ export function layoutPiece(
     case "trick": {
       const trick = g.zones.trick;
       const { cx, cy } = boxCentre(trick);
-      const seat = p.seat !== undefined ? g.seats[p.seat] : undefined;
+      const seat = p.seat !== undefined ? slotForSeat(g, p.seat) : undefined;
 
       if (!seat) {
         const { x, y } = centred(cx, cy, g);
@@ -595,7 +596,7 @@ export function layoutPiece(
 
       // Opponent hands sit just inside their pod, pulled toward the
       // centre of the table so they never hang off the edge.
-      const seat = g.seats[seatId];
+      const seat = slotForSeat(g, seatId);
       if (!seat) return { x: 0, y: 0, rotate: 0, scale: miniScale, z, opacity };
 
       const miniW = miniArt(g, ctx?.kind);
@@ -770,7 +771,7 @@ export function layoutPiece(
 
     /* --------------------------------------------- collected */
     case "collected": {
-      const seat = p.seat !== undefined ? g.seats[p.seat] : undefined;
+      const seat = p.seat !== undefined ? slotForSeat(g, p.seat) : undefined;
       if (!seat) return { x: 0, y: 0, rotate: 0, scale: miniScale, z, opacity };
 
       // A real grid, not a stack: a 0.6px-per-card offset (the old
