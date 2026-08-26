@@ -25,6 +25,12 @@ import { log, setLogLevel } from "@/server/log";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = Number(process.env.PORT ?? 3000);
+/**
+ * Only ever used to build the log line and to tell Next what it is being
+ * served as. The LISTEN below deliberately passes no host, so Node binds
+ * every interface — which is what a container needs, and what binding
+ * `localhost` inside one would have quietly prevented.
+ */
 const hostname = process.env.HOSTNAME ?? "localhost";
 
 async function main(): Promise<void> {
@@ -39,9 +45,19 @@ async function main(): Promise<void> {
   const registry = new RoomRegistry();
 
   const server = createServer((req, res) => {
-    // Debug routes are checked first and answer for themselves; everything
-    // else is Next's. They are refused outright in production — see
-    // `debug.ts` on why there is no middle setting.
+    // Liveness, and deliberately NOT one of the debug routes: those are
+    // refused in production, which is the one environment a platform
+    // actually health-checks. It answers before Next so a slow or broken
+    // page render cannot make the process look dead, and it says nothing
+    // about who is in which room — a health check is a public endpoint.
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, rooms: registry.size, uptime: process.uptime() }));
+      return;
+    }
+    // Debug routes answer for themselves; everything else is Next's. They
+    // are refused outright in production — see `debug.ts` on why there is
+    // no middle setting.
     if (handleDebugRequest(req, res, registry)) return;
     void handle(req, res);
   });

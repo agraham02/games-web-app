@@ -1,0 +1,40 @@
+# Fly.io — not free any more, but around a couple of dollars a month for
+# a machine that never sleeps, which is the main thing Render's free tier
+# gives up.
+#
+# `auto_stop_machines` is deliberately off. Fly can idle a machine down
+# and wake it on the next request, which is fine for a request/response
+# app and wrong for this one: a stopped machine takes every live room and
+# every open socket with it.
+
+app = "table-games"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # One machine, on purpose. Rooms live in this process's memory, so a
+  # second instance would be a second, invisible set of rooms — two
+  # players given the same code could land on different machines and
+  # never meet. Scaling out needs sticky routing by room code first.
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -1,0 +1,32 @@
+# Render — the recommended free-tier home for this app.
+#
+# What "free" costs you, stated plainly: a free web service SPINS DOWN
+# after about 15 minutes with no inbound traffic, and the next request
+# waits ~50 seconds for it to wake. For this app that is milder than it
+# sounds — rooms are in-memory and expire a minute after the last person
+# leaves, so there is rarely anything to lose — but a room DOES die with
+# the process, so two friends arranging to play should both load the page
+# before anyone creates a room.
+#
+# The client sends a keepalive every 25 seconds (see `connection.ts`), so
+# an open table counts as traffic and will not idle out mid-game.
+#
+# Upgrading to the cheapest paid instance removes the spin-down entirely
+# and changes nothing else here.
+services:
+  - type: web
+    name: table-games
+    runtime: node
+    plan: free
+    # Free instances get 512MB; the build is the memory-hungry part.
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # Never set ENABLE_DEBUG_ENDPOINTS here. `/debug/room/:code` dumps a
+      # room unredacted and `/debug/drop` hangs up on a player; both are
+      # refused in production precisely so a deploy cannot expose them.

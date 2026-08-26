@@ -34,6 +34,24 @@ const TOKEN_KEY = "table-games.session-token";
  */
 const RETRY_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
 
+/**
+ * How often the client says something, whether or not it has anything to
+ * say.
+ *
+ * The server already pings its sockets to notice dead ones (see
+ * `wsServer.ts`), which is the opposite direction and a different job.
+ * This exists because of everything BETWEEN the two: proxies, load
+ * balancers and free hosting tiers all reap connections that have been
+ * quiet, typically after 60 seconds, and a game of Rummy where somebody
+ * is thinking is exactly that. Losing the socket is survivable — the
+ * client reconnects and reclaims its seat — but it is a visible stall for
+ * no reason.
+ *
+ * Comfortably under a 60-second idle timeout, and nothing next to the
+ * router's own 120-messages-per-10-seconds budget.
+ */
+const KEEPALIVE_MS = 25_000;
+
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed";
 
 export interface ConnectionListener {
@@ -96,6 +114,7 @@ export class RoomConnection {
   private socket: WebSocket | null = null;
   private attempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private closedByUs = false;
   private readonly listeners = new Set<ConnectionListener>();
   /**
@@ -139,6 +158,7 @@ export class RoomConnection {
       // the server who this is, and the reply is what restores the room.
       this.raw({ t: "hello", token: this.token, protocol: PROTOCOL_VERSION });
       for (const message of this.queue.splice(0)) this.raw(message);
+      this.startKeepalive();
     };
 
     socket.onmessage = (event) => {
@@ -154,6 +174,7 @@ export class RoomConnection {
 
     socket.onclose = () => {
       this.socket = null;
+      this.stopKeepalive();
       if (this.closedByUs) {
         this.setStatus("closed");
         return;
@@ -166,6 +187,22 @@ export class RoomConnection {
       // `onclose` always follows, and that is where retrying belongs;
       // doing it here too would double every backoff.
     };
+  }
+
+  private startKeepalive(): void {
+    this.stopKeepalive();
+    this.keepaliveTimer = setInterval(() => {
+      // Straight to the socket rather than through `send`, which would
+      // QUEUE a ping while disconnected and then deliver a burst of stale
+      // ones the moment the connection came back.
+      if (this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "ping" });
+    }, KEEPALIVE_MS);
+  }
+
+  private stopKeepalive(): void {
+    if (this.keepaliveTimer === null) return;
+    clearInterval(this.keepaliveTimer);
+    this.keepaliveTimer = null;
   }
 
   private scheduleRetry(): void {
@@ -219,6 +256,7 @@ export class RoomConnection {
 
   close(): void {
     this.closedByUs = true;
+    this.stopKeepalive();
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;

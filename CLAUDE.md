@@ -20,7 +20,13 @@ npm run e2e      # several real browsers, one real server
 
 `npm run dev` boots `server.ts`, not `next dev`: rooms are live objects
 with timers and open sockets, so the app needs a process that stays up.
-That rules out serverless deploys — it runs anywhere Node runs.
+That rules out serverless deploys — it runs anywhere Node runs, and
+`README.md` covers where. Two consequences worth knowing before touching
+the server: it caps the app at ONE instance (a second would hold a second,
+invisible set of rooms), and `tsx` and `cross-env` are runtime
+dependencies rather than dev ones, because the server is TypeScript that
+is never compiled. Moving either back to `devDependencies` breaks every
+production install.
 
 ## The decisions everything rests on
 
