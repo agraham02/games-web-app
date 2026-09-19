@@ -1,68 +1,103 @@
-# Continue — session handoff (2026-08-24)
+# Continue — session handoff (2026-09-19)
 
-All five games are real. Four of them — Spades, Poker, Dominoes and LRC —
-also play online in a room against other people. `npm run check` clean at
-**615 tests**; `npm run harness` at 18 scenarios; `npm run e2e` at 6.
+All five games are real and **all five play online in a room**. The
+architecture is in CLAUDE.md and not repeated here; this is what is worth
+knowing before touching the multiplayer layer.
 
-The multiplayer architecture is in CLAUDE.md and not repeated here. This
-is what is worth knowing before touching it.
+```
+npm run check     773 tests, 44 files   (typecheck + lint + test)
+npm run harness    23 scenarios          (needs `npm run dev`)
+npm run e2e        11 browser tests      (starts its own server on 3210)
+```
 
-## What is done
+## What just happened
 
-- **One engine, two drivers.** `GameSession` is the turn loop with no
-  React in it. `useGameRuntime` drives it in a browser, `RoomRuntime` on
-  the server. Same rules, same bots, same code.
-- **Rooms**: 4-letter codes, public or private with approval, a party
-  leader with real powers, teams, spectators, bot takeover on
-  disconnect, identity-keyed seat reclaiming, one-minute expiry.
-- **Redaction** filters hidden information before it is sent, not in the
-  UI. `/lab/redact` audits it per seat.
-- **Four test layers**, each blind to what the one below it catches —
-  see CLAUDE.md's "Testing it".
+The room layer went through its first audit, prompted by a human
+playtest that found it freezing, desyncing and losing people on refresh.
+Five commits, four tiers, each fix pinned by a test that fails without
+it. The headline finding and the most useful one are both worth knowing:
 
-## What is not
+**A player who dropped ON THEIR TURN froze the table forever.**
+`settled()` is what hands a turn to a bot, and on the server it was only
+ever reached from somebody ACTING — so a table parked on a live seat
+whose owner left had nobody to wait for and nothing to wake it. Four of
+the five games; Rummy escaped only because its claim race had already
+armed a `deadline?()` timer. Every existing test passed straight over it,
+because they all assert the NEWS travels (`liveSeats` flipped, a frame
+with `botSeats` was pushed) and none asserted the game then MOVES.
 
-- **Rummy 500 is offline only**, and it is a rules problem rather than a
-  wiring one. `currentSeat` returns `HERO` outright while a claim window
-  is open, `startRound` branches on `dealer === HERO`, and the claim race
-  is timed by a `setTimeout` in the play page rather than by anything the
-  server could adjudicate. Poker's `pendingShowdown` — which routes every
-  seat, bot or human, through an ordinary turn — is the pattern to copy.
-- **Nobody has played an online game by hand.** Six browser tests drive
-  the real thing and pass, but no human has sat at an online table and
-  looked at it. That is the single biggest gap.
-- **LRC's roll changed and wants an eye on it.** It used to resolve the
-  dice on the client and hold the submit back for the length of the
-  tumble. The dice are now rolled by whoever owns the game, and the beat
-  comes from a `pause` the engine emits. The tumble was shortened to
-  match. It is correct; whether it FEELS right is unverified.
-- **No deploy config.** Custom server, so it needs a Node host.
+**Two tabs on one machine is the one arrangement guaranteed not to
+work** — and it is the obvious way to try a room out by hand.
+`localStorage` is per-origin, not per-tab, so two tabs are one PERSON;
+the server replaces the old socket with the new one, and the old tab used
+to read that as the network dropping and reconnect, which closed the tab
+that had just taken over. Measured at ~4 round trips a second, forever,
+with one of the two always holding a dead socket. Now the server says
+`superseded` and the old tab stands down with an offer to take it back.
+
+## Testing a room by hand
+
+Two tabs on `localhost` will NOT give you two players (see above). Use
+two origins, which is what `allowedDevOrigins` in `next.config.ts` is
+for:
+
+- player one: `http://localhost:3000/room`
+- player two: `http://127.0.0.1:3000/room`
+
+Two browser profiles or two devices work too. The e2e tests use separate
+browser CONTEXTS for the same reason.
 
 ## Things that bit, and would bite again
 
-- **Each redaction bug was found by doing the next thing, not by more
-  tests on the last one.** A second game exposed the deal-event leak; a
-  real browser exposed the missing hand. Both had green unit tests.
+- **Each bug was found by doing the NEXT thing.** The freeze needed a
+  real socket to really close; the two-tab storm needed a browser. Both
+  had green unit tests either side of them.
+- **`legalActions` is the turn gate, not the action gate.** It answers
+  "may this seat act" and says nothing about whether the action that
+  arrived is one of them — and online the action is arbitrary JSON off a
+  socket. `GameDefinition.validate?()` is the seam that closes it. Four
+  games share `validateByEnumeration`; poker validates by hand because
+  its bet is a continuous range and `legalActions` offers only the
+  minimum as a representative.
+- **`SPECTATOR_SEAT` is -1, and -1 is a perfectly ordinary number.** It
+  makes every `seat === viewer` comparison fail, which is exactly right
+  for hands and meaningless for arithmetic: `partnerOf(-1)` is 1, so a
+  spectator was told seat 1 was their partner. Check any maths that takes
+  a seat id.
+- **`HERO` is seat 0 is still hiding in shared code.** `playerViews` was
+  fixed for it long ago; `GameHost`'s winner label and standings were
+  not, so every online match ended with the wrong name. Grep for `=== 0`
+  and `HERO` before trusting a shared component online.
+- **A shell that hand-rolls what `table.tsx` should own WILL drift.**
+  Dominoes' `tapTile` and Spades' `onPieceTap` exist because of this;
+  Spades' card selection and LRC's `handZone`/`stats` had drifted again
+  and are now shared the same way.
 - **A client-side navigation remounts the room screen** while the socket
-  stays open. The connection replays its last hello/room/frame to a new
-  subscriber for exactly this reason. Do not make room state
-  component-local again.
+  stays open. The connection replays its last hello/room/frame for this
+  reason. Do not make room state component-local again.
 - **Mocking the router hid a fatal bug.** The jsdom tests mock
-  `next/navigation`, so `replace` was a no-op and creating a room
-  appeared to work. Anything that depends on real navigation needs the
-  browser layer.
+  `next/navigation`, so `replace` is a no-op. Anything depending on real
+  navigation needs the browser layer.
 - **The lobby and the table registry can drift.** One decides what may be
-  STARTED (and the server enforces it), the other what can be DRAWN. They
-  cannot be merged — one is imported by the server, the other is React —
-  so `src/room/tables.test.tsx` holds them together.
-- **`npm run check` used to be unreliable** and is not any more: the
-  suite defaults to `node` and only five files opt into jsdom. If it
-  starts timing out again, look at environment setup time before
-  suspecting a test.
+  STARTED (server-enforced), the other what can be DRAWN. They cannot be
+  merged — one is imported by the server, the other is React — so
+  `src/room/tables.test.tsx` holds them together.
 
-## Next up
+## Known and deliberately not done
 
-Rummy's claim race is the obvious remaining piece of work, and the only
-one that needs engine surgery rather than wiring. Everything else on the
-list is polish: a human playtest of an online table, LRC's roll timing,
-and somewhere to deploy it.
+- **One instance only.** Rooms are live in-memory objects, so a second
+  instance would hold a second, invisible set of rooms. Fine for the ~10
+  players this is being launched to; it is the first thing to revisit if
+  that changes, and it means a real fix (shared store or sticky routing),
+  not a config flag.
+- **There is no CI.** `check`, `harness` and `e2e` are all manual and
+  local, and `render.yaml`/`Dockerfile` deploy on `build` alone — so
+  nothing stops a red suite shipping. A GitHub Action running `check`
+  plus `e2e` is the obvious next piece of infrastructure.
+- **Only chromium** in `playwright.config.ts`. Mobile Safari is a
+  plausible target for a phone-first table game and is untested.
+- **Never more than two clients** at the harness or e2e layer, though
+  rooms seat up to 10. Four-player online play — the shape every
+  partnership game assumes — has no end-to-end test.
+- `reqId` idempotency is promised in `protocol.ts`'s header and
+  implemented nowhere.

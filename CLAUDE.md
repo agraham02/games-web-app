@@ -15,7 +15,7 @@ race" below. The shared layer is additionally exercised through `/lab`.
 npm run dev      # server + app on one port: /play/rummy, /room, /lab/seats
 npm run check    # typecheck + lint + test
 npm run harness  # adversarial WebSocket scenarios (needs `npm run dev`)
-npm run e2e      # several real browsers, one real server
+npm run e2e      # real browsers, one real server (starts its own, port 3210)
 ```
 
 `npm run dev` boots `server.ts`, not `next dev`: rooms are live objects
@@ -160,6 +160,64 @@ deliberately not tuned to fire together (`CLAIM_GRACE_MS`).
 **The ws harness found the stall**, which is the layer that should have:
 it drives real sockets with no browser behind them, so a table that only
 moves because a page is running stops dead.
+
+### The turn gate and the action gate are different questions
+
+`GameSession.submit` asks `legalActions(state, seat)` whether this seat
+may act — see the claim race above for why it is not `currentSeat`. That
+answers WHO, and nothing at all about WHAT: the action is arbitrary JSON
+off a socket, and `reduce` would take a stranger's word for it. Spades
+would play a card out of somebody else's hand (ids are suit+rank and
+guessable); poker's `Math.round("abc")` is `NaN`, `if (added <= 0)` is
+false for `NaN`, and one malformed bet turned the table's money into
+`NaN` for the rest of the match.
+
+So `GameDefinition.validate?(state, seat, action)`, shaped after
+`deadline?()` and just as optional. Four games share
+`validateByEnumeration` ([_shared/validate.ts](src/games/_shared/validate.ts)),
+which tests membership of the game's own `legalActions` — the same
+function the action bar is built from, so the button and the gate cannot
+disagree. **Poker cannot use it**: it returns `{t:"bet", to: range.min}`
+as one representative of a continuous range, so membership would refuse
+every bet but the minimum. It validates the range by hand.
+
+### A seat belongs to a person, and a person may have two tabs
+
+`localStorage` is per-ORIGIN, not per-tab, so a second tab is the same
+identity — and `attach` replaces the old socket, correctly, because the
+seat belongs to the person. A bare close is indistinguishable from the
+network dropping, so the replaced tab reconnected, which closed the tab
+that had just taken over, which reconnected: roughly four round trips a
+second for as long as both were open, with one of the two always holding
+a dead socket and a stale table.
+
+The server sends `{t:"superseded"}` immediately before closing, and the
+client treats that as a deliberate stop — it does not retry, it keeps its
+cached room so the seat is still there, and it offers to take the
+connection back on purpose.
+
+The consequence for TESTING is the thing to remember: **two tabs on
+`localhost` cannot be two players.** Use two origins (`next.config.ts`
+allows `127.0.0.1` in dev for exactly this), two profiles, or two
+devices. The e2e tests use separate browser contexts.
+
+### A liveness change is a turn change
+
+`settled()` is what schedules a bot's turn, and on the server it is
+reached from `onFrame` — which is to say, from somebody ACTING. That is
+complete only while somebody is acting. Park the table on a live seat,
+let that player drop, and the four games with no `deadline?()` armed
+nothing: the seat was bot-played, no bot was ever invoked, and the person
+still sitting there waited forever with an Away badge for company.
+
+`RoomRuntime.command` already diffs a live-seat signature to push that
+badge; it settles on the same edge, which inherits every route the
+signature covers — dropping, exiting, being kicked, coming back.
+
+Every test passed over it, and they shared a shape: they assert the NEWS
+travels (`liveSeats` flipped, a frame carrying `botSeats` was pushed) and
+none asserted the game then MOVES. `TestClock.drain()` is the instrument
+that catches it — a stalled table simply stops, with nothing pending.
 
 ### A room is the point; playing alone is the fallback
 
