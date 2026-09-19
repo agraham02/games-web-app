@@ -100,8 +100,18 @@ export function Lobby({ api }: { api: RoomApi }) {
       <div className="flex w-full flex-col gap-3">
         {room.gameRunning ? (
           <>
-            <Button tone="primary" onClick={() => api.enterGame("player")}>
-              Join the game →
+            {/* `openSeats` existed on the room view and was never read,
+                so this button was always enabled — and at a full table it
+                quietly made you a spectator instead, with only a toast
+                saying so. Dimmed rather than hidden, per the rest of this
+                screen, with the reason on it. */}
+            <Button
+              tone="primary"
+              disabled={room.openSeats.length === 0}
+              title={room.openSeats.length === 0 ? "Every seat is taken" : undefined}
+              onClick={() => api.enterGame("player")}
+            >
+              {room.openSeats.length === 0 ? "Table is full" : "Join the game →"}
             </Button>
             <Button onClick={() => api.enterGame("spectator")}>Watch instead</Button>
             {leader ? (

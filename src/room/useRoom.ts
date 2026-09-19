@@ -46,6 +46,8 @@ export interface RoomApi {
   createRoom: (name: string) => void;
   joinRoom: (code: string, name: string) => void;
   leaveRoom: () => void;
+  /** Take back a knock on a private room. See `phase: "pending"`. */
+  withdraw: () => void;
   rename: (name: string) => void;
   promote: (session: string) => void;
   kick: (session: string) => void;
@@ -207,6 +209,7 @@ export function useRoom(): RoomApi {
       createRoom: (name) => send({ t: "createRoom", name }),
       joinRoom: (code, name) => send({ t: "joinRoom", code: code.toUpperCase(), name }),
       leaveRoom: () => send({ t: "leaveRoom" }),
+      withdraw: () => send({ t: "withdraw" }),
       rename: (name) => send({ t: "rename", name }),
       promote: (session) => send({ t: "promote", session }),
       kick: (session) => send({ t: "kick", session }),

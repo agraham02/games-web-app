@@ -22,6 +22,7 @@ import { GameToaster } from "@/ui/disclosure";
 import { Button } from "@/ui/primitives/Button";
 import { CodeInput, TextField } from "@/ui/primitives/TextField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
+import { ConnectionNotice } from "./ConnectionNotice";
 import { Lobby } from "./Lobby";
 import { tableFor } from "./tables";
 import { useRoom } from "./useRoom";
@@ -62,6 +63,10 @@ export function RoomScreen({ code }: { code?: string }) {
     <>
       {tableShowing ? null : <GameToaster />}
 
+      {/* Above every branch below, because losing the socket is worth
+          saying whichever screen you are on. */}
+      <ConnectionNotice status={api.status} />
+
       {api.phase === "superseded" ? (
         // Said plainly rather than retried. Two tabs for one identity used
         // to trade the socket back and forth several times a second, each
@@ -89,7 +94,16 @@ export function RoomScreen({ code }: { code?: string }) {
           <p className="max-w-xs text-center text-sm text-bone-400">
             {api.pendingCode} is a private room. The party leader has to approve you.
           </p>
-          <Button size="sm" onClick={() => router.push("/room")}>
+          <Button
+            size="sm"
+            onClick={() => {
+              // Actually withdraw, not just navigate. Leaving the request
+              // standing meant a later approval dragged the player into a
+              // room they had declined.
+              api.withdraw();
+              router.push("/room");
+            }}
+          >
             Never mind
           </Button>
         </Centred>
@@ -122,6 +136,11 @@ export function RoomScreen({ code }: { code?: string }) {
   );
 }
 
+/** Uppercase, letters only, at most the four a join code has. */
+function cleanCode(raw: string | undefined): string {
+  return (raw ?? "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+}
+
 function Centred({ children }: { children: React.ReactNode }) {
   return (
     <main className="felt felt-weave flex h-svh flex-col items-center justify-center gap-4">
@@ -139,7 +158,11 @@ function Centred({ children }: { children: React.ReactNode }) {
  */
 function Entry({ api, initialCode }: { api: ReturnType<typeof useRoom>; initialCode?: string }) {
   const [name, setName] = useState("");
-  const [code, setCode] = useState(initialCode?.toUpperCase() ?? "");
+  // Sanitised exactly as `CodeInput` sanitises typing, which this used
+  // to skip. `/room/abcde` filled all four boxes and left Join disabled
+  // forever with no error; `/room/ab-1` is length 4, so Join was ENABLED
+  // and sent a code the server could only refuse.
+  const [code, setCode] = useState(cleanCode(initialCode));
   const [touched, setTouched] = useState(false);
 
   useEffect(() => {

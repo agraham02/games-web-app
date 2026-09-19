@@ -128,7 +128,7 @@ describe("the room client", () => {
   async function open() {
     render(<RoomScreen />);
     await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
-    socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION });
+    socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: false });
     await screen.findByText("Rooms");
   }
 
@@ -239,12 +239,23 @@ describe("the room client", () => {
     });
 
     it("offers a seat or a seat-free watch once a game is running", async () => {
-      await enterLobby({ gameId: "spades", gameRunning: true });
+      await enterLobby({ gameId: "spades", gameRunning: true, openSeats: [2, 3] });
       fireEvent.click(screen.getByRole("button", { name: /watch instead/i }));
       expect(socket().lastSent("enterGame")).toMatchObject({ as: "spectator" });
 
       fireEvent.click(screen.getByRole("button", { name: /join the game/i }));
       expect(socket().lastSent("enterGame")).toMatchObject({ as: "player" });
+    });
+
+    it("says so instead of offering a seat at a full table", async () => {
+      // `openSeats` was on the room view and never read, so this button
+      // was always enabled — and pressing it at a full table quietly made
+      // you a spectator, announced only by a toast.
+      await enterLobby({ gameId: "spades", gameRunning: true, openSeats: [] });
+
+      expect(screen.getByRole("button", { name: /table is full/i })).toBeDisabled();
+      // Watching is still on offer, and is now the honest way in.
+      expect(screen.getByRole("button", { name: /watch instead/i })).toBeEnabled();
     });
 
     it("tells a kicked player, and sends them back to the entry screen", async () => {

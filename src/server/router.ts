@@ -142,6 +142,11 @@ export class Router {
       return;
     }
 
+    if (message.t === "withdraw") {
+      this.withdraw(peer, session);
+      return;
+    }
+
     const runtime = this.registry.roomOf(session);
     if (!runtime) {
       this.fail(peer, "no-room", "you are not in a room", message.reqId);
@@ -275,6 +280,27 @@ export class Router {
     this.registry.displace(session);
   }
 
+  /**
+   * Takes back a knock on a private room.
+   *
+   * Handled before the "are you in a room" check, because a pending
+   * requester deliberately is NOT — they are parked in `awaiting`, which
+   * is the whole reason this needs its own path.
+   *
+   * Without it, "Never mind" only navigated: the request stayed on the
+   * leader's list and in `awaiting`, so approving it later pulled the
+   * person into a room they had explicitly declined — and, if they had
+   * joined another room meanwhile, into a second one at the same time.
+   */
+  private withdraw(peer: Peer, session: SessionId): void {
+    const waiting = this.awaiting.get(session);
+    if (!waiting) return;
+    this.awaiting.delete(session);
+    const runtime = this.registry.get(waiting.code);
+    runtime?.command(session, { t: "withdraw" });
+    peer.connection.send({ t: "left", reason: "left" });
+  }
+
   private admit(session: SessionId, code: string): void {
     const waiting = this.awaiting.get(session);
     this.awaiting.delete(session);
@@ -299,7 +325,7 @@ export class Router {
     if (protocol !== PROTOCOL_VERSION) {
       // Refused rather than best-effort: a mismatched client will
       // misinterpret frames in ways that look like game bugs.
-      this.fail(peer, "bad-message", `protocol ${PROTOCOL_VERSION} required`);
+      this.fail(peer, "protocol-mismatch", `protocol ${PROTOCOL_VERSION} required`);
       peer.connection.close();
       return;
     }
@@ -328,9 +354,14 @@ export class Router {
     }
 
     peer.session = session;
-    peer.connection.send({ t: "hello", session, protocol: PROTOCOL_VERSION });
-
     const runtime = this.registry.roomOf(session);
+    peer.connection.send({
+      t: "hello",
+      session,
+      protocol: PROTOCOL_VERSION,
+      inRoom: runtime !== null,
+    });
+
     if (!runtime) return; // A token nobody has seen in a room is simply new.
 
     log.info("session returned", { room: runtime.code, session });

@@ -64,7 +64,9 @@ export type ConnectionStatus =
   | "open"
   | "reconnecting"
   | "closed"
-  | "superseded";
+  | "superseded"
+  /** Built against a different wire. Only a reload fixes it. */
+  | "incompatible";
 
 export interface ConnectionListener {
   onMessage: (message: ServerMessage) => void;
@@ -130,6 +132,8 @@ export class RoomConnection {
   private closedByUs = false;
   /** Set by a `superseded` message; cleared only by `resume()`. */
   private superseded = false;
+  /** Set by a `protocol-mismatch`; this client cannot speak this wire. */
+  private incompatible = false;
   private readonly listeners = new Set<ConnectionListener>();
   /**
    * Messages composed before the socket was ready. Held rather than
@@ -149,7 +153,14 @@ export class RoomConnection {
     // establishes identity, and the room and frame are meaningless before
     // it — the same order the server sends them in.
     if (this.session) {
-      listener.onMessage({ t: "hello", session: this.session, protocol: PROTOCOL_VERSION });
+      listener.onMessage({
+        t: "hello",
+        session: this.session,
+        protocol: PROTOCOL_VERSION,
+        // Replaying `true` unconditionally would re-assert a room this
+        // connection may have since been told it is not in.
+        inRoom: this.lastRoom !== null,
+      });
     }
     if (this.lastRoom) listener.onMessage(this.lastRoom as ServerMessage);
     if (this.lastFrame) listener.onMessage(this.lastFrame as ServerMessage);
@@ -201,6 +212,10 @@ export class RoomConnection {
         this.setStatus("superseded");
         return;
       }
+      if (this.incompatible) {
+        this.setStatus("incompatible");
+        return;
+      }
       this.setStatus("reconnecting");
       this.scheduleRetry();
     };
@@ -247,6 +262,15 @@ export class RoomConnection {
     switch (message.t) {
       case "hello":
         this.session = message.session;
+        // The server has just said whether this identity is in a room.
+        // If it is not, whatever we cached describes one that is gone —
+        // most often because the process restarted — and keeping it means
+        // rendering a live-looking lobby whose every button fails
+        // silently.
+        if (!message.inRoom) {
+          this.lastRoom = null;
+          this.lastFrame = null;
+        }
         break;
       case "room":
         this.lastRoom = message;
@@ -260,6 +284,13 @@ export class RoomConnection {
       case "left":
         this.lastRoom = null;
         this.lastFrame = null;
+        break;
+      case "error":
+        // The one error a reconnect cannot fix. Retrying hides it behind
+        // a "Reconnecting…" spinner that never resolves, because the
+        // server refuses the handshake every time and the explanation is
+        // never shown.
+        if (message.code === "protocol-mismatch") this.incompatible = true;
         break;
       case "superseded":
         // Recorded before the close event, which is where it is acted on.

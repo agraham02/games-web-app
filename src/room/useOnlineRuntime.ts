@@ -195,6 +195,35 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame]);
 
+  /**
+   * Catch up the moment the tab is looked at again.
+   *
+   * The choreographer paces on `setTimeout`, which a backgrounded tab
+   * throttles to about one a second and, after a few minutes, one a
+   * MINUTE. The server never waits, so frames pile up — and
+   * `CATCH_UP_FRAMES` only trims them inside `pump`, which cannot run
+   * until the batch currently playing has drained one throttled event at
+   * a time. So a tab that had been away came back and crawled through
+   * history it had already missed.
+   *
+   * Skipping is safe for the same reason the backlog trim is: every
+   * frame is a whole snapshot, so collapsing them loses position, not
+   * truth. Two tabs on one machine is the ordinary way this app gets
+   * tried out, which makes this the ordinary case rather than an edge.
+   */
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      // `skip` drains the playing batch instantly and calls `onIdle`,
+      // which settles and pumps — so the trim happens on the same tick.
+      if (playing.current) choreographer.skip();
+      else pump();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Same shape as the offline runtime's: a dependency effect, so
   // StrictMode's mount -> cleanup -> mount becomes schedule -> cancel ->
   // reschedule rather than leaving the intro stuck on screen.

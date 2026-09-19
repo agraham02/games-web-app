@@ -190,6 +190,101 @@ describe("the server, in process", () => {
     });
   });
 
+  /**
+   * Three states that a client could not tell apart, and had to.
+   */
+  describe("saying which kind of nothing this is", () => {
+    it("tells a returning client whether it is still in a room", () => {
+      // A client caches the last roster so a navigation does not strand
+      // it on "Connecting…". That cache outlives the SERVER: restart the
+      // process and a reconnecting client, greeted with nothing but its
+      // own identity, went on rendering a complete interactive lobby for
+      // a room that no longer existed.
+      const fresh = peerFor("nobody");
+      expect(fresh.conn.last("hello")!.inRoom).toBe(false);
+
+      const { code } = host("homeowner");
+      expect(code).toBeTruthy();
+      const back = peerFor("homeowner");
+      expect(back.conn.last("hello")!.inRoom).toBe(true);
+    });
+
+    it("refuses a wrong protocol with its own code, not a generic one", () => {
+      // It used to answer `bad-message`, which a client cannot tell from
+      // a garbled frame — so it retried forever behind a "Reconnecting…"
+      // spinner that could never resolve, and the explanation was never
+      // shown.
+      const conn = new FakeConnection();
+      const peer = makePeer(conn, clock.now());
+      router.onMessage(peer, JSON.stringify({ t: "hello", token: "old", protocol: 999 }));
+
+      expect(conn.last("error")!.code).toBe("protocol-mismatch");
+      expect(conn.closed).toBe(true);
+    });
+
+    it("answers a refused move as a refused move", () => {
+      const h = host("p1");
+      const p2 = peerFor("p2");
+      send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+      send(h.peer, {
+        t: "selectGame",
+        gameId: "spades",
+        settings: {},
+        seats: 4,
+        difficulty: "steady",
+      });
+      send(h.peer, { t: "startGame" });
+
+      // Nonsense from a seated player.
+      h.conn.clear();
+      send(h.peer, { t: "action", action: { t: "play", card: "not-a-card" } });
+
+      // `bad-message` before, which is what a garbled frame gets — so a
+      // client could not decide which of the two is worth interrupting
+      // somebody over.
+      expect(h.conn.last("error")!.code).toBe("move-refused");
+    });
+  });
+
+  /**
+   * "Never mind" used to only navigate: the request stayed on the
+   * leader's list, so approving it later pulled somebody into a room
+   * they had explicitly declined — and, if they had joined another one
+   * meanwhile, into two rooms at once.
+   */
+  describe("taking a knock back", () => {
+    function privateRoomWithAKnock() {
+      const h = host("owner");
+      send(h.peer, { t: "setPrivacy", privacy: "private" });
+      const knocker = peerFor("knocker");
+      send(knocker.peer, { t: "joinRoom", code: h.code, name: "Knocker" });
+      return { ...h, knocker };
+    }
+
+    it("clears the request so a later approval does nothing", () => {
+      const { peer, code, knocker } = privateRoomWithAKnock();
+      const runtime = registry.get(code)!;
+      expect(Object.keys(runtime.room.pending)).toHaveLength(1);
+
+      send(knocker.peer, { t: "withdraw" });
+      expect(Object.keys(runtime.room.pending)).toHaveLength(0);
+
+      knocker.conn.clear();
+      send(peer, { t: "approve", session: registry.sessionFor("knocker") });
+
+      // Nothing drags them in: no roster, no room.
+      expect(knocker.conn.last("room")).toBeUndefined();
+      expect(registry.roomOf(registry.sessionFor("knocker"))).toBeNull();
+    });
+
+    it("tells the requester they are out of it", () => {
+      const { knocker } = privateRoomWithAKnock();
+      knocker.conn.clear();
+      send(knocker.peer, { t: "withdraw" });
+      expect(knocker.conn.last("left")).toBeDefined();
+    });
+  });
+
   describe("reconnection", () => {
     it("puts a returning player back in their room without them asking", () => {
       const { peer, code } = host("comeback");

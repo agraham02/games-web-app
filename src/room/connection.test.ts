@@ -191,3 +191,70 @@ describe("being replaced by another tab", () => {
     expect(connection.lastRoom).not.toBeNull();
   });
 });
+
+/**
+ * A cached room that outlives the server.
+ *
+ * The replay cache is what stops a client-side navigation stranding the
+ * page on "Connecting…". It also outlives the SERVER, though: restart
+ * the process and a reconnecting client used to be greeted with nothing
+ * but its own identity, and went on rendering a complete, interactive
+ * lobby for a room that no longer existed — whose every button then
+ * failed silently, because nothing surfaced a `no-room` error either.
+ */
+describe("a room that is no longer there", () => {
+  beforeEach(() => {
+    sockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function connected() {
+    const connection = new RoomConnection("token-abc");
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    return { connection, socket };
+  }
+
+  function deliver(socket: FakeSocket, message: unknown): void {
+    socket.onmessage?.({ data: JSON.stringify(message) });
+  }
+
+  it("drops the cached room when the server says we are in none", () => {
+    const { connection, socket } = connected();
+    deliver(socket, { t: "room", room: { code: "ABCD", gameRunning: true } });
+    expect(connection.lastRoom).not.toBeNull();
+
+    // The reconnect after a restart: same identity, no room.
+    deliver(socket, { t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: false });
+
+    expect(connection.lastRoom, "a room that is gone must not be replayed").toBeNull();
+    expect(connection.lastFrame).toBeNull();
+  });
+
+  it("keeps it when the server says we are still in one", () => {
+    const { connection, socket } = connected();
+    deliver(socket, { t: "room", room: { code: "ABCD", gameRunning: true } });
+    deliver(socket, { t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    expect(connection.lastRoom).not.toBeNull();
+  });
+
+  it("stops retrying a wire it cannot speak", () => {
+    // Every retry is refused identically, so retrying only hides the one
+    // message that would have explained it.
+    const { connection, socket } = connected();
+    const opened = sockets.length;
+
+    deliver(socket, { t: "error", code: "protocol-mismatch", message: "protocol 1 required" });
+    socket.close();
+
+    expect(connection.status).toBe("incompatible");
+    vi.advanceTimersByTime(300_000);
+    expect(sockets.length).toBe(opened);
+  });
+});

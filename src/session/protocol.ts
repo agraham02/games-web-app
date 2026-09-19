@@ -49,6 +49,8 @@ export type ClientMessage =
   | ({ t: "createRoom"; name: string } & Addressed)
   | ({ t: "joinRoom"; code: RoomCode; name: string } & Addressed)
   | ({ t: "leaveRoom" } & Addressed)
+  /** Take back a knock on a private room that has not been answered. */
+  | ({ t: "withdraw" } & Addressed)
   | ({ t: "rename"; name: string } & Addressed)
   | ({ t: "promote"; session: SessionId } & Addressed)
   | ({ t: "kick"; session: SessionId } & Addressed)
@@ -166,6 +168,13 @@ export type ServerErrorCode =
   | "no-such-room"
   | "rate-limited"
   /**
+   * The client is built against a different wire. Its own code because
+   * it is the one error a reconnect cannot fix: the server says so and
+   * closes, and a client that treats that as a network blip retries
+   * forever behind a "Reconnecting…" spinner that will never resolve.
+   */
+  | "protocol-mismatch"
+  /**
    * A move the server would not take. Its own code rather than
    * `bad-message`, because the two mean opposite things to a client: a
    * malformed frame is a bug worth surfacing loudly, while a rejected
@@ -204,6 +213,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "no-such-room": "no room with that code",
   "rate-limited": "slow down",
   "move-refused": "that move is no longer available",
+  "protocol-mismatch": "this page is out of date — reload to keep playing",
 };
 
 export function errorText(code: ServerErrorCode): string {
@@ -211,7 +221,18 @@ export function errorText(code: ServerErrorCode): string {
 }
 
 export type ServerMessage =
-  | { t: "hello"; session: SessionId; protocol: number }
+  /**
+   * `inRoom` is the answer to "am I still where I think I am".
+   *
+   * A client caches the last roster it was sent so that a client-side
+   * navigation does not strand it on "Connecting…". That cache outlives
+   * the SERVER, though: restart the process and a reconnecting client
+   * greeted with nothing but its own identity went on rendering a
+   * complete, interactive lobby for a room that no longer existed, whose
+   * every button then failed silently. Saying so plainly is the only
+   * thing that distinguishes "you are new" from "that is gone".
+   */
+  | { t: "hello"; session: SessionId; protocol: number; inRoom: boolean }
   | { t: "room"; room: RoomView }
   | { t: "frame"; frame: FrameView }
   /** The recipient is no longer in any room — kicked, left, or it expired. */
@@ -354,6 +375,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       };
 
     case "leaveRoom":
+    case "withdraw":
     case "randomizeTeams":
     case "startGame":
     case "exitGame":

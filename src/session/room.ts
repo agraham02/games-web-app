@@ -137,6 +137,8 @@ export type RoomCommand =
   | { t: "join"; name: string }
   | { t: "approve"; session: SessionId }
   | { t: "deny"; session: SessionId }
+  /** The REQUESTER taking their own knock back. Not leader-gated. */
+  | { t: "withdraw" }
   | { t: "leave" }
   | { t: "rename"; name: string }
   | { t: "promote"; session: SessionId }
@@ -510,6 +512,17 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       if (!room.pending[command.session]) return fail("no-such-request");
       const pending = { ...room.pending };
       delete pending[command.session];
+      return { ok: true, room: { ...room, pending }, effects };
+    }
+
+    case "withdraw": {
+      // Deliberately not leader-gated, and deliberately not an error when
+      // there is nothing to withdraw: a person cancelling their own
+      // request may well be doing it just as the leader approves them,
+      // and either outcome is fine.
+      if (!room.pending[actor]) return { ok: true, room, effects };
+      const pending = { ...room.pending };
+      delete pending[actor];
       return { ok: true, room: { ...room, pending }, effects };
     }
 
