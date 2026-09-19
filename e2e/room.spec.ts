@@ -67,6 +67,26 @@ test.describe("a room, in real browsers", () => {
     await two.close();
   });
 
+  test("one person on their own is sent to the solo table instead", async ({ browser }) => {
+    // A room game with a single human is the offline game plus a round
+    // trip per bot turn. The server refuses it; what this checks is the
+    // half a server cannot — that the screen SAYS so, and offers the
+    // thing it is steering them towards rather than just going dead.
+    const one = await browser.newContext();
+    const ada = await player(one, "Ada");
+    await hostRoom(ada);
+
+    await ada.getByRole("button", { name: "Dominoes" }).click();
+    await expect(ada.getByRole("button", { name: /start dominoes/i })).toBeDisabled();
+    await expect(ada.getByText(/needs 2 people/i)).toBeVisible();
+    await expect(ada.getByRole("link", { name: /play dominoes solo/i })).toHaveAttribute(
+      "href",
+      "/play/dominoes",
+    );
+
+    await one.close();
+  });
+
   test("a started game deals both players a table, and neither sees the other's hand", async ({
     browser,
   }) => {
@@ -137,13 +157,34 @@ test.describe("a room, in real browsers", () => {
     await ada.getByRole("button", { name: /start spades/i }).click();
     await expect(bo.getByRole("button", { name: /step away/i })).toBeVisible();
 
+    // Nothing on Ada's table claims anybody has gone yet.
+    const away = ada.locator('[aria-label*="stepped away"]');
+    await expect(away).toHaveCount(0);
+
     await bo.getByRole("button", { name: /step away/i }).click();
     // Back in the lobby, with the game still running for everyone else.
     await expect(bo.getByRole("button", { name: /join the game/i })).toBeVisible();
     await expect(ada.getByRole("button", { name: /step away/i })).toBeVisible();
 
+    /*
+      And Ada's table says so — WITHOUT the game having to advance first.
+      This is the assertion that found the real bug: `botSeats` rides on a
+      frame, frames come from the game moving, and the table is very often
+      parked on the person still sitting there. Bo's pod stayed looking
+      exactly like Bo for as long as Ada declined to move, which is
+      precisely as long as she was waiting to be told what was going on.
+
+      Nothing below a real browser saw it: the server was right, the
+      redaction was right, and every unit test asserted on a frame that in
+      practice never arrived.
+    */
+    await expect(away).toHaveCount(1);
+    await expect(ada.getByText("Away", { exact: true })).toBeVisible();
+
     await bo.getByRole("button", { name: /join the game/i }).click();
     await expect(bo.getByRole("button", { name: /step away/i })).toBeVisible();
+    // And it clears again on the way back in, for the same reason.
+    await expect(away).toHaveCount(0);
 
     await one.close();
     await two.close();
@@ -282,6 +323,99 @@ test.describe("a room, in real browsers", () => {
     for (const card of onlyBo) {
       expect(adaCards.has(card), `${card} was private to Bo and visible to Ada`).toBe(false);
     }
+
+    await one.close();
+    await two.close();
+  });
+
+  test("the pod that lights is the seat being waited on, not the last one to move", async ({
+    browser,
+  }) => {
+    /*
+      Reported from a real room: a player's turn indicator lagged. It moved
+      to them when they drew or passed, but the turn had been theirs since
+      the player before them finished.
+
+      Every game lit its pods from `lastAction` — "who just moved" — which
+      is a complete answer offline, where every seat with a pod is a bot
+      and a bot's turn OPENS with a `think` event. A human emits nothing
+      until they act, so the glow stayed on the previous player.
+
+      Observed from the OTHER player's screen, because that is the only
+      place it is visible: your own pod is never drawn.
+    */
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    await ada.getByRole("button", { name: "Dominoes" }).click();
+    await ada.getByRole("button", { name: /start dominoes/i }).click();
+    for (const page of [ada, bo]) {
+      await expect(page.getByRole("button", { name: /step away/i })).toBeVisible();
+    }
+
+    // The authoritative answer to "whose turn is it", per the same
+    // reasoning the ws harness uses: a client's view is derived and could
+    // itself be the thing that is wrong.
+    // Through the page's own request context rather than bare `fetch`, so
+    // it follows `baseURL` — the e2e server is not on the port the dev
+    // server uses, and a hardcoded one silently talks to whatever else is
+    // listening there.
+    const table = async () => {
+      const res = await ada.request.get(`/debug/room/${code}`);
+      return (await res.json()) as {
+        game: { seatOwner: (string | null)[] };
+        members: Record<string, { name: string; session: string }>;
+        table: { currentSeat: number | null } | null;
+      };
+    };
+
+    const first = await table();
+    const seatOf = (name: string) =>
+      first.game.seatOwner.indexOf(
+        Object.values(first.members).find((m) => m.name === name)!.session,
+      );
+    const seats: Record<string, number> = { Ada: seatOf("Ada"), Bo: seatOf("Bo") };
+
+    // Wait for the table to park on one of the two people. Nothing is
+    // driven: bots play their own turns and then it is a person's move,
+    // which is exactly the state being tested.
+    let turn: number | null = null;
+    let onTurn: "Ada" | "Bo" | null = null;
+    await expect
+      .poll(
+        async () => {
+          turn = (await table()).table?.currentSeat ?? null;
+          onTurn = turn === seats.Ada ? "Ada" : turn === seats.Bo ? "Bo" : null;
+          return onTurn;
+        },
+        { timeout: 30_000 },
+      )
+      .not.toBeNull();
+
+    // Let the move that handed them the turn finish being shown: while it
+    // is still playing, the mover's pod is correctly the lit one.
+    const watcher = onTurn === "Ada" ? bo : ada;
+    await watcher.waitForTimeout(2500);
+    expect((await table()).table?.currentSeat, "they should still be on turn").toBe(turn);
+
+    /*
+      "Lit" is the highlighted branch's full-strength ring. Not a
+      box-shadow test: every pod carries `ring-brass-400/20` at rest, which
+      is also a box-shadow, so that check calls every pod lit and passes
+      against any bug at all. It did, when it was written that way.
+    */
+    const lit = await watcher.evaluate(() =>
+      [...document.querySelectorAll("div.backdrop-blur-md.rounded-xl")]
+        .filter((el) => el.classList.contains("ring-brass-400"))
+        .map((el) => el.textContent?.replace(/\s+/g, " ").trim() ?? ""),
+    );
+
+    expect(lit, `exactly one pod should be lit, saw ${JSON.stringify(lit)}`).toHaveLength(1);
+    expect(lit[0]).toContain(onTurn!);
 
     await one.close();
     await two.close();

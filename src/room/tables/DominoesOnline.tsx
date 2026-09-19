@@ -24,6 +24,7 @@ import type { DomAction, DomState } from "@/games/dominoes/types";
 import type { ChainEnd } from "@/games/dominoes/types";
 import { botColour } from "@/games/_shared/botIdentity";
 import { GameHostView } from "@/table/GameHost";
+import { useTableStore } from "@/table/store";
 import { Button } from "@/ui/primitives/Button";
 import {
   DominoTable,
@@ -31,10 +32,11 @@ import {
   playerViews,
   roundSummary,
   standings,
+  tapTile,
   type DomView,
 } from "@/app/play/dominoes/table";
 import { tintFor } from "../Roster";
-import { useOnlineRuntime } from "../useOnlineRuntime";
+import { awayFrom, useOnlineRuntime } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function DominoesOnline({
@@ -73,9 +75,28 @@ export function DominoesOnline({
         const owner = room.members.find((m) => m.seat === seat);
         return owner ? tintFor(owner.session) : botColour(seat);
       },
+      // A seat somebody owns but is not currently in — see `awayFrom`.
+      awayFor: awayFrom(frame),
     }),
-    [frame.seat, frame.seatNames, room.members],
+    [frame, room.members],
   );
+
+  /**
+   * Put down whatever is held.
+   *
+   * The store patch is the half that is easy to forget: `held` is what the
+   * ghosts read, but `selected` is what LIFTS the tile out of the hand,
+   * and clearing one without the other leaves a tile standing proud of a
+   * fan it is no longer part of. The ghosts go too, since they are fed
+   * into the camera's extent and would otherwise keep the board eased out
+   * around a tile that has already been played.
+   */
+  const release = () => {
+    const store = useTableStore.getState();
+    for (const tile of held) store.patch(tile, { selected: false });
+    store.setGhosts([]);
+    onClearHeld();
+  };
 
   // The first frame after entering carries no events, so the runtime has
   // nothing to publish until it has settled one. A beat, not a state.
@@ -101,9 +122,27 @@ export function DominoesOnline({
         ]}
         roundSummary={(state) => roundSummary(view, state)}
         pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
-        onPieceTap={(id) => onToggleHeld(id)}
+        /*
+          Not a bare toggle. Picking a tile up is only meaningful when
+          there is an end to CHOOSE between — with one legal end this
+          plays it, exactly as the offline screen has always done. See
+          `tapTile`, which is where that rule now lives for both.
+        */
+        onPieceTap={(id, l) =>
+          tapTile(id, l, held[0] ?? null, {
+            select: (tile) => {
+              useTableStore.getState().patch(tile, { selected: true });
+              onToggleHeld(tile);
+            },
+            release,
+            play: (tile, end) => {
+              release();
+              l.submitAction({ t: "play", tile, end });
+            },
+          })
+        }
         onLobby={() => {
-          onClearHeld();
+          release();
           api.exitGame();
         }}
       >
@@ -113,10 +152,10 @@ export function DominoesOnline({
             live={l}
             held={held[0] ?? null}
             onPlace={(live, tile, end: ChainEnd) => {
+              release();
               live.submitAction({ t: "play", tile, end });
-              onClearHeld();
             }}
-            onRelease={onClearHeld}
+            onRelease={release}
           />
         )}
       </GameHostView>

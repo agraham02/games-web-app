@@ -16,6 +16,7 @@
  */
 
 import {
+  errorText,
   parseClientMessage,
   PROTOCOL_VERSION,
   type ClientMessage,
@@ -167,7 +168,7 @@ export class Router {
       case "leaveRoom": {
         const ok = runtime.command(session, { t: "leave" });
         if (!ok.ok) {
-          this.fail(peer, ok.error, ok.error, message.reqId);
+          this.fail(peer, ok.error, errorText(ok.error), message.reqId);
           return;
         }
         // Told first, let go of second: `left` goes down this peer's own
@@ -196,7 +197,7 @@ export class Router {
         }
         const result = runtime.command(session, command);
         if (!result.ok) {
-          this.fail(peer, result.error, result.error, message.reqId);
+          this.fail(peer, result.error, errorText(result.error), message.reqId);
           return;
         }
         // A kick has to reach the person kicked, who is about to stop being
@@ -342,7 +343,7 @@ export class Router {
 
     const result = runtime.command(session, { t: "join", name });
     if (!result.ok) {
-      this.fail(peer, result.error, result.error, reqId);
+      this.fail(peer, result.error, errorText(result.error), reqId);
       return;
     }
 

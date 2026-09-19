@@ -33,7 +33,7 @@ import {
   type PokerView,
 } from "@/app/play/poker/table";
 import { tintFor } from "../Roster";
-import { useOnlineRuntime } from "../useOnlineRuntime";
+import { awayFrom, useOnlineRuntime } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function PokerOnline({ api, room, frame }: OnlineTableProps) {
@@ -65,8 +65,10 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         const owner = room.members.find((m) => m.seat === seat);
         return owner ? tintFor(owner.session) : botColour(seat);
       },
+      // A seat somebody owns but is not currently in — see `awayFrom`.
+      awayFor: awayFrom(frame),
     }),
-    [frame.seat, frame.seatNames, room.members],
+    [frame, room.members],
   );
 
   // The first frame after entering carries no events, so the runtime has

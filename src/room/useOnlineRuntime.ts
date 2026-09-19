@@ -240,6 +240,12 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     nextRound: opts.nextRound,
     autoAdvance: true,
     busy: choreographer.isPlaying || !myTurn,
+    // Off the SETTLED frame, deliberately. `applied` lags the newest
+    // frame by exactly one animation, so during a move this still names
+    // the seat making it, and it only advances once that move has
+    // finished being shown. Which is the pacing every pod wants.
+    currentSeat: applied.isOver ? null : applied.currentSeat,
+    animating: choreographer.isPlaying,
     submitAction: (action) => opts.submit(action),
     rng,
     skip: choreographer.skip,
@@ -256,4 +262,22 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
 /** Convenience for a component that only needs to know where it is sitting. */
 export function viewerSeatOf(frame: FrameView | null): SeatId | null {
   return frame ? frame.seat : null;
+}
+
+/**
+ * "Is a bot playing somebody's seat for them?" — for `SeatView.away`.
+ *
+ * Two fields, and both are needed. `botSeats` alone is the wrong question:
+ * a room of two at a four-seat table has two chairs a bot plays because
+ * nobody ever sat in them, and marking those "away" would say two people
+ * had abandoned a game they never joined. `seatNames[seat]` is non-null
+ * exactly when a member OWNS the seat, so the pair says what is meant —
+ * this chair has a person, and the person is not currently in it.
+ *
+ * Offline there is nobody to step away from a seat, so no offline view
+ * supplies this and every pod answers false.
+ */
+export function awayFrom(frame: FrameView): (seat: SeatId) => boolean {
+  const bots = new Set(frame.botSeats);
+  return (seat) => bots.has(seat) && frame.seatNames[seat] != null;
 }

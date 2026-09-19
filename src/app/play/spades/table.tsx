@@ -35,6 +35,7 @@ import { TRANSITIONS } from "@/motion/presets";
 import { HandZone } from "@/table/HandZone";
 import type { RoundNote } from "@/table/GameHost";
 import type { SeatView } from "@/table/SeatRing";
+import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
 type Live = GameRuntime<SpadesState, SpadesAction>;
@@ -49,6 +50,12 @@ export interface SpadesView {
   viewerSeat: SeatId;
   nameFor: (seat: SeatId) => string;
   colourFor: (seat: SeatId) => string;
+  /**
+   * Whether a bot is currently playing that seat for the person who owns
+   * it. Optional because only a room can answer it — offline there is
+   * nobody to step away. Supplied by `awayFrom(frame)`.
+   */
+  awayFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -413,15 +420,19 @@ export function playerViews(view: SpadesView, state: SpadesState, live: Live): S
   for (let seat = 0; seat < 4; seat++) {
     if (seat === view.viewerSeat) continue;
     const s = seat as SeatId;
-    const acting = live.busy && live.lastAction?.seat === s;
+    // "Who just moved" and "who are we waiting on" — see `seatCue`. The
+    // second used to have no answer, so a human's pod only lit once they
+    // acted, a whole turn late.
+    const cue = seatCue(live, s);
     out.push({
       seat: s,
       name: view.nameFor(s),
       colour: view.colourFor(s),
       meta: seatMeta(view, state, s),
-      active: acting,
-      thinking: acting,
+      active: cue.active,
+      thinking: cue.thinking,
       partner: s === partnerOf(view.viewerSeat),
+      away: view.awayFor?.(s) ?? false,
     });
   }
   return out;

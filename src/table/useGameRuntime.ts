@@ -233,6 +233,25 @@ export interface GameRuntime<S, A> {
   /** True whenever it is not the hero's turn to act — bots thinking,
    * animation still playing, or the game hasn't started resolving yet. */
   busy: boolean;
+  /**
+   * The seat the table is waiting on, or null when it is waiting on
+   * nobody (between rounds, game over).
+   *
+   * `busy` cannot answer this and never could: it is asked from the
+   * HERO's point of view, so to a spectator — who is never on turn — it
+   * is simply always true. A seat pod needs the question answered about
+   * somebody else, which is what this is for. See `seatCue`.
+   */
+  currentSeat: SeatId | null;
+  /**
+   * Whether a batch of events is still playing out on screen.
+   *
+   * Separate from `busy`, which folds this together with whose turn it
+   * is. Anything deciding what to SHOW about another seat needs them
+   * apart: "a move is being animated" and "we are waiting for someone to
+   * move" are opposite states and `busy` is true in both.
+   */
+  animating: boolean;
   /** Call with the hero's chosen action. Bot turns are handled internally. */
   submitAction: (action: A) => void;
   /** The runtime's own persistent rng. A human path needing randomness
@@ -531,6 +550,8 @@ export function useGameRuntime<S, A>(
     nextRound,
     autoAdvance: opts.autoAdvance !== false,
     busy: choreographer.isPlaying || (!isOver && currentSeat !== HERO),
+    currentSeat: isOver ? null : currentSeat,
+    animating: choreographer.isPlaying,
     submitAction,
     rng: session.rng,
     skip: choreographer.skip,

@@ -72,6 +72,7 @@ import type { RoundNote } from "@/table/GameHost";
 import { HandZone, handHeaderHeight } from "@/table/HandZone";
 import { PanSurface } from "@/table/PanSurface";
 import type { SeatView } from "@/table/SeatRing";
+import { seatCue } from "@/table/turnCue";
 import { baseSize, layoutPiece } from "@/table/layout";
 import {
   discardMaxScroll,
@@ -118,6 +119,12 @@ export interface RummyView {
   viewerSeat: SeatId | null;
   nameFor: (seat: SeatId) => string;
   colourFor: (seat: SeatId) => string;
+  /**
+   * Whether a bot is currently playing that seat for the person who owns
+   * it. Optional because only a room can answer it — offline there is
+   * nobody to step away. Supplied by `awayFrom(frame)`.
+   */
+  awayFor?: (seat: SeatId) => boolean;
 }
 
 /** One human at seat 0, everyone else a bot — the single-player table. */
@@ -1901,14 +1908,15 @@ export function playerViews(view: RummyView, seats: number) {
     // right: they are watching all of them.
     for (let s = 0; s < seats; s++) {
       if (s === view.viewerSeat) continue;
-      const acting = live.busy && live.lastAction?.seat === s;
+      const cue = seatCue(live, s);
       views.push({
         seat: s,
         name: view.nameFor(s),
         colour: view.colourFor(s),
         meta: `${(state.hands[s] ?? []).length} cards · ${state.scores[s] ?? 0}`,
-        active: acting || live.state.turn === s,
-        thinking: acting,
+        active: cue.active,
+        thinking: cue.thinking,
+        away: view.awayFor?.(s) ?? false,
       });
     }
     return views;

@@ -37,6 +37,22 @@ export type Privacy = "public" | "private";
 export const MAX_NAME_LENGTH = 20;
 
 /**
+ * How many people a room needs before it will start a game.
+ *
+ * A room with one person in it is a single-player game with extra steps —
+ * and worse than the offline one, because every bot turn makes a round
+ * trip. The lobby says so and offers the solo screens instead; this is the
+ * authority behind that, since a client can be told anything.
+ *
+ * Counted over CONNECTED members, which is what "here" means everywhere
+ * else in this file (`connectedCount`, `seatMembers`) — a member whose
+ * phone is asleep gets a bot seat the moment the deal happens, so counting
+ * them would let a room start exactly the game this rule exists to
+ * prevent.
+ */
+export const MIN_ROOM_PLAYERS = 2;
+
+/**
  * Codes are uppercase and skip I and O, which are the two letters people
  * reliably mistype as 1 and 0 when reading a code off someone else's
  * screen. 24^4 is still 331,776 rooms.
@@ -99,6 +115,7 @@ export type RoomError =
   | "needs-approval"
   | "no-such-request"
   | "no-game-selected"
+  | "needs-two-players"
   | "game-not-online"
   | "game-already-running"
   | "no-game-running"
@@ -654,6 +671,10 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       if (room.game) return fail("game-already-running");
       const entry = gameEntry(room.gameId);
       if (!entry.online) return fail("game-not-online");
+      // See MIN_ROOM_PLAYERS. Deliberately checked here rather than only in
+      // the lobby: the button is disabled there, but a disabled button is a
+      // courtesy and this is the rule.
+      if (connectedCount(room) < MIN_ROOM_PLAYERS) return fail("needs-two-players");
 
       const seats = Math.min(entry.maxSeats, Math.max(entry.minSeats, room.seats || entry.defaultSeats));
       const { seatOwner, present } = seatMembers(room, seats);

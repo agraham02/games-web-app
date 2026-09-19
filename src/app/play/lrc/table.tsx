@@ -18,6 +18,7 @@ import { TRANSITIONS } from "@/motion/presets";
 import { DiceFace } from "@/ui/primitives/DiceFace";
 import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
+import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
 type Live = GameRuntime<LrcState, LrcAction>;
@@ -27,6 +28,12 @@ export interface LrcView {
   viewerSeat: SeatId;
   nameFor: (seat: SeatId) => string;
   colourFor: (seat: SeatId) => string;
+  /**
+   * Whether a bot is currently playing that seat for the person who owns
+   * it. Optional because only a room can answer it — offline there is
+   * nobody to step away. Supplied by `awayFrom(frame)`.
+   */
+  awayFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -103,15 +110,16 @@ export function playerViews(view: LrcView, state: LrcState, live: Live): SeatVie
     // only changes at the moment a roll is genuinely revealed, so keying
     // off it keeps the glow on whoever just acted for the whole pending
     // gap, and only moves it once the next roll is truly shown.
-    const thisSeatActing = live.busy && live.lastAction?.seat === seat;
+    const cue = seatCue(live, seat);
     out.push({
       seat,
       name: view.nameFor(seat),
       colour: view.colourFor(seat),
       meta: eliminated ? "Out" : `${held} chip${held === 1 ? "" : "s"}`,
-      active: thisSeatActing,
-      thinking: thisSeatActing,
+      active: cue.active,
+      thinking: cue.thinking,
       eliminated,
+      away: view.awayFor?.(seat) ?? false,
     });
   }
   return out;

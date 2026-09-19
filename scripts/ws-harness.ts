@@ -20,6 +20,8 @@
  */
 
 import WebSocket from "ws";
+// The 52 real ids, so the leak check below cannot drift from the deck.
+import { rummyDeck } from "../src/games/rummy/cards";
 
 const BASE = process.env.HARNESS_URL ?? "http://localhost:3000";
 const WS_URL = BASE.replace(/^http/, "ws") + "/ws";
@@ -184,6 +186,12 @@ async function main(): Promise<void> {
   await scenario("only one of two simultaneous starts is accepted", async () => {
     const a = await client(`t-race-a-${Date.now()}`);
     const code = await hostRoom(a, "Racer");
+    // A room needs two people before it will start anything
+    // (MIN_ROOM_PLAYERS), so the second client is a precondition of the
+    // race rather than part of it.
+    const b = await client(`t-race-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Second" });
+    await b.until((m) => m.t === "room");
     a.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
     await sleep(50);
     a.clear();
@@ -257,6 +265,11 @@ async function main(): Promise<void> {
     // but "it was never on the wire".
     const a = await client(`t-spec-a-${Date.now()}`);
     const code = await hostRoom(a, "Dealer");
+    // Two people to get a game going at all (MIN_ROOM_PLAYERS); the
+    // spectator arrives afterwards, which is the point of the scenario.
+    const partner = await client(`t-spec-p-${Date.now()}`);
+    partner.send({ t: "joinRoom", code, name: "Partner" });
+    await partner.until((m) => m.t === "room");
     a.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
     await sleep(50);
     a.send({ t: "startGame" });
@@ -273,8 +286,6 @@ async function main(): Promise<void> {
     watcher.send({ t: "enterGame", as: "spectator" });
     await watcher.until((m) => m.t === "frame");
     await sleep(300);
-
-    const seen = JSON.stringify(watcher.inbox);
 
     // First prove the spectator was actually sent a dealt table, or the
     // leak check below would pass simply by having received nothing.
@@ -293,8 +304,32 @@ async function main(): Promise<void> {
 
     // A spectator holds no seat, so every hand is concealed from them. Any
     // real card id anywhere in their traffic is a leak.
-    const realCard = /"[SHDC]-(?:A|K|Q|J|10|[2-9])"/.exec(seen);
-    assert(realCard === null, `a spectator was sent a real card id: ${realCard?.[0]}`);
+    //
+    // Matched against the deck itself rather than a hand-written pattern.
+    // The pattern this replaces was `/"[SHDC]-(?:A|K|...)"/` — ids with a
+    // hyphen in them, which this app has never produced: a card is
+    // `${suit}${rank}`, so `SA` and `D10`. It could not match anything and
+    // the assertion below had never once been able to fail. The file's own
+    // header calls this the assertion that matters most, which is exactly
+    // why it must not be able to quietly pass.
+    const named = (inbox: unknown) =>
+      rummyDeck().filter((id) => JSON.stringify(inbox).includes(`"${id}"`));
+
+    // The control, and the reason the check above is now trustworthy: a
+    // SEATED player is entitled to their own thirteen, so the same scan
+    // over the dealer's traffic has to find cards. If it finds none there
+    // either, the scan is broken rather than the redaction being perfect —
+    // which is precisely the state this test spent its whole life in.
+    assert(
+      named(a.inbox).length >= 13,
+      `the scan found no cards in a seated player's own traffic, so it proves nothing`,
+    );
+
+    const leaked = named(watcher.inbox);
+    assert(
+      leaked.length === 0,
+      `a spectator was sent real card ids: ${leaked.slice(0, 5).join(", ")}`,
+    );
   });
 
   await scenario("backing out hands the seat to a bot and keeps it reserved", async () => {

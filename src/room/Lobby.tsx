@@ -18,9 +18,11 @@
  */
 
 import { Check, Copy, Lock, LockOpen, Shuffle, X } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import type { BotDifficulty } from "@/engine/types";
 import { GAMES, GAME_IDS, onlineGames, type GameId } from "@/session/registry";
+import { MIN_ROOM_PLAYERS } from "@/session/room";
 import { Button } from "@/ui/primitives/Button";
 import { DifficultyPicker, type DifficultyBlurbs } from "@/ui/primitives/DifficultyPicker";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
@@ -40,6 +42,11 @@ export function Lobby({ api }: { api: RoomApi }) {
   const leader = room.youAreLeader;
   const entry = room.gameId ? GAMES[room.gameId] : null;
   const teamsEnabled = entry ? entry.teams(room.settings) : false;
+  // See MIN_ROOM_PLAYERS. Connected, not merely on the roster — the same
+  // count the header line above the roster already shows, so the reason
+  // the button is off is legible two rows higher.
+  const here = room.members.filter((m) => m.connected).length;
+  const enoughPeople = here >= MIN_ROOM_PLAYERS;
 
   return (
     <SetupShell maxWidth="max-w-md">
@@ -104,14 +111,23 @@ export function Lobby({ api }: { api: RoomApi }) {
             ) : null}
           </>
         ) : (
-          <Button
-            tone="primary"
-            disabled={!leader || !room.gameId}
-            onClick={api.startGame}
-            title={leader ? undefined : "Only the party leader can start"}
-          >
-            {room.gameId ? `Start ${GAMES[room.gameId].name}` : "Pick a game first"}
-          </Button>
+          <>
+            <Button
+              tone="primary"
+              disabled={!leader || !room.gameId || !enoughPeople}
+              onClick={api.startGame}
+              title={
+                !leader
+                  ? "Only the party leader can start"
+                  : !enoughPeople
+                    ? `A room game needs ${String(MIN_ROOM_PLAYERS)} people`
+                    : undefined
+              }
+            >
+              {room.gameId ? `Start ${GAMES[room.gameId].name}` : "Pick a game first"}
+            </Button>
+            {enoughPeople ? null : <WaitingForPeople gameId={room.gameId} />}
+          </>
         )}
 
         <div className="flex items-center justify-between gap-3">
@@ -129,6 +145,33 @@ export function Lobby({ api }: { api: RoomApi }) {
         </div>
       </div>
     </SetupShell>
+  );
+}
+
+/**
+ * Why the start button is off, and what to do instead.
+ *
+ * A room of one is not a broken room, so this is an explanation rather than
+ * an error — and it carries the alternative with it, because the honest
+ * answer to "I want to play and nobody is here yet" is the solo table: the
+ * same rules and the same bots, without a round trip per turn. It links
+ * straight to the game already chosen rather than to the home screen, so
+ * taking that answer is one tap instead of three.
+ */
+function WaitingForPeople({ gameId }: { gameId: GameId | null }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg bg-bone-50/4 px-4 py-3 text-center ring-1 ring-bone-50/10">
+      <p className="text-xs leading-relaxed text-bone-400">
+        A room game needs {MIN_ROOM_PLAYERS} people. Share the code above — or
+        play on your own until somebody arrives.
+      </p>
+      <Link
+        href={gameId ? `/play/${gameId}` : "/"}
+        className="text-xs font-semibold text-brass-300 underline-offset-4 hover:underline"
+      >
+        {gameId ? `Play ${GAMES[gameId].name} solo →` : "Pick a game to play solo →"}
+      </Link>
+    </div>
   );
 }
 

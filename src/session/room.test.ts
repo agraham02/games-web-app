@@ -21,6 +21,7 @@ import {
   isSeatLive,
   makeCode,
   openSeats,
+  MIN_ROOM_PLAYERS,
   seatOf,
   teamIndex,
   type Room,
@@ -194,6 +195,45 @@ describe("leadership", () => {
 });
 
 describe("starting a game", () => {
+  it("refuses to start for one person on their own", () => {
+    // A room game with a single human is the offline game plus a round
+    // trip per bot turn, and the lobby sends them to the solo screens
+    // instead. The button there is disabled; this is the rule behind it.
+    let r = room();
+    r = spades(r);
+    expect(applyCommand(r, { t: "startGame" }, { actor: LEADER, now: 10 })).toEqual({
+      ok: false,
+      error: "needs-two-players",
+    });
+  });
+
+  it("counts who is actually here, not who is on the roster", () => {
+    // A member whose phone has slept gets a bot seat the instant the deal
+    // happens, so counting them would admit exactly the game the rule
+    // exists to prevent — one human against three bots, over a socket.
+    let r = withMembers(["Sam"]);
+    r = spades(r);
+    r = ok(r, { t: "setConnected", connected: false }, { actor: "s-0" });
+    expect(applyCommand(r, { t: "startGame" }, { actor: LEADER, now: 10 })).toEqual({
+      ok: false,
+      error: "needs-two-players",
+    });
+
+    // Back on, and the same command goes through.
+    r = ok(r, { t: "setConnected", connected: true }, { actor: "s-0" });
+    expect(applyCommand(r, { t: "startGame" }, { actor: LEADER, now: 10 }).ok).toBe(true);
+  });
+
+  it("starts as soon as MIN_ROOM_PLAYERS are here", () => {
+    // Pinned to the constant rather than to the number two, so raising it
+    // cannot leave this test asserting the old rule.
+    let r = withMembers(
+      Array.from({ length: MIN_ROOM_PLAYERS - 1 }, (_, i) => `Player${String(i)}`),
+    );
+    r = spades(r);
+    expect(applyCommand(r, { t: "startGame" }, { actor: LEADER, now: 10 }).ok).toBe(true);
+  });
+
   it("refuses a second start — the simultaneous-click race", () => {
     let r = withMembers(["Sam"]);
     r = spades(r);
@@ -379,9 +419,15 @@ describe("seats, presence and bots", () => {
   });
 
   it("ends the game when the last human disconnects rather than playing on to an empty room", () => {
-    const r = started([]);
+    // Two of them, because a game cannot start with fewer
+    // (MIN_ROOM_PLAYERS) — so "the last human" is genuinely the second one
+    // to go, and the first dropping must NOT end anything.
+    let r = started(["Sam"]);
     expect(r.game).not.toBeNull();
-    const res = applyCommand(r, { t: "setConnected", connected: false }, { actor: LEADER, now: 30 });
+    r = ok(r, { t: "setConnected", connected: false }, { actor: "s-0", now: 30 });
+    expect(r.game, "one of two leaving is a bot takeover, not the end").not.toBeNull();
+
+    const res = applyCommand(r, { t: "setConnected", connected: false }, { actor: LEADER, now: 31 });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.room.game).toBeNull();

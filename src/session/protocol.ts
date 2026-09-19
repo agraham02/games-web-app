@@ -161,6 +161,41 @@ export interface FrameView {
 
 export type ServerErrorCode = RoomError | "no-room" | "bad-message" | "no-such-room" | "rate-limited";
 
+/**
+ * What each refusal says out loud.
+ *
+ * The codes are the wire's vocabulary and the client switches on them; the
+ * text is for a person, and it lives here rather than in the client so that
+ * a `message` field sent by the server is already readable in a log, in the
+ * ws harness, and in the one place the UI prints it verbatim. Every entry
+ * is lower-case and sentence-shaped, because it is rendered inline next to
+ * a control rather than as a heading.
+ */
+export const ERROR_TEXT: Record<ServerErrorCode, string> = {
+  "not-leader": "only the party leader can do that",
+  "not-a-member": "you are not in this room",
+  "name-required": "a name is needed to join a room",
+  "name-taken": "somebody in this room already goes by that name",
+  "needs-approval": "this room is private — the leader has to let you in",
+  "no-such-request": "that request is no longer waiting",
+  "no-game-selected": "pick a game first",
+  "needs-two-players": "a room game needs at least two people here",
+  "game-not-online": "that game cannot be played in a room yet",
+  "game-already-running": "a game is already running",
+  "no-game-running": "no game is running",
+  "not-in-game": "you are not at the table",
+  "cannot-target-self": "that one only works on somebody else",
+  "bad-seat-count": "that seat count does not fit this game",
+  "no-room": "you are not in a room",
+  "bad-message": "that request could not be handled",
+  "no-such-room": "no room with that code",
+  "rate-limited": "slow down",
+};
+
+export function errorText(code: ServerErrorCode): string {
+  return ERROR_TEXT[code] ?? "something went wrong";
+}
+
 export type ServerMessage =
   | { t: "hello"; session: SessionId; protocol: number }
   | { t: "room"; room: RoomView }

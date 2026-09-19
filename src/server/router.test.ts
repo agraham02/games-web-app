@@ -304,6 +304,71 @@ describe("the server, in process", () => {
       );
     });
 
+    /**
+     * A bot taking somebody's seat has to reach the people still playing,
+     * and `botSeats` — the field every pod's "Away" marker is drawn from —
+     * rides on a FRAME. Frames are produced by the game advancing, so
+     * without a deliberate push the news waits for the next move.
+     *
+     * That wait is unbounded in exactly the wrong case. Found in a browser
+     * with the table parked on the remaining player: their opponent walked
+     * away, the table stopped, and nothing on screen said why — because
+     * the only thing that would have said so was a frame that could not
+     * arrive until they moved, and they were waiting to be told what was
+     * going on before moving.
+     */
+    describe("a seat changing hands is news", () => {
+      it("tells the people still at the table, without waiting for a move", () => {
+        const { conn, p2, code } = twoPlayerSpades();
+        const runtime = registry.get(code)!;
+        const theirSeat = runtime.room.game!.seatOwner.indexOf(registry.sessionFor("p2"));
+        expect(theirSeat).toBeGreaterThanOrEqual(0);
+
+        conn.clear();
+        send(p2.peer, { t: "exitGame" });
+
+        const frame = conn.last("frame");
+        expect(frame, "the remaining player should have been sent a frame").toBeDefined();
+        expect(frame!.frame.botSeats).toContain(theirSeat);
+      });
+
+      it("says so again when they come back", () => {
+        const { conn, p2, code } = twoPlayerSpades();
+        const runtime = registry.get(code)!;
+        const theirSeat = runtime.room.game!.seatOwner.indexOf(registry.sessionFor("p2"));
+
+        send(p2.peer, { t: "exitGame" });
+        conn.clear();
+        send(p2.peer, { t: "enterGame" });
+
+        expect(conn.last("frame")!.frame.botSeats).not.toContain(theirSeat);
+      });
+
+      it("counts a dropped socket the same as a walk to the lobby", () => {
+        // Same push, reached through `detach` rather than through a
+        // command the client sent — which is the case a player never
+        // chooses and the one most likely to leave everybody confused.
+        const { conn, p2, code } = twoPlayerSpades();
+        const runtime = registry.get(code)!;
+        const theirSeat = runtime.room.game!.seatOwner.indexOf(registry.sessionFor("p2"));
+
+        conn.clear();
+        router.onClose(p2.peer);
+
+        expect(conn.last("frame")!.frame.botSeats).toContain(theirSeat);
+      });
+
+      it("does not fire a second time for a change that is not one", () => {
+        // A room command that leaves every seat exactly as it was must not
+        // shower the table with position frames — they reconcile the board
+        // and are not free.
+        const { conn, peer } = twoPlayerSpades();
+        conn.clear();
+        send(peer, { t: "setPrivacy", privacy: "private" });
+        expect(conn.all("frame")).toHaveLength(0);
+      });
+    });
+
     it("ends the game and keeps the room when everybody leaves the table", () => {
       const { peer, code, p2 } = twoPlayerSpades();
       send(peer, { t: "exitGame" });

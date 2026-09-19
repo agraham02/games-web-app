@@ -161,6 +161,65 @@ deliberately not tuned to fire together (`CLAIM_GRACE_MS`).
 it drives real sockets with no browser behind them, so a table that only
 moves because a page is running stops dead.
 
+### A room is the point; playing alone is the fallback
+
+The home screen leads with making or joining a room and puts the five
+solo tables under "or play on your own", because that ordering is the
+product. It also means a room has to be a room: **`MIN_ROOM_PLAYERS`
+(2) is enforced in `applyCommand`**, not only in the lobby. One human in
+a room is the offline game plus a round trip per bot turn, and it is
+strictly worse — so the lobby dims Start, says why, and links straight
+to `/play/<gameId>`. The button is the courtesy; the guard is the rule.
+
+Counted over CONNECTED members, deliberately: somebody whose phone is
+asleep gets a bot seat the moment the deal happens, so counting them
+would admit exactly the game the rule exists to prevent.
+
+### Presence is table state, so it needs a frame
+
+`SeatView.away` marks a seat whose OWNER is not in it — read from
+`awayFrom(frame)`, which needs both `botSeats` and `seatNames`, because a
+chair nobody ever sat in is also bot-played and is not an abandonment.
+
+The half that is easy to miss: `botSeats` rides on a **frame**, and
+frames are produced by the game advancing. So the news that a bot took
+over waited for the next move — and the wait is unbounded in exactly the
+wrong case, which is the table parked on the one person still there. Their
+opponent walked off, the table stopped, and nothing said why. So
+`RoomRuntime.command` compares a **live-seat signature** across every
+command and pushes the current position when it changes; comparing the
+signature rather than switching on the command covers stepping out, being
+kicked, a socket dropping and coming back, and whatever is added next.
+
+Found in a browser with two windows open. Every unit test asserted on a
+frame that in practice never arrived.
+
+### Two questions, not one: who moved, and who are we waiting on
+
+A seat pod lights from **`seatCue`** ([turnCue.ts](src/table/turnCue.ts)),
+and it is one function because it used to be five copies of half an idea.
+
+Every game had `busy && lastAction?.seat === seat` — "this seat moved and
+we are still watching it". Deliberately not `state.turn`, which names the
+NEXT actor the instant `reduce` runs; four of the five carry a comment
+defending that. What none of them had was the other question. Offline they
+are the same question: every seat with a pod is a bot, and a bot's turn
+OPENS with a `think`, so `lastAction` lands on it as the turn begins.
+
+A second human does not do that. Their turn produces no frame at all until
+they act, so the glow stayed on the previous player until they moved —
+reported as an indicator that only updated on a draw or a pass.
+
+So the rule is a union, gated so exactly one seat can be lit:
+`animating || pendingReveal` means a turn is on SCREEN and the mover keeps
+it; otherwise the table is parked and `currentSeat` takes it. `busy` is not
+an input any more, and should not be: it answers "can the HERO act", which
+is simply always true for a spectator — whose table therefore kept the
+first mover lit for the rest of the game.
+
+`GameRuntime` gained `currentSeat` and `animating` for this. `busy` folds
+both together and cannot be un-folded by a caller.
+
 ### `HERO` is a default, not a fact
 
 Seats are laid out by POSITION and labelled from the viewer, so pinning
@@ -173,6 +232,16 @@ spectator; `undefined` means "no opinion" and stays seat 0.
 A game's play screen therefore splits: `page.tsx` is the offline shell,
 `table.tsx` is the table content, and the only thing that differs between
 them is a `View` — who is looking, and what everyone is called.
+
+**What a tap MEANS belongs in `table.tsx`, not in either shell.** Both
+screens own where a held piece is kept — the page in its own state, the
+room in `RoomScreen` so it survives a trip to the lobby — and that is a
+real difference. Which piece is legal, and whether picking it up is even
+a choice, is not: it is a rules question with one answer. Dominoes'
+`tapTile` is the worked example, and it exists because the two had
+drifted. Offline, a tile with one legal end played on the tap; online,
+every tap raised ghosts and asked the player to choose between one
+option. Spades' own `onPieceTap` is the same shape.
 
 ### Testing it
 

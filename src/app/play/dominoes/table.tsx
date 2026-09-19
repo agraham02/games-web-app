@@ -31,6 +31,7 @@ import { TileFace } from "@/ui/primitives/TileFace";
 import { HandZone } from "@/table/HandZone";
 import type { RoundNote } from "@/table/GameHost";
 import type { SeatView } from "@/table/SeatRing";
+import { seatCue } from "@/table/turnCue";
 import { useBoardView, useGeometry, useTableStore } from "@/table/store";
 import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -42,6 +43,12 @@ export interface DomView {
   viewerSeat: SeatId;
   nameFor: (seat: SeatId) => string;
   colourFor: (seat: SeatId) => string;
+  /**
+   * Whether a bot is currently playing that seat for the person who owns
+   * it. Optional because only a room can answer it — offline there is
+   * nobody to step away. Supplied by `awayFrom(frame)`.
+   */
+  awayFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -51,6 +58,51 @@ export const OFFLINE_VIEW: DomView = {
   colourFor: botColour,
 };
 
+
+/**
+ * What tapping one of your own tiles means.
+ *
+ * Shared by both screens, and it had to be: it is a RULES question — how
+ * many ends will this tile legally go on — and the two screens answered it
+ * differently. Offline, one legal end played immediately; online, every
+ * tap put up ghosts and asked you to confirm a choice that did not exist.
+ * A tile that can only go in one place is not a decision, and being asked
+ * to make it is the game getting in the way.
+ *
+ * The three callbacks are all the two screens genuinely differ by: offline
+ * holds the tile in the page's own state and lifts it in the piece store,
+ * online holds it in `RoomScreen` so it survives a trip out to the lobby.
+ * Neither difference is about the rule, which is why the rule is here.
+ */
+export function tapTile(
+  id: PieceId,
+  live: Live,
+  held: PieceId | null,
+  on: {
+    /** Pick it up: two or more ends, so the player has to choose one. */
+    select: (tile: PieceId) => void;
+    /** Put down whatever is currently held. */
+    release: () => void;
+    play: (tile: PieceId, end: ChainEnd) => void;
+  },
+): void {
+  if (!live.isHeroTurn) return;
+  const ends = playableEnds(live.state, id);
+  if (ends.length === 0) return;
+  // Tapping the held tile again puts it back down.
+  if (held === id) {
+    on.release();
+    return;
+  }
+  if (held) on.release();
+  // One legal end is not a choice, so do not make the player confirm it.
+  // Two ends is a real decision and gets two ghosts to pick between.
+  if (ends.length === 1) {
+    on.play(id, ends[0]!);
+    return;
+  }
+  on.select(id);
+}
 
 /* ============================================================
    Table overlays
@@ -341,10 +393,10 @@ export function playerViews(view: DomView, state: DomState, live: Live): SeatVie
   for (let seat = 0; seat < state.seats; seat++) {
     if (seat === view.viewerSeat) continue;
     const tiles = state.hands[seat]?.length ?? 0;
-    // Keyed off `lastAction`, not `state.turn`: `turn` already names the
-    // NEXT actor the instant reduce runs, so highlighting from it makes
-    // the glow jump to a pod before anything of theirs has been shown.
-    const acting = live.busy && live.lastAction?.seat === seat;
+    // "Who just moved" and "who are we waiting on" — see `seatCue`. The
+    // second used to have no answer, so a human's pod only lit once they
+    // acted, a whole turn late.
+    const cue = seatCue(live, seat);
     const isPartner = seat === hero;
     out.push({
       seat,
@@ -357,8 +409,9 @@ export function playerViews(view: DomView, state: DomState, live: Live): SeatVie
       // and the hero's own pod is filtered out of the ring, so this only
       // ever answers "is THIS pod on my side".
       partner: isPartner || undefined,
-      active: acting,
-      thinking: acting,
+      active: cue.active,
+      thinking: cue.thinking,
+      away: view.awayFor?.(seat) ?? false,
     });
   }
   return out;

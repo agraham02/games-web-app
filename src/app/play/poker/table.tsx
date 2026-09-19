@@ -23,6 +23,7 @@ import { InfoSheet } from "@/ui/disclosure";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { HandZone } from "@/table/HandZone";
 import type { SeatView } from "@/table/SeatRing";
+import { seatCue } from "@/table/turnCue";
 import { useGeometry } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
@@ -33,6 +34,12 @@ export interface PokerView {
   viewerSeat: SeatId;
   nameFor: (seat: SeatId) => string;
   colourFor: (seat: SeatId) => string;
+  /**
+   * Whether a bot is currently playing that seat for the person who owns
+   * it. Optional because only a room can answer it — offline there is
+   * nobody to step away. Supplied by `awayFrom(frame)`.
+   */
+  awayFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -119,17 +126,18 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
     // names the NEXT actor the instant a decision is computed, before
     // its `think` beat has actually played, which would jump the glow
     // to the wrong pod during the pause.
-    const thisSeatActing = live.busy && live.lastAction?.seat === seat;
+    const cue = seatCue(live, seat);
 
     out.push({
       seat,
       name: view.nameFor(seat),
       colour: view.colourFor(seat),
       meta,
-      active: thisSeatActing,
-      thinking: thisSeatActing,
+      active: cue.active,
+      thinking: cue.thinking,
       eliminated: busted,
       badge: positionBadge(state, seat) ?? undefined,
+      away: view.awayFor?.(seat) ?? false,
     });
   }
   return out;

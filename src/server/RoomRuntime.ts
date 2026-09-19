@@ -179,6 +179,7 @@ export class RoomRuntime {
    * the simultaneous-start case resolve correctly without a lock.
    */
   command(session: SessionId, command: RoomCommand): { ok: true } | { ok: false; error: RoomError } {
+    const liveBefore = this.liveSignature();
     const result = applyCommand(this.room, command, {
       actor: session,
       now: this.clock.now(),
@@ -196,8 +197,44 @@ export class RoomRuntime {
 
     this.room = result.room;
     for (const effect of result.effects) this.runEffect(effect);
+
+    // A seat changing hands between a person and a bot is a change to the
+    // TABLE, not merely to the roster — every pod says whether a bot is
+    // playing it, and `botSeats` rides on a FRAME. Without this the news
+    // waited for the next one, and the next one is whenever somebody
+    // moves: park the table on a human and their opponent could step away
+    // for minutes with nothing on screen saying so. Which is precisely
+    // when it matters, since the player left looking at it is the one
+    // wondering why nothing is happening.
+    //
+    // Compared as a signature rather than switched on the command, so
+    // every route to it is covered — stepping out, being kicked, a socket
+    // dropping, coming back — including ones added later.
+    if (liveBefore !== "" && this.liveSignature() !== liveBefore) {
+      this.broadcastCurrentFrame();
+    }
+
     log.info("command", { room: this.code, session, event: command.t });
     return { ok: true };
+  }
+
+  /**
+   * Which seats a connected human is actually playing, as a comparable
+   * string. Empty when no game is running, which is what lets the caller
+   * tell "the seats changed" from "a game just started or ended" — the
+   * latter sends its own frames and does not want a second one.
+   */
+  private liveSignature(): string {
+    const seats = this.room.game?.seats ?? 0;
+    let out = "";
+    for (let i = 0; i < seats; i++) out += isSeatLive(this.room, i) ? "1" : "0";
+    return out;
+  }
+
+  /** The current position, to everybody at the table. */
+  private broadcastCurrentFrame(): void {
+    if (!this.session || !this.room.game) return;
+    for (const viewer of this.room.game.present) this.sendCurrentFrame(viewer);
   }
 
   private runEffect(effect: RoomEffect): void {

@@ -37,11 +37,12 @@ import {
   playerViews,
   roundSummary,
   standings,
+  tapTile,
 } from "./table";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { useTableStore } from "@/table/store";
 import { createDominoes, MAX_SEATS, MIN_SEATS } from "@/games/dominoes/rules";
-import { CARIBBEAN_DEFAULT_TARGET, CARIBBEAN_SEATS, CARIBBEAN_TARGET_MAX, CARIBBEAN_TARGET_MIN, SIX_LOVE_DEFAULT_TARGET, pipsInHand, playableEnds, playableTiles, rollsSlam, sideOf } from "@/games/dominoes/state";
+import { CARIBBEAN_DEFAULT_TARGET, CARIBBEAN_SEATS, CARIBBEAN_TARGET_MAX, CARIBBEAN_TARGET_MIN, SIX_LOVE_DEFAULT_TARGET, pipsInHand, playableTiles, rollsSlam, sideOf } from "@/games/dominoes/state";
 import type { ChainEnd, DomAction, DomMode, DomState } from "@/games/dominoes/types";
 
 type Live = GameRuntime<DomState, DomAction>;
@@ -102,25 +103,20 @@ export default function DominoesPlayPage() {
     live.submitAction({ t: "play", tile, end });
   };
 
-  /** Only the hero's own hand tiles are ever tappable — see PieceLayer. */
-  const onPieceTap = (id: PieceId, live: Live) => {
-    if (!live.isHeroTurn) return;
-    const ends = playableEnds(live.state, id);
-    if (ends.length === 0) return;
-    if (held === id) {
-      release();
-      return;
-    }
-    if (held) release();
-    // One legal end is not a choice, so do not make the player confirm
-    // it. Two ends is a real decision and gets two ghosts.
-    if (ends.length === 1) {
-      play(live, id, ends[0]!);
-      return;
-    }
-    useTableStore.getState().patch(id, { selected: true });
-    setHeld(id);
-  };
+  /**
+   * Only the hero's own hand tiles are ever tappable — see PieceLayer.
+   * What a tap MEANS lives in `tapTile`, next to the online table, so the
+   * two screens cannot answer it differently again.
+   */
+  const onPieceTap = (id: PieceId, live: Live) =>
+    tapTile(id, live, held, {
+      select: (tile) => {
+        useTableStore.getState().patch(tile, { selected: true });
+        setHeld(tile);
+      },
+      release,
+      play: (tile, end) => play(live, tile, end),
+    });
 
   if (!started) {
     return (
