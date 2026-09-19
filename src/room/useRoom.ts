@@ -93,6 +93,13 @@ export function useRoom(): RoomApi {
           case "room":
             setRoom(message.room);
             setPendingCode(null);
+            // Whatever was last refused, it is moot: we are in a room and
+            // the server is talking to us. Nothing else ever cleared this,
+            // so a failed join left "no room with that code" sitting under
+            // the code field long after a later join had worked, and a
+            // refusal from inside a room greeted the player on the entry
+            // screen the next time they left one.
+            setError(null);
             if (!message.room.gameRunning) {
               // The table is gone; anything still on screen from it is
               // stale. Clearing here rather than waiting for a frame is
@@ -120,7 +127,18 @@ export function useRoom(): RoomApi {
             setFrame(null);
             setPendingCode(null);
             lastSeq.current = -1;
-            if (message.reason === "kicked") announce("You were removed", "bad");
+            // Every reason is said out loud. Only "kicked" used to be,
+            // so being turned away from a private room — or having the
+            // room closed under you — dropped you back on the entry
+            // screen with no explanation at all.
+            announce(
+              message.reason === "kicked"
+                ? "You were removed"
+                : message.reason === "room-closed"
+                  ? "That room is closed"
+                  : "You left the room",
+              message.reason === "left" ? "info" : "bad",
+            );
             break;
 
           case "notice":
@@ -130,6 +148,21 @@ export function useRoom(): RoomApi {
             break;
 
           case "error":
+            // A refused MOVE is not a form error. It has no control to sit
+            // next to — the thing that caused it was a tap on a card — and
+            // the only screen that renders `error` is the entry form, so
+            // it used to vanish entirely: you tapped, nothing happened,
+            // and nothing said why. It goes on the toast seam instead,
+            // which is where everything else that "just happened" goes.
+            //
+            // It is also deliberately NOT stored: a stale "not your turn"
+            // outliving the turn it referred to is worse than silence, and
+            // that is exactly what greeted people on the entry screen
+            // later, because nothing ever cleared it.
+            if (message.code === "move-refused") {
+              announce(message.message || "that move is no longer available", "bad");
+              break;
+            }
             setError({ code: message.code, message: message.message });
             break;
 

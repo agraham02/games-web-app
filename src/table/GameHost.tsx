@@ -214,7 +214,9 @@ export function GameHostView<S, A>({
   const seatViews = players(live.state, live).map((view) =>
     winningSeats?.includes(view.seat) ? { ...view, winning: true } : view,
   );
-  const board = (standings ?? winLoseStandings)(live.state, live, seatViews);
+  const board = standings
+    ? standings(live.state, live, seatViews)
+    : winLoseStandings(live.state, live, seatViews, viewerSeat);
 
   // `pieces` is contractually fixed once `setup` has run (see its own
   // doc — the runtime calls it once and caches it), so rebuilding a
@@ -278,8 +280,8 @@ export function GameHostView<S, A>({
 
       <GameEndSummary
         show={live.showSummary}
-        winnerName={winnerLabel(live, seatViews)}
-        winnerColour={winnerColour(live, seatViews)}
+        winnerName={winnerLabel(live, seatViews, viewerSeat)}
+        winnerColour={winnerColour(live, seatViews, viewerSeat)}
         subtitle={gameTitle}
         standings={board}
         stats={stats?.(live.state, live)}
@@ -311,20 +313,58 @@ export function GameHostView<S, A>({
   );
 }
 
-function winnerLabel<S, A>(live: GameRuntime<S, A>, seats: SeatView[]): string {
-  if (live.winner === 0) return "You";
+/**
+ * Who "You" is, which is not always seat 0.
+ *
+ * These three read the viewer's seat rather than assuming the hero owns
+ * it — the same `HERO`-is-seat-0 assumption `playerViews` was already
+ * fixed for, left behind in the shared host. Online it produced two
+ * wrong endings at once: whoever happened to sit at seat 0 winning told
+ * EVERYBODY "You won", and a viewer winning from any other seat got the
+ * literal word "Winner", because `seatViews` deliberately omits the
+ * viewer's own seat and there was nothing else to look them up in.
+ *
+ * `null` is a spectator, who is nobody at this table — so no seat is
+ * ever "You" for them.
+ */
+function isViewer(viewerSeat: SeatId | null | undefined, seat: SeatId | null): boolean {
+  if (seat === null) return false;
+  if (viewerSeat === null) return false; // Spectator.
+  return seat === (viewerSeat ?? HERO);
+}
+
+export function winnerLabel<S, A>(
+  live: GameRuntime<S, A>,
+  seats: SeatView[],
+  viewerSeat: SeatId | null | undefined,
+): string {
+  if (isViewer(viewerSeat, live.winner)) return "You";
   const seat = seats.find((s) => s.seat === live.winner);
   return seat?.name ?? "Winner";
 }
 
-function winnerColour<S, A>(live: GameRuntime<S, A>, seats: SeatView[]): string {
-  if (live.winner === 0) return "var(--color-brass-300)";
+export function winnerColour<S, A>(
+  live: GameRuntime<S, A>,
+  seats: SeatView[],
+  viewerSeat: SeatId | null | undefined,
+): string {
+  if (isViewer(viewerSeat, live.winner)) return "var(--color-brass-300)";
   return seats.find((s) => s.seat === live.winner)?.colour ?? "var(--color-brass-300)";
 }
 
-function winLoseStandings<S, A>(_state: S, live: GameRuntime<S, A>, seats: SeatView[]) {
+export function winLoseStandings<S, A>(
+  _state: S,
+  live: GameRuntime<S, A>,
+  seats: SeatView[],
+  viewerSeat: SeatId | null | undefined,
+) {
+  // A spectator is in no row of their own; everybody else gets one,
+  // because `seats` omits whoever is looking.
+  const mine = viewerSeat === null ? null : (viewerSeat ?? HERO);
   return [
-    { seat: 0, name: "You", total: live.winner === 0 ? 1 : 0 },
+    ...(mine === null
+      ? []
+      : [{ seat: mine, name: "You", total: live.winner === mine ? 1 : 0 }]),
     ...seats.map((s) => ({ seat: s.seat, name: s.name, total: live.winner === s.seat ? 1 : 0 })),
   ].sort((a, b) => b.total - a.total);
 }

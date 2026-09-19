@@ -135,7 +135,20 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
             End game
           </Button>
         ) : null}
-        <Button size="sm" onClick={api.exitGame}>
+        <Button
+          size="sm"
+          onClick={() => {
+            // Cleared on the way out, like the summary screen's own exit
+            // already does. Not KEPT, deliberately, unlike Spades'
+            // exchange: stepping away hands this seat to a bot, which
+            // draws and discards, so a staged pickup restored on return
+            // would be a depth into a pile that is no longer the same
+            // pile. The selection is only meaningful for the turn it was
+            // made in.
+            clearSelection();
+            api.exitGame();
+          }}
+        >
           {frame.seat === null ? "Stop watching" : "Step away"}
         </Button>
       </div>

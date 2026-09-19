@@ -20,6 +20,7 @@ import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
+import { potSize } from "@/games/lrc/state";
 
 type Live = GameRuntime<LrcState, LrcAction>;
 
@@ -42,6 +43,30 @@ export const OFFLINE_VIEW: LrcView = {
   nameFor: botName,
   colourFor: botColour,
 };
+
+/**
+ * Vertical room the Roll button needs. There is no hand in LRC — the
+ * strip is the button and nothing else.
+ *
+ * A constant because both shells have to agree, and they did not: the
+ * room passed `0` while `LrcControls` went on rendering a fixed 64px
+ * bar, so online the button sat on top of whatever the geometry had
+ * laid into the bottom band.
+ */
+export const LRC_HAND_ZONE = 64;
+
+/**
+ * The HUD numbers. Shared for the same reason as the hand zone — the two
+ * shells each hand-rolled this and had already drifted, the room's copy
+ * having quietly lost the pot.
+ */
+export function statsFor(state: LrcState) {
+  return [
+    { label: "Round", value: `${state.round}` },
+    { label: "Target", value: `${state.target} rounds` },
+    { label: "Pot", value: `${potSize(state)} chips` },
+  ];
+}
 
 export function standings(view: LrcView, state: LrcState, _live: Live, seats: SeatView[]) {
   return [

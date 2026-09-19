@@ -21,6 +21,7 @@
 import type { GameId } from "@/session/registry";
 import type { FrameView, RoomView } from "@/session/protocol";
 import type { RoomApi } from "./useRoom";
+import type { PieceId } from "@/engine/types";
 import { DominoesOnline } from "./tables/DominoesOnline";
 import { LrcOnline } from "./tables/LrcOnline";
 import { PokerOnline } from "./tables/PokerOnline";
@@ -37,9 +38,16 @@ export interface OnlineTableProps {
   room: RoomView;
   frame: FrameView;
   /** Pieces the player has picked up but not yet committed. */
-  held: string[];
-  onToggleHeld: (id: string) => void;
+  held: PieceId[];
+  onToggleHeld: (id: PieceId) => void;
   onClearHeld: () => void;
+  /**
+   * The raw setter, for a game whose selection has a RULE — how many may
+   * be held, what picking one up looks like. `onToggleHeld` is a bare
+   * toggle and cannot express either, which is how Spades' online
+   * exchange came to disagree with its offline one.
+   */
+  setHeld: (next: (prev: PieceId[]) => PieceId[]) => void;
 }
 
 export type OnlineTableComponent = (props: OnlineTableProps) => React.ReactNode;

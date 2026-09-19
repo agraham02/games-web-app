@@ -159,7 +159,20 @@ export interface FrameView {
   lastAction: { seat: SeatId; action: unknown } | null;
 }
 
-export type ServerErrorCode = RoomError | "no-room" | "bad-message" | "no-such-room" | "rate-limited";
+export type ServerErrorCode =
+  | RoomError
+  | "no-room"
+  | "bad-message"
+  | "no-such-room"
+  | "rate-limited"
+  /**
+   * A move the server would not take. Its own code rather than
+   * `bad-message`, because the two mean opposite things to a client: a
+   * malformed frame is a bug worth surfacing loudly, while a rejected
+   * move is ordinary — your view was a moment stale, or somebody beat
+   * you to a claim — and the next frame already puts you right.
+   */
+  | "move-refused";
 
 /**
  * What each refusal says out loud.
@@ -190,6 +203,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "bad-message": "that request could not be handled",
   "no-such-room": "no room with that code",
   "rate-limited": "slow down",
+  "move-refused": "that move is no longer available",
 };
 
 export function errorText(code: ServerErrorCode): string {

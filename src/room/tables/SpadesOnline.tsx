@@ -21,12 +21,15 @@ import { useMemo } from "react";
 import type { SeatId } from "@/engine/types";
 import { GAMES } from "@/session/registry";
 import type { SpadesAction, SpadesState } from "@/games/spades/types";
+import type { PieceId } from "@/engine/types";
 import { botColour } from "@/games/_shared/botIdentity";
 import { GameHostView } from "@/table/GameHost";
 import { Button } from "@/ui/primitives/Button";
 import {
   SpadesTable,
+  clearExchangeCards,
   onPieceTap as tapCard,
+  toggleExchangeCard,
   pendingLabel,
   playerViews,
   roundSummary,
@@ -43,9 +46,18 @@ export function SpadesOnline({
   room,
   frame,
   held,
-  onToggleHeld,
   onClearHeld,
+  setHeld,
 }: OnlineTableProps) {
+  // Through the shared rule, not a bare toggle. `RoomScreen` owns WHERE
+  // the selection lives (so it survives a trip to the lobby); what a tap
+  // means is a rules question with one answer, and it lives next to
+  // `onPieceTap` in the table.
+  const pickUp = (id: PieceId) => setHeld((prev) => toggleExchangeCard(prev, id));
+  const putDown = () => {
+    clearExchangeCards(held);
+    onClearHeld();
+  };
   const definition = useMemo(() => {
     const entry = GAMES[room.gameId ?? "spades"];
     return entry.create(room.settings);
@@ -98,13 +110,13 @@ export function SpadesOnline({
         stats={(state) => statsFor(view, state)}
         roundSummary={(state) => roundSummary(view, state)}
         pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
-        onPieceTap={(id, l) => tapCard(view, id, l, onToggleHeld)}
+        onPieceTap={(id, l) => tapCard(view, id, l, pickUp)}
         onLobby={() => {
-          onClearHeld();
+          putDown();
           api.exitGame();
         }}
       >
-        {(l) => <SpadesTable view={view} live={l} held={held} onClearHeld={onClearHeld} />}
+        {(l) => <SpadesTable view={view} live={l} held={held} onClearHeld={putDown} />}
       </GameHostView>
 
       {/*

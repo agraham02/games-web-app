@@ -246,6 +246,59 @@ describe("starting a game", () => {
     expect(second).toEqual({ ok: false, error: "game-already-running" });
   });
 
+  /**
+   * The lobby stays reachable while a match runs — that is what "Step
+   * away" goes back to — and its game picker was gated only on being
+   * leader. `startGame` has carried this guard forever; `selectGame`
+   * never did.
+   */
+  describe("changing the game under a running match", () => {
+    it("refuses a different game", () => {
+      let r = withMembers(["Sam"]);
+      r = spades(r);
+      r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+
+      const res = applyCommand(
+        r,
+        { t: "selectGame", gameId: "poker", settings: {}, seats: 6, difficulty: "steady" },
+        { actor: LEADER, now: 11 },
+      );
+
+      // Allowed, this used to swap every client's table component to
+      // poker while the live session went on dealing spades.
+      expect(res).toEqual({ ok: false, error: "game-already-running" });
+    });
+
+    it("refuses a different seat count for the same game", () => {
+      // The same door, and the more plausible accident: re-laying the
+      // geometry for a seat count the running game does not have.
+      let r = withMembers(["Sam"]);
+      r = spades(r);
+      r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+
+      const res = applyCommand(
+        r,
+        { t: "selectGame", gameId: "spades", settings: {}, seats: 2, difficulty: "steady" },
+        { actor: LEADER, now: 11 },
+      );
+      expect(res.ok).toBe(false);
+    });
+
+    it("allows it again once the game has ended", () => {
+      let r = withMembers(["Sam"]);
+      r = spades(r);
+      r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+      r = ok(r, { t: "endGame" }, { actor: LEADER, now: 11 });
+
+      const res = applyCommand(
+        r,
+        { t: "selectGame", gameId: "poker", settings: {}, seats: 6, difficulty: "steady" },
+        { actor: LEADER, now: 12 },
+      );
+      expect(res.ok).toBe(true);
+    });
+  });
+
   it("refuses a game that is not wired for online play", () => {
     // Every game is online now — Rummy was the last one in — so there is
     // no longer a real game that trips this guard. The guard still has to

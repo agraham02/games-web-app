@@ -33,6 +33,7 @@ import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/Phase
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { TRANSITIONS } from "@/motion/presets";
 import { HandZone } from "@/table/HandZone";
+import { useTableStore } from "@/table/store";
 import type { RoundNote } from "@/table/GameHost";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -70,6 +71,41 @@ export const OFFLINE_VIEW: SpadesView = {
  * the two screens — it is a rules question (is this card legal for me right
  * now), not a presentation one.
  */
+/** How many cards a blind-nil exchange passes. */
+export const EXCHANGE_PICK_LIMIT = 2;
+
+/**
+ * What picking a card up for the exchange MEANS — for both screens.
+ *
+ * Here rather than in either shell for the same reason `onPieceTap` is:
+ * a shell owns WHERE the selection is kept (the page in its own state,
+ * the room in `RoomScreen` so it survives a trip to the lobby), and that
+ * is a real difference. How many cards may be held, and what picking one
+ * up looks like, is not — it is one answer, and when the two shells each
+ * had their own the online one lost both halves of it. Online there was
+ * no highlight at all (the only feedback was a `(n/2)` counter) and a
+ * third tap appended, pushing the selection to three and disabling
+ * "Give" with no way to see which cards were chosen.
+ */
+export function toggleExchangeCard(held: readonly PieceId[], id: PieceId): PieceId[] {
+  const store = useTableStore.getState();
+  if (held.includes(id)) {
+    store.patch(id, { highlighted: false });
+    return held.filter((x) => x !== id);
+  }
+  // A third tap is ignored until one is put back, rather than silently
+  // dropping the oldest — the player chose those two.
+  if (held.length >= EXCHANGE_PICK_LIMIT) return [...held];
+  store.patch(id, { highlighted: true });
+  return [...held, id];
+}
+
+/** Puts every held card down. The store patch is the half easily forgotten. */
+export function clearExchangeCards(held: readonly PieceId[]): void {
+  const store = useTableStore.getState();
+  for (const id of held) store.patch(id, { highlighted: false });
+}
+
 export function onPieceTap(
   view: SpadesView,
   id: PieceId,
@@ -431,7 +467,10 @@ export function playerViews(view: SpadesView, state: SpadesState, live: Live): S
       meta: seatMeta(view, state, s),
       active: cue.active,
       thinking: cue.thinking,
-      partner: s === partnerOf(view.viewerSeat),
+      // Never for a spectator. `SPECTATOR_SEAT` is -1 and the
+      // partnership maths is modular, so `partnerOf(-1)` is 1 — which
+      // quietly told anyone watching that seat 1 was their partner.
+      partner: isSeated(view) && s === partnerOf(view.viewerSeat),
       away: view.awayFor?.(s) ?? false,
     });
   }
@@ -454,7 +493,26 @@ export function standings(view: SpadesView, state: SpadesState, _live: Live, sea
     .sort((x, y) => y.total - x.total);
 }
 
+/**
+ * Is the viewer actually sitting at this table?
+ *
+ * A spectator's seat is `SPECTATOR_SEAT` (-1), chosen so that every
+ * game's `seat === viewer` comparison fails and every hand comes out
+ * face-down. That works beautifully for hands and not at all for
+ * ARITHMETIC: partnership maths is modular, so -1 has a partner and a
+ * team like any other number, and a spectator was shown one side's
+ * private numbers as though they were their own.
+ */
+function isSeated(view: SpadesView): boolean {
+  return view.viewerSeat >= 0 && view.viewerSeat < 4;
+}
+
 export function statsFor(view: SpadesView, state: SpadesState): Array<{ label: string; value: string }> {
+  if (!isSeated(view)) {
+    // Watching, so there is no "my team". The round is the only one of
+    // these three that means anything to somebody with no side.
+    return [{ label: "Round", value: `${state.round}` }];
+  }
   const [a, b] = teammates(teamOf(view.viewerSeat));
   const nilsMade = (state.nilsMade[a] ?? 0) + (state.nilsMade[b] ?? 0);
   const nilsAttempted = (state.nilsAttempted[a] ?? 0) + (state.nilsAttempted[b] ?? 0);
@@ -510,7 +568,14 @@ export function roundSummary(view: SpadesView, state: SpadesState) {
   let note: RoundNote | undefined;
   for (const team of [0, 1] as const) {
     const [a] = teammates(team);
-    const whose = team === teamOf(view.viewerSeat) ? "Your team" : "Opponents";
+    // A spectator has no side, so neither team is "yours" and neither is
+    // an opponent — name them instead of guessing. (`teamOf(-1)` is not
+    // 0 or 1, so without this BOTH teams read as "Opponents".)
+    const whose = !isSeated(view)
+      ? `Team ${team === 0 ? "A" : "B"}`
+      : team === teamOf(view.viewerSeat)
+        ? "Your team"
+        : "Opponents";
     if ((result.bagPenalty[a] ?? 0) > 0) {
       note = { tone: "warn", title: "Bag penalty", body: `${whose} crossed 10 bags and lost 100 points.` };
     } else if ((result.bags[a] ?? 0) % 10 === 9) {

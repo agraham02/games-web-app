@@ -39,6 +39,8 @@ import { GameHost } from "@/table/GameHost";
 import {
   OFFLINE_VIEW,
   SpadesTable,
+  clearExchangeCards,
+  toggleExchangeCard,
   onPieceTap as tapCard,
   pendingLabel,
   playerViews,
@@ -47,7 +49,6 @@ import {
   statsFor,
 } from "./table";
 import type { GameRuntime } from "@/table/useGameRuntime";
-import { useTableStore } from "@/table/store";
 import { Toggle } from "@/ui/primitives/Toggle";
 import { createSpades } from "@/games/spades/rules";
 import { SpadesAction, SpadesState } from "@/games/spades/types";
@@ -70,24 +71,14 @@ export default function SpadesPlayPage() {
     [jokers, twoOfSpadesHigh],
   );
 
+  // Both rules live in `table.tsx` now, so the room screen cannot drift
+  // from this one again — which is exactly what it had done.
   const clearHeld = () => {
-    const store = useTableStore.getState();
-    for (const id of held) store.patch(id, { highlighted: false });
+    clearExchangeCards(held);
     setHeld([]);
   };
 
-  const toggleHeld = (id: PieceId) => {
-    const store = useTableStore.getState();
-    setHeld((prev) => {
-      if (prev.includes(id)) {
-        store.patch(id, { highlighted: false });
-        return prev.filter((x) => x !== id);
-      }
-      if (prev.length >= 2) return prev; // a 3rd tap is ignored until one is deselected
-      store.patch(id, { highlighted: true });
-      return [...prev, id];
-    });
-  };
+  const toggleHeld = (id: PieceId) => setHeld((prev) => toggleExchangeCard(prev, id));
 
   // Offline is just the shared table with the offline point of view: seat
   // 0 is you, everyone else is a bot with a bot's name.

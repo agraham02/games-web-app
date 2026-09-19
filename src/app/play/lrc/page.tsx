@@ -16,6 +16,8 @@ import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameHost } from "@/table/GameHost";
 import {
+  LRC_HAND_ZONE,
+  statsFor,
   LrcControls,
   OFFLINE_VIEW,
   pendingLabel,
@@ -30,7 +32,6 @@ import {
   LRC_TARGET_MAX,
   LRC_TARGET_MIN,
 } from "@/games/lrc/rules";
-import { potSize } from "@/games/lrc/state";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
 
 export default function LrcPlayPage() {
@@ -59,14 +60,10 @@ export default function LrcPlayPage() {
       definition={definition}
       runtime={{ seats }}
       gameTitle="Left Right Center"
-      handZone={64} // just enough room for the Roll button, no hand
+      handZone={LRC_HAND_ZONE}
       players={(state, live) => playerViews(OFFLINE_VIEW, state, live)}
       standings={(state, live, seats) => standings(OFFLINE_VIEW, state, live, seats)}
-      stats={(state) => [
-        { label: "Round", value: `${state.round}` },
-        { label: "Target", value: `${state.target} rounds` },
-        { label: "Pot", value: `${potSize(state)} chips` },
-      ]}
+      stats={statsFor}
       roundSummary={(state) => roundSummary(OFFLINE_VIEW, state)}
       pendingLabel={(state, seat) => pendingLabel(OFFLINE_VIEW, state, seat)}
       onRematch={() => setGameKey((k) => k + 1)}

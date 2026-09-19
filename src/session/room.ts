@@ -600,6 +600,16 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
     case "selectGame": {
       const err = requireLeader();
       if (err) return fail(err);
+      // The same guard `startGame` carries, and missing here for no
+      // reason: the lobby stays reachable during a match (that is what
+      // "Step away" goes back to), and its game picker was gated only on
+      // being leader. Switching mid-match left `room.game` and the live
+      // `GameSession` on the OLD game while every client's room view
+      // described the new one — so the screen swapped to a different
+      // table component and rendered it against frames from a game it
+      // knows nothing about. Changing the seat count was the same shape,
+      // re-laying the geometry for a table that does not exist.
+      if (room.game) return fail("game-already-running");
       const entry = gameEntry(command.gameId);
       if (!entry.online) return fail("game-not-online");
       const settings = entry.parse(command.settings);

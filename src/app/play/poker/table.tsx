@@ -155,6 +155,10 @@ export function PokerControls({ view, live }: { view: PokerView; live: Live }) {
   const showdownPending = Boolean(state.pendingShowdown) && live.isHeroTurn;
   useShowdownCountdown(live, showdownPending);
 
+  // See `isSeated` in Spades' table: a spectator's -1 makes every
+  // `seat === viewer` comparison fail (which is the point, for hands) but
+  // is a perfectly ordinary index everywhere else.
+  const seated = view.viewerSeat >= 0;
   const heroBadge = positionBadge(state, view.viewerSeat);
   const toCall = amountToCall(state, view.viewerSeat);
   const stack = state.stacks[view.viewerSeat] ?? 0;
@@ -167,14 +171,20 @@ export function PokerControls({ view, live }: { view: PokerView; live: Live }) {
       <HandZone
         bar={showdownPending ? <ShowMuckBar live={live} /> : undefined}
         left={
-          <div className="flex items-center gap-1.5">
-            <HeroStatusBadge
-              inline
-              label="You"
-              detail={`$${stack}${heroBet > 0 ? ` · bet $${heroBet}` : ""}`}
-            />
-            {heroBadge ? <HeroPositionBadge label={heroBadge} /> : null}
-          </div>
+          // Nothing for a spectator. `SPECTATOR_SEAT` is -1, which is in
+          // nobody's `stacks`, so this rendered a confident "You · $0" to
+          // someone with no chips and no seat — and a dealer button for a
+          // position they do not hold.
+          seated ? (
+            <div className="flex items-center gap-1.5">
+              <HeroStatusBadge
+                inline
+                label="You"
+                detail={`$${stack}${heroBet > 0 ? ` · bet $${heroBet}` : ""}`}
+              />
+              {heroBadge ? <HeroPositionBadge label={heroBadge} /> : null}
+            </div>
+          ) : undefined
         }
         center={
           <TurnIndicator

@@ -156,7 +156,12 @@ export class Router {
           // disconnect. The client's own view is stale or its user was
           // quick; either way the authoritative board is unchanged and the
           // next frame will put them right.
-          this.fail(peer, "bad-message", result.error ?? "rejected", message.reqId);
+          //
+          // `move-refused` rather than `bad-message`, which is what this
+          // used to send: a client switching on `code` could not tell a
+          // lost race from a parse failure, so it could not sensibly
+          // decide which of the two is worth interrupting somebody over.
+          this.fail(peer, "move-refused", result.error ?? "rejected", message.reqId);
         }
         return;
       }

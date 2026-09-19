@@ -25,11 +25,13 @@ import { botColour } from "@/games/_shared/botIdentity";
 import { GameHostView } from "@/table/GameHost";
 import { Button } from "@/ui/primitives/Button";
 import {
+  LRC_HAND_ZONE,
   LrcControls,
   pendingLabel,
   playerViews,
   roundSummary,
   standings,
+  statsFor,
   type LrcView,
 } from "@/app/play/lrc/table";
 import { tintFor } from "../Roster";
@@ -83,14 +85,11 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
         gameTitle={GAMES[room.gameId ?? "lrc"].name}
         viewerSeat={frame.seat}
         serverDriven
-        handZone={0}
+        handZone={LRC_HAND_ZONE}
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}
-        stats={(state) => [
-          { label: "Round", value: `${state.round}` },
-          { label: "Rounds to win", value: `${state.target}` },
-        ]}
+        stats={statsFor}
         roundSummary={(state) => roundSummary(view, state)}
         pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
         onLobby={api.exitGame}

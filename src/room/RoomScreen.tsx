@@ -48,14 +48,19 @@ export function RoomScreen({ code }: { code?: string }) {
     }
   }, [api.room, code, router]);
 
+  // A table of its own mounts a `GameToaster` inside `TableSurface`, so
+  // this one is for the screens that have no table: the lobby, the entry
+  // form, waiting to be let in. Mounting both is not harmless — sonner
+  // renders every toast into every mounted `<Toaster>`, so online play
+  // showed each bot move, each room notice and each announcement TWICE,
+  // stacked.
+  const tableShowing = Boolean(
+    api.room && api.room.inGame && api.frame && tableFor(api.room.gameId),
+  );
+
   return (
     <>
-      {/*
-        Mounted here, not by the table: `GameToaster` normally lives inside
-        `TableSurface`, and the lobby has no table. Room notices — somebody
-        joined, a seat changed hands — need to reach both.
-      */}
-      <GameToaster />
+      {tableShowing ? null : <GameToaster />}
 
       {api.phase === "superseded" ? (
         // Said plainly rather than retried. Two tabs for one identity used
@@ -106,6 +111,7 @@ export function RoomScreen({ code }: { code?: string }) {
               held={held}
               onToggleHeld={toggleHeld}
               onClearHeld={() => setHeld([])}
+              setHeld={setHeld}
             />
           );
         })()
