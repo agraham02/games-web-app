@@ -52,7 +52,19 @@ const RETRY_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
  */
 const KEEPALIVE_MS = 25_000;
 
-export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed";
+/**
+ * `superseded` is a deliberate stop, not a failure: another tab for this
+ * same identity took the connection, and retrying would start a fight
+ * neither tab can win. It is the only status a reconnect will not
+ * recover from on its own — `resume()` is how the player says they want
+ * it back here.
+ */
+export type ConnectionStatus =
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "closed"
+  | "superseded";
 
 export interface ConnectionListener {
   onMessage: (message: ServerMessage) => void;
@@ -116,6 +128,8 @@ export class RoomConnection {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private closedByUs = false;
+  /** Set by a `superseded` message; cleared only by `resume()`. */
+  private superseded = false;
   private readonly listeners = new Set<ConnectionListener>();
   /**
    * Messages composed before the socket was ready. Held rather than
@@ -146,6 +160,7 @@ export class RoomConnection {
   connect(): void {
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return;
     this.closedByUs = false;
+    this.superseded = false;
     this.setStatus(this.attempt === 0 ? "connecting" : "reconnecting");
 
     const socket = new WebSocket(socketUrl());
@@ -177,6 +192,13 @@ export class RoomConnection {
       this.stopKeepalive();
       if (this.closedByUs) {
         this.setStatus("closed");
+        return;
+      }
+      // Another tab has it. Standing down is the whole fix: retrying
+      // here is what made two tabs trade the socket back and forth
+      // forever.
+      if (this.superseded) {
+        this.setStatus("superseded");
         return;
       }
       this.setStatus("reconnecting");
@@ -239,6 +261,13 @@ export class RoomConnection {
         this.lastRoom = null;
         this.lastFrame = null;
         break;
+      case "superseded":
+        // Recorded before the close event, which is where it is acted on.
+        // The cached room and frame are deliberately KEPT: the person is
+        // still a member holding their seat, so `resume()` should land
+        // them back at the table rather than on a blank screen.
+        this.superseded = true;
+        break;
       default:
         break;
     }
@@ -252,6 +281,20 @@ export class RoomConnection {
     if (this.status === status) return;
     this.status = status;
     for (const listener of this.listeners) listener.onStatus(status);
+  }
+
+  /**
+   * Takes the connection back after another tab claimed it.
+   *
+   * Deliberately a thing the PLAYER asks for rather than something this
+   * does by itself, because doing it automatically is precisely the
+   * fight `superseded` exists to end. The seat was never given up, so
+   * this lands back at the same table.
+   */
+  resume(): void {
+    if (this.status !== "superseded") return;
+    this.attempt = 0;
+    this.connect();
   }
 
   close(): void {

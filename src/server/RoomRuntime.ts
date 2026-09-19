@@ -128,7 +128,15 @@ export class RoomRuntime {
     // two live sockets for one seat would double every frame and leave
     // "who is really here" ambiguous on disconnect.
     const existing = this.connections.get(session);
-    if (existing && existing !== connection) existing.close();
+    if (existing && existing !== connection) {
+      // Told, then closed. A bare close is indistinguishable from the
+      // network dropping, so the replaced tab used to retry — which
+      // closed the tab that had just taken over, which retried, at about
+      // four round trips a second for as long as both were open. Saying
+      // WHY is what lets the old tab stand down instead of fighting.
+      existing.send({ t: "superseded" });
+      existing.close();
+    }
     this.connections.set(session, connection);
     this.command(session, { t: "setConnected", connected: true });
     this.broadcastRoom();

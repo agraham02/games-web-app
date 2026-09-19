@@ -26,7 +26,9 @@ export type RoomPhase =
   /** Knocked on a private room; waiting on the leader. */
   | "pending"
   /** In a room. */
-  | "in-room";
+  | "in-room"
+  /** Another tab for this identity took the connection. */
+  | "superseded";
 
 export interface RoomApi {
   phase: RoomPhase;
@@ -36,6 +38,8 @@ export interface RoomApi {
   pendingCode: string | null;
   error: { code: ServerErrorCode; message: string } | null;
   clearError: () => void;
+  /** Takes the connection back from another tab. See `phase: "superseded"`. */
+  resume: () => void;
   /** The newest frame, or null when no game is running or we are in the lobby. */
   frame: FrameView | null;
 
@@ -140,13 +144,21 @@ export function useRoom(): RoomApi {
 
   const send = useCallback((message: ClientMessage) => connection.send(message), [connection]);
 
-  const phase: RoomPhase = room
-    ? "in-room"
-    : pendingCode
-      ? "pending"
-      : greeted && status === "open"
-        ? "idle"
-        : "connecting";
+  // Checked before `room`, deliberately. The cached roster is kept so
+  // resuming lands back at the table, but while another tab holds the
+  // socket it describes a room this tab is no longer talking to — and a
+  // lobby whose every button silently does nothing is worse than saying
+  // plainly what happened.
+  const phase: RoomPhase =
+    status === "superseded"
+      ? "superseded"
+      : room
+        ? "in-room"
+        : pendingCode
+          ? "pending"
+          : greeted && status === "open"
+            ? "idle"
+            : "connecting";
 
   return useMemo(
     (): RoomApi => ({
@@ -157,6 +169,7 @@ export function useRoom(): RoomApi {
       frame,
       error,
       clearError: () => setError(null),
+      resume: () => connection.resume(),
       send,
       createRoom: (name) => send({ t: "createRoom", name }),
       joinRoom: (code, name) => send({ t: "joinRoom", code: code.toUpperCase(), name }),
@@ -176,6 +189,6 @@ export function useRoom(): RoomApi {
       exitGame: () => send({ t: "exitGame" }),
       endGame: () => send({ t: "endGame" }),
     }),
-    [phase, status, room, pendingCode, frame, error, send],
+    [phase, status, room, pendingCode, frame, error, send, connection],
   );
 }

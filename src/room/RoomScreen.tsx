@@ -57,7 +57,22 @@ export function RoomScreen({ code }: { code?: string }) {
       */}
       <GameToaster />
 
-      {api.phase === "connecting" ? (
+      {api.phase === "superseded" ? (
+        // Said plainly rather than retried. Two tabs for one identity used
+        // to trade the socket back and forth several times a second, each
+        // closing the other, and neither screen ever settled — which read
+        // as the game desyncing rather than as what it was.
+        <Centred>
+          <span className="eyebrow">Playing in another tab</span>
+          <p className="max-w-xs text-center text-sm text-bone-400">
+            You opened this room somewhere else. Your seat is still yours — carry on there, or
+            bring the game back here.
+          </p>
+          <Button size="sm" onClick={api.resume}>
+            Play here instead
+          </Button>
+        </Centred>
+      ) : api.phase === "connecting" ? (
         <Centred>
           <span className="eyebrow">
             {api.status === "reconnecting" ? "Reconnecting…" : "Connecting…"}

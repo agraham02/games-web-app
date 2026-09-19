@@ -216,6 +216,21 @@ export type ServerMessage =
    * rung 3, never a banner, never a modal.
    */
   | { t: "notice"; text: string }
+  /**
+   * This SOCKET has been replaced by a newer one for the same identity —
+   * almost always a second tab. The recipient is still a member, still
+   * holds its seat, and is simply no longer the socket the room talks to.
+   *
+   * Distinct from `left`, which says the person is out of the room, and
+   * distinct from an ordinary close, which says the network went away.
+   * The difference is the whole point: a client that cannot tell a
+   * deliberate takeover from a blip will RECONNECT, which closes the tab
+   * that just took over, which reconnects... Two tabs on one machine
+   * produced roughly four reconnections a second, indefinitely, and at
+   * any instant one of them was holding a dead socket — which looks
+   * exactly like the game desyncing.
+   */
+  | { t: "superseded" }
   | { t: "error"; code: ServerErrorCode; message: string; reqId?: string }
   | { t: "pong" };
 
