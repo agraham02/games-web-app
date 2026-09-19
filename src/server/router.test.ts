@@ -734,6 +734,78 @@ describe("the server, in process", () => {
     });
   });
 
+  /**
+   * Bookkeeping that nothing visible depends on until it does.
+   */
+  describe("not growing without end", () => {
+    it("keeps an identity that is in a room, however old", () => {
+      const { code } = host("tenant");
+      const tenant = registry.sessionFor("tenant");
+
+      // Plenty of strangers pass through.
+      for (let i = 0; i < 200; i++) peerFor(`passer-${i}`);
+
+      // Same token, same identity: the seat is still reclaimable.
+      expect(registry.sessionFor("tenant")).toBe(tenant);
+      expect(registry.get(code)).not.toBeNull();
+    });
+
+    it("counts a message in bytes rather than in UTF-16 code units", () => {
+      // `String.length` undercounts every character outside the BMP by
+      // half, so the cap it thought it was enforcing was up to four times
+      // larger for a payload built out of them.
+      const { peer, conn } = peerFor("whale");
+      const huge = "🂡".repeat(40_000); // ~160KB, length 80_000
+      router.onMessage(peer, JSON.stringify({ t: "rename", name: huge }));
+      expect(conn.last("error")!.message).toBe("message too large");
+    });
+
+    it("cleans up a knock when its owner goes somewhere else", () => {
+      // `roomOf` is null for a pending requester, so `leaveCurrentRoom`
+      // used to skip them entirely: the knock on A stayed standing while
+      // they joined B, and A's leader approving it later pulled them into
+      // two rooms at once.
+      const a = host("owner-a");
+      send(a.peer, { t: "setPrivacy", privacy: "private" });
+      const b = host("owner-b");
+
+      const wanderer = peerFor("wanderer");
+      send(wanderer.peer, { t: "joinRoom", code: a.code, name: "Wanderer" });
+      expect(Object.keys(registry.get(a.code)!.room.pending)).toHaveLength(1);
+
+      // Off to a different, public room.
+      send(wanderer.peer, { t: "joinRoom", code: b.code, name: "Wanderer" });
+      expect(Object.keys(registry.get(a.code)!.room.pending)).toHaveLength(0);
+
+      // And A's leader approving now cannot drag them back out of B.
+      send(a.peer, { t: "approve", session: registry.sessionFor("wanderer") });
+      expect(registry.roomOf(registry.sessionFor("wanderer"))!.code).toBe(b.code);
+    });
+
+    it("answers a Continue from somebody with no seat", () => {
+      // It returned nothing at all, so the press was simply swallowed.
+      const h = host("p1");
+      const p2 = peerFor("p2");
+      send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+      send(h.peer, {
+        t: "selectGame",
+        gameId: "spades",
+        settings: {},
+        seats: 4,
+        difficulty: "steady",
+      });
+      send(h.peer, { t: "startGame" });
+
+      const watcher = peerFor("watcher");
+      send(watcher.peer, { t: "joinRoom", code: h.code, name: "Watcher" });
+      send(watcher.peer, { t: "enterGame", as: "spectator" });
+      watcher.conn.clear();
+
+      send(watcher.peer, { t: "nextRound" });
+      expect(watcher.conn.last("error")!.code).toBe("move-refused");
+    });
+  });
+
   /* ============================================================
      Hostile input
      ============================================================ */

@@ -426,10 +426,16 @@ export class RoomRuntime {
     return { ok: true };
   }
 
-  nextRound(session: SessionId): void {
-    if (!this.session) return;
-    if (seatOf(this.room, session) === null) return;
+  nextRound(session: SessionId): boolean {
+    if (!this.session) return false;
+    // A seat, not merely presence: a spectator has no round to continue.
+    if (seatOf(this.room, session) === null) return false;
+    // Deliberately not leader-gated and deliberately not deduped —
+    // `GameSession.nextRound` already no-ops unless a round is genuinely
+    // over, so the second of two players pressing Continue together is
+    // harmless rather than a race to guard.
     this.session.nextRound();
+    return true;
   }
 
   /* ---------- fan-out ---------- */

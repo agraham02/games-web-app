@@ -36,7 +36,17 @@ import { log } from "./log";
 const MAX_MESSAGES_PER_WINDOW = 120;
 const RATE_WINDOW_MS = 10_000;
 
-/** A payload beyond this is refused unread. */
+/**
+ * A payload beyond this is refused unread.
+ *
+ * Measured in BYTES, which `String.length` is not — it counts UTF-16
+ * code units, so a message of astral-plane characters is up to four
+ * times the size this thought it was checking. `Buffer.byteLength` is
+ * the real number. The transport has its own, larger ceiling
+ * (`MAX_FRAME_BYTES`), which is what stops a huge frame being assembled
+ * at all; this is the protocol's own view of "nothing we send is
+ * remotely this big".
+ */
 const MAX_MESSAGE_BYTES = 64 * 1024;
 
 export interface Peer {
@@ -98,7 +108,7 @@ export class Router {
   }
 
   private route(peer: Peer, raw: string): void {
-    if (raw.length > MAX_MESSAGE_BYTES) {
+    if (Buffer.byteLength(raw, "utf8") > MAX_MESSAGE_BYTES) {
       this.fail(peer, "bad-message", "message too large");
       return;
     }
@@ -172,7 +182,13 @@ export class Router {
       }
 
       case "nextRound":
-        runtime.nextRound(session);
+        // Answered rather than swallowed. It used to return nothing at
+        // all on refusal, so a spectator (or somebody whose round had
+        // already been continued by another player) pressed Continue and
+        // got silence — the one case `move-refused` was invented for.
+        if (!runtime.nextRound(session)) {
+          this.fail(peer, "move-refused", "not-in-game", message.reqId);
+        }
         return;
 
       case "leaveRoom": {
@@ -242,7 +258,16 @@ export class Router {
   onClose(peer: Peer): void {
     if (!peer.session) return;
     try {
-      this.awaiting.delete(peer.session);
+      // Only if this socket is the one holding the request. `detach`
+      // below takes the same care and for the same reason: two tabs under
+      // one identity means the second overwrites the first's entry, and
+      // deleting unconditionally here let a closing tab wipe the live
+      // tab's place in the queue. The leader's approval then found
+      // nothing waiting and the person sat on the waiting screen forever,
+      // a member of a room that never told them so.
+      const waiting = this.awaiting.get(peer.session);
+      if (waiting && waiting.peer === peer) this.awaiting.delete(peer.session);
+
       const runtime = this.registry.roomOf(peer.session);
       runtime?.detach(peer.session, peer.connection);
     } catch (error) {
@@ -273,11 +298,28 @@ export class Router {
    * other's view of where its owner is.
    */
   private leaveCurrentRoom(peer: Peer, session: SessionId): void {
+    // An unanswered knock counts as being somewhere, and used not to.
+    // `roomOf` is null for a pending requester — they are deliberately
+    // not in `located` — so knocking on A and then joining B left the
+    // request on A standing. A's leader approving it later yanked the
+    // person into A while they were a member, possibly seated, in B:
+    // exactly the two-rooms-at-once state this function exists to
+    // prevent.
+    this.withdrawQuietly(session);
+
     const existing = this.registry.roomOf(session);
     if (!existing) return;
     existing.command(session, { t: "leave" });
     existing.detach(session, peer.connection);
     this.registry.displace(session);
+  }
+
+  /** `withdraw` without telling them — they are on their way elsewhere. */
+  private withdrawQuietly(session: SessionId): void {
+    const waiting = this.awaiting.get(session);
+    if (!waiting) return;
+    this.awaiting.delete(session);
+    this.registry.get(waiting.code)?.command(session, { t: "withdraw" });
   }
 
   /**
@@ -293,11 +335,8 @@ export class Router {
    * joined another room meanwhile, into a second one at the same time.
    */
   private withdraw(peer: Peer, session: SessionId): void {
-    const waiting = this.awaiting.get(session);
-    if (!waiting) return;
-    this.awaiting.delete(session);
-    const runtime = this.registry.get(waiting.code);
-    runtime?.command(session, { t: "withdraw" });
+    if (!this.awaiting.has(session)) return;
+    this.withdrawQuietly(session);
     peer.connection.send({ t: "left", reason: "left" });
   }
 

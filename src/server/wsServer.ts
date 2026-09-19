@@ -36,8 +36,19 @@ interface Tracked {
   alive: boolean;
 }
 
+/** Hard transport ceiling, well above anything the protocol sends. */
+const MAX_FRAME_BYTES = 128 * 1024;
+
 export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry): () => void {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    // The router's own cap is applied to a frame `ws` has already
+    // buffered and stringified, so on its own it refuses a 100MB payload
+    // only after holding 100MB (which is `ws`'s default). Capping here
+    // means the transport drops it without ever assembling it. Generous
+    // against real traffic: a turn is a few hundred bytes.
+    maxPayload: MAX_FRAME_BYTES,
+  });
   const router = new Router(registry, () => realClock.now());
   const tracked = new Map<WebSocket, Tracked>();
 

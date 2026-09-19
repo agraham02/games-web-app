@@ -444,4 +444,108 @@ test.describe("a room, in real browsers", () => {
     await one.close();
     await two.close();
   });
+
+  test("the table carries on when the player on turn walks out", async ({ browser }) => {
+    /*
+      The freeze, in the layer that mirrors how it was actually hit.
+
+      `settled()` is what hands a turn to a bot, and on the server it was
+      only ever reached from somebody ACTING. So a table parked on a live
+      seat whose owner then left had nobody to wait for and nothing to
+      wake it: the seat showed as Away, and that was the last thing that
+      ever happened. Four of the five games, every one without a
+      `deadline?()`.
+
+      Asserted from the REMAINING player's screen, because they are the
+      person the bug actually happened to.
+    */
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    await ada.getByRole("button", { name: "Dominoes" }).click();
+    await ada.getByRole("button", { name: /start dominoes/i }).click();
+    for (const page of [ada, bo]) {
+      await expect(page.getByRole("button", { name: /step away/i })).toBeVisible();
+    }
+
+    // The authoritative position, for the same reason as above: a
+    // client's view is derived and could itself be what is wrong.
+    const table = async () => {
+      const res = await bo.request.get(`/debug/room/${code}`);
+      const body = (await res.json()) as {
+        game: { seatOwner: (string | null)[] };
+        members: Record<string, { name: string; session: string }>;
+        table: { currentSeat: number | null; fingerprint: string } | null;
+      };
+      return body;
+    };
+
+    const seatOfName = async (name: string) => {
+      const now = await table();
+      return now.game.seatOwner.indexOf(
+        Object.values(now.members).find((m) => m.name === name)!.session,
+      );
+    };
+    const adaSeat = await seatOfName("Ada");
+
+    // Wait until the table is genuinely parked on Ada.
+    await expect
+      .poll(async () => (await table()).table?.currentSeat, { timeout: 20_000 })
+      .toBe(adaSeat);
+
+    const stuck = (await table()).table!.fingerprint;
+
+    // Ada goes, mid-turn, without saying goodbye.
+    await one.close();
+
+    // A bot should take her turn and the table should move on.
+    await expect
+      .poll(async () => (await table()).table?.fingerprint, { timeout: 20_000 })
+      .not.toBe(stuck);
+
+    // And Bo is told why his opponent stopped playing.
+    await expect(bo.getByText(/away/i).first()).toBeVisible();
+  });
+
+  test("a second tab does not fight the first for the seat", async ({ browser }) => {
+    /*
+      Two tabs of ONE context, deliberately — the opposite of every other
+      test here. Identity lives in `localStorage`, which is per-origin and
+      not per-tab, so this is one person opening the room twice, and it is
+      the obvious way somebody tries the app out.
+
+      The server replaces the old socket with the new one, correctly. The
+      old tab used to read that close as the network dropping and
+      reconnect, which closed the tab that had just taken over, which
+      reconnected — about four round trips a second for as long as both
+      were open, with one of the two always holding a dead socket.
+    */
+    const context = await browser.newContext();
+    const first = await player(context, "Ada");
+    const code = await hostRoom(first);
+
+    const second = await context.newPage();
+    await second.goto(`/room/${code}`);
+
+    // The newest tab wins and lands in the lobby.
+    await expect(second.getByText(code, { exact: true })).toBeVisible();
+
+    // The old one stands down and says so, rather than flickering.
+    await expect(first.getByText(/playing in another tab/i)).toBeVisible();
+
+    // And it stays stood down, instead of trading the socket back.
+    await first.waitForTimeout(3_000);
+    await expect(first.getByText(/playing in another tab/i)).toBeVisible();
+    await expect(second.getByText(code, { exact: true })).toBeVisible();
+
+    // Taking it back is deliberate, and works.
+    await first.getByRole("button", { name: /play here instead/i }).click();
+    await expect(first.getByText(code, { exact: true })).toBeVisible();
+    await expect(second.getByText(/playing in another tab/i)).toBeVisible();
+  });
+
 });

@@ -39,6 +39,24 @@ export const EMPTY_ROOM_TTL_MS = 60_000;
 /** Enough attempts that exhausting them means something is genuinely wrong. */
 const CODE_ATTEMPTS = 50;
 
+/**
+ * How many identities to remember before forgetting the oldest idle ones.
+ *
+ * The identity table is the one structure here with no natural end: a
+ * room is reaped a minute after it empties, but `sessionFor` minted and
+ * kept an entry for every distinct token ever presented, for the life of
+ * the process. The rate limit is per-connection, so a client cycling
+ * tokens — or simply a long-lived server — grows it without bound.
+ *
+ * An identity that is not in a room is worth nothing except the ability
+ * to reclaim a seat, and there is no seat to reclaim, so those are the
+ * ones to drop. Anybody in a room is kept regardless of how many there
+ * are: forgetting them is what would actually cost somebody their seat.
+ *
+ * Generous against the ~10 players this is built for, and still bounded.
+ */
+const MAX_IDLE_IDENTITIES = 5_000;
+
 export interface RegistryOptions {
   clock?: Clock;
   /** Seeded for tests; a real deployment wants a fresh one. */
@@ -72,10 +90,35 @@ export class RoomRegistry {
    */
   sessionFor(token: string): SessionId {
     const existing = this.sessions.get(token);
-    if (existing) return existing;
+    if (existing) {
+      // Touched: a `Map` keeps insertion order, so re-inserting moves
+      // this to the young end and keeps `forgetIdleIdentities` honest
+      // about which entries are actually idle.
+      this.sessions.delete(token);
+      this.sessions.set(token, existing);
+      return existing;
+    }
     const session = `s${this.nextSession++}-${this.rng.int(0xffffff).toString(36)}`;
     this.sessions.set(token, session);
+    if (this.sessions.size > MAX_IDLE_IDENTITIES) this.forgetIdleIdentities();
     return session;
+  }
+
+  /**
+   * Drops the least recently seen identities that are not in a room.
+   *
+   * Forgetting one costs only the ability to reclaim a seat with that
+   * token — and an identity in no room has no seat — so this is a cache
+   * eviction rather than a logout. Anyone currently in a room is skipped
+   * however old their entry is.
+   */
+  private forgetIdleIdentities(): void {
+    const target = Math.floor(MAX_IDLE_IDENTITIES / 2);
+    for (const [token, session] of this.sessions) {
+      if (this.sessions.size <= target) break;
+      if (this.located.has(session)) continue;
+      this.sessions.delete(token);
+    }
   }
 
   roomOf(session: SessionId): RoomRuntime | null {
