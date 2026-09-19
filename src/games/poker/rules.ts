@@ -565,6 +565,46 @@ export function legalActions(state: PokerState, seat: SeatId): PokerAction[] {
   return out;
 }
 
+/**
+ * Poker cannot validate by enumeration, so it does it by hand.
+ *
+ * `legalActions` offers `{t:"bet", to: range.min}` — ONE representative
+ * of a continuous range, because an action bar needs a starting number
+ * and a slider does the rest. Membership testing would therefore refuse
+ * every bet but the minimum, which is why the other four games share
+ * `validateByEnumeration` and this one does not.
+ *
+ * The case that made it necessary: `to` arrives off a socket as arbitrary
+ * JSON. `Math.round("abc")` is `NaN`; `Math.max(min, Math.min(max, NaN))`
+ * is `NaN`; and `if (added <= 0)` is FALSE for `NaN` — so `reduceBetOrRaise`
+ * ran on through and wrote `NaN` into `stacks`, `streetCommitted` and
+ * `totalCommitted`. One malformed bet turned the whole table's money into
+ * `NaN` for the rest of the match. Clamping happens downstream and is not
+ * a defence, because a non-number survives clamping.
+ */
+export function validate(state: PokerState, seat: SeatId, action: PokerAction): string | null {
+  const offered = legalActions(state, seat);
+  if (offered.length === 0) return "not-your-turn";
+
+  const kinds = new Set(offered.map((a) => a.t));
+  if (!action || typeof action !== "object" || !kinds.has(action.t)) return "illegal-action";
+
+  if (action.t === "bet" || action.t === "raise") {
+    // `Number.isFinite` is the whole guard, and it has to come first:
+    // it rejects NaN, both infinities, and every non-number, which
+    // `>=`/`<=` comparisons silently pass through as false.
+    if (typeof action.to !== "number" || !Number.isFinite(action.to)) return "illegal-action";
+    const range = betRange(state, seat);
+    // Rounded before comparing, matching what `reduceBetOrRaise` will do
+    // with it — otherwise a fractional bet inside the range is accepted
+    // here and lands on a different number than the one validated.
+    const to = Math.round(action.to);
+    if (to < range.min || to > range.max) return "illegal-action";
+  }
+
+  return null;
+}
+
 export function currentSeat(state: PokerState): SeatId | null {
   if (state.winner !== null) return null;
   if (state.pendingShowdown && state.pendingShowdown.order.length > 0) {
@@ -719,6 +759,7 @@ export function createPoker(
     setup: makeSetup(startingStack, bigBlind),
     reduce,
     legalActions,
+    validate,
     pieces,
     placements,
     playerView,

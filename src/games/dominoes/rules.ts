@@ -91,6 +91,7 @@ import {
   sideOf,
 } from "./state";
 import type { ChainEnd, DomAction, DomRules, DomState, PlacedTile } from "./types";
+import { validateByEnumeration } from "../_shared/validate";
 
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 4;
@@ -671,6 +672,7 @@ export function createDominoes(
     setup: makeSetup(rules, target),
     reduce,
     legalActions,
+    validate: validateByEnumeration(legalActions),
     pieces,
     placements,
     playerView,

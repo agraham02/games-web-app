@@ -94,7 +94,13 @@ export type SubmitResult =
        */
       animated: boolean;
     }
-  | { ok: false; reason: "not-your-turn" | "game-over" | "round-over" };
+  /**
+   * `illegal-action` is the game's own `validate` refusing the action
+   * itself, as opposed to `not-your-turn` refusing the SEAT. Kept
+   * distinct because they mean different things to a client: one is a
+   * race it lost, the other is a move it should never have offered.
+   */
+  | { ok: false; reason: "not-your-turn" | "game-over" | "round-over" | "illegal-action" };
 
 export interface GameSessionOptions<S, A> {
   definition: GameDefinition<S, A>;
@@ -276,6 +282,25 @@ export class GameSession<S, A> {
     this.pending = current;
     if (!this.autoAdvance) return; // Wait for an explicit advance().
 
+    // Asking twice for the same position must not arm two timers.
+    //
+    // It is asked twice in ordinary play: `submit` emits even when a
+    // reduce produced no events, so a driver that settles on every frame
+    // AND honours the `animated: false` contract calls this twice in a
+    // row — which is exactly what the room server does, and there are 33
+    // no-op `reduce` paths across the five games to trigger it. The
+    // second call used to overwrite `holdTimer` and leak the first; the
+    // leaked one then fired, nulled the handle to a live timer, and a bot
+    // turn revealed with no hold at all while `advance()` ran a spare
+    // time.
+    //
+    // A hold already armed is a hold for this same position — `submit`
+    // and `nextRound` both clear it by moving the game on — so the
+    // correct answer to being asked again is to let the first one stand.
+    // The deadline branch above is already idempotent for the same
+    // reason: `scheduleDeadline` clears before it arms.
+    if (this.holdTimer !== null) return;
+
     const hold = this.opts.turnHoldMs ? this.opts.turnHoldMs() : DEFAULT_TURN_HOLD_MS;
     this.holdTimer = this.clock.setTimeout(() => {
       this.holdTimer = null;
@@ -356,6 +381,19 @@ export class GameSession<S, A> {
     // and the gate cannot disagree about what is allowed.
     if (this.definition.legalActions(this.state, seat).length === 0) {
       return { ok: false, reason: "not-your-turn" };
+    }
+
+    // ...and then whether the thing that arrived is one of them.
+    //
+    // The gate above answers "may this seat act", which is the question
+    // the turn loop cares about. It says nothing about the action itself,
+    // and online the action is arbitrary JSON off a socket — `reduce`
+    // would otherwise believe a stranger about which card is in their
+    // hand, or hand poker a bet of `"abc"`. See
+    // `GameDefinition.validate`, which is where each game says what
+    // well-formed means for it.
+    if (this.definition.validate?.(this.state, seat, action)) {
+      return { ok: false, reason: "illegal-action" };
     }
 
     // Anything random in the action is re-resolved here, against the

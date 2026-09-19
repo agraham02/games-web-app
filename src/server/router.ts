@@ -300,6 +300,28 @@ export class Router {
     }
 
     const session = this.registry.sessionFor(token);
+
+    // A socket may only speak for one identity at a time.
+    //
+    // Nothing stops a client sending a second `hello` with a different
+    // token, and when it did, `peer.session` was simply overwritten — so
+    // the room still held the FIRST session against this very socket, and
+    // `onClose` later detached the second. The first was never detached,
+    // ever, and the consequences were all permanent: it stayed
+    // `connected`, so `isSeatLive` stayed true and a bot never took the
+    // seat; `connectedCount` never reached zero, so the room was never
+    // reaped; and every frame went on being pushed into a closed socket.
+    //
+    // Detaching the outgoing identity here is the same courtesy
+    // `leaveCurrentRoom` does for a peer changing rooms — it keeps "who
+    // the room thinks is holding this socket" true, which is the invariant
+    // the whole connection-lifecycle suite exists to defend.
+    if (peer.session && peer.session !== session) {
+      const previous = this.registry.roomOf(peer.session);
+      previous?.detach(peer.session, peer.connection);
+      this.awaiting.delete(peer.session);
+    }
+
     peer.session = session;
     peer.connection.send({ t: "hello", session, protocol: PROTOCOL_VERSION });
 

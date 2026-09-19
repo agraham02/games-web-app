@@ -75,6 +75,7 @@ import {
 } from "./state";
 import { AUTO_LOSS_SCORE, scoreRound, TARGET_SCORE } from "./scoring";
 import type { Bid, RoundResult, SpadesAction, SpadesState } from "./types";
+import { validateByEnumeration } from "../_shared/validate";
 
 export const MIN_SEATS = 4;
 export const MAX_SEATS = 4;
@@ -866,6 +867,7 @@ export function createSpades(
     setup: makeSetup(rules),
     reduce,
     legalActions,
+    validate: validateByEnumeration(legalActions),
     pieces,
     placements,
     playerView,

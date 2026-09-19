@@ -358,6 +358,93 @@ describe("the server, in process", () => {
         expect(conn.last("frame")!.frame.botSeats).toContain(theirSeat);
       });
 
+      /**
+       * The assertion every test above this one stops just short of.
+       *
+       * They all prove the NEWS travels — `liveSeats` flipped, a frame
+       * carrying `botSeats` was pushed. None of them proves the game then
+       * MOVES, and for a long time it did not: `settled()` is what hands
+       * a turn to a bot, and on this server it was only ever reached from
+       * `onFrame` — which is to say, from somebody acting. Park the table
+       * on a live seat, let that player drop, and the four games with no
+       * `deadline?()` armed nothing at all. The seat was bot-played, no
+       * bot was ever invoked, and the person still sitting there waited
+       * forever with an Away badge for company.
+       *
+       * `drain()` is the instrument: it runs the loop to a standstill. A
+       * table that has genuinely stalled simply stops, with the match
+       * unfinished and nothing pending — which is exactly what this
+       * asserted against before the fix.
+       */
+      describe("and the game has to carry on without them", () => {
+        /** Runs bots until the table parks on a seat a human owns. */
+        function parkOnAHuman(code: string): { seat: number; session: string } {
+          const runtime = registry.get(code)!;
+          clock.drain();
+          const seat = runtime.debugDump().table as { currentSeat: number | null };
+          const at = seat.currentSeat;
+          expect(at, "the table should be waiting on somebody").not.toBeNull();
+          const owner = runtime.room.game!.seatOwner[at!];
+          expect(owner, "the table should be parked on a seat a person owns").not.toBeNull();
+          return { seat: at!, session: owner! };
+        }
+
+        /** `{ currentSeat, fingerprint }` — the cheap "has anything moved". */
+        function tableOf(code: string) {
+          return registry.get(code)!.debugDump().table as {
+            currentSeat: number | null;
+            fingerprint: string;
+          };
+        }
+
+        it("takes the turn of the seat on turn when its owner drops", () => {
+          const { code, peer, p2 } = twoPlayerSpades();
+          const { seat, session } = parkOnAHuman(code);
+          const before = tableOf(code).fingerprint;
+
+          // Drop whichever of the two is actually on turn.
+          const hostSession = registry.sessionFor("p1");
+          router.onClose(session === hostSession ? peer : p2.peer);
+          clock.drain();
+
+          const after = tableOf(code);
+          expect(after.currentSeat, "the abandoned seat should have been played").not.toBe(seat);
+          expect(after.fingerprint, "the table should have moved").not.toBe(before);
+        });
+
+        it("does the same when they walk to the lobby on their turn", () => {
+          // `exitGame` rather than a dropped socket: the same liveness
+          // edge, reached by a command the player chose to send.
+          const { code, peer, p2 } = twoPlayerSpades();
+          const { seat, session } = parkOnAHuman(code);
+          const before = tableOf(code).fingerprint;
+
+          const hostSession = registry.sessionFor("p1");
+          send(session === hostSession ? peer : p2.peer, { t: "exitGame" });
+          clock.drain();
+
+          const after = tableOf(code);
+          expect(after.currentSeat).not.toBe(seat);
+          expect(after.fingerprint).not.toBe(before);
+        });
+
+        it("still waits for a human who is present", () => {
+          // The other half, and the one that stops the fix becoming "bots
+          // play everything": a table parked on a seat somebody IS in must
+          // stay parked, however long the loop is drained for. Without
+          // this, the fix above could pass by simply never waiting.
+          const { code } = twoPlayerSpades();
+          const { seat } = parkOnAHuman(code);
+          const before = tableOf(code).fingerprint;
+
+          clock.drain();
+
+          const after = tableOf(code);
+          expect(after.currentSeat).toBe(seat);
+          expect(after.fingerprint).toBe(before);
+        });
+      });
+
       it("does not fire a second time for a change that is not one", () => {
         // A room command that leaves every seat exactly as it was must not
         // shower the table with position frames — they reconcile the board
@@ -484,6 +571,71 @@ describe("the server, in process", () => {
 
       expect(registry.roomOf(session)!.code).toBe(other.code);
       expect(registry.get(mine)?.room.members[session]).toBeUndefined();
+    });
+
+    /**
+     * A socket speaks for one identity at a time.
+     *
+     * Nothing stops a client sending a second `hello` with a different
+     * token, and when it did, `peer.session` was simply overwritten while
+     * the room went on holding the FIRST session against this same
+     * socket. `onClose` then detached the second, and the first was never
+     * detached at all — permanently. It stayed `connected`, so a bot
+     * never took its seat and the room was never reaped, and every frame
+     * went on being written to a socket that had closed.
+     */
+    describe("a socket that changes its mind about who it is", () => {
+      it("lets go of the identity it was holding", () => {
+        const { peer, conn, code } = host("first");
+        const first = registry.sessionFor("first");
+        expect(registry.get(code)!.isAttached(first)).toBe(true);
+
+        // Same socket, different token.
+        router.onMessage(
+          peer,
+          JSON.stringify({ t: "hello", token: "second", protocol: PROTOCOL_VERSION }),
+        );
+
+        expect(registry.get(code)!.isAttached(first)).toBe(false);
+        expect(conn.last("hello")!.session).toBe(registry.sessionFor("second"));
+      });
+
+      it("lets the room die rather than pinning it open forever", () => {
+        const { peer, code } = host("first");
+        router.onMessage(
+          peer,
+          JSON.stringify({ t: "hello", token: "second", protocol: PROTOCOL_VERSION }),
+        );
+        router.onClose(peer);
+
+        clock.advance(EMPTY_ROOM_TTL_MS + 1);
+        expect(registry.get(code), "nobody is connected, so the room should be gone").toBeNull();
+      });
+
+      it("hands the abandoned seat to a bot", () => {
+        const h = host("p1");
+        const p2 = peerFor("p2");
+        send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+        send(h.peer, {
+          t: "selectGame",
+          gameId: "spades",
+          settings: {},
+          seats: 4,
+          difficulty: "steady",
+        });
+        send(h.peer, { t: "startGame" });
+
+        const runtime = registry.get(h.code)!;
+        const theirs = registry.sessionFor("p2");
+        const seat = runtime.room.game!.seatOwner.indexOf(theirs);
+
+        router.onMessage(
+          p2.peer,
+          JSON.stringify({ t: "hello", token: "someone-else", protocol: PROTOCOL_VERSION }),
+        );
+
+        expect((runtime.debugDump().liveSeats as boolean[])[seat]).toBe(false);
+      });
     });
   });
 

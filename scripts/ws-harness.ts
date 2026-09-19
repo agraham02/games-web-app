@@ -918,6 +918,143 @@ async function main(): Promise<void> {
   });
 
 
+  /* ------------------------------------------------------------
+     A table nobody is left to wait for
+     ------------------------------------------------------------ */
+
+  await scenario("the table carries on when the seat on turn drops", async () => {
+    // The stall this layer exists to catch, and the one it missed.
+    //
+    // `settled()` is what hands a turn to a bot, and on the server it was
+    // only ever reached from somebody ACTING. Park the table on a live
+    // seat, drop that player, and the four games with no `deadline?()`
+    // armed nothing: the seat was bot-played, no bot was ever invoked,
+    // and the person still sitting there waited forever.
+    //
+    // A unit test cannot see this — it needs a real socket to really
+    // close. `router.test.ts` asserted the Away badge was pushed and
+    // stopped exactly there.
+    const a = await client(`t-stall-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-stall-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "casual" });
+    await sleep(50);
+    a.send({ t: "startGame" });
+    await sleep(500);
+
+    const seatOf = new Map<Client, number>();
+    for (const c of [a, b]) {
+      const frame = c.latest("frame");
+      assert(frame, "both players should have been dealt in");
+      seatOf.set(c, (frame.frame as { seat: number }).seat);
+    }
+
+    // Wait until the table is genuinely parked on one of the two humans.
+    let onTurn: Client | undefined;
+    for (let tick = 0; tick < 40 && !onTurn; tick++) {
+      const table = (await dump(code)).table as { currentSeat: number | null } | null;
+      onTurn = [a, b].find((c) => seatOf.get(c) === table?.currentSeat);
+      if (!onTurn) await sleep(100);
+    }
+    assert(onTurn, "the table should have parked on a human");
+
+    const before = (await dump(code)).table as { fingerprint: string };
+    const stranded = onTurn === a ? b : a;
+
+    // Drop them where they sit — not a polite exit, a socket going away.
+    onTurn.close();
+
+    // A generous window for the server to do what it used to never do.
+    let moved = false;
+    for (let tick = 0; tick < 50 && !moved; tick++) {
+      await sleep(120);
+      const now = (await dump(code)).table as { fingerprint: string } | null;
+      if (now && now.fingerprint !== before.fingerprint) moved = true;
+    }
+
+    assert(moved, "the abandoned seat was never played — the table stalled");
+    assert(stranded.latest("frame"), "the remaining player should still hold a frame");
+  });
+
+  await scenario("a socket that re-hellos as somebody else lets go of the first seat", async () => {
+    // `peer.session` was simply overwritten, so the room went on holding
+    // the FIRST session against this same socket. `onClose` then detached
+    // the second and the first was never detached at all — it stayed
+    // "connected" forever, so a bot never took its seat and the room was
+    // never reaped.
+    const a = await client(`t-rehello-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-rehello-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "casual" });
+    await sleep(50);
+    a.send({ t: "startGame" });
+    await sleep(500);
+
+    const seat = (b.latest("frame")!.frame as { seat: number }).seat;
+    assert(((await dump(code)).liveSeats as boolean[])[seat] === true, "Bo should be live first");
+
+    // Same socket, different identity.
+    b.send({ t: "hello", token: `t-rehello-other-${Date.now()}`, protocol: PROTOCOL });
+    await sleep(400);
+
+    const live = (await dump(code)).liveSeats as boolean[];
+    assert(live[seat] === false, "the abandoned seat should have gone to a bot");
+  });
+
+  await scenario("an action the seat may not take changes nothing", async () => {
+    // The wire used to be trusted: `submit` checked only that the seat had
+    // SOME legal action and never that the one that arrived was among
+    // them. In Spades that meant playing a card out of somebody else's
+    // hand; ids are suit+rank and entirely guessable.
+    const a = await client(`t-illegal-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-illegal-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "casual" });
+    await sleep(50);
+    a.send({ t: "startGame" });
+    await sleep(500);
+
+    const seatOf = new Map<Client, number>();
+    for (const c of [a, b]) seatOf.set(c, (c.latest("frame")!.frame as { seat: number }).seat);
+
+    let onTurn: Client | undefined;
+    for (let tick = 0; tick < 40 && !onTurn; tick++) {
+      const table = (await dump(code)).table as { currentSeat: number | null } | null;
+      onTurn = [a, b].find((c) => seatOf.get(c) === table?.currentSeat);
+      if (!onTurn) await sleep(100);
+    }
+    assert(onTurn, "the table should have parked on a human");
+
+    const before = (await dump(code)).table as { fingerprint: string };
+
+    // A card that is certainly not theirs to play, and bids shaped wrong.
+    for (const action of [
+      { t: "play", card: "AS" },
+      { t: "play", card: "??" },
+      { t: "bid", tricks: 99, nil: false },
+      { t: "bid", tricks: "lots", nil: false },
+      { t: "raise", to: "abc" },
+    ]) {
+      onTurn.send({ t: "action", action });
+      await sleep(60);
+    }
+
+    const after = (await dump(code)).table as { fingerprint: string };
+    assert(
+      after.fingerprint === before.fingerprint,
+      "an illegal action moved the table when it should have changed nothing",
+    );
+  });
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);
 }

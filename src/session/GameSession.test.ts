@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 import { createSpades } from "@/games/spades/rules";
 import type { SpadesAction } from "@/games/spades/types";
 import { createLrc } from "@/games/lrc/rules";
+import { createPoker, DEFAULT_BIG_BLIND, DEFAULT_STARTING_STACK } from "@/games/poker/rules";
+import { betRange } from "@/games/poker/state";
 import { createRummy } from "@/games/rummy/rules";
 import { claimReactions } from "@/games/rummy/state";
 import type { GameDefinition, SeatId } from "@/engine/types";
@@ -186,6 +188,56 @@ describe("GameSession — the loop outside React", () => {
     expect(frames.length).toBeGreaterThan(afterSubmit);
   });
 
+  /**
+   * Settling twice for one position is ordinary, not hostile.
+   *
+   * `submit` emits even when a reduce produced no events — and there are
+   * 33 such no-op paths across the five games — so a driver that settles
+   * on every frame AND honours the `animated: false` contract asks twice
+   * in a row. The room server is exactly that driver.
+   *
+   * The second ask used to arm a second hold timer and leak the first.
+   * The leaked one then fired, nulled the handle to a live timer, and a
+   * bot turn revealed with no hold at all while `advance()` ran a spare
+   * time — a bot appearing to answer before it had thought.
+   */
+  it("arms one bot-turn timer however many times it is settled", () => {
+    const clock = new TestClock();
+    const frames: SessionFrame<SpadesAction>[] = [];
+    const spades = createSpades();
+    const session = new GameSession({
+      definition: spades,
+      seats: 4,
+      seed: 31,
+      clock,
+      isSeatLive: (seat) => seat === 0,
+      turnHoldMs: () => 900,
+      emit: (frame) => {
+        frames.push(frame);
+        session.settled();
+      },
+    });
+
+    session.start();
+    clock.drain(); // Deal, then park on seat 0 (live).
+
+    const action = spades.legalActions(session.snapshot(), 0)[0]!;
+    session.submit(0, action);
+
+    // `emit` already settled once. This is the driver's second ask.
+    const armed = clock.pending;
+    session.settled();
+    session.settled();
+    expect(clock.pending, "asking again must not arm another timer").toBe(armed);
+
+    // And the beat is still honoured rather than collapsed.
+    const afterSubmit = frames.length;
+    clock.advance(899);
+    expect(frames.length).toBe(afterSubmit);
+    clock.advance(1);
+    expect(frames.length).toBeGreaterThan(afterSubmit);
+  });
+
   it("rides the round number on the deal frame, not behind it", () => {
     const { clock, frames, session } = harness({
       definition: createLrc(),
@@ -224,8 +276,105 @@ describe("GameSession — the loop outside React", () => {
 });
 
 /* ============================================================
-   The submit gate
+   The action gate
    ============================================================ */
+
+/**
+ * `legalActions` answers "may this seat act". It says nothing about
+ * whether the action that ARRIVED is one of the things they may do — and
+ * online, the action is arbitrary JSON off a socket. Offline the gap was
+ * unreachable, because the only thing authoring actions was the UI's own
+ * action bar; a room makes every one of these reachable by a player whose
+ * turn it genuinely is.
+ */
+describe("validate — the action itself, not just the seat", () => {
+  /** Runs the loop until seat 0 (the only live seat) is on turn. */
+  function parkOnHero<S, A>(definition: GameDefinition<S, A>, seats: number, seed: number) {
+    const h = harness({ definition, seats, seed, isSeatLive: (seat) => seat === 0 });
+    h.session.start();
+    h.clock.drain();
+    return h;
+  }
+
+  it("spades: refuses a card the seat does not hold", () => {
+    const spades = createSpades();
+    const { session, clock } = parkOnHero(spades, 4, 31);
+
+    // Bid it out so we reach the play phase with seat 0 on turn, which is
+    // where the hole was. Bots move on the clock; seat 0 is the only live
+    // seat, so it is the only one this drives by hand.
+    let guard = 0;
+    while (session.snapshot().phase !== "play" || spades.currentSeat(session.snapshot()) !== 0) {
+      if (++guard > 200) throw new Error("never reached seat 0's turn to play");
+      if (spades.currentSeat(session.snapshot()) === 0) {
+        session.submit(0, spades.legalActions(session.snapshot(), 0)[0]!);
+      }
+      clock.drain();
+    }
+
+    const state = session.snapshot();
+    const mine = new Set(state.hands[0] ?? []);
+    // A real card, genuinely in the deck, that seat 0 does not hold —
+    // which is to say, one sitting in somebody else's hand. Piece ids are
+    // suit+rank and entirely guessable, so this is not a hard forgery.
+    const theirs = Object.values(state.hands)
+      .flat()
+      .find((id) => !mine.has(id))!;
+    expect(theirs, "the other seats should be holding cards").toBeTruthy();
+
+    const before = JSON.stringify(session.snapshot());
+    const result = session.submit(0, { t: "play", card: theirs });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe("illegal-action");
+    expect(JSON.stringify(session.snapshot()), "nothing should have moved").toBe(before);
+  });
+
+  it("poker: refuses a bet that is not a number, and keeps the money real", () => {
+    // `Math.round("abc")` is NaN, `Math.max/min` propagate it, and
+    // `if (added <= 0)` is FALSE for NaN — so this used to write straight
+    // through into every stack and the table's money stayed NaN for the
+    // rest of the match.
+    const poker = createPoker(DEFAULT_STARTING_STACK, DEFAULT_BIG_BLIND);
+    const { session } = parkOnHero(poker, 6, 9);
+
+    const seat = poker.currentSeat(session.snapshot())!;
+    expect(seat).toBe(0);
+
+    for (const bad of ["abc", null, undefined, {}, [], Number.NaN, Infinity, -Infinity]) {
+      const result = session.submit(seat, { t: "raise", to: bad } as never);
+      expect(result.ok, `a bet of ${String(bad)} should be refused`).toBe(false);
+    }
+
+    const after = session.snapshot();
+    for (const value of Object.values(after.stacks)) {
+      expect(Number.isFinite(value), "every stack should still be a real number").toBe(true);
+    }
+  });
+
+  it("poker: still allows any amount inside the range, not only the minimum", () => {
+    // The reason poker cannot share `validateByEnumeration`: its
+    // `legalActions` offers one representative of a continuous range, so
+    // membership testing would refuse every bet but the smallest.
+    const poker = createPoker(DEFAULT_STARTING_STACK, DEFAULT_BIG_BLIND);
+    const { session } = parkOnHero(poker, 6, 9);
+
+    const seat = poker.currentSeat(session.snapshot())!;
+    const range = betRange(session.snapshot(), seat);
+    const between = Math.floor((range.min + range.max) / 2);
+    expect(between, "the test needs a range with room in it").toBeGreaterThan(range.min);
+
+    expect(session.submit(seat, { t: "raise", to: between }).ok).toBe(true);
+  });
+
+  it("refuses an action of a type that is not on offer at all", () => {
+    const spades = createSpades();
+    const { session } = parkOnHero(spades, 4, 31);
+    // Bidding is open; playing a card is not.
+    const result = session.submit(0, { t: "play", card: "AS" } as never);
+    expect(result.ok).toBe(false);
+  });
+});
 
 describe("legalActions as the submit gate", () => {
   /**

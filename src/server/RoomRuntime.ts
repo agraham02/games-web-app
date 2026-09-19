@@ -210,8 +210,23 @@ export class RoomRuntime {
     // Compared as a signature rather than switched on the command, so
     // every route to it is covered — stepping out, being kicked, a socket
     // dropping, coming back — including ones added later.
+    //
+    // And then SETTLE, because a seat changing hands changes whose turn
+    // it is to take. `settled()` is how a bot turn gets scheduled, and on
+    // this server it is only ever reached from `onFrame` — which is to
+    // say, from somebody ACTING. Park the table on a live seat and that
+    // player drops, and the four games with no `deadline?()` arm nothing:
+    // the seat is bot-played, no bot is ever invoked, and the person
+    // still at the table waits forever. Asking again here is the whole
+    // fix, and it is safe to ask at any time — `settled()` no-ops when
+    // the game is over, the round is over, or the seat it lands on is
+    // live, so the one case it adds is the one that was missing.
+    //
+    // After the broadcast, matching `onFrame`'s order: everyone sees the
+    // position, and nobody waits for a client.
     if (liveBefore !== "" && this.liveSignature() !== liveBefore) {
       this.broadcastCurrentFrame();
+      this.session?.settled();
     }
 
     log.info("command", { room: this.code, session, event: command.t });

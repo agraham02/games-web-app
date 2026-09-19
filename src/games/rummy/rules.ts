@@ -82,6 +82,7 @@ import {
 } from "./state";
 import type { RoundResult, RummyAction, RummyState } from "./types";
 import { rummyBots } from "./bots";
+import { validateByEnumeration } from "../_shared/validate";
 
 /** Hidden-card sentinel for `playerView`, mirroring Spades' own. */
 export const HIDDEN_CARD: PieceId = "??";
@@ -1073,6 +1074,7 @@ export function createRummy(
     setup: makeSetup(opts.target ?? DEFAULT_TARGET),
     reduce,
     legalActions,
+    validate: validateByEnumeration(legalActions),
     pieces,
     placements,
     playerView,

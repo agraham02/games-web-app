@@ -490,6 +490,41 @@ export interface GameDefinition<S, A> {
    */
   deadline?(state: S, seat: SeatId): { ms: number; action: A } | null;
 
+  /**
+   * Is this actually a well-formed, legal action for this seat? Return a
+   * reason to refuse it, or null to allow it.
+   *
+   * The session's gate is `legalActions(state, seat).length !== 0` — "is
+   * there something this seat may do right now". That is the right
+   * question for WHOSE TURN it is, and it is deliberately not
+   * `currentSeat` (see `GameSession.submit`). But it says nothing about
+   * whether the action that arrived is one of the things they may do, and
+   * online the action is arbitrary JSON off a socket. Offline that gap
+   * was unreachable, because the only thing authoring actions was the
+   * UI's own action bar.
+   *
+   * Set membership against `legalActions` is not the answer. Poker
+   * returns `{t:"bet", to: range.min}` as ONE representative of a
+   * continuous range, so exact matching would refuse every bet but the
+   * minimum. Only the game knows the shape of its own legality.
+   *
+   * Two real holes this closes, both reachable from a socket by a player
+   * whose turn it genuinely is:
+   *  - Spades: `reducePlay` filters the named card out of your hand (a
+   *    no-op if you never held it) and adds it to the trick regardless —
+   *    so you could play a card sitting in somebody else's hand, and
+   *    piece ids are guessable.
+   *  - Poker: `Math.round("abc")` is `NaN`, `Math.max/min` propagate it,
+   *    and `if (added <= 0)` is FALSE for `NaN` — so it writes through to
+   *    every stack and the table's money becomes `NaN`.
+   *
+   * Implement it wherever `reduce` would believe something a stranger
+   * said. A game that omits it keeps the old behaviour, which is correct
+   * for LRC: its only action carries a roll, and `completeAction` already
+   * throws the client's away.
+   */
+  validate?(state: S, seat: SeatId, action: A): string | null;
+
   currentSeat(state: S): SeatId | null;
   isOver(state: S): boolean;
 
