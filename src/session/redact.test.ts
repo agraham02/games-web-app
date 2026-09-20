@@ -447,7 +447,9 @@ function frameNames(
  * Narrow on purpose. Anything added here needs the same argument made
  * out loud: not "the UI does not show it" but "everyone already saw it".
  */
-const PUBLIC_ONCE_SEEN: Partial<Record<GameId, string[]>> = {
+type PublicKeys = string[] | ((state: Record<string, unknown>) => string[]);
+
+const PUBLIC_ONCE_SEEN: Partial<Record<GameId, PublicKeys>> = {
   /** Tricks already taken — every card was played face-up to win them. */
   spades: ["won"],
   /**
@@ -463,14 +465,24 @@ const PUBLIC_ONCE_SEEN: Partial<Record<GameId, string[]>> = {
    * identified is the whole point of a reveal — it is the one moment in BS
    * when the truth is public — and `placements` says so too, which is what
    * makes the redaction layer send them out under their real names.
+   *
+   * Conditional, and that is the entire point. The cards are public for
+   * exactly as long as they are face up in the middle of the table, which
+   * is the span `pendingTake` marks. Once the loser has swept them into
+   * their hand they are hidden again — and an unconditional exemption here
+   * meant this suite deleted the key before it looked, so it could not see
+   * that `playerView` went on naming four cards in a known opponent's hand
+   * after every resolved challenge. A hatch that is open wider than the
+   * argument for it is a hatch that hides the next bug.
    */
-  bs: ["reveal"],
+  bs: (state) => (state.pendingTake !== null ? ["reveal"] : []),
 };
 
 function withoutPublicHistory(state: unknown, gameId: GameId): unknown {
-  const drop = PUBLIC_ONCE_SEEN[gameId];
-  if (!drop || typeof state !== "object" || state === null) return state;
+  const rule = PUBLIC_ONCE_SEEN[gameId];
+  if (!rule || typeof state !== "object" || state === null) return state;
   const copy = { ...(state as Record<string, unknown>) };
+  const drop = typeof rule === "function" ? rule(copy) : rule;
   for (const key of drop) delete copy[key];
   return copy;
 }

@@ -251,6 +251,11 @@ export class GameSession<S, A> {
 
   private pushDeal(): void {
     if (!this.definition.startRound) return;
+    // A new round is the game moving on, exactly as a move is: a hold or a
+    // deadline armed for the round that just ended belongs to a position
+    // nobody is at any more.
+    this.clearHold();
+    this.clearDeadline();
     const { state: next, events } = this.definition.startRound(this.state, this.rng);
     this.state = next;
     this.last = null;
@@ -267,6 +272,17 @@ export class GameSession<S, A> {
   settled(): void {
     if (this.disposed) return;
     const current = this.state;
+
+    // Every path below either arms a deadline for the position we are in
+    // now, or is a position that deserves none - so the honest thing is to
+    // start from none. Without this, a deadline armed for a live seat
+    // outlived the turn it belonged to: the seat drops mid-window, the
+    // liveness edge settles, a bot answers for them in a beat, play moves
+    // on - and ten seconds later the orphan fired into a CURRENT window the
+    // seat was legitimately entitled to, declining a challenge nobody had
+    // been shown. `scheduleDeadline` re-arms immediately below when the
+    // position still wants one.
+    this.clearDeadline();
 
     if (this.definition.isOver(current)) return;
     // Checked AFTER isOver: the last round of a match is both, and the
@@ -330,6 +346,15 @@ export class GameSession<S, A> {
     const current = this.pending;
     if (!current) return;
     this.pending = null;
+    // The position this turn was scheduled FOR, not merely the latest one.
+    // A bot turn is stashed while the table waits out its hold, and in that
+    // window somebody else may legitimately act - BS hands the seat on turn
+    // its plays while a challenge window is open, precisely so a person can
+    // play over the top of one. Reducing the stale snapshot then assigned it
+    // wholesale over `this.state` and broadcast it, silently undoing the move
+    // that had just been made. Whoever moved has already re-armed whatever
+    // the new position deserves, so dropping this one loses nothing.
+    if (current !== this.state) return;
     this.revealBotTurn(current);
   }
 
@@ -417,6 +442,7 @@ export class GameSession<S, A> {
     // state has moved. `settled()` re-arms one if the new position still
     // wants it.
     this.clearDeadline();
+    this.clearHold();
 
     const { state: next, events } = this.definition.reduce(this.state, resolved);
     this.state = next;
@@ -482,6 +508,21 @@ export class GameSession<S, A> {
       const result = this.submit(seat, due.action);
       if (result.ok && !result.animated) this.settled();
     }, due.ms);
+  }
+
+  /**
+   * Forgets a bot turn that was waiting out its hold.
+   *
+   * `settled()`'s idempotency guard already states that "a hold already
+   * armed is a hold for this same position - `submit` and `nextRound` both
+   * clear it by moving the game on". Neither actually did, so a hold armed
+   * for a position the game had left stayed armed over the new one.
+   */
+  private clearHold(): void {
+    this.pending = null;
+    if (this.holdTimer === null) return;
+    this.clock.clearTimeout(this.holdTimer);
+    this.holdTimer = null;
   }
 
   private clearDeadline(): void {

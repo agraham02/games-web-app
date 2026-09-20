@@ -379,6 +379,18 @@ describe("bs — validate", () => {
       .toBe("the same card twice");
   });
 
+  it("refuses an action that is not an object, rather than throwing on it", () => {
+    // The wire hands `action` through untouched, so `{"t":"action"}` with no
+    // action at all arrives here as `undefined` - and reading `.t` off it
+    // threw, which the router turned into a generic `bad-message` and a log
+    // line per attempt. A refusal is an answer; an exception is not.
+    const state = mid();
+    for (const bad of [undefined, null, "play", 7, true]) {
+      expect(() => def.validate!(state, 0, bad as never)).not.toThrow();
+      expect(def.validate!(state, 0, bad as never)).not.toBeNull();
+    }
+  });
+
   it("refuses a malformed payload without believing any of it", () => {
     const state = mid();
     expect(def.validate!(state, 0, { t: "play", cards: "SA" as never })).toBe("cards must be an array");

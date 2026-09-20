@@ -14,6 +14,7 @@ import { createPoker, DEFAULT_BIG_BLIND, DEFAULT_STARTING_STACK } from "@/games/
 import { betRange } from "@/games/poker/state";
 import { createRummy } from "@/games/rummy/rules";
 import { createBs } from "@/games/bs/rules";
+import type { BsAction, BsState } from "@/games/bs/types";
 import { claimReactions } from "@/games/rummy/state";
 import type { GameDefinition, SeatId } from "@/engine/types";
 import { GAMES, GAME_IDS, type GameId } from "./registry";
@@ -739,5 +740,157 @@ describe("GameSession — BS's challenge window", () => {
     expect(bsDef.turnHold!(state, bsDef.currentSeat(state)!)).toBeLessThan(300);
     const quiet = { ...state, window: null, pendingTake: null };
     expect(bsDef.turnHold!(quiet, 0)).toBeUndefined();
+  });
+});
+
+/**
+ * Two ways a timer could act for somebody after the moment it was armed for
+ * had passed. Both are BS-shaped because BS is the game that opens a race
+ * after every play, but neither is a BS rule - they are both the session's.
+ */
+describe("GameSession — a timer belongs to the position that armed it", () => {
+  const bsDef = createBs({ target: 2, windowMs: 5000 });
+
+
+  /**
+   * Seeds and live-seat sets chosen because each one actually reaches the
+   * position: a bot's turn waiting out its hold while a person plays over
+   * the top of an open window. That interrupt is a designed mechanic, so
+   * this is ordinary play, not a contrivance.
+   */
+  const INTERRUPTED: [number, SeatId[]][] = [
+    [1, [0, 1]],
+    [5, [0, 1]],
+    [6, [0, 1]],
+    [8, [0, 1, 2]],
+  ];
+
+  it("never computes a bot's turn from a position the game has left", () => {
+    // The pile is the visible half of this. A bot's turn used to be stashed
+    // as a SNAPSHOT of the position it was scheduled for, and nothing
+    // cleared it when somebody acted first - so the hold fired, reduced the
+    // stale snapshot and assigned it wholesale, and the play that had just
+    // landed was silently rolled back, cards and all.
+    //
+    // Asserted on every emitted frame rather than at the end, because the
+    // rewind HEALS: the bot turns that follow push fresh plays onto the
+    // pile, so one check afterwards reads as though nothing happened.
+    const bsDef = createBs({ target: 5, windowMs: 5000 });
+    const violations: string[] = [];
+
+    for (const [seed, liveSeats] of INTERRUPTED) {
+      const clock = new TestClock();
+      let prev: BsState | null = null;
+      const session: GameSession<BsState, BsAction> = new GameSession<BsState, BsAction>({
+        definition: bsDef,
+        seats: 4,
+        seed,
+        clock,
+        isSeatLive: (seat) => liveSeats.includes(seat),
+        emit: () => {
+          const now = session.snapshot();
+          if (prev !== null && now.plays.length < prev.plays.length) {
+            // The pile legitimately empties two ways: somebody swallows it
+            // after a challenge, or the round ends. Anything else that
+            // shortens it is a position being undone.
+            const explained =
+              prev.pendingTake !== null || prev.result !== null || now.result !== null;
+            if (!explained) {
+              violations.push(
+                `seed ${seed}: pile went ${prev.plays.length} -> ${now.plays.length}`,
+              );
+            }
+          }
+          prev = now;
+          session.settled();
+        },
+      });
+
+      session.start();
+      for (let i = 0; i < 2000; i++) {
+        const state = session.snapshot();
+        if (bsDef.isOver(state)) break;
+        if (bsDef.isRoundOver!(state)) {
+          session.nextRound();
+          continue;
+        }
+        // The person on turn plays over whatever is open, which is exactly
+        // the interrupt the rules grant them.
+        if (liveSeats.includes(state.turn)) {
+          const plays = bsDef.legalActions(state, state.turn).filter((a) => a.t === "play");
+          if (plays.length > 0) {
+            session.submit(state.turn, plays[plays.length - 1]!);
+            continue;
+          }
+        }
+        if (clock.pending === 0) break;
+        clock.advance(10);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("does not let a departed seat's deadline fire into a later window", () => {
+    // A deadline is armed for a live seat that owes an answer. If that seat
+    // stops being live, a bot answers for it within a beat and play moves
+    // on - but the orphaned timer was still out there, and BS opens a fresh
+    // window after every play, so when it fired the seat was legitimately
+    // entitled again and it declined a challenge nobody had been shown.
+    // One person at a table of bots, so the game actually moves.
+    let present = true;
+    const { clock, session } = harness({
+      definition: bsDef,
+      seats: 4,
+      seed: 21,
+      isSeatLive: (seat) => present && seat === 2,
+    });
+    session.start();
+
+    // Reach a window seat 2 owes an answer to, which is what arms its
+    // deadline. Stepped in slices rather than drained, or the deadline
+    // this is about would resolve the very window it is waiting for.
+    let armed = false;
+    for (let i = 0; i < 4000 && !armed; i++) {
+      const state = session.snapshot();
+      if (state.window !== null && state.window.pending.some((x) => x.seat === 2)) {
+        armed = true;
+        break;
+      }
+      if (bsDef.isOver(state)) break;
+      if (bsDef.isRoundOver!(state)) {
+        session.nextRound();
+        continue;
+      }
+      if (bsDef.currentSeat(state) === 2) {
+        const legal = bsDef.legalActions(state, 2);
+        if (legal.length === 0) break;
+        session.submit(2, legal[legal.length - 1]!);
+        continue;
+      }
+      if (clock.pending === 0) break;
+      clock.advance(20);
+    }
+    expect(armed).toBe(true);
+
+    // They leave. The liveness edge settles, which is what hands the seat
+    // to a bot - and from that moment nothing may still be armed to act on
+    // the departed person's behalf. Checked BEFORE draining, deliberately:
+    // a drain runs every timer and then reports none left, so it cannot
+    // tell an orphan that fired from one that was never there. What is
+    // SCHEDULED is the whole question.
+    //
+    // Exactly one thing belongs here: the bot's turn. The orphaned deadline
+    // used to sit beside it and fire ten seconds later, into a window the
+    // seat had become entitled to all over again, declining a challenge
+    // nobody had been shown.
+    present = false;
+    session.settled();
+    expect(clock.pending).toBe(1);
+
+    // And the table still carries on by itself.
+    const before = session.snapshot();
+    clock.drain();
+    expect(session.snapshot()).not.toBe(before);
   });
 });

@@ -348,7 +348,19 @@ function reduceTake(state: BsState, seat: SeatId): ReduceResult<BsState> {
   }
   events.push({ t: "collect", pieces: pile, to: seat });
 
-  const base: BsState = { ...state, hands, plays: [], pendingTake: null };
+  // `reveal` goes with `pendingTake`, and forgetting it was a real leak.
+  //
+  // A reveal is public only WHILE the cards are face up in the middle of the
+  // table, which is exactly the span `pendingTake` marks. The moment they are
+  // swept into somebody's hand they are hidden again - and `placements` knew
+  // that (it gates on `pendingTake`), so the table drew them face down while
+  // `playerView` went on shipping `state.reveal.cards` under their real ids.
+  // Everyone at the table could therefore name up to four cards in a named
+  // opponent's hand after every resolved challenge.
+  //
+  // The blunt rule has no exceptions: a piece the viewer may not SEE is a
+  // piece whose identity they do not get.
+  const base: BsState = { ...state, hands, plays: [], pendingTake: null, reveal: null };
 
   // The only way a hand is empty here is a call that FAILED against a
   // player who had just put their last cards down: they were telling the
@@ -493,6 +505,14 @@ export function legalActions(state: BsState, seat: SeatId): BsAction[] {
  * claim a pair it does not hold, or a bare string where an array belongs.
  */
 export function validate(state: BsState, seat: SeatId, action: BsAction): string | null {
+  // The action is arbitrary JSON off a socket, and the wire hands `action`
+  // through untouched - so `{"t":"action"}` arrives here as `undefined` and
+  // `switch (action.t)` throws. A TypeError out of `validate` is caught far
+  // upstream by the router, which turns it into a generic `bad-message` and
+  // a log line per attempt: the one exception path a seated player can walk
+  // at will. Poker guards this; BS did not.
+  if (!action || typeof action !== "object") return "that is not an action";
+
   if (state.winner !== null) return "the match is over";
   if (state.result !== null) return "the round is over";
   if (!state.dealt) return "the round has not been dealt";
