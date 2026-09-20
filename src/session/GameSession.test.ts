@@ -964,3 +964,72 @@ describe("GameSession — one window is one wait", () => {
     expect(total).toBeLessThan(5000 + 2000);
   });
 });
+
+/**
+ * The gates a game must have to be safe on a socket, asserted from the
+ * REGISTRY rather than from a list written here.
+ *
+ * Both of the holes below were found by reading, not by a failing test,
+ * and both would have been inherited in silence by a seventh game: the
+ * per-game `describe`s elsewhere in this file name spades and poker, so
+ * adding a game adds no coverage to them at all.
+ */
+describe("every online game brings its own gates", () => {
+  /**
+   * A game may decline `validate` only with a reason, and only when
+   * something else is genuinely checking the action.
+   *
+   * LRC is the one: rolling is its only move, and `completeAction`
+   * re-rolls the dice server-side against the session's own generator, so
+   * nothing a client puts in the action survives to reach `reduce`. That
+   * is a real argument. "The UI would never send that" is not.
+   */
+  const NO_VALIDATE: Partial<Record<GameId, string>> = {
+    lrc: "rolling is the only move and completeAction re-rolls it server-side",
+  };
+
+  for (const gameId of GAME_IDS) {
+    const entry = GAMES[gameId];
+    if (!entry.online) continue;
+
+    it(`${gameId}: checks the action, not just the seat`, () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
+      const excused = NO_VALIDATE[gameId];
+
+      if (definition.validate) {
+        // A gate that is present must also be a gate: it has to refuse
+        // something. Garbage off a socket is the cheapest proof, and it
+        // must be REFUSED rather than thrown on - an exception here
+        // reaches the router as a generic bad-message and a log line per
+        // attempt.
+        //
+        // Asked of a DEALT position, deliberately. A fresh `setup()` is
+        // undealt, and several games answer "the round has not been dealt"
+        // before they look at the action at all - so a sweep run against
+        // one proves nothing about the parsing underneath.
+        const clock = new TestClock();
+        const session = new GameSession({
+          definition,
+          seats: entry.minSeats,
+          seed: 5,
+          clock,
+          isSeatLive: () => true, // Nobody acts, so the deal is all that runs.
+        });
+        session.start();
+        clock.drain();
+        const state = session.snapshot();
+
+        for (const bad of [undefined, null, "play", 7, {}, { t: "nonsense" }]) {
+          expect(() => definition.validate!(state, 0, bad as never)).not.toThrow();
+        }
+        expect(definition.validate(state, 0, { t: "nonsense" } as never)).not.toBeNull();
+        return;
+      }
+
+      // No gate, so there had better be a stated reason.
+      expect(excused, `${gameId} has no validate() and no reason on record`).toBeTruthy();
+      expect(definition.completeAction, `${gameId} is excused as ${excused}`).toBeTruthy();
+    });
+  }
+});
