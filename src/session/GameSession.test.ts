@@ -379,18 +379,25 @@ describe("validate — the action itself, not just the seat", () => {
 
 describe("legalActions as the submit gate", () => {
   /**
-   * `submit` used to ask `currentSeat(state) === seat` and now asks
-   * whether the seat has any legal action at all. The two must stay the
-   * same question everywhere except where a game deliberately widens it,
-   * or the change quietly becomes a way to act out of turn.
+   * `submit` used to ask `currentSeat(state) === seat` and now asks whether
+   * the seat has any legal action at all. The two must stay the same question
+   * everywhere except where a game deliberately widens it, or the change
+   * quietly becomes a way to act out of turn.
    *
-   * Two games are deliberate exceptions, both for the same reason: a race.
-   * Rummy's claim window entitles several seats to grab the same discard at
-   * once, and BS's challenge window entitles every seat but the claimer to
-   * doubt a play — plus the seat on turn to play straight over the top of it.
-   * In both, `currentSeat` names only the seat the PACING waits on, which is
-   * exactly the widening this check exists to notice. Each is skipped here
-   * and asserted properly in its own rules test.
+   * Two games widen it, both for the same reason: a race. Rummy's claim
+   * window entitles every seat still in the race to grab the same discard,
+   * and BS's challenge window entitles every seat but the claimer to doubt a
+   * play — plus the seat on turn, who may play straight over the top of an
+   * open window. In both, `currentSeat` names only the seat the PACING waits
+   * on.
+   *
+   * Those two are ASSERTED here rather than skipped, which is the difference
+   * that matters. The first version of this returned early whenever a window
+   * was open — but a window is exactly when an out-of-turn bug is reachable,
+   * so the exemption was a hole in the check rather than a narrowing of it,
+   * and it covered the one game that opens a window after every single play.
+   * Now each race states the set of seats it means to entitle, and anything
+   * outside that set is a failure like any other.
    */
   const SEATS: Record<GameId, number> = {
     spades: 4,
@@ -401,8 +408,33 @@ describe("legalActions as the submit gate", () => {
     bs: 4,
   };
 
+  /** Seats a race in progress entitles, or null when no race is open. */
+  type Racing = { seats: Set<number>; why: string } | null;
+
+  function raceEntitles(gameId: GameId, state: unknown): Racing {
+    const s = state as {
+      claimWindow?: { pending: ReadonlyArray<{ seat: number }> } | null;
+      window?: { pending: ReadonlyArray<{ seat: number }> } | null;
+      turn?: number;
+    };
+    if (gameId === "rummy" && s.claimWindow) {
+      return {
+        seats: new Set(s.claimWindow.pending.map((p) => p.seat)),
+        why: "everyone still in the claim race, and nobody else",
+      };
+    }
+    if (gameId === "bs" && s.window) {
+      const seats = new Set(s.window.pending.map((p) => p.seat));
+      // The interrupt: the seat on turn may play over an open window, which
+      // is the only thing stopping a generous window holding up a table.
+      if (typeof s.turn === "number") seats.add(s.turn);
+      return { seats, why: "everyone still able to doubt the play, plus the seat on turn" };
+    }
+    return null;
+  }
+
   for (const gameId of GAME_IDS) {
-    it(`${gameId}: no seat may act that is not the one on turn`, () => {
+    it(`${gameId}: no seat may act that the game has not entitled`, () => {
       const entry = GAMES[gameId];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
@@ -418,16 +450,28 @@ describe("legalActions as the submit gate", () => {
 
       const wrong: string[] = [];
       let checks = 0;
+      let raced = 0;
       session.setEmit(() => {
-        const state = session.snapshot() as { claimWindow?: unknown; window?: unknown };
-        if (gameId === "rummy" && state.claimWindow) return;
-        if (gameId === "bs" && state.window) return;
+        const state = session.snapshot();
+        const race = raceEntitles(gameId, state);
         const current = definition.currentSeat(state);
+        if (race) {
+          raced++;
+          // The seat the pacing waits on must be one of the entitled, or the
+          // table is parked on somebody who cannot act.
+          if (current !== null && !race.seats.has(current)) {
+            wrong.push(`currentSeat ${current} is not entitled during a race`);
+          }
+        }
+        const expected = race ? race.seats : new Set(current === null ? [] : [current]);
         for (let seat = 0; seat < SEATS[gameId]; seat++) {
           checks++;
           const mayAct = definition.legalActions(state, seat).length > 0;
-          if (mayAct !== (current === seat)) {
-            wrong.push(`seat ${seat}: legalActions=${mayAct} currentSeat=${current === seat}`);
+          if (mayAct !== expected.has(seat)) {
+            wrong.push(
+              `seat ${seat}: legalActions=${mayAct} entitled=${expected.has(seat)}` +
+                (race ? ` (${race.why})` : ""),
+            );
           }
         }
       });
@@ -441,6 +485,19 @@ describe("legalActions as the submit gate", () => {
 
       expect(checks).toBeGreaterThan(100);
       expect([...new Set(wrong)].slice(0, 4)).toEqual([]);
+
+      // Guards the guard for the game that is meant to race constantly: BS
+      // opens a window after every play, so a run that saw none would mean
+      // the widened branch above went untested and this whole test had
+      // quietly narrowed back to the ordinary rule.
+      //
+      // Rummy is deliberately not asserted: its claim window opens about
+      // once every twelve rounds, so a 400-turn run genuinely may see none,
+      // and its own rules test constructs the race directly.
+      if (gameId === "bs") {
+        expect(raced, "BS should have raced constantly and did not race at all")
+          .toBeGreaterThan(20);
+      }
     });
   }
 });

@@ -28,39 +28,34 @@ import { useEffect, useMemo, useState } from "react";
 import { Control, DeviceFrame, DEVICES, LabPanel, SegButton, type DeviceKey } from "@/lab/LabShell";
 import type { GameDefinition, PieceId, SeatId } from "@/engine/types";
 import { createRng } from "@/engine/rng";
-import { createDominoes } from "@/games/dominoes/rules";
-import { createLrc } from "@/games/lrc/rules";
-import { createPoker } from "@/games/poker/rules";
-import { createRummy } from "@/games/rummy/rules";
-import { createSpades } from "@/games/spades/rules";
 import { botName } from "@/games/_shared/botIdentity";
 import { redactPlacements } from "@/session/redact";
-import { createBs } from "@/games/bs/rules";
+import { GAMES, GAME_IDS, type GameId } from "@/session/registry";
 import { SeatRing } from "@/table/SeatRing";
 import { TableSurface } from "@/table/TableSurface";
 import { useTableStore } from "@/table/store";
 
-type GameKey = "spades" | "dominoes" | "poker" | "rummy" | "lrc" | "bs";
-
 /**
- * Seats are fixed per game rather than adjustable: this page is about
- * WHO CAN SEE WHAT, and a seat-count slider is what `/lab/seats` is for.
+ * Every game comes from the shared registry, not from a list kept here.
+ *
+ * This page used to hold its own union of game ids and its own table of
+ * factories, which is a second list with nothing holding it to the first: a
+ * game added to the app and forgotten here simply never got audited. That is
+ * the worst place for a list to fall behind, because this page exists
+ * precisely to catch what unit tests cannot see — a face-down card whose real
+ * id is still in the store looks perfect and is completely broken.
+ *
+ * Seats are fixed rather than adjustable: this page is about WHO CAN SEE WHAT,
+ * and a seat-count slider is what `/lab/seats` is for. Four suits every game
+ * today and is clamped to what each one actually allows, so a future game with
+ * a higher floor still gets a legal table here instead of a crash.
  */
-const GAMES: Record<
-  GameKey,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  { label: string; seats: number; make: () => GameDefinition<any, any> }
-> = {
-  spades: { label: "Spades", seats: 4, make: () => createSpades() },
-  dominoes: { label: "Dominoes", seats: 4, make: () => createDominoes() },
-  poker: { label: "Poker", seats: 4, make: () => createPoker() },
-  rummy: { label: "Rummy", seats: 4, make: () => createRummy() },
-  lrc: { label: "LRC", seats: 4, make: () => createLrc() },
-  // The hardest subject this page has: BS's pile is a growing stack of cards
-  // that are face down to EVERYBODY, its own contributor included, so almost
-  // every piece on the table is one the viewer must not be able to name.
-  bs: { label: "BS", seats: 4, make: () => createBs() },
-};
+const WANTED_SEATS = 4;
+
+function seatsFor(id: GameId): number {
+  const entry = GAMES[id];
+  return Math.min(entry.maxSeats, Math.max(entry.minSeats, WANTED_SEATS));
+}
 
 /**
  * Every id the viewer must not be able to name, read off the TRUE state.
@@ -84,14 +79,16 @@ function secretsFor(
 }
 
 export default function RedactLab() {
-  const [game, setGame] = useState<GameKey>("spades");
+  const [game, setGame] = useState<GameId>("spades");
   const [device, setDevice] = useState<DeviceKey>("desktop");
   const [viewer, setViewer] = useState(0);
   const [seed, setSeed] = useState(4242);
 
   const { definition, seats } = useMemo(() => {
     const entry = GAMES[game];
-    return { definition: entry.make(), seats: entry.seats };
+    // Through `parse({})` so the lab builds each game exactly the way a room
+    // does, defaults and clamps included.
+    return { definition: entry.create(entry.parse({})), seats: seatsFor(game) };
   }, [game]);
 
   // One deal, held still. Every control except the seed re-reads it
@@ -142,10 +139,7 @@ export default function RedactLab() {
       <LabPanel>
         <Control label="Game">
           <SegButton
-            options={(Object.keys(GAMES) as GameKey[]).map((k) => ({
-              value: k,
-              label: GAMES[k].label,
-            }))}
+            options={GAME_IDS.map((k) => ({ value: k, label: GAMES[k].name }))}
             value={game}
             onChange={(v) => {
               setGame(v);

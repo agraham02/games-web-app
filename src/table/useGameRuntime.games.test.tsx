@@ -20,27 +20,44 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameDefinition } from "@/engine/types";
 import { HERO } from "@/engine/types";
-import { dominoes } from "@/games/dominoes/rules";
-import { lrc } from "@/games/lrc/rules";
-import { bs } from "@/games/bs/rules";
-import { poker } from "@/games/poker/rules";
-import { rummy } from "@/games/rummy/rules";
-import { spades } from "@/games/spades/rules";
+import { GAMES as CATALOGUE, GAME_IDS } from "@/session/registry";
 import { useTableStore } from "./store";
 import { useGameRuntime } from "./useGameRuntime";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const GAMES: ReadonlyArray<{ name: string; definition: GameDefinition<any, any> }> = [
-  { name: "LRC", definition: lrc },
-  { name: "Dominoes", definition: dominoes },
-  { name: "Spades", definition: spades },
-  { name: "Rummy 500", definition: rummy },
-  { name: "Poker", definition: poker },
-  { name: "BS", definition: bs },
-];
+/**
+ * Derived from the shared registry rather than listed here.
+ *
+ * It was a hand-written array of six definitions, and that is a second list
+ * with nothing holding it to the first: a seventh game would be added to the
+ * app and silently never driven through the hook, which is the one thing this
+ * file exists to do. Built through `parse({})` as well, so each game is
+ * constructed exactly the way a room constructs it — defaults and clamps
+ * included — rather than through a singleton that may carry different options.
+ */
+const GAMES: ReadonlyArray<{
+  name: string;
+  seats: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  definition: GameDefinition<any, any>;
+}> = GAME_IDS.map((id) => {
+  const entry = CATALOGUE[id];
+  return {
+    name: entry.name,
+    // Four seats suits every game today; clamped to what each one actually
+    // allows so a future game with a higher floor gets a legal table here
+    // instead of a crash nobody expected from this file.
+    seats: Math.min(entry.maxSeats, Math.max(entry.minSeats, 4)),
+    definition: entry.create(entry.parse({})),
+  };
+});
 
-/** Four seats is legal for all six games, so one number covers the table. */
-const SEATS = 4;
+/**
+ * The two manual-mode tests below want ONE game rather than all of them, and
+ * Spades is the pick because its turn order is plain: four seats, no races, no
+ * sub-decisions that seize the turn. Taken from the same derived list so there
+ * is still only one place a game is built.
+ */
+const SPADES = GAMES.find((g) => g.name === "Spades")!;
 
 describe("useGameRuntime — every game still runs through the extracted session", () => {
   beforeEach(() => {
@@ -70,10 +87,10 @@ describe("useGameRuntime — every game still runs through the extracted session
     useTableStore.getState().reset({}, {});
   });
 
-  for (const { name, definition } of GAMES) {
+  for (const { name, definition, seats } of GAMES) {
     it(`${name}: deals onto the table and reconciles real placements`, () => {
       const { result } = renderHook(() =>
-        useGameRuntime(definition, { seats: SEATS, seed: 4242 }),
+        useGameRuntime(definition, { seats, seed: 4242 }),
       );
 
       // The opening deal is dispatched synchronously on mount, then
@@ -94,7 +111,7 @@ describe("useGameRuntime — every game still runs through the extracted session
 
     it(`${name}: paces to a stopping point rather than racing to the end`, () => {
       const { result } = renderHook(() =>
-        useGameRuntime(definition, { seats: SEATS, seed: 99 }),
+        useGameRuntime(definition, { seats, seed: 99 }),
       );
 
       act(() => {
@@ -126,7 +143,11 @@ describe("useGameRuntime — every game still runs through the extracted session
     // Under auto-advance the bots would play straight back round to the
     // hero and there would be nothing to test against.
     const { result } = renderHook(() =>
-      useGameRuntime(spades, { seats: SEATS, seed: 17, autoAdvance: false }),
+      useGameRuntime(SPADES.definition, {
+        seats: SPADES.seats,
+        seed: 17,
+        autoAdvance: false,
+      }),
     );
 
     act(() => {
@@ -136,13 +157,16 @@ describe("useGameRuntime — every game still runs through the extracted session
     // Asserted rather than branched on: a precondition inside an `if` is
     // how a test quietly stops testing anything the day the setup shifts.
     const before = result.current.rawState;
-    expect(spades.currentSeat(before)).not.toBe(HERO);
+    expect(SPADES.definition.currentSeat(before)).not.toBe(HERO);
 
     // Borrow the action the seat that IS on turn would legitimately make,
     // so the only thing wrong with the submission is who sent it. A
     // made-up card would prove nothing: Spades' own `reduce` discards an
     // illegal play regardless, so the test would pass with the gate gone.
-    const theirMove = spades.legalActions(before, spades.currentSeat(before)!)[0]!;
+    const theirMove = SPADES.definition.legalActions(
+      before,
+      SPADES.definition.currentSeat(before)!,
+    )[0]!;
     act(() => {
       result.current.submitAction(theirMove);
     });
@@ -154,7 +178,11 @@ describe("useGameRuntime — every game still runs through the extracted session
     // `configure()` call rather than a captured constructor value — so the
     // thing worth proving is that flipping it still actually holds a turn.
     const { result } = renderHook(() =>
-      useGameRuntime(spades, { seats: SEATS, seed: 17, autoAdvance: false }),
+      useGameRuntime(SPADES.definition, {
+        seats: SPADES.seats,
+        seed: 17,
+        autoAdvance: false,
+      }),
     );
 
     act(() => {
@@ -198,10 +226,10 @@ describe("useGameRuntime — every game still runs through the extracted session
      *
      * Found by running the app, which is the only place StrictMode is on.
      */
-    for (const { name, definition } of GAMES) {
+    for (const { name, definition, seats } of GAMES) {
       it(`${name}: still runs its first bot turn after a double mount`, () => {
         const { result, rerender } = renderHook(
-          () => useGameRuntime(definition, { seats: SEATS, seed: 4242 }),
+          () => useGameRuntime(definition, { seats, seed: 4242 }),
           { wrapper: StrictMode },
         );
         rerender();
