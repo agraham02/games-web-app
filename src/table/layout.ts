@@ -70,6 +70,11 @@ const Z: Record<string, number> = {
   center: 950,
   stub: 120,
   burnt: 320,
+  // BS's pile sits where a discard would; `reveal` must clear it, because
+  // a challenged play reaches the row by flying off the top of the stack
+  // and has to be above it the whole way.
+  pile: 300,
+  reveal: 420,
 };
 const Z_HERO_HAND = 1000;
 const Z_SELECTED = 5000;
@@ -938,6 +943,55 @@ export function layoutPiece(
       const { cx, cy, tilt } = miniStackSlot(g.zones.burnt, p.index);
       const { x, y } = centred(cx, cy, g);
       return { x, y, rotate: tilt, scale: miniScale, z, opacity };
+    }
+
+    /* -------------------------------------------------- pile */
+    case "pile": {
+      // BS's one central stack of played-but-unverified cards — see
+      // engine/types.ts's `ZoneId` doc for why this is neither `"deck"`,
+      // `"discard"` nor `"trick"`.
+      const zone = g.zones.pile;
+      const { cx, cy } = boxCentre(zone);
+      // A deep stack reads as depth, not as 52 individually offset cards
+      // — capped, the same way `deck` caps its own lift.
+      const lift = Math.min(p.index, 12) * 0.45;
+      // A small deterministic tilt makes a pile somebody threw cards at
+      // rather than a machine-stacked block. Same recipe as `discard`.
+      const tilt = ((p.index * 37) % 9) - 4;
+      // The play that just landed is the only thing on this pile anyone
+      // can act on, so it steps clear of the stack instead of
+      // disappearing into it. Counted from the TOP rather than from a
+      // group index, because the pile is deliberately ONE bucket: making
+      // the live play its own `group` would restart `index`/`count`
+      // inside it and take the stack's whole depth with it.
+      const fromTop = p.count - 1 - p.index;
+      const step = p.highlighted === true ? g.card.w * 0.17 : 0;
+      const { x, y } = centred(
+        cx + lift + fromTop * step,
+        cy - lift - fromTop * step * 0.4,
+        g,
+      );
+      return { x, y, rotate: tilt, scale: tableScale, z, opacity };
+    }
+
+    /* ------------------------------------------------ reveal */
+    case "reveal": {
+      // A ROW, not a stack: the entire point of a reveal is that every
+      // challenged card is legible at once. Compresses the gap before the
+      // cards, exactly as `community` does, and for the same reason —
+      // `resolveTable` already clamped the box to the play area, so the
+      // only thing left to give on a narrow phone is the spacing.
+      const zone = g.zones.reveal;
+      const gap = g.card.w * 0.16;
+      const gaps = Math.max(0, p.count - 1);
+      const totalW = g.card.w * p.count + gap * gaps;
+      const effGap = gap * Math.min(1, zone.w / Math.max(1, totalW));
+      const rowW = g.card.w * p.count + effGap * gaps;
+      const originX = zone.x + zone.w / 2 - rowW / 2 + g.card.w / 2;
+      const rcx = originX + p.index * (g.card.w + effGap);
+      const rcy = zone.y + zone.h / 2;
+      const { x, y } = centred(rcx, rcy, g);
+      return { x, y, rotate: 0, scale: tableScale, z, opacity };
     }
 
     /* ------------------------------------------------ centre */

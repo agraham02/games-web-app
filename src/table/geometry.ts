@@ -71,7 +71,14 @@ export type ZoneName =
   | "stub"
   /** Poker's own burnt-card pile, beside `stub` — see `engine/types.ts`'s
    * `ZoneId` doc for why this is not `"discard"`. */
-  | "burnt";
+  | "burnt"
+  /** BS's single central face-down stack, dead centre with `reveal`
+   * stacked above it — see `engine/types.ts`'s `ZoneId` doc for why this
+   * is neither `"deck"`, `"discard"` nor `"trick"`. */
+  | "pile"
+  /** The face-up row a challenged play is turned over into, above
+   * `pile` — see `engine/types.ts`'s `ZoneId` doc. */
+  | "reveal";
 
 /**
  * Where a given SEAT is sitting, from this viewer's chair.
@@ -719,6 +726,28 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const stubCardW = spec.miniCard.w * 1.3;
   const stubPairGap = spec.miniCard.w * 0.3;
 
+  // BS: one central face-down pile with the face-up `reveal` row directly
+  // above it. Laid out as a PAIR centred on `cy` rather than as two
+  // independent guesses at "the middle of the table", because that is the
+  // only arrangement in which the two cannot overlap — the same reason
+  // poker's community/pot/stub/burnt are computed as one chain rather than
+  // each from its own fraction of `cy` (see `engine/types.ts`'s `ZoneId`).
+  //
+  // The gap between them gives ground first on a viewport too short for
+  // both rows; past that the pair keeps its size and is clamped as far
+  // inside `play` as it will go, the same "being drawable beats being
+  // perfectly contained" trade every zone below `community` already makes.
+  const bsGapWanted = spec.card.h * 0.3;
+  const bsGap = Math.max(0, Math.min(bsGapWanted, play.h - spec.card.h * 2));
+  const bsPairH = spec.card.h * 2 + bsGap;
+  const bsTop = Math.max(play.y, Math.min(cy - bsPairH / 2, play.y + play.h - bsPairH));
+  // Four cards is as many as one rank can hold, so a reveal never needs a
+  // fifth slot. They deliberately do not overlap — the whole point of the
+  // row is that all of them are legible at once — so it wants its full
+  // width, clamped to the play area for a narrow phone.
+  const bsRevealGap = spec.card.w * 0.16;
+  const bsRevealW = Math.min(play.w * 0.94, spec.card.w * 4 + bsRevealGap * 3);
+
   const pileGap = spec.card.w * 0.45;
   const deckX = cx - spec.card.w / 2 - pileGap;
   const discardX = cx + spec.card.w / 2 + pileGap;
@@ -867,6 +896,13 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     pot: { x: cx - potW / 2, y: potY, w: potW, h: potH },
     stub: { x: cx - stubPairGap / 2 - stubCardW, y: stubY, w: stubCardW, h: stubH },
     burnt: { x: cx + stubPairGap / 2, y: stubY, w: stubCardW, h: stubH },
+    pile: {
+      x: cx - spec.card.w / 2,
+      y: bsTop + spec.card.h + bsGap,
+      w: spec.card.w,
+      h: spec.card.h,
+    },
+    reveal: { x: cx - bsRevealW / 2, y: bsTop, w: bsRevealW, h: spec.card.h },
   };
 
   // The line the pile assembly is centred on.

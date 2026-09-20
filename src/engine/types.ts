@@ -78,6 +78,37 @@ export type ZoneId =
    */
   | "burnt"
   /**
+   * BS's single central stack of played-but-unverified cards —
+   * deliberately NOT `"deck"` or `"discard"`. Those two are offset from
+   * table centre by `card.w/2 + 0.45*card.w` in opposite directions,
+   * precisely so they can sit side by side; a game with only ONE pile
+   * placed in either of them reads as visibly off-centre with nothing
+   * beside it to explain why. And it cannot be `"trick"`: that box is
+   * `card.h * 2.6` tall around `cy`, which leaves nowhere for the
+   * face-up `"reveal"` row this pile hands its top cards to.
+   *
+   * So: its own box, dead centre, with `"reveal"` stacked above it and a
+   * real gap between — the same "dedicated, non-overlapping by
+   * construction" answer `"community"`/`"pot"`/`"stub"`/`"burnt"` are,
+   * arrived at for the same reason rather than guessed at.
+   *
+   * Every card here is face down to EVERYONE, including whoever played
+   * it. That is not a redaction compromise, it is the game: a claim is
+   * worth doubting exactly because nobody can see it.
+   */
+  | "pile"
+  /**
+   * The cards from a challenged play, turned face up for everyone while
+   * the table reads the verdict — BS's one moment of public truth.
+   *
+   * A row rather than a stack, because the whole point is that all 1-4
+   * of them are legible at once. It sits ABOVE `"pile"` (see there for
+   * why neither reuses an existing zone), and the cards reach it by a
+   * real `move`, so the reveal is a gesture off the top of the pile
+   * rather than an appearance.
+   */
+  | "reveal"
+  /**
    * A chain of pieces laid end to end — dominoes' line of play. Unlike
    * every other zone, position here is NOT derived from index/count:
    * where a domino sits depends on the exact run of tiles before it
