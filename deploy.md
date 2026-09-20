@@ -158,9 +158,26 @@ fits — a second free service would not.
 If the sleep bothers you, in rising order of effort:
 
 1. **Do nothing.** For ten friends, the minute-long first load is usually fine.
-2. **Ping it.** A free uptime monitor (UptimeRobot, Better Stack, cron-job.org)
-   hitting `https://<your-app>/healthz` every 10 minutes keeps it awake. Check
-   Render's current terms on this before relying on it.
+2. **Ping it from outside.** A free uptime monitor (UptimeRobot, Better
+   Stack, cron-job.org) requesting `https://<your-app>/healthz` every 10
+   minutes or less keeps the service awake, since Render counts inbound HTTP
+   requests as traffic. Set it up in the monitor's own dashboard; nothing in
+   this repo is involved.
+
+   **What Render's docs say about it (checked September 2026):** nothing,
+   either way. The free-tier page does not mention pings or keep-alives, and
+   the terms of service text could not be retrieved to check. Render
+   recommends external monitoring probes generally, but as health monitoring
+   rather than as a way to avoid sleeping. The free tier is labelled "not for
+   production applications", and the only abuse language found concerns
+   *outbound* traffic. So it is a common practice that is neither endorsed nor
+   forbidden, and the worst realistic outcome is the free service being
+   suspended. Read Render's current terms yourself before relying on it.
+
+   **Do not do this from a GitHub Actions cron.** It would run ~4,400 times a
+   month, which exhausts a private repo's free minutes; scheduled runs are also
+   delayed by minutes at busy times, which a 15-minute idle window cannot
+   absorb.
 3. **Use a host that does not sleep** — Oracle's Always Free VM (below) or
    Fly/Railway at a few dollars a month.
 
