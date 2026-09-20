@@ -109,6 +109,36 @@ export function canCall(view: BsView, live: Live): boolean {
   return entitledToCall(live.state, view.viewerSeat);
 }
 
+/**
+ * Which of the two the action band shows - for both screens, and testable
+ * without mounting a table.
+ *
+ * A window is the louder of the two and wins the row, because it is the one
+ * that expires. But it cannot win OUTRIGHT, and that was the bug: a window
+ * enrols every seat but the claimer, so the seat on turn is ALWAYS entitled
+ * to call as well, and preferring `calling` unconditionally meant the player
+ * on turn was never shown a Play button at all. That deletes the interrupt
+ * the rules go out of their way to grant (see `canPlay`, and `legalActions`):
+ * a person playing straight over an open window is the most natural thing
+ * that ends one, and it is the only defence a generous window has. Worse,
+ * taps were still accepted, so the player lifted cards out of their hand and
+ * then had nothing to press - until they pressed "Let it go" and forfeited
+ * the very challenge the band was protecting.
+ *
+ * Lifting a card is the signal. Until then the window owns the row; once
+ * cards are up the player has plainly chosen to play, so the claim owns it.
+ */
+export function barMode(
+  view: BsView,
+  live: Live,
+  heldCount: number,
+): "challenge" | "claim" | null {
+  const playing = canPlay(view, live);
+  if (playing && heldCount > 0) return "claim";
+  if (canCall(view, live)) return "challenge";
+  return playing ? "claim" : null;
+}
+
 /* ============================================================
    Picking cards up
    ============================================================ */
@@ -219,16 +249,15 @@ export function BsTable({
   useHeldLift(live, held);
   useChallengeCountdown(view, live);
 
-  const calling = canCall(view, live);
-  const playing = canPlay(view, live);
-
-  // One band, one owner, two modes — see `HandZone`'s `bar`. A window is the
-  // louder of the two and wins the row, because it is the one that expires.
-  const bar = calling ? (
-    <ChallengeBar view={view} live={live} />
-  ) : playing ? (
-    <ClaimBar live={live} held={held} onClearHeld={onClearHeld} />
-  ) : undefined;
+  // One band, one owner, two modes - see `HandZone`'s `bar`, and
+  // `barMode` for which one wins and why.
+  const mode = barMode(view, live, held.length);
+  const bar =
+    mode === "challenge" ? (
+      <ChallengeBar view={view} live={live} />
+    ) : mode === "claim" ? (
+      <ClaimBar live={live} held={held} onClearHeld={onClearHeld} />
+    ) : undefined;
 
   return (
     <>

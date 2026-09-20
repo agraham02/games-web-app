@@ -90,6 +90,25 @@ export function useRoom(): RoomApi {
         switch (message.t) {
           case "hello":
             setGreeted(true);
+            // The server has just said whether this identity is still in a
+            // room, and a reconnect is the only time it can say no while we
+            // are showing one. `connection` already drops its replay cache
+            // on this (see its own `hello` case), but that only decides what
+            // a FUTURE mount replays - the tab that is open keeps its React
+            // state, so a server restart left a fully interactive lobby for a
+            // room that no longer existed, every button on it answering
+            // `no-room` into a screen that renders no error.
+            if (!message.inRoom) {
+              setRoom(null);
+              setFrame(null);
+              lastSeq.current = -1;
+              // A knock the server has forgotten cannot be approved, so
+              // sitting on "waiting to be let in" would wait forever.
+              setPendingCode((code) => {
+                if (code) announce("That room is no longer there.");
+                return null;
+              });
+            }
             break;
 
           case "room":

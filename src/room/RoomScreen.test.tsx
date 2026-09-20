@@ -184,6 +184,28 @@ describe("the room client", () => {
       await screen.findByText("ABCD");
     }
 
+    it("lets go of a room the server no longer has", async () => {
+      // A server restart is the ordinary way here: the socket comes back,
+      // `hello` answers "you are not in a room", and everything on screen
+      // describes one that no longer exists. The connection already dropped
+      // its replay cache on this, but that only decides what a FUTURE mount
+      // sees - the tab that is open kept its own state, so the player was
+      // left holding a fully interactive lobby whose every button answers
+      // `no-room`, which nothing renders.
+      await enterLobby();
+      expect(screen.getByText("ABCD")).toBeInTheDocument();
+
+      socket().deliver({
+        t: "hello",
+        session: "me",
+        protocol: PROTOCOL_VERSION,
+        inRoom: false,
+      });
+
+      await screen.findByText("Rooms");
+      expect(screen.queryByText("ABCD")).not.toBeInTheDocument();
+    });
+
     it("shows the code and everybody in the room", async () => {
       await enterLobby();
       expect(screen.getByText("ABCD")).toBeInTheDocument();
