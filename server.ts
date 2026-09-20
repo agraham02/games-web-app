@@ -19,6 +19,7 @@
 import { createServer } from "node:http";
 import next from "next";
 import { RoomRegistry } from "@/server/RoomRegistry";
+import { KeepAwake, keepAwakeUrl } from "@/server/keepAwake";
 import { attachWebSocketServer, WS_PATH } from "@/server/wsServer";
 import { debugEnabled, handleDebugRequest } from "@/server/debug";
 import { log, setLogLevel } from "@/server/log";
@@ -77,8 +78,17 @@ async function main(): Promise<void> {
 
   const detach = attachWebSocketServer(server, registry);
 
+  // Keeps a free host from sleeping under a game in progress. See the file.
+  const awakeUrl = keepAwakeUrl(process.env);
+  const keepAwake = awakeUrl
+    ? new KeepAwake({ url: awakeUrl, hasPeople: () => registry.hasConnections() })
+    : null;
+  keepAwake?.start();
+  if (awakeUrl) log.info("keep-awake enabled", { event: "keep-awake", url: awakeUrl });
+
   const shutdown = (signal: string) => {
     log.info("shutting down", { event: signal });
+    keepAwake?.stop();
     detach();
     registry.disposeAll();
     server.close(() => process.exit(0));

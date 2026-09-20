@@ -8,8 +8,11 @@
 # the process, so two friends arranging to play should both load the page
 # before anyone creates a room.
 #
-# The client sends a keepalive every 25 seconds (see `connection.ts`), so
-# an open table counts as traffic and will not idle out mid-game.
+# A game in play will not be cut off: the client sends a keepalive every
+# 25 seconds, and on top of that the server requests its own public URL
+# every few minutes WHILE ANYONE IS CONNECTED (see `keepAwake.ts`, which
+# reads RENDER_EXTERNAL_URL — Render sets it, so nothing to configure).
+# When nobody is connected it does nothing, and the service sleeps.
 #
 # Upgrading to the cheapest paid instance removes the spin-down entirely
 # and changes nothing else here.

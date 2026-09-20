@@ -210,6 +210,19 @@ export class RoomRegistry {
     this.reapers.delete(code);
   }
 
+  /**
+   * Is anybody connected to any room right now?
+   *
+   * The question `KeepAwake` asks: a service should stay awake exactly
+   * while a person is in it, and not a moment longer.
+   */
+  hasConnections(): boolean {
+    for (const runtime of this.rooms.values()) {
+      if (this.connectedIn(runtime) > 0) return true;
+    }
+    return false;
+  }
+
   private connectedIn(runtime: RoomRuntime): number {
     return Object.values(runtime.room.members).filter((m) => m.connected).length;
   }

@@ -819,6 +819,20 @@ describe("the server, in process", () => {
       expect(registry.get(code)).not.toBeNull();
     });
 
+    it("knows whether anybody is connected, for the keep-awake check", () => {
+      // What `KeepAwake` asks before it makes any request: a service
+      // should stay awake exactly while a person is in it.
+      expect(registry.hasConnections()).toBe(false);
+
+      const { peer } = host("keeper");
+      expect(registry.hasConnections()).toBe(true);
+
+      router.onClose(peer);
+      // A room outlives its last member by a minute, but nobody is IN it.
+      expect(registry.size).toBe(1);
+      expect(registry.hasConnections()).toBe(false);
+    });
+
     it("counts a message in bytes rather than in UTF-16 code units", () => {
       // `String.length` undercounts every character outside the BMP by
       // half, so the cap it thought it was enforcing was up to four times

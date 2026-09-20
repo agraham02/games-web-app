@@ -137,49 +137,97 @@ your service → **Events** (or **Deploys**) → pick a previous deploy →
 
 ---
 
-## The free-tier catch, and what to do about it
+## The free-tier catch, and how a game is protected from it
 
-Render's free service **spins down after 15 minutes without traffic** and
-takes about a minute to wake ([Render's free-tier
-docs](https://render.com/docs/free)). Traffic includes WebSocket messages from
-open connections, and this client sends a keepalive every 25 seconds, so **a
-table in play will not idle out**.
+Render's free service **spins down after 15 minutes without inbound traffic**
+and takes about a minute to wake ([Render's free-tier
+docs](https://render.com/docs/free)). Rooms live in the process's memory, so a
+spin-down ends every game in progress, with no warning. A cold start is
+harmless; **a game cut off at fifteen minutes is the thing to prevent.**
 
-What that means in practice: rooms are in memory and expire a minute after the
-last person leaves, so there is rarely anything to lose. But a room *does* die
-with the process. Two friends arranging to play should both open the site
-before anyone makes a room, and the first person to arrive after a quiet
-stretch will wait about a minute for it to wake.
+Render's docs say WebSocket messages from an open connection count as traffic,
+and this client sends one every 25 seconds. That should be enough. But a
+platform's idle accounting is not something to find out about by losing a
+game, and a game cut off exactly this way is what happened on an earlier
+project, so **the server does not rely on it.**
+
+### What the server does
+
+[`src/server/keepAwake.ts`](src/server/keepAwake.ts). While at least one person
+is connected to any room, the server makes an ordinary HTTP request to its own
+public `/healthz` every 4 minutes. That is inbound traffic however the platform
+counts, and 4 minutes leaves room for three attempts inside the 15-minute
+window.
+
+The important half is the other direction: **when nobody is connected it does
+nothing.** So it protects a game in play and stops the moment the last person
+leaves, after which the service sleeps as normal. It does not turn a free
+instance into an always-on one, does not spend the 750 monthly hours on an
+empty room, and is a small request every few minutes only while people are
+actually playing.
+
+It needs no configuration on Render, which sets `RENDER_EXTERNAL_URL` on every
+web service. It only runs in production, so a local server never phones a live
+one.
+
+| Variable | Effect |
+|---|---|
+| `RENDER_EXTERNAL_URL` | Set by Render. This is the address it calls. |
+| `KEEP_AWAKE_URL` | Use this address instead, or on a host that does not set the above. |
+| `KEEP_AWAKE=0` | Turn it off. |
+
+The startup log says `keep-awake enabled` with the URL it is using, so you can
+confirm from the Render logs that it is on.
+
+### Prove it on the real deployment
+
+Neither Render's docs nor a test in this repo can show that a real game
+survives fifteen minutes on a real free instance; only running one can. The
+first time you deploy:
+
+1. Open the site on two devices, make a room and start a game. Then leave it
+   alone, letting the bots play, for **at least 20 minutes**.
+2. The game should still be running. In the Render logs you can also see the
+   `GET /healthz` requests arrive about every four minutes.
+3. Close every tab, wait 20 minutes, and open the site again. It should take
+   about a minute to load (asleep). That is the free tier behaving, and it is
+   the other half of the design working.
+
+If step 1 fails, the server-side request is not counting on your plan; the
+options below are the fallback.
+
+### About Render's terms
+
+A self-request while people are playing is the mildest form of keep-alive there
+is, but it is still a way of staying awake, and Render's free-tier docs are
+silent on it (checked September 2026; the terms-of-service text could not be
+retrieved). They do label the free tier "not for production applications", and
+the only abuse language concerns *outbound* traffic. Read Render's current
+terms yourself if it matters to you. The worst realistic outcome is the free
+service being suspended.
+
+### If it is not enough
+
+1. **An external monitor** (UptimeRobot, Better Stack, cron-job.org) requesting
+   `https://<your-app>/healthz` every 10 minutes keeps it awake permanently,
+   including when nobody is playing. Set it up in the monitor's dashboard;
+   nothing in this repo is involved. Do **not** use a GitHub Actions cron for
+   it: about 4,400 runs a month would exhaust a private repo's free minutes,
+   and scheduled runs are delayed by minutes at busy times, which a 15-minute
+   window cannot absorb.
+2. **A host that does not sleep** — Oracle's Always Free VM (below), or
+   Fly/Railway at a few dollars a month.
 
 Render gives each workspace **750 free instance hours a month**. One service
-running around the clock is about 744, so a single always-awake service just
-fits — a second free service would not.
+running around the clock is about 744, so an always-awake service just fits and
+a second free one would not.
 
-If the sleep bothers you, in rising order of effort:
+### Redeploys still end games
 
-1. **Do nothing.** For ten friends, the minute-long first load is usually fine.
-2. **Ping it from outside.** A free uptime monitor (UptimeRobot, Better
-   Stack, cron-job.org) requesting `https://<your-app>/healthz` every 10
-   minutes or less keeps the service awake, since Render counts inbound HTTP
-   requests as traffic. Set it up in the monitor's own dashboard; nothing in
-   this repo is involved.
-
-   **What Render's docs say about it (checked September 2026):** nothing,
-   either way. The free-tier page does not mention pings or keep-alives, and
-   the terms of service text could not be retrieved to check. Render
-   recommends external monitoring probes generally, but as health monitoring
-   rather than as a way to avoid sleeping. The free tier is labelled "not for
-   production applications", and the only abuse language found concerns
-   *outbound* traffic. So it is a common practice that is neither endorsed nor
-   forbidden, and the worst realistic outcome is the free service being
-   suspended. Read Render's current terms yourself before relying on it.
-
-   **Do not do this from a GitHub Actions cron.** It would run ~4,400 times a
-   month, which exhausts a private repo's free minutes; scheduled runs are also
-   delayed by minutes at busy times, which a 15-minute idle window cannot
-   absorb.
-3. **Use a host that does not sleep** — Oracle's Always Free VM (below) or
-   Fly/Railway at a few dollars a month.
+Restarting the process drops every room, whatever keeps it awake. Deploy when
+nobody is mid-hand. CI deploys on every green push to `main`; if that is a
+problem, add *Required reviewers* to the `production` environment (see above)
+so a deploy waits for you.
 
 ---
 
