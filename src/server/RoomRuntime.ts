@@ -26,7 +26,8 @@
 
 import type { BotDifficulty, PieceId, PieceMeta, PlacementMap, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { GameSession, type SessionFrame } from "@/session/GameSession";
+import { DEFAULT_TURN_HOLD_MS, GameSession, type SessionFrame } from "@/session/GameSession";
+import { playbackMs } from "@/motion/choreographer";
 import { gameEntry, type GameId, type RawSettings } from "@/session/registry";
 import { projectEvents, redactPlacements } from "@/session/redact";
 import {
@@ -104,6 +105,11 @@ export class RoomRuntime {
    * what tells it to send an `unmask` ahead of the play.
    */
   private previous: unknown = null;
+  /**
+   * How long the frame most recently broadcast takes to WATCH. See
+   * `startSession` for why the next bot turn is spaced by it.
+   */
+  private lastFramePlaybackMs = 0;
 
   constructor(opts: RoomRuntimeOptions) {
     this.room = opts.room;
@@ -290,12 +296,37 @@ export class RoomRuntime {
     const session: AnySession = new GameSession({
       definition,
       seats,
+      // From the room's own generator rather than left to `GameSession`,
+      // which would otherwise reach for a fresh random one. A registry is
+      // seeded randomly in production, so this changes nothing there; it
+      // means a seeded registry replays a game's deals and bot choices
+      // exactly, which is what lets a test assert on the bots.
+      seed: this.rng.int(0x7fffffff),
       difficulty: Array.from({ length: seats }, () => difficulty),
       clock: this.clock,
       // The live read that makes bot takeover instant. Asked fresh on every
       // turn, so a player dropping between two turns is picked up by a bot
       // on the very next one with nothing to reconcile.
       isSeatLive: (seat) => isSeatLive(this.room, seat),
+      // How long to wait before the NEXT bot turn is revealed: what the
+      // last frame takes to play, plus the same beat offline has.
+      //
+      // Offline the hold starts when the animation FINISHES, because the
+      // browser only calls `settled()` then. Here it starts when the frame
+      // is broadcast — the server never waits on a client — and the hold
+      // was a flat 900ms. But a bot's `think` (600-1000ms) rides inside
+      // the frame and is played out by every client, so each turn took a
+      // client longer to watch than the server allowed it: the queue grew
+      // by a fraction of a second per bot turn until it passed the
+      // catch-up limit, at which point clients dropped the backlog and
+      // skipped straight to the present. On a table of bots that meant
+      // most animations, and every dice tumble, were skipped.
+      //
+      // Counting the playback here gives a client at normal speed exactly
+      // offline's rhythm. It is still not waiting on anybody: a slow
+      // client falls behind and catches up on its own, and nobody else's
+      // game is any slower for it.
+      turnHoldMs: () => this.lastFramePlaybackMs + DEFAULT_TURN_HOLD_MS,
       emit: (frame) => this.onFrame(frame),
     });
 
@@ -332,6 +363,8 @@ export class RoomRuntime {
     }
 
     this.previous = after;
+    // Before `settled()`, which is what reads it to schedule the next turn.
+    this.lastFramePlaybackMs = playbackMs(frame.events);
     session.settled();
   }
 

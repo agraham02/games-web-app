@@ -221,3 +221,82 @@ export function totalDuration(steps: readonly TimedStep[]): number {
   }
   return end;
 }
+
+/**
+ * How long a step blocks the queue on its own, regardless of what comes
+ * next.
+ *
+ * Most events block nothing: their effect is an animation that runs on
+ * the compositor while the queue moves on, and how soon the NEXT event
+ * starts is that event's `offset`. Three are different, because they are
+ * time itself rather than something that takes time:
+ *
+ *  - `think` renders nothing. It exists solely so an opponent appears to
+ *    be deciding, so its whole `ms` has to run out.
+ *  - `unmask` renders a piece that has never been on this screen, and the
+ *    move that follows must not land in the same paint.
+ *  - `pause` is a beat by definition. LRC emits one ahead of a roll's
+ *    chip moves so the dice can be READ before the chips they decided
+ *    start flying, and the draining loop used to honour only the first
+ *    two — so the beat existed in `choreograph`, was documented as
+ *    obeying skip and reduced motion, and did nothing at all.
+ */
+function blockingMs(event: GameEvent, step: TimedStep | undefined): number {
+  if (event.t === "think") return event.ms;
+  if (event.t === "unmask" || event.t === "pause") return step?.duration ?? 0;
+  return 0;
+}
+
+/**
+ * How long a step of the queue waits before the next one starts. The
+ * single home for a rule that is easy to get subtly wrong, and that the
+ * SERVER now needs as well as the browser.
+ *
+ * TWO clocks decide it, and the bug history is entirely about
+ * conflating them: `next.offset` is how long the UPCOMING event wants to
+ * wait (and `0` is meaningful — it is how `choreograph` says "these play
+ * concurrently"), while `blockingMs` is how long THIS event holds the
+ * queue no matter what. The wait is whichever is longer.
+ */
+export function gapAfter(
+  event: GameEvent,
+  next: GameEvent,
+  opts: ChoreographOptions = {},
+): number {
+  // Both, not `next` alone: `choreograph`'s "same run" detection reads
+  // the event before, so timing `next` in isolation would always see it
+  // as the first of its kind and lose every stagger.
+  const [current, upcoming] = choreograph([event, next], opts);
+  return Math.max(blockingMs(event, current), upcoming?.offset ?? beatOf(event));
+}
+
+/**
+ * How long a step takes when nothing overlaps or follows it: chained
+ * slightly before the animation finishes, because a full stop between
+ * every action reads as lag rather than as weight.
+ */
+export function beatOf(event: GameEvent): number {
+  const [step] = choreograph([event]);
+  if (!step) return 0;
+  return step.duration * (event.t === "think" ? 1 : 0.72);
+}
+
+/**
+ * Milliseconds from a batch starting to its playback going idle — the
+ * moment the browser calls `onIdle` and the game is allowed to move on.
+ *
+ * Not `totalDuration`, though the two look alike. That is when the last
+ * animation FINISHES; this is when the loop is done waiting, which is at
+ * the last event being APPLIED (its animation carries on underneath the
+ * hold that follows). What a turn costs to watch is this one.
+ *
+ * The server uses it to space out bot turns, because it does not wait on
+ * any client to finish showing one — see `RoomRuntime`.
+ */
+export function playbackMs(events: readonly GameEvent[], opts: ChoreographOptions = {}): number {
+  let total = 0;
+  for (let i = 0; i < events.length - 1; i++) {
+    total += gapAfter(events[i]!, events[i + 1]!, opts);
+  }
+  return total;
+}

@@ -548,4 +548,60 @@ test.describe("a room, in real browsers", () => {
     await expect(second.getByText(/playing in another tab/i)).toBeVisible();
   });
 
+
+  test("the deal is watched from the start, not joined half way through", async ({ browser }) => {
+    /*
+      Reported from a real room: a "Dealing you in" screen, and then a table
+      that looked as though most of the deal had already happened offstage.
+
+      The online runtime returned null until the first frame had finished
+      playing, so the animation ran with no table mounted to show it. And
+      the events it ran were partly no-ops: an opponent's cards are
+      addressed by stand-in ids, and a deal aimed at a piece the store is
+      not tracking does nothing, so every hand simply appeared whole.
+
+      Watched from the RECEIVING player's screen, sampled from the moment
+      Start is pressed rather than from when the table is up — which is
+      the point, since a loading screen is exactly what "table is up"
+      would have waited out.
+    */
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    await ada.getByRole("button", { name: "Spades" }).click();
+
+    // A dealt card shows its face; an undealt one is a back. So Bo's own
+    // hand filling in is a count of faces going from nothing to thirteen.
+    const faces = bo.getByRole("img", { name: / of (hearts|spades|clubs|diamonds)$/i });
+    const loading = bo.getByText(/dealing you in/i);
+
+    await ada.getByRole("button", { name: /start spades/i }).click();
+
+    const seen: number[] = [];
+    let sawLoadingScreen = false;
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      if ((await loading.count()) > 0) sawLoadingScreen = true;
+      const n = await faces.count();
+      seen.push(n);
+      if (n >= 13) break;
+      await bo.waitForTimeout(40);
+    }
+
+    expect(sawLoadingScreen, "the table should never be replaced by a loading screen").toBe(false);
+    expect(seen.at(-1), "the hand should end up complete").toBe(13);
+    expect(seen[0], "the first thing seen must not be an already-finished hand").toBeLessThan(13);
+    expect(
+      seen.some((n) => n > 0 && n < 13),
+      `the hand should be seen filling in, not jumping to full — saw ${JSON.stringify(seen)}`,
+    ).toBe(true);
+
+    await one.close();
+    await two.close();
+  });
+
 });

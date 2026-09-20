@@ -43,7 +43,7 @@ import {
   type RummyView,
 } from "@/app/play/rummy/table";
 import { tintFor } from "../Roster";
-import { awayFrom, useOnlineRuntime } from "../useOnlineRuntime";
+import { awayFrom, openingPosition, useOnlineRuntime } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function RummyOnline({ api, room, frame }: OnlineTableProps) {
@@ -58,6 +58,8 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
     frame,
     submit: (action) => api.send({ t: "action", action }),
     nextRound: () => api.send({ t: "nextRound" }),
+    // The undealt table, so the opening deal has a deck to fly from.
+    initial: () => openingPosition(definition, room.seats, frame.seat),
   });
 
   /**
@@ -87,8 +89,9 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
 
   const { picked, pickupDepth, clearSelection, onPieceTap } = useRummySelection(view);
 
-  // The first frame after entering carries no events, so the runtime has
-  // nothing to publish until it has settled one. A beat, not a state.
+  // Only ever null for a moment before there is a frame at all: the table is
+  // drawn from the first frame, and its deal plays once this player's own
+  // table is up.
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (

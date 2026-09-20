@@ -60,7 +60,7 @@ export function isSentinel(id: PieceId): boolean {
  * closing up by one is exactly what the real animation does anyway. What
  * matters is that the count and the positions stay right, and they do.
  */
-function sentinelFor(p: Placement): PieceId {
+export function sentinelFor(p: Placement): PieceId {
   return `${SENTINEL_PREFIX}${p.zone}:${p.seat ?? "-"}:${p.group ?? "-"}:${p.index}`;
 }
 

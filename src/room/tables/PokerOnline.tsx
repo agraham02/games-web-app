@@ -33,7 +33,7 @@ import {
   type PokerView,
 } from "@/app/play/poker/table";
 import { tintFor } from "../Roster";
-import { awayFrom, useOnlineRuntime } from "../useOnlineRuntime";
+import { awayFrom, openingPosition, useOnlineRuntime } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function PokerOnline({ api, room, frame }: OnlineTableProps) {
@@ -46,6 +46,8 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
     frame,
     submit: (action) => api.send({ t: "action", action }),
     nextRound: () => api.send({ t: "nextRound" }),
+    // The undealt table, so the opening deal has a deck to fly from.
+    initial: () => openingPosition(definition, room.seats, frame.seat),
   });
 
   /**
@@ -71,8 +73,9 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
     [frame, room.members],
   );
 
-  // The first frame after entering carries no events, so the runtime has
-  // nothing to publish until it has settled one. A beat, not a state.
+  // Only ever null for a moment before there is a frame at all: the table is
+  // drawn from the first frame, and its deal plays once this player's own
+  // table is up.
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (

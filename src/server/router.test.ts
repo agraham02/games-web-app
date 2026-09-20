@@ -16,6 +16,8 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { TestClock } from "@/session/clock";
+import { playbackMs } from "@/motion/choreographer";
+import { DEFAULT_TURN_HOLD_MS } from "@/session/GameSession";
 import { PROTOCOL_VERSION, type ServerMessage } from "@/session/protocol";
 import { EMPTY_ROOM_TTL_MS, RoomRegistry } from "./RoomRegistry";
 import type { Connection } from "./RoomRuntime";
@@ -521,6 +523,73 @@ describe("the server, in process", () => {
           const after = tableOf(code);
           expect(after.currentSeat).not.toBe(seat);
           expect(after.fingerprint).not.toBe(before);
+        });
+
+        /**
+         * The reason a table of bots used to skip its own animations.
+         *
+         * A bot's `think` rides INSIDE the frame and every client plays it
+         * out, but the server spaced turns by a flat 900ms from the moment
+         * it broadcast. So each turn took a client longer to watch than
+         * the server gave it, the queue grew by a fraction of a second per
+         * turn, and past the catch-up limit clients dropped the backlog
+         * and jumped to the present — taking the dice tumble with it.
+         *
+         * Offline never had this, because there the hold starts when the
+         * animation FINISHES. Online the hold has to be told how long that
+         * was.
+         */
+        it("gives every bot turn as long to watch as it takes to play", () => {
+          /** Wraps a connection so every frame it is sent is timestamped. */
+          const stamped = (conn: FakeConnection) => {
+            const at = new Map<ServerMessage, number>();
+            const original = conn.send.bind(conn);
+            conn.send = (message) => {
+              at.set(message, clock.now());
+              original(message);
+            };
+            return at;
+          };
+
+          const h = host("p1");
+          const second = peerFor("p2");
+          send(second.peer, { t: "joinRoom", code: h.code, name: "Second" });
+          send(h.peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+          send(h.peer, { t: "startGame" });
+
+          const { session } = parkOnAHuman(h.code);
+          const hostIsOnTurn = session === registry.sessionFor("p1");
+          const survivor = hostIsOnTurn ? second : h;
+          const dropper = hostIsOnTurn ? h : second;
+
+          const at = stamped(survivor.conn);
+          survivor.conn.clear();
+          router.onClose(dropper.peer);
+          clock.drain();
+
+          // The bot-turn frames as the survivor saw them: `think` rides
+          // first in exactly those, and in nothing else.
+          const turns = survivor.conn
+            .all("frame")
+            .map((m) => ({ at: at.get(m)!, events: m.frame.events }))
+            .filter((t) => t.events[0]?.t === "think");
+
+          expect(turns.length, "bots should have taken more than one turn").toBeGreaterThanOrEqual(2);
+          for (let i = 1; i < turns.length; i++) {
+            const gap = turns[i]!.at - turns[i - 1]!.at;
+            // Exactly the hold plus what the previous frame takes to play.
+            // `unmask` is dropped first: it is added per viewer, so the
+            // server never saw it when it worked the estimate out.
+            const expected =
+              DEFAULT_TURN_HOLD_MS + playbackMs(turns[i - 1]!.events.filter((e) => e.t !== "unmask"));
+            expect(gap, `bot turn ${i} came ${gap}ms after the last`).toBe(expected);
+          }
+          // And the case this exists for is really in here: at least one
+          // turn long enough that the old flat 900ms would have been wrong.
+          expect(
+            turns.slice(0, -1).some((t) => playbackMs(t.events.filter((e) => e.t !== "unmask")) > 0),
+            "no turn in this run took any time to watch, so nothing was tested",
+          ).toBe(true);
         });
 
         it("still waits for a human who is present", () => {

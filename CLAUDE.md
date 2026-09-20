@@ -181,6 +181,74 @@ disagree. **Poker cannot use it**: it returns `{t:"bet", to: range.min}`
 as one representative of a continuous range, so membership would refuse
 every bet but the minimum. It validates the range by hand.
 
+### An animation needs a table to play on, and a pile to fly from
+
+The online runtime used to return `null` until the first frame had
+FINISHED playing, so an opening deal ran with no table mounted — the
+"Dealing you in" screen, and then a table that looked as though most of
+the deal had happened offstage. That was half of it. The other half was
+silent: `applyEvent`'s `moveTo` does nothing (`if (!prev) return`) to a
+piece the store is not tracking, and online the store was EMPTY, so every
+opponent's `deal` — addressed by a slot-named stand-in the store had never
+heard of — was a no-op and their hands simply appeared at the reconcile.
+
+Offline gets the starting position for free: it resets the store to
+`placements(setup())` before the deal, so every card is in a pile for its
+event to leave. Online does the same through `openingPosition` — built
+from the client's OWN `definition`, not shipped in the frame. That works
+because a stand-in is named by SLOT (`#deck:-:-:17`), which depends only
+on how many pieces the pile holds, so redacting the same undealt state
+here produces the names the server used. The one wrinkle: a card dealt to
+THIS player arrives as `unmask` + `deal` under its real id, so the seed
+puts the real piece in that slot rather than a stand-in, or thirteen
+phantom backs would sit in the deck for the length of the deal.
+
+Three rules keep it honest:
+
+- **The table is drawn from the first frame**, and until something has
+  actually played it is a picture — `isHeroTurn`, `busy` and `animating`
+  say so, or a bid panel opens over an undealt deck.
+- **The deal starts when THIS player's table is up** (`READY_BEAT_MS`
+  after it mounts, and never in a hidden tab, whose throttled timers
+  would play it out unseen). That is what makes it per-player: the server
+  broadcasts and moves on, and a slow load delays only the person
+  loading. A bare position — a refresh — does not wait; there is nothing
+  to watch.
+- **Only the opening deal is seeded** (`dealtRound === 1`). Anything else
+  a client first sees is a position, and the settle that follows adopts it.
+
+Poker is the known gap, and it is not an online one: it places nothing
+before its first deal, so that deal has no pile to fly from offline
+either.
+
+### The server paces bot turns by what the last one takes to WATCH
+
+`RoomRuntime` used to space bot turns by a flat 900ms from the moment it
+broadcast — the server never waits on a client. But a bot's `think`
+(600–1000ms) rides INSIDE the frame and every client plays it out, so each
+turn took longer to watch than the server allowed. The client's queue grew
+by a fraction of a second per bot turn until it passed `CATCH_UP_FRAMES`,
+at which point `pump` drops the backlog and `skip()`s to the present — and
+a table of bots skipped most of its own animations, dice tumble included.
+Offline never has this, because there the hold starts when the animation
+FINISHES.
+
+`turnHoldMs` is now `playbackMs(lastFrame.events) + DEFAULT_TURN_HOLD_MS`,
+which gives a client at normal speed exactly offline's rhythm. It still
+waits on nobody: a slow client falls behind and catches up by itself.
+
+`playbackMs` and `gapAfter` live in
+[choreographer.ts](src/motion/choreographer.ts) and are the SAME rule the
+browser's `drain()` plays by, extracted so the two cannot drift. Do not
+use `totalDuration` for this: it reads an offset of 0 as "starts with the
+previous step", so it calls a think-pause-move turn 800ms when playback
+really takes 1165 — it under-counts precisely the turns that matter.
+
+`pause` now blocks the queue. It had a duration in `choreograph` and was
+documented as obeying skip and reduced motion, but `drain()` only ever
+blocked on `think` and `unmask`, so LRC's beat before a roll's chips fly
+existed on paper and did nothing.
+
 ### A seat belongs to a person, and a person may have two tabs
 
 `localStorage` is per-ORIGIN, not per-tab, so a second tab is the same

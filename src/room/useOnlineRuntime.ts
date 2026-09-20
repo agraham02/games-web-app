@@ -21,14 +21,22 @@
  * not, because the next frame is already on its way.
  */
 
-import { useEffect, useRef, useState } from "react";
-import type { GameEvent, SeatId } from "@/engine/types";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type {
+  GameDefinition,
+  GameEvent,
+  PieceId,
+  PieceMeta,
+  PlacementMap,
+  SeatId,
+} from "@/engine/types";
 import { createRng, type Rng } from "@/engine/rng";
 import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
 import type { FrameView } from "@/session/protocol";
 import { announce } from "@/ui/disclosure";
 import { composeAnnounce } from "@/session/announce";
+import { redactPlacements, sentinelFor } from "@/session/redact";
 import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -45,6 +53,22 @@ import type { GameRuntime } from "@/table/useGameRuntime";
  * is the one thing that actually matters.
  */
 const CATCH_UP_FRAMES = 2;
+
+/**
+ * How long the table sits on screen, dealt-out and still, before the first
+ * thing moves.
+ *
+ * A player who has just arrived should see the felt and the deck before
+ * cards start leaving it, not join an animation already underway. It is
+ * measured from the table mounting on THIS screen, which is what makes it
+ * per-player: the server broadcasts a frame and moves on, each client
+ * starts its own deal when its own table is up, and a slow load delays
+ * only the person loading.
+ *
+ * Long enough for the piece layer to have measured itself and painted the
+ * deck; short enough not to read as a stall. Zero under reduced motion.
+ */
+export const READY_BEAT_MS = 450;
 
 const DEFAULT_END_HOLD_MS = 1200;
 const DEFAULT_ROUND_HOLD_MS = 1000;
@@ -78,6 +102,54 @@ export interface OnlineRuntimeOptions {
   nextRound: () => void;
   speed?: number;
   dealStaggerMs?: number;
+  /**
+   * Where the table stands BEFORE the opening deal, for a game whose
+   * first frame deals. See `openingPosition`.
+   */
+  initial?: () => OpeningPosition | null;
+}
+
+export interface OpeningPosition {
+  placements: PlacementMap;
+  meta: Record<PieceId, PieceMeta>;
+}
+
+/**
+ * The undealt table, redacted the way the server names it.
+ *
+ * Offline resets the store to `placements(setup())` before the deal runs,
+ * so every card is in the deck for its `deal` event to fly from. That is
+ * load-bearing, not cosmetic: `applyEvent`'s `moveTo` does nothing to a
+ * piece the store is not already tracking, so a deal aimed at a piece with
+ * no placement is a silent no-op. Online the store was EMPTY when the
+ * opening deal played, so every opponent's cards — addressed by stand-in
+ * ids the store had never heard of — simply failed to move, and the hands
+ * appeared whole when the batch reconciled at the end.
+ *
+ * Built from the client's own `definition`, exactly as offline does,
+ * rather than shipped in the frame: the server's stand-ins are named by
+ * SLOT (`#deck:-:-:17`), and slot numbering depends only on how many
+ * pieces the pile holds, so redacting the same undealt state here
+ * produces the same names. Nothing about a shuffled deck is needed or
+ * revealed, because the shuffle happens inside the deal.
+ */
+export function openingPosition<S, A>(
+  definition: GameDefinition<S, A>,
+  seats: number,
+  viewer: SeatId | null,
+): OpeningPosition {
+  const state = definition.setup({ seats, rng: createRng(1) });
+  const pieces = definition.pieces(state);
+  // `null` is a spectator, whom the server addresses as seat -1 so that
+  // every `seat === viewer` comparison fails and every hand is face-down.
+  const truth = definition.placements(state, viewer ?? -1);
+  const { placements, meta: standIns } = redactPlacements(truth, pieces);
+
+  const meta: Record<PieceId, PieceMeta> = { ...standIns };
+  for (const id of Object.keys(placements)) {
+    if (!(id in meta) && pieces[id]) meta[id] = pieces[id]!;
+  }
+  return { placements, meta };
 }
 
 export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<S, A> | null {
@@ -100,6 +172,15 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   const [dealingRound, setDealingRound] = useState<number | null>(null);
   const [gameEndRevealed, setGameEndRevealed] = useState(false);
   const [roundEndRevealed, setRoundEndRevealed] = useState(false);
+
+  /**
+   * Whether THIS player's table is up and has had its beat. Frames that
+   * carry a batch to play wait behind it; a bare position does not,
+   * because there is nothing to watch and the board should be right at
+   * once. See `READY_BEAT_MS`.
+   */
+  const [ready, setReady] = useState(false);
+  const readyRef = useRef(false);
 
   /** The frame currently animating, and any newer one that arrived meanwhile. */
   const playing = useRef<FrameView | null>(null);
@@ -156,7 +237,10 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     const backlog = queued.current;
     if (backlog.length === 0) return;
 
-    if (backlog.length > CATCH_UP_FRAMES) {
+    // Trimming waits for this player's table too: nothing is playing yet,
+    // so there is nothing to skip, and doing it first would throw away the
+    // very deal the player has not seen.
+    if (readyRef.current && backlog.length > CATCH_UP_FRAMES) {
       // Everything but the newest is history nobody is waiting to watch.
       // Its placements are superseded by the frame we are about to apply,
       // which is a whole snapshot — so dropping them loses position, not
@@ -164,6 +248,9 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
       backlog.splice(0, backlog.length - 1);
       choreographer.skip();
     }
+
+    // A batch waits for the table; a bare position does not.
+    if (!readyRef.current && backlog[0]!.events.length > 0) return;
 
     const next = backlog.shift()!;
     playing.current = next;
@@ -224,6 +311,77 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Put the undealt table on screen BEFORE it is first painted, so the
+   * deal has a deck to fly from. Once, on mount, and only when this
+   * player's first frame is the opening deal — anything else (a refresh, a
+   * late arrival) is a position, and the settle that follows adopts it.
+   *
+   * A layout effect because the store is a module-level singleton that
+   * still holds whatever the last game left in it, and a passive effect
+   * would paint that for a frame first.
+   */
+  const seeded = useRef(false);
+  useLayoutEffect(() => {
+    if (seeded.current) return;
+    seeded.current = true;
+    if (!frame || frame.dealtRound !== 1 || !opts.initial) return;
+    const start = opts.initial();
+    if (!start) return;
+
+    const placements = { ...start.placements };
+    // A card this player is about to be dealt arrives as `unmask` + `deal`
+    // under its real id, and the server put it at a slot the seed has
+    // just filled with a stand-in. Leaving both would strand a phantom
+    // back in the deck for the length of the deal. Seed the real piece
+    // there instead; the `unmask` that follows is idempotent.
+    for (const event of frame.events) {
+      if (event.t !== "unmask") continue;
+      delete placements[sentinelFor(event.at)];
+      placements[event.piece] = event.at;
+    }
+    useTableStore.getState().reset(placements, { ...start.meta, ...frame.meta });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * This player's table is up: hold a beat, then let the deal begin.
+   *
+   * Independent per player by construction. The timer is started by THIS
+   * mount, so a slow load delays only whoever is loading, and the server
+   * neither knows nor waits. Not started in a hidden tab: its timers are
+   * throttled, so the deal would play out unseen and the player would come
+   * back to a finished one, which is exactly the report.
+   */
+  useEffect(() => {
+    if (ready) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const arm = () => {
+      if (timer !== null) return;
+      timer = setTimeout(
+        () => {
+          readyRef.current = true;
+          setReady(true);
+        },
+        prefersReducedMotion() ? 0 : READY_BEAT_MS,
+      );
+    };
+    if (document.visibilityState !== "hidden") arm();
+    const onVisible = () => {
+      if (document.visibilityState !== "hidden") arm();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [ready]);
+
+  useEffect(() => {
+    if (ready) pump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
   // Same shape as the offline runtime's: a dependency effect, so
   // StrictMode's mount -> cleanup -> mount becomes schedule -> cancel ->
   // reschedule rather than leaving the intro stuck on screen.
@@ -241,40 +399,51 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     };
   }, []);
 
-  if (!applied) return null;
+  // The table is drawn from the FIRST frame, not from the first one to
+  // finish playing. It used to wait for `applied`, which is set when a
+  // batch settles, so for an opening deal the whole animation ran with
+  // nothing mounted to show it and the table appeared already dealt.
+  const shown = applied ?? frame;
+  if (!shown) return null;
+  // Until something has actually played, the table is a picture: nobody's
+  // turn to act, nobody lit, nothing to tap. Without this the bid panel
+  // would open over a deck that has not been dealt.
+  const started = applied !== null;
 
-  const mySeat = applied.seat;
-  const myTurn = mySeat !== null && applied.currentSeat === mySeat;
+  const mySeat = shown.seat;
+  const myTurn = started && mySeat !== null && shown.currentSeat === mySeat;
 
   return {
-    state: applied.state as S,
+    state: shown.state as S,
     // Identical to `state`, and that is the honest answer: the unredacted
     // state exists only on the server. The dev state editor is offline-only
     // for exactly this reason — there is nothing here it could edit that
     // the server would honour.
-    rawState: applied.state as S,
+    rawState: shown.state as S,
     replaceState: () => {
       /* Server-authoritative. Nothing a client wrote here would survive. */
     },
-    isHeroTurn: myTurn && !applied.isOver && !choreographer.isPlaying,
-    isOver: applied.isOver,
-    winner: applied.winner,
-    winningSeats: applied.winningSeats,
-    roundWinner: applied.isOver ? null : applied.roundWinner,
-    roundWinningSeats: applied.isOver ? null : applied.roundWinningSeats,
-    showSummary: applied.isOver && gameEndRevealed,
-    showRoundSummary: !applied.isOver && applied.isRoundOver && roundEndRevealed,
-    round: applied.round,
+    isHeroTurn: myTurn && !shown.isOver && !choreographer.isPlaying,
+    isOver: shown.isOver,
+    winner: shown.winner,
+    winningSeats: shown.winningSeats,
+    roundWinner: shown.isOver ? null : shown.roundWinner,
+    roundWinningSeats: shown.isOver ? null : shown.roundWinningSeats,
+    showSummary: shown.isOver && gameEndRevealed,
+    showRoundSummary: !shown.isOver && shown.isRoundOver && roundEndRevealed,
+    round: shown.round,
     dealingRound,
     nextRound: opts.nextRound,
     autoAdvance: true,
-    busy: choreographer.isPlaying || !myTurn,
+    busy: choreographer.isPlaying || !myTurn || !started,
     // Off the SETTLED frame, deliberately. `applied` lags the newest
     // frame by exactly one animation, so during a move this still names
     // the seat making it, and it only advances once that move has
     // finished being shown. Which is the pacing every pod wants.
-    currentSeat: applied.isOver ? null : applied.currentSeat,
-    animating: choreographer.isPlaying,
+    currentSeat: shown.isOver ? null : shown.currentSeat,
+    // "A turn is on screen" until something has played, so no pod lights
+    // for a seat that has not, yet, been asked to do anything.
+    animating: choreographer.isPlaying || !started,
     submitAction: (action) => opts.submit(action),
     rng,
     skip: choreographer.skip,
