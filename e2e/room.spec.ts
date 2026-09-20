@@ -399,8 +399,6 @@ test.describe("a room, in real browsers", () => {
     // Let the move that handed them the turn finish being shown: while it
     // is still playing, the mover's pod is correctly the lit one.
     const watcher = onTurn === "Ada" ? bo : ada;
-    await watcher.waitForTimeout(2500);
-    expect((await table()).table?.currentSeat, "they should still be on turn").toBe(turn);
 
     /*
       "Lit" is the highlighted branch's full-strength ring. Not a
@@ -408,14 +406,43 @@ test.describe("a room, in real browsers", () => {
       is also a box-shadow, so that check calls every pod lit and passes
       against any bug at all. It did, when it was written that way.
     */
-    const lit = await watcher.evaluate(() =>
-      [...document.querySelectorAll("div.backdrop-blur-md.rounded-xl")]
-        .filter((el) => el.classList.contains("ring-brass-400"))
-        .map((el) => el.textContent?.replace(/\s+/g, " ").trim() ?? ""),
-    );
+    const litPods = () =>
+      watcher.evaluate(() =>
+        [...document.querySelectorAll("div.backdrop-blur-md.rounded-xl")]
+          .filter((el) => el.classList.contains("ring-brass-400"))
+          .map((el) => el.textContent?.replace(/\s+/g, " ").trim() ?? ""),
+      );
 
-    expect(lit, `exactly one pod should be lit, saw ${JSON.stringify(lit)}`).toHaveLength(1);
-    expect(lit[0]).toContain(onTurn!);
+    /*
+      Polled, rather than sampled once after a fixed pause — and the reason
+      is worth keeping, because it is not flakiness, it is the deal.
+
+      For the first few seconds the watcher is still PLAYING the opening
+      deal, and a deal frame carries no `lastAction`. `seatCue` therefore
+      lights nobody, entirely correctly: nothing has moved, and the table is
+      not yet waiting on anyone. The server meanwhile named a human on turn
+      the moment it dealt, so a fixed 2.5s wait sampled inside that gap and
+      read it as "no pod lit". Measured with a trace: empty until ~3.5s,
+      then the right pod, steady from there on.
+
+      The guard is unchanged. The bug this test exists for leaves the
+      PREVIOUS player's pod lit and never lights the waiting one, so the
+      poll below runs out and fails exactly as it should.
+    */
+    const RIGHT = "one pod, and it is the seat on turn";
+    await expect
+      .poll(
+        async () => {
+          const lit = await litPods();
+          return lit.length === 1 && lit[0]!.includes(onTurn!) ? RIGHT : JSON.stringify(lit);
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(RIGHT);
+
+    // And it is still their turn, so the glow is tracking the seat being
+    // waited ON rather than a move that has since gone past.
+    expect((await table()).table?.currentSeat, "they should still be on turn").toBe(turn);
 
     await one.close();
     await two.close();
@@ -473,9 +500,11 @@ test.describe("a room, in real browsers", () => {
     }
 
     // The authoritative position, for the same reason as above: a
-    // client's view is derived and could itself be what is wrong.
-    const table = async () => {
-      const res = await bo.request.get(`/debug/room/${code}`);
+    // client's view is derived and could itself be what is wrong. Takes the
+    // page to ask THROUGH, because the player who walks out below takes
+    // their request context with them.
+    const table = async (via: Page) => {
+      const res = await via.request.get(`/debug/room/${code}`);
       const body = (await res.json()) as {
         game: { seatOwner: (string | null)[] };
         members: Record<string, { name: string; session: string }>;
@@ -485,30 +514,54 @@ test.describe("a room, in real browsers", () => {
     };
 
     const seatOfName = async (name: string) => {
-      const now = await table();
+      const now = await table(bo);
       return now.game.seatOwner.indexOf(
         Object.values(now.members).find((m) => m.name === name)!.session,
       );
     };
     const adaSeat = await seatOfName("Ada");
+    const boSeat = await seatOfName("Bo");
 
-    // Wait until the table is genuinely parked on Ada.
+    /*
+      Wait until the table is parked on one of the two PEOPLE — whichever of
+      them it reaches first, which is the part this test used to get wrong.
+
+      It waited for Ada specifically. But a seat whose turn it is blocks the
+      table in every game here, correctly and by design, so if Bo's seat
+      comes first in turn order the table parks on HIM and never reaches her
+      at all. The poll then ran out against a table that was behaving
+      perfectly. Confirmed by the failure it produced: stuck at seat 1 while
+      waiting for seat 0.
+    */
+    let parked: number | null = null;
     await expect
-      .poll(async () => (await table()).table?.currentSeat, { timeout: 20_000 })
-      .toBe(adaSeat);
+      .poll(
+        async () => {
+          const seat = (await table(bo)).table?.currentSeat ?? null;
+          parked = seat === adaSeat || seat === boSeat ? seat : null;
+          return parked;
+        },
+        { timeout: 20_000 },
+      )
+      .not.toBeNull();
 
-    const stuck = (await table()).table!.fingerprint;
+    // Whoever is on turn is the one who walks out. The other is the person
+    // the bug actually happened to, so they are who we watch and who we ask.
+    const leaving = parked === adaSeat ? one : two;
+    const staying = parked === adaSeat ? bo : ada;
 
-    // Ada goes, mid-turn, without saying goodbye.
-    await one.close();
+    const stuck = (await table(staying)).table!.fingerprint;
 
-    // A bot should take her turn and the table should move on.
+    // Out mid-turn, without saying goodbye.
+    await leaving.close();
+
+    // A bot should take the turn and the table should move on.
     await expect
-      .poll(async () => (await table()).table?.fingerprint, { timeout: 20_000 })
+      .poll(async () => (await table(staying)).table?.fingerprint, { timeout: 20_000 })
       .not.toBe(stuck);
 
-    // And Bo is told why his opponent stopped playing.
-    await expect(bo.getByText(/away/i).first()).toBeVisible();
+    // And the one still there is told why their opponent stopped playing.
+    await expect(staying.getByText(/away/i).first()).toBeVisible();
   });
 
   test("a second tab does not fight the first for the seat", async ({ browser }) => {
