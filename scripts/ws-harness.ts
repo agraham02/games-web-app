@@ -1055,6 +1055,176 @@ async function main(): Promise<void> {
     );
   });
 
+  await scenario("BS runs online, and the pile leaks nothing to anybody", async () => {
+    // The sixth game, and the heaviest user of the challenge machinery: it
+    // runs a race after every single play. Two things are checked from this
+    // side of the wire because only this side can see them — the pile must
+    // never be nameable, and a window must never be able to stop the table.
+    const a = await client(`t-bs-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-bs-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({
+      t: "selectGame",
+      gameId: "bs",
+      settings: { target: 2, windowMs: 3000 },
+      seats: 4,
+      difficulty: "casual",
+    });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(800);
+
+    const state = await dump(code);
+    assert(state.sessionRunning === true, "bs should be running");
+
+    const frame = a.latest("frame");
+    assert(frame, "Ada should have been dealt in");
+    const f = frame.frame as {
+      seat: number;
+      state: {
+        hands: Record<string, string[]>;
+        plays: Array<{ seat: number; claimed: string; cards: string[] }>;
+      };
+    };
+
+    for (const [seat, hand] of Object.entries(f.state.hands)) {
+      if (Number(seat) === f.seat) continue;
+      assert(hand.every((c) => c === "??"), `seat ${seat}'s hand leaked to Ada`);
+    }
+    // Including Ada's OWN plays. The rule is blunt on purpose: face down
+    // means the identity does not travel, with no exception for the player
+    // who put the cards there.
+    for (const play of f.state.plays) {
+      assert(
+        play.cards.every((c) => c === "??"),
+        `the pile leaked — seat ${play.seat}'s claim of ${play.claimed} arrived named`,
+      );
+    }
+  });
+
+  await scenario("a BS challenge window cannot stall the table", async () => {
+    // The stall this shape is most prone to, and the one a unit test is worst
+    // placed to see: a window parks the table on SEVERAL seats at once, so no
+    // single browser can unblock it and a client-side timer is not the
+    // mechanism.
+    //
+    // The first version of this asserted that an idle table moves at all, and
+    // it failed — deservedly, but not for the reason it claimed. A seat whose
+    // TURN it is blocks the table in every game here and always has; that is
+    // ordinary, correct, and a person is right there deciding. So this drives
+    // real plays until a window is actually open, and only then stops
+    // answering anything.
+    const a = await client(`t-bswin-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-bswin-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({
+      t: "selectGame",
+      gameId: "bs",
+      settings: { target: 2, windowMs: 2000 },
+      seats: 4,
+      difficulty: "sharp",
+    });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(600);
+
+    const seatOf = new Map<Client, number>();
+    for (const c of [a, b]) {
+      const frame = c.latest("frame");
+      assert(frame, "both players should have been dealt in");
+      seatOf.set(c, (frame.frame as { seat: number }).seat);
+    }
+
+    type Frame = {
+      seat: number;
+      state: {
+        turn: number;
+        hands: Record<string, string[]>;
+        window: { pending: { seat: number }[] } | null;
+      };
+    };
+
+    // Play on until a window is open, nudging it along only when the seat on
+    // turn is one of ours. A bot's play opens one by itself.
+    let opened = false;
+    for (let tick = 0; tick < 80 && !opened; tick++) {
+      for (const c of [a, b]) {
+        const f = c.latest("frame")?.frame as Frame | undefined;
+        if (f?.state.window) {
+          opened = true;
+          break;
+        }
+        if (!f || f.state.turn !== seatOf.get(c)) continue;
+        const card = f.state.hands[String(f.seat)]?.[0];
+        if (card) c.send({ t: "action", action: { t: "play", cards: [card] } });
+      }
+      await sleep(120);
+    }
+    assert(opened, "no challenge window ever opened, so there was nothing to test");
+
+    const before = (await dump(code)).table as { fingerprint: string };
+    // Long enough for the window to expire on its own several times over.
+    // Nobody answers anything: whatever moves is the server's own deadline
+    // moving it, which is the entire claim.
+    await sleep(9000);
+    const after = (await dump(code)).table as { fingerprint: string };
+    assert(
+      after.fingerprint !== before.fingerprint,
+      "the table never moved — a challenge window stalled it with nobody answering",
+    );
+  });
+
+  await scenario("BS refuses a claim nobody could make", async () => {
+    // Every one of these is reachable from a socket by a player whose turn it
+    // genuinely is. Card ids are suit+rank and entirely guessable.
+    const a = await client(`t-bsbad-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-bsbad-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({
+      t: "selectGame",
+      gameId: "bs",
+      settings: { target: 2 },
+      seats: 4,
+      difficulty: "casual",
+    });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(600);
+
+    const before = (await dump(code)).table as { fingerprint: string };
+    for (const action of [
+      // Five cards, when four of a rank is all there is.
+      { t: "play", cards: ["SA", "S2", "S3", "S4", "S5"] },
+      { t: "play", cards: [] },
+      { t: "play", cards: "SA" },
+      { t: "play", cards: [7] },
+      // The same card twice, to claim a pair out of one card.
+      { t: "play", cards: ["SA", "SA"] },
+      // A call on a window that is not open, and a pile nobody owes.
+      { t: "callBs", seat: 3 },
+      { t: "takePile", seat: 0 },
+      { t: "declineBs", seat: 1 },
+    ]) {
+      a.send({ t: "action", action });
+      b.send({ t: "action", action });
+      await sleep(40);
+    }
+    const after = (await dump(code)).table as { fingerprint: string };
+    assert(
+      after.fingerprint === before.fingerprint,
+      "a malformed BS action moved the table when it should have changed nothing",
+    );
+  });
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);
 }

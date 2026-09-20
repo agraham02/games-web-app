@@ -457,6 +457,14 @@ const PUBLIC_ONCE_SEEN: Partial<Record<GameId, string[]>> = {
    * before it reached anybody's hand.
    */
   rummy: ["mandatory"],
+  /**
+   * A challenged play, turned face up in the middle of the table for
+   * everybody to read before the loser swallows it. Keeping those ids
+   * identified is the whole point of a reveal — it is the one moment in BS
+   * when the truth is public — and `placements` says so too, which is what
+   * makes the redaction layer send them out under their real names.
+   */
+  bs: ["reveal"],
 };
 
 function withoutPublicHistory(state: unknown, gameId: GameId): unknown {
@@ -520,6 +528,7 @@ describe("the whole frame, every game, every turn", () => {
     poker: 6,
     lrc: 6,
     rummy: 4,
+    bs: 4,
   };
 
   /**
@@ -534,6 +543,7 @@ describe("the whole frame, every game, every turn", () => {
     poker: true,
     lrc: false,
     rummy: true,
+    bs: true,
   };
 
   for (const gameId of GAME_IDS) {

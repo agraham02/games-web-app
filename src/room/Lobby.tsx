@@ -387,6 +387,39 @@ function GamePicker({ api }: { api: RoomApi }) {
             </>
           ) : null}
 
+          {entry.id === "bs" ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-bone-200">Rounds to win</span>
+                <NumberStepper
+                  value={(room.settings.target as number) ?? 3}
+                  min={1}
+                  max={9}
+                  onChange={(v) => leader && update(entry.id, { ...room.settings, target: v })}
+                  label="rounds to win"
+                />
+              </div>
+              {/*
+                Longer than the five seconds a solo table gives, and the
+                reason is the room: whoever is next to play can end a window
+                early simply by playing, so the only person a generous one
+                costs anything is the one who chooses to use all of it.
+              */}
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-bone-200">Seconds to call BS</span>
+                <NumberStepper
+                  value={Math.round(((room.settings.windowMs as number) ?? 10_000) / 1000)}
+                  min={2}
+                  max={20}
+                  onChange={(v) =>
+                    leader && update(entry.id, { ...room.settings, windowMs: v * 1000 })
+                  }
+                  label="seconds"
+                />
+              </div>
+            </>
+          ) : null}
+
           {/*
             Empty seats are filled by bots, so difficulty is a real setting
             in a room even when every seat has a person in it — somebody

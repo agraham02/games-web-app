@@ -22,6 +22,7 @@ import type { GameDefinition } from "@/engine/types";
 import { HERO } from "@/engine/types";
 import { dominoes } from "@/games/dominoes/rules";
 import { lrc } from "@/games/lrc/rules";
+import { bs } from "@/games/bs/rules";
 import { poker } from "@/games/poker/rules";
 import { rummy } from "@/games/rummy/rules";
 import { spades } from "@/games/spades/rules";
@@ -35,9 +36,10 @@ const GAMES: ReadonlyArray<{ name: string; definition: GameDefinition<any, any> 
   { name: "Spades", definition: spades },
   { name: "Rummy 500", definition: rummy },
   { name: "Poker", definition: poker },
+  { name: "BS", definition: bs },
 ];
 
-/** Four seats is legal for all five games, so one number covers the table. */
+/** Four seats is legal for all six games, so one number covers the table. */
 const SEATS = 4;
 
 describe("useGameRuntime — every game still runs through the extracted session", () => {

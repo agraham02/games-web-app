@@ -604,4 +604,118 @@ test.describe("a room, in real browsers", () => {
     await two.close();
   });
 
+
+  test("BS deals two real tables, and the pile is nameable by nobody", async ({ browser }) => {
+    // BS runs a challenge race after every single play, which makes it the
+    // heaviest user of the machinery Rummy's claim window grew. Two things are
+    // checked here that nothing below this layer can see: that a second person
+    // actually gets a table drawn for them, and that the pile in the middle of
+    // it is anonymous in BOTH browsers — including to whoever put the cards
+    // there, which is the one exception the blunt rule does not make.
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    await ada.getByRole("button", { name: "BS", exact: true }).click();
+    await ada.getByRole("button", { name: /start bs/i }).click();
+
+    for (const page of [ada, bo]) {
+      await expect(page.getByRole("button", { name: /step away/i })).toBeVisible();
+    }
+
+    // Counting pieces is not enough to know the deal happened: before a deal
+    // BS places all 52 cards on the pile, face down, and fifty-two anonymous
+    // stand-ins look exactly like a full table until you ask how many of them
+    // anybody can name. Same trap Rummy's test fell into first.
+    const nameable = async (page: Page) =>
+      new Set(
+        (
+          await page
+            .locator("[data-fx]")
+            .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-fx") ?? ""))
+        ).filter((id) => !id.startsWith("#")),
+      );
+
+    for (const page of [ada, bo]) {
+      await expect
+        .poll(async () => (await nameable(page)).size, { timeout: 25_000 })
+        .toBeGreaterThan(5);
+    }
+
+    const adaCards = await nameable(ada);
+    const boCards = await nameable(bo);
+    // Each holds cards the other cannot name, and no card is private to both.
+    // Unlike Rummy there is no public card at all in this game between
+    // reveals, so the two sets should simply not meet.
+    for (const card of boCards) {
+      expect(adaCards.has(card), `${card} was private to Bo and visible to Ada`).toBe(false);
+    }
+    expect(adaCards.size, "Ada should hold cards Bo cannot see").toBeGreaterThan(0);
+    expect(boCards.size, "Bo should hold cards Ada cannot see").toBeGreaterThan(0);
+
+    await one.close();
+    await two.close();
+  });
+
+  test("a BS challenge window reaches a second player's screen", async ({ browser }) => {
+    // The race, from the only place it can really be seen. A window entitles
+    // every seat but the claimer at once, so when cards go down BOTH people
+    // must be offered the call — not just whichever of them the server happens
+    // to be pacing on. That distinction is `legalActions` versus
+    // `currentSeat`, and a browser is where getting it wrong shows up as a
+    // button somebody can watch and cannot press.
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    await ada.getByRole("button", { name: "BS", exact: true }).click();
+    await ada.getByRole("button", { name: /start bs/i }).click();
+    for (const page of [ada, bo]) {
+      await expect(page.getByRole("button", { name: /step away/i })).toBeVisible();
+    }
+
+    // Somebody has to actually play, and it may well be one of ours: a seat
+    // whose TURN it is blocks the table in every game here, correctly, so a
+    // test that only waits is a test that can wait forever. Whichever page is
+    // being asked picks a card off its own hand and puts it down.
+    //
+    // The cards it can NAME are exactly the ones it is holding face up —
+    // everything else on this table is an anonymous stand-in — so that is how
+    // one gets picked without reaching into game state.
+    const playSomething = async (page: Page) => {
+      const play = page.getByRole("button", { name: /^Play$/ });
+      if (!(await play.isVisible().catch(() => false))) return;
+      const mine = (
+        await page
+          .locator("[data-fx]")
+          .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-fx") ?? ""))
+      ).filter((id) => id && !id.startsWith("#"));
+      if (mine.length === 0) return;
+      await page.locator(`[data-fx="${mine[0]}"]`).click({ timeout: 2000 }).catch(() => {});
+      await page.getByRole("button", { name: /^Play 1$/ }).click({ timeout: 2000 }).catch(() => {});
+    };
+
+    let sawWindow = false;
+    for (let tick = 0; tick < 50 && !sawWindow; tick++) {
+      for (const page of [ada, bo]) {
+        if (await page.getByRole("button", { name: "BS!" }).isVisible().catch(() => false)) {
+          sawWindow = true;
+          break;
+        }
+        await playSomething(page);
+      }
+      if (!sawWindow) await ada.waitForTimeout(400);
+    }
+
+    expect(sawWindow, "no challenge window ever reached either player's screen").toBe(true);
+
+    await one.close();
+    await two.close();
+  });
 });

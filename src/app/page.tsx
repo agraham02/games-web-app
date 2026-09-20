@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Bot, Eye, Users } from "lucide-react";
 import { GAMES, GAME_IDS, type GameId } from "@/session/registry";
-import { CardFace } from "@/ui/primitives/CardFace";
+import { CardBack, CardFace } from "@/ui/primitives/CardFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { DiceFace } from "@/ui/primitives/DiceFace";
 import { TileFace } from "@/ui/primitives/TileFace";
@@ -48,13 +48,13 @@ function Hero() {
     <header className="flex flex-col gap-4">
       <PieceStrip />
       <div>
-        <span className="eyebrow">Five table games</span>
+        <span className="eyebrow">Six table games</span>
         <h1 className="mt-1.5 font-display text-4xl tracking-wider text-brass-300 sm:text-5xl">
           Table Games
         </h1>
       </div>
       <p className="max-w-xl text-sm leading-relaxed text-bone-400">
-        Dominoes, Spades, Rummy 500, Poker and Left Right Center — real
+        Dominoes, Spades, Rummy 500, Poker, Left Right Center and BS — real
         rules, real bots, and a table that moves like a table. Play them
         with people in a room, or on your own against the house.
       </p>
@@ -63,8 +63,8 @@ function Hero() {
 }
 
 /**
- * One piece from four of the five games, overlapping and slightly turned,
- * the way a set looks when somebody has just cleared the table.
+ * One piece from most of the games, overlapping and slightly turned, the
+ * way a set looks when somebody has just cleared the table.
  *
  * Purely decorative and hidden from assistive tech: everything it says is
  * said again in words directly below it.
@@ -83,6 +83,12 @@ function PieceStrip() {
       </div>
       <div className="-ml-3 rotate-[-3deg] drop-shadow-lg">
         <CardFace card="HK" w={42} h={60} detail="index" ariaHidden />
+      </div>
+      {/* Face down, for BS — and it sits in the fan rather than beside it,
+          because a card nobody can see is only interesting next to ones
+          they can. */}
+      <div className="-ml-3 rotate-[4deg] drop-shadow-lg">
+        <CardBack w={42} h={60} ariaHidden />
       </div>
       <div className="-ml-1 mb-1 rotate-[9deg] drop-shadow-lg">
         <DiceFace face="C" size={38} />
@@ -113,7 +119,7 @@ function PlayTogether() {
           </h2>
           <p className="mt-3 max-w-md text-sm leading-relaxed text-bone-400">
             Make a room, send the four letters to your people, and pick a
-            game once everyone is in. Any of the five, up to ten seats.
+            game once everyone is in. Any of the six, up to ten seats.
           </p>
         </div>
 
@@ -174,6 +180,7 @@ const BLURBS: Record<GameId, string> = {
   rummy: "Melds on the table, and a discard anybody at the table can race you for.",
   poker: "No-limit hold'em, with real side pots and a proper showdown.",
   lrc: "Three dice, three chips, and not one decision to make.",
+  bs: "Claim the rank, lie about it, and see who doubts you before the next card goes down.",
 };
 
 const THUMBS: Record<GameId, React.ReactNode> = {
@@ -182,6 +189,8 @@ const THUMBS: Record<GameId, React.ReactNode> = {
   rummy: <CardFace card="D10" w={36} h={50} detail="index" ariaHidden />,
   poker: <ChipFace colour="ruby" size={40} />,
   lrc: <DiceFace face="L" size={40} />,
+  // A back rather than a face, because the back of a card is the whole game.
+  bs: <CardBack w={36} h={50} ariaHidden />,
 };
 
 function GameCard({ id }: { id: GameId }) {

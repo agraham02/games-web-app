@@ -35,11 +35,12 @@ import { createRummy } from "@/games/rummy/rules";
 import { createSpades } from "@/games/spades/rules";
 import { botName } from "@/games/_shared/botIdentity";
 import { redactPlacements } from "@/session/redact";
+import { createBs } from "@/games/bs/rules";
 import { SeatRing } from "@/table/SeatRing";
 import { TableSurface } from "@/table/TableSurface";
 import { useTableStore } from "@/table/store";
 
-type GameKey = "spades" | "dominoes" | "poker" | "rummy" | "lrc";
+type GameKey = "spades" | "dominoes" | "poker" | "rummy" | "lrc" | "bs";
 
 /**
  * Seats are fixed per game rather than adjustable: this page is about
@@ -55,6 +56,10 @@ const GAMES: Record<
   poker: { label: "Poker", seats: 4, make: () => createPoker() },
   rummy: { label: "Rummy", seats: 4, make: () => createRummy() },
   lrc: { label: "LRC", seats: 4, make: () => createLrc() },
+  // The hardest subject this page has: BS's pile is a growing stack of cards
+  // that are face down to EVERYBODY, its own contributor included, so almost
+  // every piece on the table is one the viewer must not be able to name.
+  bs: { label: "BS", seats: 4, make: () => createBs() },
 };
 
 /**

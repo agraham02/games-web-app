@@ -13,6 +13,7 @@ import { createLrc } from "@/games/lrc/rules";
 import { createPoker, DEFAULT_BIG_BLIND, DEFAULT_STARTING_STACK } from "@/games/poker/rules";
 import { betRange } from "@/games/poker/state";
 import { createRummy } from "@/games/rummy/rules";
+import { createBs } from "@/games/bs/rules";
 import { claimReactions } from "@/games/rummy/state";
 import type { GameDefinition, SeatId } from "@/engine/types";
 import { GAMES, GAME_IDS, type GameId } from "./registry";
@@ -383,9 +384,13 @@ describe("legalActions as the submit gate", () => {
    * same question everywhere except where a game deliberately widens it,
    * or the change quietly becomes a way to act out of turn.
    *
-   * Rummy is the deliberate exception: a claim window is a race, and
-   * several seats are entitled to grab the card at the same instant. It
-   * is skipped here and asserted properly in Rummy's own rules test.
+   * Two games are deliberate exceptions, both for the same reason: a race.
+   * Rummy's claim window entitles several seats to grab the same discard at
+   * once, and BS's challenge window entitles every seat but the claimer to
+   * doubt a play — plus the seat on turn to play straight over the top of it.
+   * In both, `currentSeat` names only the seat the PACING waits on, which is
+   * exactly the widening this check exists to notice. Each is skipped here
+   * and asserted properly in its own rules test.
    */
   const SEATS: Record<GameId, number> = {
     spades: 4,
@@ -393,6 +398,7 @@ describe("legalActions as the submit gate", () => {
     poker: 6,
     lrc: 6,
     rummy: 4,
+    bs: 4,
   };
 
   for (const gameId of GAME_IDS) {
@@ -413,8 +419,9 @@ describe("legalActions as the submit gate", () => {
       const wrong: string[] = [];
       let checks = 0;
       session.setEmit(() => {
-        const state = session.snapshot() as { claimWindow?: unknown };
+        const state = session.snapshot() as { claimWindow?: unknown; window?: unknown };
         if (gameId === "rummy" && state.claimWindow) return;
+        if (gameId === "bs" && state.window) return;
         const current = definition.currentSeat(state);
         for (let seat = 0; seat < SEATS[gameId]; seat++) {
           checks++;
@@ -574,5 +581,106 @@ describe("a live seat that never answers", () => {
     expect(session.snapshot().melds[0]!.cards).toContain("S8");
     clock.advance(60_000);
     expect(session.snapshot().melds[0]!.cards).toContain("S8");
+  });
+});
+
+/**
+ * BS runs a challenge race after EVERY play, which makes it by far the
+ * heaviest user of the three things Rummy's claim window grew: several seats
+ * entitled at once, `deadline` as the only thing that can unblock them, and
+ * now `turnHold` so the seats nobody is sitting in answer in a flicker.
+ */
+describe("GameSession — BS's challenge window", () => {
+  const bsDef = createBs({ target: 2, windowMs: 5000 });
+
+  /**
+   * Plays until a window is open with `live` still entitled to answer it.
+   *
+   * Steps the clock in small slices rather than draining it, deliberately: a
+   * drain would run the live seat's own deadline too and resolve the very
+   * window this is trying to stop on.
+   */
+  function untilWindow(live: SeatId) {
+    const { clock, session } = harness({
+      definition: bsDef,
+      seats: 4,
+      seed: 21,
+      isSeatLive: (seat) => seat === live,
+    });
+    session.start();
+    for (let i = 0; i < 4000; i++) {
+      const state = session.snapshot();
+      if (state.window !== null && state.window.pending.some((p) => p.seat === live)) {
+        return { clock, session, state };
+      }
+      if (bsDef.isOver(state)) break;
+      if (bsDef.isRoundOver!(state)) {
+        session.nextRound();
+        continue;
+      }
+      // Parked on the person for an ordinary turn: unblock it by playing.
+      if (bsDef.currentSeat(state) === live) {
+        const legal = bsDef.legalActions(state, live);
+        if (legal.length === 0) break;
+        session.submit(live, legal[legal.length - 1]!);
+        continue;
+      }
+      if (clock.pending === 0) break;
+      clock.advance(20);
+    }
+    throw new Error("never reached a window with that seat entitled");
+  }
+
+  it("lets a live seat win the race from further down the queue", () => {
+    // The whole mechanic. `currentSeat` names only the seat the pacing waits
+    // on, so a person two or three deep is still entitled — and `submit`
+    // gates on `legalActions`, not on `currentSeat`, which is what makes
+    // being quick beat being early in the list.
+    const { session, state } = untilWindow(2);
+    const order = state.window!.pending.map((p) => p.seat);
+    expect(order.length).toBeGreaterThan(1);
+    if (order[0] === 2) return; // Already first; nothing to prove here.
+
+    expect(bsDef.currentSeat(state)).not.toBe(2);
+    const result = session.submit(2, { t: "callBs", seat: 2 });
+    expect(result.ok).toBe(true);
+    expect(session.snapshot().reveal?.caller).toBe(2);
+  });
+
+  it("never leaves the table parked on a window nobody answers", () => {
+    // The stall this shape is most prone to, and the instrument that catches
+    // it: a table that has stopped simply has nothing pending. Every other
+    // signal — a frame arriving, a badge flipping — can look perfectly
+    // healthy while the game has quietly died.
+    const { clock, session } = untilWindow(3);
+    expect(clock.pending, "a live seat's window must arm a deadline")
+      .toBeGreaterThan(0);
+    clock.drain();
+    const after = session.snapshot();
+    // Whatever happened, the window resolved: the seat let it go on the
+    // deadline, or somebody called and the pile moved.
+    expect(after.window === null || after.window.pending.every((p) => p.seat !== 3)).toBe(true);
+  });
+
+  it("plays a whole match out with nobody sitting anywhere", () => {
+    const { clock, session } = harness({
+      definition: bsDef,
+      seats: 4,
+      seed: 808,
+      isSeatLive: () => false,
+    });
+    playToEnd(session, clock);
+    expect(session.snapshot().winner).not.toBeNull();
+    expect(clock.pending, "the loop is parked, not still ticking").toBe(0);
+  });
+
+  it("hurries the beats inside a window and leaves the rest alone", () => {
+    // Without this every seat that lets a play go costs the driver's full
+    // 900ms, so three opponents meant nearly three seconds of blank table
+    // after every single play.
+    const { state } = untilWindow(1);
+    expect(bsDef.turnHold!(state, bsDef.currentSeat(state)!)).toBeLessThan(300);
+    const quiet = { ...state, window: null, pendingTake: null };
+    expect(bsDef.turnHold!(quiet, 0)).toBeUndefined();
   });
 });

@@ -25,13 +25,21 @@ import { TestClock } from "@/session/clock";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
 
+import { playerViews as bs } from "./bs/table";
 import { playerViews as dominoes } from "./dominoes/table";
 import { playerViews as lrc } from "./lrc/table";
 import { playerViews as poker } from "./poker/table";
 import { playerViews as rummy } from "./rummy/table";
 import { playerViews as spades } from "./spades/table";
 
-const SEATS: Record<GameId, number> = { spades: 4, dominoes: 4, poker: 6, lrc: 6, rummy: 4 };
+const SEATS: Record<GameId, number> = {
+  spades: 4,
+  dominoes: 4,
+  poker: 6,
+  lrc: 6,
+  rummy: 4,
+  bs: 4,
+};
 
 /** Enough of a runtime for a `players` callback; none of them reduce. */
 function fakeLive(state: unknown): GameRuntime<unknown, unknown> {
@@ -72,6 +80,7 @@ const CALLERS: Record<GameId, Caller> = {
   lrc: (v, state, _s, away) => (lrc as AnyFn)(viewFor(v, away), state, fakeLive(state)),
   poker: (v, state, _s, away) => (poker as AnyFn)(viewFor(v, away), state, fakeLive(state)),
   spades: (v, state, _s, away) => (spades as AnyFn)(viewFor(v, away), state, fakeLive(state)),
+  bs: (v, state, _s, away) => (bs as AnyFn)(viewFor(v, away), state, fakeLive(state)),
   // Rummy curries the seat count; the rest read it off state.
   rummy: (v, state, seats, away) =>
     (rummy as AnyFn)(viewFor(v, away), seats)(state, fakeLive(state)),

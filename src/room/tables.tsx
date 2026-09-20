@@ -22,6 +22,7 @@ import type { GameId } from "@/session/registry";
 import type { FrameView, RoomView } from "@/session/protocol";
 import type { RoomApi } from "./useRoom";
 import type { PieceId } from "@/engine/types";
+import { BsOnline } from "./tables/BsOnline";
 import { DominoesOnline } from "./tables/DominoesOnline";
 import { LrcOnline } from "./tables/LrcOnline";
 import { PokerOnline } from "./tables/PokerOnline";
@@ -53,9 +54,13 @@ export interface OnlineTableProps {
 export type OnlineTableComponent = (props: OnlineTableProps) => React.ReactNode;
 
 /**
- * All five, and the last one in was Rummy. It sat out not because the
- * room could not draw it but because its RULES answered "the human" with
- * seat 0 in three places — see the note on `GameEntry.online`.
+ * All six. Rummy was the last of the original five in, and it sat out not
+ * because the room could not draw it but because its RULES answered "the
+ * human" with seat 0 in three places — see the note on `GameEntry.online`.
+ *
+ * BS came after that work rather than before it, and cost almost nothing as a
+ * result: a game whose `deadline`, `validate` and redaction were built for two
+ * drivers from the first commit needs wiring here, not rules changes.
  */
 
 export const TABLES: Partial<Record<GameId, OnlineTableComponent>> = {
@@ -64,6 +69,7 @@ export const TABLES: Partial<Record<GameId, OnlineTableComponent>> = {
   dominoes: DominoesOnline,
   lrc: LrcOnline,
   rummy: RummyOnline,
+  bs: BsOnline,
 };
 
 export function tableFor(gameId: GameId | null): OnlineTableComponent | null {

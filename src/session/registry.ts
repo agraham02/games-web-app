@@ -16,15 +16,25 @@
  */
 
 import type { BotDifficulty, GameDefinition } from "@/engine/types";
+import { createBs } from "@/games/bs/rules";
+import { CHALLENGE_MS_ONLINE, DEFAULT_TARGET as BS_DEFAULT_TARGET } from "@/games/bs/state";
 import { createDominoes } from "@/games/dominoes/rules";
 import { createLrc } from "@/games/lrc/rules";
 import { createPoker } from "@/games/poker/rules";
 import { createRummy } from "@/games/rummy/rules";
 import { createSpades } from "@/games/spades/rules";
 
-export type GameId = "spades" | "dominoes" | "poker" | "lrc" | "rummy";
+export type GameId = "spades" | "dominoes" | "poker" | "lrc" | "rummy" | "bs";
 
-export const GAME_IDS: readonly GameId[] = ["spades", "dominoes", "poker", "lrc", "rummy"];
+// Also the order the home screen lists them in.
+export const GAME_IDS: readonly GameId[] = [
+  "spades",
+  "dominoes",
+  "poker",
+  "lrc",
+  "rummy",
+  "bs",
+];
 
 /** Loose bag off the wire, before `parse` has had a look at it. */
 export type RawSettings = Record<string, unknown>;
@@ -163,6 +173,28 @@ export const GAMES: Record<GameId, GameEntry> = {
     teams: () => false,
     parse: (raw) => ({ target: int(raw.target, 100, 2_000, 500) }),
     create: (s) => createRummy({ target: s.target as number }),
+  },
+
+  bs: {
+    id: "bs",
+    name: "BS",
+    minSeats: 2,
+    maxSeats: 6,
+    defaultSeats: 4,
+    online: true,
+    teams: () => false,
+    parse: (raw) => ({
+      target: int(raw.target, 1, 9, BS_DEFAULT_TARGET),
+      // A room gets a longer challenge window than a solo table, and this is
+      // where that difference lives. It is generous because online the next
+      // player can cut a window short simply by playing, so the only person
+      // it costs anything is the one who chooses to use all of it. Clamped
+      // hard at both ends: a window of zero makes the game unplayable and one
+      // of an hour parks the table.
+      windowMs: int(raw.windowMs, 2_000, 20_000, CHALLENGE_MS_ONLINE),
+    }),
+    create: (s) =>
+      createBs({ target: s.target as number, windowMs: s.windowMs as number }),
   },
 };
 
