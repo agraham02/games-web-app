@@ -87,6 +87,73 @@ test.describe("a room, in real browsers", () => {
     await one.close();
   });
 
+  test("four people fill a table, and each sees only their own hand", async ({ browser }) => {
+    // The shape every partnership game is built around, and the one no
+    // layer had ever run: four separate browsers, four separate
+    // identities, one room. Two people prove redaction between a pair;
+    // only four can show that a whole table is consistent at once.
+    const contexts = await Promise.all([0, 1, 2, 3].map(() => browser.newContext()));
+    const names = ["Ada", "Bo", "Cy", "Di"];
+    const pages: Page[] = [];
+
+    const ada = await player(contexts[0]!, names[0]!);
+    pages.push(ada);
+    const code = await hostRoom(ada);
+
+    for (let i = 1; i < 4; i++) {
+      const page = await player(contexts[i]!, names[i]!);
+      await join(page, code);
+      pages.push(page);
+    }
+
+    // Everybody can see everybody, before a card is dealt. Given time,
+    // because a roster reaches the other browsers over a socket - and not
+    // an exact match, because the viewer's own row reads "Ada (you)".
+    for (const page of pages) {
+      for (const name of names) {
+        await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
+      }
+    }
+
+    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /start spades/i }).click();
+
+    for (const page of pages) {
+      await expect(page.getByRole("button", { name: /step away/i })).toBeVisible();
+    }
+
+    // Each player can name at most their own thirteen, and no two players
+    // can name the same card. With four seats that accounts for the whole
+    // deck, so this is the redaction rule asserted across a FULL table
+    // rather than between one pair of it.
+    const nameable = async (page: Page) =>
+      (
+        await page
+          .locator("[data-fx]")
+          .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-fx") ?? ""))
+      ).filter((id) => !id.startsWith("#"));
+
+    const hands: string[][] = [];
+    for (const page of pages) {
+      await expect
+        .poll(async () => page.locator("[data-fx]").count(), { timeout: 20_000 })
+        .toBeGreaterThan(40);
+      const mine = await nameable(page);
+      expect(mine.length).toBeLessThanOrEqual(13);
+      hands.push(mine);
+    }
+
+    const seen = new Set<string>();
+    for (const hand of hands) {
+      for (const card of hand) {
+        expect(seen.has(card), `${card} was nameable at two different seats`).toBe(false);
+        seen.add(card);
+      }
+    }
+
+    await Promise.all(contexts.map((c) => c.close()));
+  });
+
   test("a started game deals both players a table, and neither sees the other's hand", async ({
     browser,
   }) => {

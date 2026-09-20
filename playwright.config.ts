@@ -23,7 +23,23 @@ export default defineConfig({
     baseURL: process.env.E2E_URL ?? "http://localhost:3210",
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+      testIgnore: /mobile.spec.ts/,
+    },
+    {
+      // A phone, for the half of the layout a desktop viewport cannot
+      // reach: the short-viewport branch, the pannable fans, and the one
+      // game that declines to lay out and asks to be turned. Its own
+      // spec rather than the whole suite run twice - the point is the
+      // viewport, so only the tests whose behaviour depends on it.
+      name: "mobile",
+      use: { ...devices["Pixel 7"] },
+      testMatch: /mobile.spec.ts/,
+    },
+  ],
   webServer: process.env.E2E_URL
     ? undefined
     : {
