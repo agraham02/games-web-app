@@ -134,6 +134,62 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+/**
+ * Fills a room with `count` REAL clients and returns them, host first.
+ *
+ * Every game scenario in this file before this one seated two people and
+ * let bots take the rest, so nothing anywhere exercised the shapes the
+ * games are actually built around: a partnership needs four, and BS's
+ * whole reason for `turnHold` is what happens when three or more people
+ * each have to be asked about the same window.
+ */
+async function party(
+  tag: string,
+  count: number,
+  names: string[],
+): Promise<{ code: string; clients: Client[] }> {
+  const stamp = Date.now();
+  const host = await client(`t-${tag}-0-${stamp}`);
+  const code = await hostRoom(host, names[0] ?? "P0");
+  const clients = [host];
+  for (let i = 1; i < count; i++) {
+    const c = await client(`t-${tag}-${i}-${stamp}`);
+    c.send({ t: "joinRoom", code, name: names[i] ?? `P${i}` });
+    await c.until((m) => m.t === "room");
+    clients.push(c);
+  }
+  return { code, clients };
+}
+
+/**
+ * BS only: plays one card from this client's OWN hand if it is on turn.
+ *
+ * A frame carries the viewer's own cards under their real ids - that is
+ * the whole point of the redaction layer - so a scripted player can play
+ * for real rather than being handed a legal move by the server.
+ */
+function playOneBs(c: Client, seat: number): boolean {
+  const frame = c.latest("frame");
+  if (!frame) return false;
+  const state = (frame.frame as { state?: { turn?: number; hands?: Record<string, string[]> } })
+    .state;
+  if (!state || state.turn !== seat) return false;
+  const hand = state.hands?.[String(seat)] ?? [];
+  const card = hand.find((id) => typeof id === "string" && !id.startsWith("#"));
+  if (!card) return false;
+  c.send({ t: "action", action: { t: "play", cards: [card] } });
+  return true;
+}
+
+/** Every client's own seat, once a game has dealt. */
+function seatsOf(clients: Client[]): number[] {
+  return clients.map((c) => {
+    const frame = c.latest("frame");
+    assert(frame, "every player should have been dealt in");
+    return (frame.frame as { seat: number }).seat;
+  });
+}
+
 /** Creates a room and returns its code. */
 async function hostRoom(c: Client, name = "Host"): Promise<string> {
   c.send({ t: "createRoom", name });
@@ -1223,6 +1279,189 @@ async function main(): Promise<void> {
       after.fingerprint === before.fingerprint,
       "a malformed BS action moved the table when it should have changed nothing",
     );
+  });
+
+  await scenario("four people fill a partnership table", async () => {
+    // Nothing in any layer had ever seated more than two humans, so the
+    // shape every partnership game is built around - four people, partners
+    // across, 0/2 against 1/3 - was never once exercised end to end.
+    const { code, clients } = await party("quad", 4, ["Ada", "Bo", "Cy", "Di"]);
+    const host = clients[0]!;
+
+    host.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "casual" });
+    await sleep(80);
+    host.send({ t: "startGame" });
+    await sleep(900);
+
+    const seats = seatsOf(clients);
+    assert(new Set(seats).size === 4, `four people need four distinct seats, got ${seats}`);
+    for (const seat of seats) assert(seat >= 0 && seat < 4, `seat ${seat} is off the table`);
+
+    // Everybody is live, so no bot may be holding a seat.
+    const live = (await dump(code)).liveSeats as boolean[];
+    assert(
+      live.length === 4 && live.every((x) => x === true),
+      `a real person sits in every seat, but liveSeats was ${JSON.stringify(live)}`,
+    );
+
+    // And the table is parked on one of them, waiting rather than stalled.
+    const table = (await dump(code)).table as { currentSeat: number | null };
+    assert(
+      seats.includes(table.currentSeat ?? -1),
+      `the table should wait on one of the four, not seat ${table.currentSeat}`,
+    );
+  });
+
+  await scenario("a six-seat BS table with four people keeps moving", async () => {
+    // BS asks EVERY other seat about every single play, so a table with
+    // several people on it is a different load from one with two - it is
+    // the load `turnHold` exists for, and it had never been put under it
+    // outside a pure function.
+    const { code, clients } = await party("bs6", 4, ["Ada", "Bo", "Cy", "Di"]);
+    const host = clients[0]!;
+
+    host.send({
+      t: "selectGame",
+      gameId: "bs",
+      // A short window keeps the scenario quick; the SHAPE being
+      // measured - every play asking four other seats, three of them
+      // people - is the same at any length.
+      settings: { target: 2, windowMs: 2000 },
+      seats: 6,
+      difficulty: "casual",
+    });
+    await sleep(80);
+    host.send({ t: "startGame" });
+    await sleep(900);
+
+    const seats = seatsOf(clients);
+    assert(new Set(seats).size === 4, `four people need four distinct seats, got ${seats}`);
+
+    // The people play for real, from their own hands. Windows are left to
+    // resolve on their own clocks, which is the load being measured: every
+    // play asks four other seats, and three of those are people.
+    let moves = 0;
+    let last = ((await dump(code)).table as { fingerprint: string }).fingerprint;
+    for (let tick = 0; tick < 120 && moves < 4; tick++) {
+      for (let i = 0; i < clients.length; i++) playOneBs(clients[i]!, seats[i]!);
+      await sleep(250);
+      const now = (await dump(code)).table as { fingerprint: string } | null;
+      if (!now) break;
+      if (now.fingerprint !== last) {
+        moves++;
+        last = now.fingerprint;
+      }
+    }
+    assert(moves >= 4, `a four-person BS table only moved ${moves} times`);
+  });
+
+  await scenario("a ten-seat room seats everybody who turns up", async () => {
+    // Poker and LRC are the two that seat ten; rummy stops at six, and a
+    // seat count outside a game's range is CLAMPED rather than refused
+    // (room.ts), so asking the wrong game for ten quietly gives you six.
+    // Nothing had ever put more than four people in a room, so "the room
+    // fills up" was an assumption rather than a tested claim - and seat
+    // assignment is the one thing with no second chance to get right.
+    const { code, clients } = await party("ten", 10, [
+      "Ada",
+      "Bo",
+      "Cy",
+      "Di",
+      "Eve",
+      "Fay",
+      "Gus",
+      "Hal",
+      "Ivy",
+      "Jo",
+    ]);
+    const host = clients[0]!;
+
+    host.send({
+      t: "selectGame",
+      gameId: "lrc",
+      settings: { target: 3 },
+      seats: 10,
+      difficulty: "casual",
+    });
+    await sleep(120);
+    host.send({ t: "startGame" });
+    await sleep(2000);
+
+    const seats = seatsOf(clients);
+    assert(new Set(seats).size === 10, `ten people need ten distinct seats, got ${seats}`);
+    const live = (await dump(code)).liveSeats as boolean[];
+    assert(live.length === 10, `a ten-seat game should report ten seats, got ${live.length}`);
+    assert(
+      live.every((x) => x === true),
+      `every seat has a person in it, but liveSeats was ${JSON.stringify(live)}`,
+    );
+  });
+
+  await scenario("kicking somebody frees their seat and the table carries on", async () => {
+    // Only ever tested from the kicked player's side, and only that they
+    // were told. Nobody asserted the seat is released and the game then
+    // keeps playing without them.
+    const { code, clients } = await party("kick", 3, ["Ada", "Bo", "Cy"]);
+    const host = clients[0]!;
+
+    host.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "casual" });
+    await sleep(80);
+    host.send({ t: "startGame" });
+    await sleep(900);
+
+    const seats = seatsOf(clients);
+
+    // Get the table parked on somebody who is NOT the leader, so that
+    // kicking them is the on-turn case - the one where a seat nobody is
+    // going to answer for has to be handed over for the game to go on.
+    // The leader bids when it is asked to, which is what moves the turn
+    // along; everybody else is left sitting on theirs.
+    let victimIdx = -1;
+    for (let tick = 0; tick < 60 && victimIdx < 0; tick++) {
+      const table = (await dump(code)).table as { currentSeat: number | null } | null;
+      const idx = seats.indexOf(table?.currentSeat ?? -1);
+      if (idx > 0) {
+        victimIdx = idx;
+        break;
+      }
+      if (idx === 0) {
+        host.send({ t: "action", action: { t: "look" } });
+        await sleep(40);
+        host.send({ t: "action", action: { t: "bid", tricks: 3, nil: false } });
+      }
+      await sleep(120);
+    }
+    assert(victimIdx > 0, "the table should have parked on somebody other than the leader");
+
+    const target = clients[victimIdx]!;
+    const victimSeat = seats[victimIdx]!;
+    assert(
+      ((await dump(code)).liveSeats as boolean[])[victimSeat] === true,
+      "the player about to be kicked should be live first",
+    );
+
+    const victimSession = target.session;
+    assert(victimSession, "the victim needs a session to be kicked by");
+    target.clear();
+    host.send({ t: "kick", session: victimSession });
+    await target.until((m) => m.t === "left" && m.reason === "kicked");
+
+    let released = false;
+    for (let tick = 0; tick < 30 && !released; tick++) {
+      await sleep(120);
+      const live = (await dump(code)).liveSeats as boolean[] | undefined;
+      if (live && live[victimSeat] === false) released = true;
+    }
+    assert(released, "a kicked player's seat was never handed over");
+
+    const before = (await dump(code)).table as { fingerprint: string };
+    let moved = false;
+    for (let tick = 0; tick < 40 && !moved; tick++) {
+      await sleep(150);
+      const now = (await dump(code)).table as { fingerprint: string } | null;
+      if (now && now.fingerprint !== before.fingerprint) moved = true;
+    }
+    assert(moved, "the table stalled after somebody was kicked out of it");
   });
 
   console.log(`\n${passed} passed, ${failed} failed\n`);
