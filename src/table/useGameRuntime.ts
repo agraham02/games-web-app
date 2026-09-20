@@ -406,11 +406,18 @@ export function useGameRuntime<S, A>(
   useEffect(() => {
     optsRef.current = opts;
     session.setEmit(onFrame);
-    session.setTurnHoldResolver(() => {
+    session.setTurnHoldResolver((state, seat) => {
       const live = optsRef.current;
       if (prefersReducedMotion()) return 0;
       const factor = 1 / Math.max(0.05, live.speed ?? 1);
-      return (live.turnHoldMs ?? DEFAULT_TURN_HOLD_MS) * factor;
+      // The game may state that THIS turn deserves a different beat — BS's
+      // challenge window resolves seat by seat and most of those turns
+      // have nothing to look at. The dev panel's slider stays in charge of
+      // ordinary dead air, and the speed multiplier scales either, so this
+      // never escapes the driver's own pacing controls. See
+      // `GameDefinition.turnHold`.
+      const asked = definition.turnHold?.(state, seat);
+      return (asked ?? live.turnHoldMs ?? DEFAULT_TURN_HOLD_MS) * factor;
     });
   });
 

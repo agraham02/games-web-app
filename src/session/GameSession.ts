@@ -125,8 +125,14 @@ export interface GameSessionOptions<S, A> {
    * being revealed. A function, not a number, because the browser resolves
    * it against a live speed control and the reduced-motion setting, both
    * of which can change between turns.
+   *
+   * Receives the position and the seat about to act so a driver can let
+   * the GAME have an opinion about this particular beat — see
+   * `GameDefinition.turnHold`. The driver stays in charge of WHEN: it is
+   * the one that folds in playback time, the speed multiplier and reduced
+   * motion around whatever the game asks for.
    */
-  turnHoldMs?: () => number;
+  turnHoldMs?: (state: S, seat: SeatId) => number;
   /**
    * When false a bot's turn is computed as soon as it is reachable but
    * never auto-revealed — the driver must call `advance()`. Dev affordance
@@ -224,7 +230,7 @@ export class GameSession<S, A> {
   }
 
   /** Replaces the turn-hold resolver. See `GameSessionOptions.turnHoldMs`. */
-  setTurnHoldResolver(turnHoldMs: () => number): void {
+  setTurnHoldResolver(turnHoldMs: (state: S, seat: SeatId) => number): void {
     this.opts.turnHoldMs = turnHoldMs;
   }
 
@@ -301,7 +307,9 @@ export class GameSession<S, A> {
     // reason: `scheduleDeadline` clears before it arms.
     if (this.holdTimer !== null) return;
 
-    const hold = this.opts.turnHoldMs ? this.opts.turnHoldMs() : DEFAULT_TURN_HOLD_MS;
+    const hold = this.opts.turnHoldMs
+      ? this.opts.turnHoldMs(current, seat)
+      : DEFAULT_TURN_HOLD_MS;
     this.holdTimer = this.clock.setTimeout(() => {
       this.holdTimer = null;
       this.advance();

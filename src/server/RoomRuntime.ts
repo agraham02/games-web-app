@@ -326,7 +326,14 @@ export class RoomRuntime {
       // offline's rhythm. It is still not waiting on anybody: a slow
       // client falls behind and catches up on its own, and nobody else's
       // game is any slower for it.
-      turnHoldMs: () => this.lastFramePlaybackMs + DEFAULT_TURN_HOLD_MS,
+      //
+      // The game may ask for a different beat on a particular turn (see
+      // `GameDefinition.turnHold`); the playback measurement is added
+      // either way, because that part is the driver's job and not
+      // something a game can know.
+      turnHoldMs: (state, seat) =>
+        this.lastFramePlaybackMs +
+        (definition.turnHold?.(state, seat) ?? DEFAULT_TURN_HOLD_MS),
       emit: (frame) => this.onFrame(frame),
     });
 

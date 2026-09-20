@@ -522,6 +522,32 @@ export interface GameDefinition<S, A> {
   deadline?(state: S, seat: SeatId): { ms: number; action: A } | null;
 
   /**
+   * How much dead air this particular turn deserves before the next one
+   * is revealed. Return undefined — as almost every game always should —
+   * to leave it to the driver.
+   *
+   * This does NOT hand the game control of pacing. The driver still owns
+   * WHEN: it adds its own measurement of how long the last frame takes to
+   * WATCH (`playbackMs`, on the server) and its own speed multiplier and
+   * reduced-motion rule (in the browser). This is only the beat AFTER
+   * that, the one the driver would otherwise take as a flat constant.
+   *
+   * It exists because a flat constant assumes every turn has something to
+   * look at, and one does not: BS resolves its challenge window by giving
+   * each entitled seat a turn in reaction-time order, and a seat that
+   * lets the play go produces no events at all. At the default 900ms a
+   * table of three opponents spent ~2.7s showing nothing after EVERY
+   * play. BS returns a small number while a window is open, so those
+   * turns read as a flicker of eyes around the table (each declining
+   * seat's pod lights on its own via `seatCue`) instead of dead air.
+   *
+   * The same seam as `deadline?()`, which already lets a game state a
+   * duration in ms for a rules-driven wait; this is its counterpart for a
+   * rules-driven hurry.
+   */
+  turnHold?(state: S, seat: SeatId): number | undefined;
+
+  /**
    * Is this actually a well-formed, legal action for this seat? Return a
    * reason to refuse it, or null to allow it.
    *
