@@ -1,9 +1,9 @@
 # Table Games
 
-Five table games — **Dominoes** (Block & Draw, and the Caribbean game),
-**Spades**, **Rummy 500**, **Poker** (NL Hold'em) and **Left Right
-Center** — playable alone against bots or in a room with other people.
-All five run online.
+Six table games — **Dominoes** (Block & Draw, and the Caribbean game),
+**Spades**, **Rummy 500**, **Poker** (NL Hold'em), **Left Right Center**
+and **BS** (Cheat) — playable alone against bots or in a room with other
+people. All six run online.
 
 ## Running it
 

@@ -1,15 +1,18 @@
 # Table Games — architecture
 
-Web app hosting five table games, alone against bots or in a room with
+Web app hosting six table games, alone against bots or in a room with
 other people: Dominoes (Block & Draw, and the Caribbean game), Spades,
-Rummy 500, Poker (NL Hold'em), Left Right Center. Priority is UI/UX —
-real-table motion, distinct phase screens, and Rummy's board information
-shown without clutter.
+Rummy 500, Poker (NL Hold'em), Left Right Center, BS (Cheat). Priority is
+UI/UX — real-table motion, distinct phase screens, and Rummy's board
+information shown without clutter.
 
-**Status: all five games are real**, with full rules, bots and play
-screens, and **all five run online in a room**. Rummy was the last in,
-and needed its rules changed rather than its wiring — see "A claim is a
-race" below. The shared layer is additionally exercised through `/lab`.
+**Status: all six games are real**, with full rules, bots and play
+screens, and **all six run online in a room**. Rummy needed its rules
+changed rather than its wiring to get there — see "A claim is a race"
+below. BS came after that work and cost almost nothing as a result, but
+it runs the same race after EVERY play rather than once every twelve
+rounds, which is a load the machinery had never taken — see "A race every
+turn". The shared layer is additionally exercised through `/lab`.
 
 ```
 npm run dev      # server + app on one port: /play/rummy, /room, /lab/seats
@@ -137,7 +140,7 @@ for every other turn. The claim needed two genuinely new things.
 
 **More than one seat may act at once.** `currentSeat` can only name one,
 so `GameSession.submit` now gates on `legalActions(state, seat)` being
-non-empty instead. For four of the five games those are the same question
+non-empty instead. For four of the six games those are the same question
 — asserted across whole matches in `GameSession.test.ts`, some eight
 thousand seat-turns of it — and `currentSeat` remains what the PACING
 waits on. Rummy's claim window is where they diverge: it names every
@@ -161,6 +164,74 @@ deliberately not tuned to fire together (`CLAIM_GRACE_MS`).
 it drives real sockets with no browser behind them, so a table that only
 moves because a page is running stops dead.
 
+### A race every turn is a different load from a race a round
+
+Rummy's claim window opens about once every twelve rounds. BS runs the
+same shape — several seats entitled at once, `legalActions` as the gate,
+`deadline?()` as the backstop — after **every single play**, and that
+turned out to be a difference in kind rather than degree.
+
+**A seat that answers with nothing still costs a turn.** Every entitled
+seat gets its own turn in the window, and a seat that lets the play go
+emits no events at all. At the driver's flat 900ms hold, three opponents
+meant nearly three seconds of blank table after each play. So
+`GameDefinition.turnHold?(state, seat)` — optional, shaped after
+`deadline?()`, and returning `undefined` for every game but this one.
+
+The division holds: the driver still decides WHEN. It keeps its own
+measurement of how long the last frame takes to WATCH (`playbackMs` on
+the server) and its own speed multiplier and reduced-motion rule; the
+game only replaces the constant beat that follows. What BS asks for is
+~120ms while a window is open, which turns those turns into a flicker of
+eyes travelling round the ring — each declining seat's pod lights on its
+own through `seatCue`, for free.
+
+**A generous window must not be able to hold up the table.** Online a
+person gets ten seconds, which is only tolerable because `legalActions`
+also hands the seat ON TURN its plays while a window is open. The most
+natural thing that ends a window is the game moving on over the top of
+it. A bot never uses that interrupt — jumping its own queue gains it
+nothing, and the interrupt exists for people, who are the only ones a
+generous window can hold up.
+
+**A person's own deadline is NOT capped by the fastest rival**, which is
+where this deliberately parts company with Rummy. There, a seat gets at
+most until the quickest rival reacts, and that is right for a race
+happening once a round. Here it would hand a player 250ms to answer a
+window that opens after every play. The seats ahead of you in the list
+have already had their turn by the time you get yours, so being beaten to
+it happens by being further down the list — not by running out of a
+clock somebody else set.
+
+**A reveal has to survive into the settled state.** The challenged cards
+turn face up for everybody, and `placements` is the authority for FACING
+— so if the position `reduce` returned said they were face down, the
+redaction layer would quite correctly send them out as anonymous backs
+and a challenge would turn over four blank cards. Which is why taking the
+pile is its own action rather than part of the same reduce: the reveal
+has to be a state anybody can be shown, not a moment inside a batch.
+
+**The pile is face down to everybody, its own contributor included.**
+Letting a player keep the identities of cards they put in themselves is
+safe in the narrow sense — they already know them. It was still wrong,
+and `redact.test.ts` caught it on the first run: the rule is blunt on
+purpose, because a subtle one eventually gets got wrong. It costs nothing
+real either way, since what is worth remembering about a pile is how much
+of it is yours, and that is a count the public claim history already
+gives.
+
+**Bots must be fallible in BOTH directions**, and this is the second time
+that lesson has been paid for. A bot that never misses a provable lie
+means a hand holding none of the rank cannot bluff at all; a bot that
+only ever lies when forced makes every claim trustworthy; a bot with a
+hard cap on its bluff size makes every FAT claim trustworthy, which is a
+rule a person can read off the table for free — and which had the bots'
+own suspicion of big claims aimed squarely at honest ones. `bots.test.ts`
+measures reachability rather than correctness for exactly this reason,
+and holds the liar fixed when it measures difficulty: across a table of
+one tier, "lies caught" conflates being good at catching with being good
+at lying, and those two move in opposite directions.
+
 ### The turn gate and the action gate are different questions
 
 `GameSession.submit` asks `legalActions(state, seat)` whether this seat
@@ -177,9 +248,13 @@ So `GameDefinition.validate?(state, seat, action)`, shaped after
 `validateByEnumeration` ([_shared/validate.ts](src/games/_shared/validate.ts)),
 which tests membership of the game's own `legalActions` — the same
 function the action bar is built from, so the button and the gate cannot
-disagree. **Poker cannot use it**: it returns `{t:"bet", to: range.min}`
-as one representative of a continuous range, so membership would refuse
-every bet but the minimum. It validates the range by hand.
+disagree. **Two games cannot use it**, for the same reason in different
+clothes — the legal set is too big to enumerate, so `legalActions`
+publishes representatives and membership would refuse everything else.
+Poker returns `{t:"bet", to: range.min}` as one point on a continuous
+range; BS publishes one play per COUNT, because a play is any 1-to-4 card
+subset of a hand and there are 1,092 of those for thirteen cards. Both
+check the shape of a legal action by hand instead.
 
 ### An animation needs a table to play on, and a pile to fly from
 
@@ -219,7 +294,9 @@ Three rules keep it honest:
 
 Poker is the known gap, and it is not an online one: it places nothing
 before its first deal, so that deal has no pile to fly from offline
-either.
+either. BS deliberately does not repeat it — `setup` returns an undealt
+state with all 52 cards parked on the pile, which is also where the pile
+lives once play starts.
 
 ### The server paces bot turns by what the last one takes to WATCH
 
@@ -289,7 +366,7 @@ that catches it — a stalled table simply stops, with nothing pending.
 
 ### A room is the point; playing alone is the fallback
 
-The home screen leads with making or joining a room and puts the five
+The home screen leads with making or joining a room and puts the six
 solo tables under "or play on your own", because that ordering is the
 product. It also means a room has to be a room: **`MIN_ROOM_PLAYERS`
 (2) is enforced in `applyCommand`**, not only in the lobby. One human in
@@ -327,7 +404,7 @@ and it is one function because it used to be five copies of half an idea.
 
 Every game had `busy && lastAction?.seat === seat` — "this seat moved and
 we are still watching it". Deliberately not `state.turn`, which names the
-NEXT actor the instant `reduce` runs; four of the five carry a comment
+NEXT actor the instant `reduce` runs; four of the games carry a comment
 defending that. What none of them had was the other question. Offline they
 are the same question: every seat with a pod is a bot, and a bot's turn
 OPENS with a `think`, so `lastAction` lands on it as the turn begins.
@@ -401,6 +478,18 @@ where everything sits`. No React, no DOM, so
 - Edge allocation is a hand-tuned table per density tier, clamped to
   what actually fits, with a proportional fallback for counts beyond
   the table.
+
+**A zone is cheaper than a collision.** Poker took three rounds of
+screenshot-driven fixes before the answer turned out to be four dedicated
+boxes computed as one vertical chain, rather than several games each
+anchoring their own pile to `cy`. BS's `pile` and `reveal` follow that
+recipe from the start: one pair, centred on `cy` together, so they cannot
+overlap by construction — and `geometry.test.ts` asserts it across all
+six viewports and nine seat counts instead of waiting to be shown a
+screenshot. Reusing `deck`/`discard` would have looked nearly right, too:
+both are offset from centre to make room for each other, so a game with
+only ONE pile in either reads as visibly off-centre with nothing beside
+it to explain why.
 
 Three density tiers (`compact` / `regular` / `wide`) set piece sizes.
 Width picks the tier but height can demote it — a 844×390 landscape
