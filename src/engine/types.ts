@@ -519,7 +519,27 @@ export interface GameDefinition<S, A> {
    * mechanism, and the two are deliberately not tuned to fire together
    * (see Rummy's `CLAIM_GRACE_MS`).
    */
-  deadline?(state: S, seat: SeatId): { ms: number; action: A } | null;
+  deadline?(state: S, seat: SeatId): {
+    ms: number;
+    action: A;
+    /**
+     * What this wait IS, so the driver can tell being asked again about
+     * the same one from a new one starting.
+     *
+     * A deadline is re-armed on every settle, and a settle happens on
+     * every frame - so a wait that spans other people's moves used to
+     * restart from full each time one arrived. BS opens a window after
+     * every play and answers it seat by seat, so a person's ten seconds
+     * were quietly reset by the seats ahead of them, and reconnecting
+     * reset them again. Return a value that is stable for as long as the
+     * same wait is running and different when a new one begins, and the
+     * driver counts down the ORIGINAL span instead of starting over.
+     *
+     * Omit it and the old behaviour stands: every re-arm is a fresh wait,
+     * which is right for a deadline that only ever spans its own turn.
+     */
+    key?: string;
+  } | null;
 
   /**
    * How much dead air this particular turn deserves before the next one

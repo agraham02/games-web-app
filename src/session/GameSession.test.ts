@@ -894,3 +894,73 @@ describe("GameSession — a timer belongs to the position that armed it", () => 
     expect(session.snapshot()).not.toBe(before);
   });
 });
+
+describe("GameSession — one window is one wait", () => {
+  const bsDef = createBs({ target: 5, windowMs: 5000 });
+
+  /** Plays until `seat` is the one the table is waiting on in a window. */
+  function untilWaitingOn(seat: SeatId) {
+    const clock = new TestClock();
+    const session: GameSession<BsState, BsAction> = new GameSession<BsState, BsAction>({
+      definition: bsDef,
+      seats: 4,
+      seed: 3,
+      clock,
+      isSeatLive: (s) => s === seat,
+      emit: () => session.settled(),
+    });
+    session.start();
+    for (let i = 0; i < 4000; i++) {
+      const state = session.snapshot();
+      if (
+        state.window !== null &&
+        state.window.pending.some((x) => x.seat === seat) &&
+        bsDef.currentSeat(state) === seat
+      ) {
+        return { clock, session };
+      }
+      if (bsDef.isOver(state)) break;
+      if (bsDef.isRoundOver!(state)) {
+        session.nextRound();
+        continue;
+      }
+      if (bsDef.currentSeat(state) === seat) {
+        const legal = bsDef.legalActions(state, seat);
+        if (legal.length === 0) break;
+        session.submit(seat, legal[legal.length - 1]!);
+        continue;
+      }
+      if (clock.pending === 0) break;
+      clock.advance(20);
+    }
+    throw new Error("never reached a window waiting on that seat");
+  }
+
+  it("does not hand a seat its window back when it is asked again", () => {
+    // A deadline is re-armed on every settle, and `settled()` is reached
+    // from far more than the seat's own move: a reconnect, a liveness
+    // change, any frame at all. Each one used to restart the countdown
+    // from full, so refreshing the page was a free extension of your own
+    // window - and a table with anything going on could keep a person's
+    // deadline alive indefinitely without them ever answering.
+    const { clock, session } = untilWaitingOn(1);
+    const opened = clock.now();
+
+    // Burn most of the window, then be asked again - which is exactly
+    // what a reconnect does.
+    clock.advance(4000);
+    session.settled();
+
+    // Let it expire. If being asked again restarted the clock, this needs
+    // a further full window; if it resumed, it is nearly up already.
+    for (let i = 0; i < 400 && clock.pending > 0; i++) {
+      if (!bsDef.legalActions(session.snapshot(), 1).some((a) => a.t === "declineBs")) break;
+      clock.advance(50);
+    }
+
+    const total = clock.now() - opened;
+    expect(total).toBeGreaterThanOrEqual(5000);
+    // The window plus its grace, and nothing like a second one.
+    expect(total).toBeLessThan(5000 + 2000);
+  });
+});

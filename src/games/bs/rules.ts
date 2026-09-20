@@ -558,12 +558,26 @@ export function validate(state: BsState, seat: SeatId, action: BsAction): string
 export function deadline(
   state: BsState,
   seat: SeatId,
-): { ms: number; action: BsAction } | null {
+): { ms: number; action: BsAction; key?: string } | null {
   if (state.pendingTake === seat) {
     return { ms: REVEAL_HOLD_MS, action: { t: "takePile", seat } };
   }
   if (entitledToCall(state, seat)) {
-    return { ms: state.windowMs + CHALLENGE_GRACE_MS, action: { t: "declineBs", seat } };
+    return {
+      ms: state.windowMs + CHALLENGE_GRACE_MS,
+      action: { t: "declineBs", seat },
+      // This seat's turn at this window, counted from when it began.
+      //
+      // Per SEAT as well as per window, deliberately: a seat's wait is
+      // not capped by the seats ahead of it in the queue, because by the
+      // time you are asked they have already had their own turn (see
+      // `ChallengeWindow.pending`). What the key stops is the same seat's
+      // own wait being handed back to it - a deadline is re-armed on
+      // every settle, so a reconnect, or any frame that arrives while you
+      // are the one being waited on, used to start your ten seconds over.
+      // Refreshing was a free extension.
+      key: `${state.round}:${state.plays.length}:${seat}`,
+    };
   }
   return null;
 }

@@ -163,6 +163,14 @@ export class GameSession<S, A> {
   private holdTimer: TimerHandle | null = null;
   /** A live seat's deadline, when its game declared one. */
   private deadlineTimer: TimerHandle | null = null;
+  /**
+   * When the wait currently being counted down actually began.
+   *
+   * Keyed by whatever the game called it, so being asked again about the
+   * same wait resumes it rather than restarting it. See
+   * `GameDefinition.deadline`'s `key`.
+   */
+  private deadlineAnchor: { key: string; at: number } | null = null;
   /** A bot turn that `settled()` has decided on but not yet revealed. */
   private pending: S | null = null;
   private disposed = false;
@@ -499,7 +507,34 @@ export class GameSession<S, A> {
   private scheduleDeadline(seat: SeatId): void {
     this.clearDeadline();
     const due = this.definition.deadline?.(this.state, seat);
-    if (!due) return;
+    if (!due) {
+      this.deadlineAnchor = null;
+      return;
+    }
+
+    // How long is actually LEFT of this wait, not how long it was worth
+    // when it started.
+    //
+    // A deadline is re-armed on every settle and a settle happens on
+    // every frame, so a wait that spans other people's moves used to
+    // restart from full each time one arrived. In BS that is the normal
+    // case: a window is answered seat by seat, and each answer is a
+    // frame, so the person at the back of the queue had their ten seconds
+    // silently reset by everybody ahead of them - and reconnecting reset
+    // them again, which is a free extension for anybody who refreshes.
+    // Games that give a key get the original span counted down; games
+    // that do not keep the old behaviour exactly.
+    let ms = due.ms;
+    if (due.key !== undefined) {
+      const now = this.clock.now();
+      if (this.deadlineAnchor?.key === due.key) {
+        ms = Math.max(0, due.ms - (now - this.deadlineAnchor.at));
+      } else {
+        this.deadlineAnchor = { key: due.key, at: now };
+      }
+    } else {
+      this.deadlineAnchor = null;
+    }
     this.deadlineTimer = this.clock.setTimeout(() => {
       this.deadlineTimer = null;
       // Through `submit`, not `reduce`, so an action that has become
@@ -507,7 +542,7 @@ export class GameSession<S, A> {
       // — the seat may have acted a moment before this fired.
       const result = this.submit(seat, due.action);
       if (result.ok && !result.animated) this.settled();
-    }, due.ms);
+    }, ms);
   }
 
   /**
