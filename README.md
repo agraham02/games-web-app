@@ -31,6 +31,12 @@ logic is built to notice.
 
 ## Deploying it
 
+**Step-by-step, CI/CD and free-tier options are in [deploy.md](deploy.md).**
+CI runs on every push and pull request
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)); a green `main`
+deploys itself to Render and checks the live site is serving that commit.
+What follows is the reasoning behind the constraints.
+
 **Not Vercel, and not serverless.** Rooms live in this process's memory —
 each one owns a running game loop with bot turns scheduled on a clock, an
 expiry timer, and the sockets themselves. Serverless functions are

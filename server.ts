@@ -52,7 +52,20 @@ async function main(): Promise<void> {
     // about who is in which room — a health check is a public endpoint.
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, rooms: registry.size, uptime: process.uptime() }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          rooms: registry.size,
+          uptime: process.uptime(),
+          // Which commit is actually serving, so a deploy can be VERIFIED
+          // rather than assumed: a platform keeps the old instance up
+          // until the new one is healthy, so "the health check passed"
+          // cannot tell a finished deploy from one still in flight. Render
+          // sets the first; `GIT_COMMIT` is for a host that does not.
+          // Null when neither is set, which is honest for local runs.
+          commit: process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? null,
+        }),
+      );
       return;
     }
     // Debug routes answer for themselves; everything else is Next's. They

@@ -22,6 +22,14 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
+    # Deploys are triggered by CI, not by a push. `commit` (Render's
+    # default) would deploy every push to the branch the moment it lands,
+    # BEFORE the tests have run — so a red commit would go live and CI
+    # would merely report on it afterwards. With `off`, the workflow in
+    # `.github/workflows/ci.yml` calls this service's deploy hook only
+    # once every job has passed, and then checks /healthz reports the
+    # commit it just shipped. See deploy.md.
+    autoDeployTrigger: "off"
     envVars:
       - key: NODE_ENV
         value: production
