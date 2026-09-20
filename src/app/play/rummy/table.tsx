@@ -43,7 +43,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence, animate, motion, useMotionValue, useTransform } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { HERO, type PieceId, type SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import {
@@ -92,6 +92,7 @@ import {
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { PeekRail } from "@/ui/disclosure/PeekRail";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
+import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { TRANSITIONS } from "@/motion/presets";
@@ -1125,155 +1126,17 @@ function ClaimBar({ live, seat }: { live: Live; seat: SeatId }) {
       <span className="min-w-0 shrink truncate text-[10px] font-bold text-brass-300">
         {window_.discard} fits a meld
       </span>
-      <ClaimButton
+      {/* The ring lives in `CountdownButton` now — BS races after every
+          single play, and a second copy of this would have become a second
+          opinion about how a losable chance should read. */}
+      <CountdownButton
         key={window_.discard}
         ms={ms}
         onClick={() => live.submitAction({ t: "claim", seat })}
-      />
+      >
+        Rummy!
+      </CountdownButton>
     </>
-  );
-}
-
-/** Where the ring turns amber, then red, as a fraction of time REMAINING. */
-const CLAIM_WARN_AT = 0.5;
-const CLAIM_DANGER_AT = 0.25;
-
-/**
- * The one high-impact moment in this game, so it is allowed to be loud.
- *
- * Everything else here settles rather than bounces (see layout.ts), and
- * this is the deliberate exception: the window is short, it can be lost,
- * and it appears without warning while the player is looking at their own
- * hand. An entrance that merely fades in is one a player misses — which
- * is exactly what was reported.
- *
- * The clock is drawn as a depleting ring around the button rather than a
- * separate bar, because a countdown sitting next to the thing it applies
- * to has to be read as belonging to it; drawn ON the button there is
- * nothing to work out. Green for the first half, amber to a quarter left,
- * red for the last quarter — driven by real timers rather than
- * interpolated keyframes, so each band is a flat colour and the switch is
- * a switch.
- */
-function ClaimButton({ ms, onClick }: { ms: number; onClick: () => void }) {
-  // Keyed by `ms` so a fresh window gets a fresh component rather than a
-  // reset written from inside an effect (see the mount below). One window
-  // is one button; there is no state here worth carrying between them.
-  const [phase, setPhase] = useState<"safe" | "warn" | "danger">("safe");
-
-  useEffect(() => {
-    const a = setTimeout(() => setPhase("warn"), ms * (1 - CLAIM_WARN_AT));
-    const b = setTimeout(() => setPhase("danger"), ms * (1 - CLAIM_DANGER_AT));
-    return () => {
-      clearTimeout(a);
-      clearTimeout(b);
-    };
-  }, [ms]);
-
-  const stroke =
-    phase === "safe"
-      ? "var(--color-emerald-400, #34d399)"
-      : phase === "warn"
-        ? "var(--color-amber-400, #fbbf24)"
-        : "var(--color-red-400, #f87171)";
-
-  return (
-    <motion.button
-      type="button"
-      onClick={onClick}
-      // Arrives big and lands. A single overshoot-and-settle, not a
-      // repeating bounce — the urgency is in the clock, not in a wobble.
-      initial={{ scale: 0.4, opacity: 0 }}
-      animate={{ scale: [0.4, 1.18, 1], opacity: 1 }}
-      transition={{ duration: 0.42, times: [0, 0.55, 1], ease: "easeOut" }}
-      // Roomier than an ordinary bar button: it is alone in the row now
-      // that Pass is gone, and it is the only thing being asked.
-      className="relative shrink-0 rounded-full bg-linear-to-b from-brass-300 to-brass-500 px-7 py-2.5 font-display text-base font-extrabold tracking-wide text-felt-950"
-    >
-      {/* A pulsing glow underneath, sized past the button's own box so it
-          reads as light rather than as a second border. */}
-      <motion.span
-        aria-hidden
-        className="pointer-events-none absolute rounded-full"
-        style={{
-          inset: -7,
-          background: "radial-gradient(closest-side, rgb(212 175 106 / 0.75), transparent 70%)",
-          filter: "blur(7px)",
-        }}
-        animate={{ opacity: [0.45, 1, 0.45], scale: [0.95, 1.08, 0.95] }}
-        transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <span className="relative">Rummy!</span>
-      <ClaimRing ms={ms} colour={stroke} />
-    </motion.button>
-  );
-}
-
-/**
- * The depleting border — a real border around the button, not a drawing
- * of one inside it.
- *
- * The first version was an SVG `<rect rx="9999">` laid over the button.
- * It read as cheap for two reasons that are the same reason: an SVG rect
- * cannot share the button's `border-radius`, it can only approximate it,
- * and it had to be inset to keep its stroke from clipping — so it sat
- * visibly INSIDE the edge rather than being the edge.
- *
- * This is a conic gradient masked to a ring. `border-radius: 9999px` on
- * the overlay resolves against the overlay's own box, so it is the
- * button's pill exactly, at any width the text happens to produce; the
- * two-layer mask (`content-box` minus the whole box) punches out the
- * middle, leaving `padding` worth of ring. Sweeping the gradient's stop
- * from a full turn to nothing empties it.
- *
- * The sweep is driven by a motion VALUE composed into the whole
- * `background` string, rather than by animating a CSS custom property.
- * Both would work in a browser, but only this one fails loudly: if Motion
- * could not drive a custom property the ring would simply sit full and
- * the countdown would be silently wrong, which is the worst way for a
- * timer to break. Here the property being animated is `background`
- * itself, which is a plain style binding.
- *
- * The colour comes through `currentColor` rather than the transform, so
- * the phase switch is an ordinary re-render and cannot capture a stale
- * value in the transform's closure.
- */
-function ClaimRing({ ms, colour }: { ms: number; colour: string }) {
-  const sweep = useMotionValue(1);
-  const background = useTransform(
-    sweep,
-    (v) => `conic-gradient(from -90deg, currentColor ${v * 360}deg, transparent 0)`,
-  );
-
-  useEffect(() => {
-    sweep.set(1);
-    const controls = animate(sweep, 0, { duration: ms / 1000, ease: "linear" });
-    return () => controls.stop();
-  }, [ms, sweep]);
-
-  const ring = "linear-gradient(#000 0 0)";
-  return (
-    <motion.span
-      aria-hidden
-      className="pointer-events-none absolute rounded-full"
-      style={{
-        // Just OUTSIDE the button, so it reads as a border around it
-        // rather than as decoration painted on the face.
-        inset: -3,
-        padding: 3,
-        color: colour,
-        background,
-        // Two mask layers, the inner one clipped to the content box,
-        // composited so the middle is punched out — what is left is
-        // exactly `padding` worth of ring following the element's own
-        // `border-radius`. An SVG rect can only approximate that radius,
-        // which is why the first version looked pasted on.
-        WebkitMask: `${ring} content-box, ${ring}`,
-        WebkitMaskComposite: "xor",
-        mask: `${ring} content-box, ${ring}`,
-        maskComposite: "exclude",
-      }}
-    />
   );
 }
 
