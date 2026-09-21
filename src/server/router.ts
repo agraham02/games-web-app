@@ -17,6 +17,7 @@
 
 import {
   errorText,
+  moveRefusedText,
   parseClientMessage,
   PROTOCOL_VERSION,
   type ClientMessage,
@@ -176,7 +177,7 @@ export class Router {
           // used to send: a client switching on `code` could not tell a
           // lost race from a parse failure, so it could not sensibly
           // decide which of the two is worth interrupting somebody over.
-          this.fail(peer, "move-refused", result.error ?? "rejected", message.reqId);
+          this.fail(peer, "move-refused", moveRefusedText(result.error), message.reqId);
         }
         return;
       }
@@ -187,7 +188,7 @@ export class Router {
         // already been continued by another player) pressed Continue and
         // got silence — the one case `move-refused` was invented for.
         if (!runtime.nextRound(session)) {
-          this.fail(peer, "move-refused", "not-in-game", message.reqId);
+          this.fail(peer, "move-refused", moveRefusedText("not-in-game"), message.reqId);
         }
         return;
 

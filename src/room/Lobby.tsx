@@ -64,12 +64,22 @@ export function Lobby({ api }: { api: RoomApi }) {
           you={room.you}
           youAreLeader={leader}
           teamsEnabled={teamsEnabled}
+          teamsLocked={room.gameRunning}
           onPromote={api.promote}
           onKick={api.kick}
           onAssignTeam={api.assignTeam}
         />
         {teamsEnabled && leader ? (
-          <Button size="sm" onClick={api.randomizeTeams} className="self-start">
+          <Button
+            size="sm"
+            // Same rule as the A/B buttons beside each name: partnerships
+            // are read once, at `startGame`, so shuffling them mid-match
+            // moved the roster and nothing else.
+            disabled={room.gameRunning}
+            title={room.gameRunning ? "Finish the game first" : undefined}
+            onClick={api.randomizeTeams}
+            className="self-start"
+          >
             <Shuffle size={12} /> Shuffle teams
           </Button>
         ) : null}
@@ -218,7 +228,18 @@ function JoinCode({ code }: { code: string }) {
 
 function GamePicker({ api }: { api: RoomApi }) {
   const room = api.room!;
-  const leader = room.youAreLeader;
+  // What a game IS cannot be changed while one is running.
+  //
+  // The server has refused this since it learned to (`game-already-running`),
+  // because swapping gameId mid-match hands every client a different table to
+  // draw against a live game's frames. But the lobby is reachable DURING a
+  // match and these controls went on looking exactly as usable as ever, so
+  // the leader tapped Poker, the server said no, and nothing at all appeared.
+  // Dimmed rather than hidden, like the rest of this screen, with the reason
+  // on them: the guard is the server's, this is the courtesy.
+  const locked = !room.youAreLeader || room.gameRunning;
+  const lockedWhy = room.gameRunning ? "Finish the game first" : undefined;
+  const leader = !locked;
   const games = onlineGames();
   const offline = GAME_IDS.map((id) => GAMES[id]).filter((g) => !g.online);
   const entry = room.gameId ? GAMES[room.gameId] : null;
@@ -235,7 +256,8 @@ function GamePicker({ api }: { api: RoomApi }) {
           <button
             key={g.id}
             type="button"
-            disabled={!leader}
+            disabled={locked}
+            title={lockedWhy}
             onClick={() => update(g.id, {}, g.defaultSeats)}
             className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               room.gameId === g.id
@@ -297,7 +319,8 @@ function GamePicker({ api }: { api: RoomApi }) {
                   <button
                     key={mode}
                     type="button"
-                    disabled={!leader}
+                    disabled={locked}
+                    title={lockedWhy}
                     onClick={() =>
                       update(entry.id, { ...room.settings, mode }, mode === "caribbean" ? 4 : room.seats)
                     }
@@ -317,21 +340,21 @@ function GamePicker({ api }: { api: RoomApi }) {
                     label="Teams"
                     hint="Partners across the table — seats 1 and 3 against 2 and 4."
                     checked={room.settings.teams === true}
-                    disabled={!leader}
+                    disabled={locked}
                     onChange={(v) => update(entry.id, { ...room.settings, teams: v })}
                   />
                   <Toggle
                     label="Key tile bonus"
                     hint="Going out on the only tile that could have been played is worth two games."
                     checked={room.settings.keyTileBonus === true}
-                    disabled={!leader}
+                    disabled={locked}
                     onChange={(v) => update(entry.id, { ...room.settings, keyTileBonus: v })}
                   />
                   <Toggle
                     label="Six love"
                     hint="Your score returns to zero whenever the other side takes a round."
                     checked={room.settings.sixLove === true}
-                    disabled={!leader}
+                    disabled={locked}
                     onChange={(v) => update(entry.id, { ...room.settings, sixLove: v })}
                   />
                 </>
@@ -374,14 +397,14 @@ function GamePicker({ api }: { api: RoomApi }) {
                 label="Jokers"
                 hint="Two jokers replace the twos, and beat every spade."
                 checked={room.settings.jokers === true}
-                disabled={!leader}
+                disabled={locked}
                 onChange={(v) => update(entry.id, { ...room.settings, jokers: v })}
               />
               <Toggle
                 label="Two of spades high"
                 hint="The two of spades outranks the ace."
                 checked={room.settings.twoOfSpadesHigh === true}
-                disabled={!leader}
+                disabled={locked}
                 onChange={(v) => update(entry.id, { ...room.settings, twoOfSpadesHigh: v })}
               />
             </>

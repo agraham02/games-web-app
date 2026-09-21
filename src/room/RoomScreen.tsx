@@ -33,12 +33,33 @@ export function RoomScreen({ code }: { code?: string }) {
   const api = useRoom();
   const router = useRouter();
 
-  // Cards picked up for Spades' blind-nil exchange. Held here rather than
-  // in the table so that stepping out to the lobby and back does not lose
-  // a half-made selection.
+  // Cards picked up: Spades' blind-nil exchange, and the cards a BS player
+  // is about to claim. Held here rather than in the table so that stepping
+  // out to the lobby and back does not lose a half-made selection.
   const [held, setHeld] = useState<PieceId[]>([]);
   const toggleHeld = (id: PieceId) =>
     setHeld((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  // A selection belongs to ONE hand, and surviving a trip to the lobby is
+  // the only thing it should survive.
+  //
+  // Nothing cleared it, so cards picked up as a round ended stayed picked
+  // up into the next deal - and in BS that is not merely cosmetic: the
+  // claim bar reads its wording off the selection, so it announced a claim
+  // made of cards the player no longer had, and pressing Play sent ids
+  // that were not in their hand. The server refused it, correctly, and the
+  // player got a toast for a move they had no way to know was stale.
+  // Adjusted during render against a key rather than cleared in an effect:
+  // an effect would paint one frame with the stale selection still lifted,
+  // and this file already carries one hard-won exception to that rule.
+  const handKey = `${api.room?.gameId ?? ""}:${api.room?.gameRunning ?? false}:${
+    api.frame?.round ?? -1
+  }`;
+  const [heldFor, setHeldFor] = useState(handKey);
+  if (heldFor !== handKey) {
+    setHeldFor(handKey);
+    if (held.length > 0) setHeld([]);
+  }
 
   // Keep the address bar honest. A room reached by code, created fresh, or
   // rejoined automatically on reconnect should all end up with the code in

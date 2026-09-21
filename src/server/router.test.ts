@@ -383,7 +383,13 @@ describe("the server, in process", () => {
       watcher.conn.clear();
 
       send(watcher.peer, { t: "action", action: { t: "bid", tricks: 3, nil: false } });
-      expect(watcher.conn.last("error")!.message).toBe("not-in-game");
+      // The CODE is the contract a client switches on; the message is for
+      // a person, and is a sentence rather than the engine's own reason
+      // string - that string was reaching players verbatim on the toast
+      // seam, so a lost race announced "not-in-game" at them.
+      const refusal = watcher.conn.last("error")!;
+      expect(refusal.code).toBe("move-refused");
+      expect(refusal.message).toBe("you are not at the table");
     });
 
     it("hands a seat to a bot the moment its owner disconnects", () => {

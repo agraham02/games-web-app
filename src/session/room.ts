@@ -648,6 +648,12 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
     case "assignTeam": {
       const err = requireLeader();
       if (err) return fail(err);
+      // Teams are dealt INTO a game: `seatMembers` reads them once, at
+      // `startGame`, and the running session keeps whatever it was given.
+      // Without this the roster happily reassigned somebody mid-match while
+      // the table's actual partnerships did not move - a change that looks
+      // like it worked and does nothing, which is worse than a refusal.
+      if (room.game) return fail("game-already-running");
       if (!room.members[command.session]) return fail("not-a-member");
       if (room.teams === null) return fail("no-game-selected");
       return {
@@ -663,6 +669,8 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
     case "randomizeTeams": {
       const err = requireLeader();
       if (err) return fail(err);
+      // See `assignTeam`: partnerships are fixed once a game has dealt.
+      if (room.game) return fail("game-already-running");
       if (room.teams === null) return fail("no-game-selected");
       const rng = ctx.rng;
       if (!rng) return fail("no-game-selected");

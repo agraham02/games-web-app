@@ -72,6 +72,15 @@ export interface RosterProps {
   youAreLeader: boolean;
   /** Null when the game does not use partnerships. */
   teamsEnabled: boolean;
+  /**
+   * Whether partnerships may still be changed.
+   *
+   * Separate from `youAreLeader` because the leader's OTHER powers do not
+   * stop when a game starts - kicking somebody mid-hand is a real thing to
+   * need, and the table carries on without them. Teams are the exception:
+   * they are read once, at `startGame`.
+   */
+  teamsLocked?: boolean;
   onPromote: (session: string) => void;
   onKick: (session: string) => void;
   onAssignTeam: (session: string, team: number) => void;
@@ -82,6 +91,7 @@ export function Roster({
   you,
   youAreLeader,
   teamsEnabled,
+  teamsLocked = false,
   onPromote,
   onKick,
   onAssignTeam,
@@ -126,7 +136,8 @@ export function Roster({
                   <button
                     key={team}
                     type="button"
-                    disabled={!youAreLeader}
+                    disabled={!youAreLeader || teamsLocked}
+                    title={teamsLocked ? "Finish the game first" : undefined}
                     onClick={() => onAssignTeam(m.session, team)}
                     aria-pressed={m.team === team}
                     className={`h-6 w-6 rounded text-[11px] font-bold transition-colors disabled:cursor-not-allowed ${

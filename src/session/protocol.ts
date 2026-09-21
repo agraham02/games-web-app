@@ -193,6 +193,32 @@ export type ServerErrorCode =
  * is lower-case and sentence-shaped, because it is rendered inline next to
  * a control rather than as a heading.
  */
+/**
+ * Why a move was refused, in words.
+ *
+ * The reasons themselves come from the engine and are CODES - "not-in-game",
+ * "illegal-action" - written for a caller, not for a person. They were being
+ * forwarded onto the toast seam verbatim, so losing a race to press Continue
+ * announced the string "not-in-game" to the player, in the one place a
+ * refusal is most likely to be seen.
+ *
+ * Here for the same reason `ERROR_TEXT` is: the server sends the words, so a
+ * log line, a harness transcript and the UI all say the same readable thing.
+ */
+export const MOVE_REFUSED_TEXT: Record<string, string> = {
+  "not-your-turn": "it is not your turn",
+  "illegal-action": "that move is not allowed",
+  "game-over": "the game is already over",
+  "round-over": "the round is already over",
+  "no-game-running": "no game is running",
+  "not-in-game": "you are not at the table",
+};
+
+/** The readable form of a refusal, falling back to something sayable. */
+export function moveRefusedText(reason: string | undefined): string {
+  return (reason && MOVE_REFUSED_TEXT[reason]) ?? "that move is no longer available";
+}
+
 export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "not-leader": "only the party leader can do that",
   "not-a-member": "you are not in this room",

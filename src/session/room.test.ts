@@ -284,6 +284,27 @@ describe("starting a game", () => {
       expect(res.ok).toBe(false);
     });
 
+    it("refuses to move the teams once a game has dealt", () => {
+      // The same door again, and the one that looked like it WORKED.
+      // `seatMembers` reads teams once, at `startGame`, and the running
+      // session keeps what it was handed - so reassigning somebody
+      // mid-match updated the roster on every screen while the table's
+      // actual partnerships carried on exactly as before. A change that
+      // appears to take and does nothing is worse than a refusal.
+      let r = withMembers(["Sam", "Ali", "Kit"]);
+      r = spades(r);
+      r = ok(r, { t: "assignTeam", session: "s-0", team: 1 }, { actor: LEADER });
+      r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+
+      expect(
+        applyCommand(r, { t: "assignTeam", session: "s-0", team: 0 }, { actor: LEADER, now: 11 }),
+      ).toEqual({ ok: false, error: "game-already-running" });
+
+      expect(
+        applyCommand(r, { t: "randomizeTeams" }, { actor: LEADER, now: 11 }),
+      ).toEqual({ ok: false, error: "game-already-running" });
+    });
+
     it("allows it again once the game has ended", () => {
       let r = withMembers(["Sam"]);
       r = spades(r);
