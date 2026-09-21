@@ -91,6 +91,39 @@ export function rankPluralTitle(rank: Rank): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
+/**
+ * The singular of each, written out rather than derived.
+ *
+ * A rule would have to know that "sixes" drops two letters and "threes"
+ * drops one, which is a table with extra steps and one that gets
+ * "thre" wrong on the way.
+ */
+const RANK_SINGULARS: Record<Rank, string> = {
+  A: "ace",
+  "2": "two",
+  "3": "three",
+  "4": "four",
+  "5": "five",
+  "6": "six",
+  "7": "seven",
+  "8": "eight",
+  "9": "nine",
+  "10": "ten",
+  J: "jack",
+  Q: "queen",
+  K: "king",
+};
+
+/**
+ * "one ace", "two aces" - the count and the rank agreeing.
+ *
+ * A claim is always announced with its count, and the count is one often
+ * enough that "one aces" was on screen most turns.
+ */
+export function claimWords(count: number, rank: Rank): string {
+  return `${countWord(count)} ${count === 1 ? RANK_SINGULARS[rank] : RANK_PLURALS[rank]}`;
+}
+
 const COUNT_WORDS = ["no", "one", "two", "three", "four"] as const;
 
 /** Spelled out, because "3 sevens" and "37" look alike at a glance. */

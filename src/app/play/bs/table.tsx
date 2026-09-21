@@ -35,7 +35,7 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import type { PieceId, SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
-import { countWord, rankPlural, rankPluralTitle } from "@/games/bs/cards";
+import { claimWords, rankPlural, rankPluralTitle } from "@/games/bs/cards";
 import {
   MAX_PER_PLAY,
   challengeDeadlineMs,
@@ -322,7 +322,7 @@ function ChallengeBar({ view, live }: { view: BsView; live: Live }) {
   return (
     <>
       <span className="min-w-0 shrink truncate text-[10px] font-bold text-brass-300">
-        {who} claimed {countWord(play.cards.length)} {rankPlural(play.claimed)}
+        {who} claimed {claimWords(play.cards.length, play.claimed)}
       </span>
       <CountdownButton
         // Keyed by the play, so each window gets its own fresh ring rather
@@ -369,7 +369,7 @@ function ClaimBar({
       <span className="min-w-0 shrink truncate text-[10px] font-bold text-bone-300">
         {held.length === 0
           ? `Tap 1 to ${PLAY_PICK_LIMIT} cards to claim as ${rank}`
-          : `Claiming ${countWord(held.length)} ${rank}`}
+          : `Claiming ${claimWords(held.length, state.rank)}`}
       </span>
       {held.length > 0 && (
         <button
@@ -476,7 +476,7 @@ function PileRail({ view, state }: { view: BsView; state: BsState }) {
                   {play.seat === view.viewerSeat ? "You" : view.nameFor(play.seat)}
                 </span>
                 <span className="shrink-0 text-bone-400">
-                  {countWord(play.cards.length)} {rankPlural(play.claimed)}
+                  {claimWords(play.cards.length, play.claimed)}
                 </span>
               </li>
             );

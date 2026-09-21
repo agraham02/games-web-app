@@ -310,9 +310,12 @@ a table of bots skipped most of its own animations, dice tumble included.
 Offline never has this, because there the hold starts when the animation
 FINISHES.
 
-`turnHoldMs` is now `playbackMs(lastFrame.events) + DEFAULT_TURN_HOLD_MS`,
-which gives a client at normal speed exactly offline's rhythm. It still
-waits on nobody: a slow client falls behind and catches up by itself.
+`turnHoldMs` is now `playbackMs(lastFrame.events)` plus what the GAME
+asks for — `turnHold?(state, seat)`, falling back to
+`DEFAULT_TURN_HOLD_MS` — which gives a client at normal speed exactly
+offline's rhythm. It still waits on nobody: a slow client falls behind
+and catches up by itself. BS is the only game that answers; see "A race
+every turn" above.
 
 `playbackMs` and `gapAfter` live in
 [choreographer.ts](src/motion/choreographer.ts) and are the SAME rule the

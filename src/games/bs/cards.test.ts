@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { RANKS, standardDeck, type Rank } from "@/games/_shared/cards";
 import {
+  claimWords,
   countOfRank,
   countWord,
   handDisplayOrder,
@@ -71,5 +72,27 @@ describe("bs — hand display order", () => {
   it("never loses or invents a card", () => {
     const hand = standardDeck().map((c) => c.id).slice(0, 17);
     expect([...handDisplayOrder(hand)].sort()).toEqual([...hand].sort());
+  });
+});
+
+describe("claimWords", () => {
+  it("agrees with its count", () => {
+    // "one aces" was on screen most turns: a claim is always announced
+    // with its count, and the count is one more often than not.
+    expect(claimWords(1, "A")).toBe("one ace");
+    expect(claimWords(2, "A")).toBe("two aces");
+    expect(claimWords(1, "6")).toBe("one six");
+    expect(claimWords(3, "6")).toBe("three sixes");
+    expect(claimWords(1, "3")).toBe("one three");
+    expect(claimWords(1, "10")).toBe("one ten");
+    expect(claimWords(4, "K")).toBe("four kings");
+  });
+
+  it("has a singular for every rank", () => {
+    // Derived from the plural, this is where "threes" became "thre".
+    for (const rank of RANKS) {
+      const one = claimWords(1, rank);
+      expect(one.endsWith("s"), `${rank}: ${one}`).toBe(false);
+    }
   });
 });
