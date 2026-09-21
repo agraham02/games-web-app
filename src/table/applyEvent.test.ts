@@ -343,3 +343,85 @@ describe("applyEventToTable — slam", () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+describe("applyEventToTable — unmask", () => {
+  /**
+   * `unmask` is the multiplayer redaction layer's way of handing a
+   * watching client a piece it has only ever seen the back of, at the
+   * exact slot it is about to leave, so the `play` right behind it can
+   * fly out of that hand instead of popping into being on the table.
+   *
+   * It is the one placement event that must CREATE a piece rather than
+   * move an existing one — `move` deliberately no-ops on an unknown id —
+   * which is exactly what makes it worth its own coverage.
+   */
+
+  it("creates a piece that was not in the map at all", () => {
+    useTableStore.getState().reset({}, {});
+    applyEventToTable({
+      t: "unmask",
+      piece: "S-A",
+      at: { zone: "hand", seat: 3, index: 4, count: 7, faceUp: false },
+    });
+
+    const placed = useTableStore.getState().placements["S-A"]!;
+    expect(placed.zone).toBe("hand");
+    expect(placed.seat).toBe(3);
+    expect(placed.faceUp).toBe(false);
+
+    // `index`/`count` are NOT the 4-of-7 the event asked for, and that is
+    // `reindex` working as designed: it renormalises every bucket after a
+    // write, and this piece is alone in seat 3's hand here. In the real
+    // flow the anonymous stand-ins are still sitting in that bucket, so
+    // the unmasked card slots in among them (see the third test) and the
+    // batch's own reconcile publishes the authoritative numbers a moment
+    // later either way.
+    expect(placed.index).toBe(0);
+    expect(placed.count).toBe(1);
+  });
+
+  it("lands the unmasked piece where the play can animate out of it", () => {
+    // The pair as the projection actually emits it. What matters is that
+    // after the unmask the piece exists at the HAND, so the play that
+    // follows animates from there rather than from nowhere.
+    useTableStore.getState().reset({}, {});
+    applyEventToTable({
+      t: "unmask",
+      piece: "S-A",
+      at: { zone: "hand", seat: 3, index: 1, count: 3, faceUp: false },
+    });
+    expect(useTableStore.getState().placements["S-A"]!.zone).toBe("hand");
+
+    applyEventToTable({ t: "play", piece: "S-A", from: 3, to: "trick" });
+    expect(useTableStore.getState().placements["S-A"]!.zone).toBe("trick");
+  });
+
+  it("leaves the anonymous stand-ins beside it alone", () => {
+    // They are dropped a moment later by the batch's own reconcile, not
+    // by this event — which is what keeps `applyEvent` a pure placement
+    // reducer with no idea that redaction exists.
+    useTableStore.getState().reset(
+      {
+        "#hand:3:-:0": { zone: "hand", seat: 3, index: 0, count: 2, faceUp: false },
+        "#hand:3:-:1": { zone: "hand", seat: 3, index: 1, count: 2, faceUp: false },
+      },
+      {},
+    );
+    applyEventToTable({
+      t: "unmask",
+      piece: "S-A",
+      at: { zone: "hand", seat: 3, index: 1, count: 2, faceUp: false },
+    });
+
+    const map = useTableStore.getState().placements;
+    expect(map["#hand:3:-:0"]).toBeDefined();
+    expect(map["#hand:3:-:1"]).toBeDefined();
+    expect(map["S-A"]).toBeDefined();
+
+    // All three now share the bucket, so the fan briefly spreads for
+    // three. That momentary extra back is the spare the reconcile drops,
+    // and it sits exactly on top of the card flying out — which is why it
+    // is invisible rather than a flicker.
+    expect(map["S-A"]!.count).toBe(3);
+  });
+});

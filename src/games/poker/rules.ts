@@ -24,17 +24,18 @@
  * `revealBotTurn`/`onIdle` machinery paces it exactly like a fold.
  *
  * Chip visuals are deliberately simple, per this build's own product
- * decision: stacks/bets/pot are HUD text (the authoritative numbers,
- * moved via the ordinary `{t:"score"}` event every game uses), and a
- * SINGLE plain pile of decorative chip pieces sits in `zone: "pot"` (its
+ * decision: stacks/bets/pot are all HUD text (the authoritative numbers,
+ * moved via the ordinary `{t:"score"}` event every game uses) — no chip
+ * pieces at all, no per-seat piles, no proportional bet-to-chip-count
+ * choreography, no dedicated chip GameEvents. An earlier version placed
+ * a single decorative fanned pile of chip pieces in `zone: "pot"` (its
  * own mini-scale zone, not LRC's table-scaled `"center"` — see
- * engine/types.ts's `ZoneId` doc), sized straight off the pot total in
- * `placements()` — no per-seat piles, no proportional bet-to-chip-count
- * choreography, no dedicated chip GameEvents at all. A piece's position
- * is driven by React/Motion off whatever `placements()` returns after
- * every batch regardless of whether an explicit event named it, so the
- * pile still visibly grows and shrinks with the pot; it just isn't
- * individually choreographed the way a card's flight is.
+ * engine/types.ts's `ZoneId` doc), sized off the pot total; a live
+ * playtest reported it visually overlapping the community row above it
+ * on an ordinary pot, so it was dropped for a plain pot-total badge (the
+ * page reads the same `"pot"` zone box directly off table geometry,
+ * outside `placements()`, since there's no piece involved). `pieces()`
+ * therefore declares only the standard deck now, no chip pool.
  */
 
 import type {
@@ -68,7 +69,6 @@ import {
   liveMatchSeats,
   nextButton,
   postflopOrder,
-  potTotal,
   preflopOrder,
   seatHoleCards,
   seatOrderAfter,
@@ -94,20 +94,6 @@ export const MAX_STARTING_STACK = 20000;
  * convention as Rummy/Spades' own `HIDDEN_CARD`, suffixed to stay unique
  * per hidden card since this is a Record key, not an array slot. */
 const HIDDEN_CARD_PREFIX = "??";
-
-// Purely decorative — the real pot total is always the HUD text, never
-// this pile's count (see this file's own header doc). Kept deliberately
-// small and SQRT-scaled rather than linear in `pot / bigBlind`: a live
-// playtest showed the pile maxing out (6 rows, in a 5-column grid) at a
-// completely ordinary pot size and visually swallowing the community
-// row above it. sqrt growth still visibly grows the pile for a small
-// pot but only reaches the (now much smaller) cap on a genuinely huge
-// multi-way pot, so it reads as "a real pile" without ever dominating
-// the felt.
-const POT_CHIP_POOL = 12;
-function potChipId(i: number): PieceId {
-  return `pchip-${i}`;
-}
 
 const STREET_AFTER: Record<Exclude<PokerStreet, "river">, PokerStreet> = {
   preflop: "flop",
@@ -579,6 +565,46 @@ export function legalActions(state: PokerState, seat: SeatId): PokerAction[] {
   return out;
 }
 
+/**
+ * Poker cannot validate by enumeration, so it does it by hand.
+ *
+ * `legalActions` offers `{t:"bet", to: range.min}` — ONE representative
+ * of a continuous range, because an action bar needs a starting number
+ * and a slider does the rest. Membership testing would therefore refuse
+ * every bet but the minimum, which is why the other four games share
+ * `validateByEnumeration` and this one does not.
+ *
+ * The case that made it necessary: `to` arrives off a socket as arbitrary
+ * JSON. `Math.round("abc")` is `NaN`; `Math.max(min, Math.min(max, NaN))`
+ * is `NaN`; and `if (added <= 0)` is FALSE for `NaN` — so `reduceBetOrRaise`
+ * ran on through and wrote `NaN` into `stacks`, `streetCommitted` and
+ * `totalCommitted`. One malformed bet turned the whole table's money into
+ * `NaN` for the rest of the match. Clamping happens downstream and is not
+ * a defence, because a non-number survives clamping.
+ */
+export function validate(state: PokerState, seat: SeatId, action: PokerAction): string | null {
+  const offered = legalActions(state, seat);
+  if (offered.length === 0) return "not-your-turn";
+
+  const kinds = new Set(offered.map((a) => a.t));
+  if (!action || typeof action !== "object" || !kinds.has(action.t)) return "illegal-action";
+
+  if (action.t === "bet" || action.t === "raise") {
+    // `Number.isFinite` is the whole guard, and it has to come first:
+    // it rejects NaN, both infinities, and every non-number, which
+    // `>=`/`<=` comparisons silently pass through as false.
+    if (typeof action.to !== "number" || !Number.isFinite(action.to)) return "illegal-action";
+    const range = betRange(state, seat);
+    // Rounded before comparing, matching what `reduceBetOrRaise` will do
+    // with it — otherwise a fractional bet inside the range is accepted
+    // here and lands on a different number than the one validated.
+    const to = Math.round(action.to);
+    if (to < range.min || to > range.max) return "illegal-action";
+  }
+
+  return null;
+}
+
 export function currentSeat(state: PokerState): SeatId | null {
   if (state.winner !== null) return null;
   if (state.pendingShowdown && state.pendingShowdown.order.length > 0) {
@@ -596,14 +622,13 @@ export function isRoundOver(state: PokerState): boolean {
   return state.result !== null;
 }
 
-// No `state` param: the piece SET is entirely fixed (a standard deck
-// plus the decorative chip pool) regardless of seat count or match
-// state — same "fewer params than the declared type" idiom LRC's own
-// no-viewer `placements` uses, which TS's structural typing allows.
+// No `state` param: the piece SET is entirely fixed (a standard deck)
+// regardless of seat count or match state — same "fewer params than the
+// declared type" idiom LRC's own no-viewer `placements` uses, which TS's
+// structural typing allows.
 export function pieces(): Record<PieceId, PieceMeta> {
   const out: Record<PieceId, PieceMeta> = {};
   for (const card of standardDeck()) out[card.id] = { kind: "card", face: card.id };
-  for (let i = 0; i < POT_CHIP_POOL; i++) out[potChipId(i)] = { kind: "chip", face: "gold" };
   return out;
 }
 
@@ -650,36 +675,76 @@ export function placements(state: PokerState, viewer: SeatId): PlacementMap {
     });
   }
 
-  const pot = potTotal(state);
-  const potChips = Math.max(
-    0,
-    Math.min(POT_CHIP_POOL, Math.round(Math.sqrt(Math.max(0, pot) / state.bigBlind))),
-  );
-  for (let i = 0; i < POT_CHIP_POOL; i++) {
-    const id = potChipId(i);
-    out[id] =
-      i < potChips
-        ? { zone: "pot", index: i, count: potChips, faceUp: true, fanned: true }
-        : { zone: "boneyard", index: i - potChips, count: POT_CHIP_POOL - potChips, faceUp: true };
-  }
-
   return out;
 }
 
-/** Redacts every OTHER seat's still-hidden hole cards, the same
- * contractual guarantee Rummy/Spades enforce for their own concealed
- * hands ("bots for seat N only ever see view(N)") — poker is this app's
- * first game where that guarantee is load-bearing on every single turn,
- * not just an occasional blind-bid exchange. */
+/**
+ * Can this viewer legitimately put a NAME to this card?
+ *
+ * The question `playerView` turns on, and it is asked of the owner rather
+ * than the card because ownership is what decides visibility in Hold'em:
+ *
+ *  - the board is face-up in front of everybody
+ *  - your own hole cards are yours to read
+ *  - an opponent's are theirs until a showdown reveals them
+ *  - the stub and the burn cards are nobody's, and stay that way
+ *
+ * That last line is the one that was missing, and it cost more than it
+ * looks: `cardOwner` is keyed by card id, so leaving the stub in the
+ * clear published the identity of every undealt card. Heads-up that is
+ * the whole game — the two ids a player CANNOT name are, by elimination,
+ * exactly their opponent's hand. Masking `state.deck` (which carries the
+ * order) did nothing about it, because the set was never in `deck` at
+ * all; it was in the keys of this map.
+ */
+function isIdentifiable(
+  state: PokerState,
+  owner: PokerState["cardOwner"][PieceId],
+  viewer: SeatId,
+): boolean {
+  if (owner === "community") return true;
+  if (owner === "deck" || owner === "burnt") return false;
+  return owner === viewer || isHoleCardsRevealed(state, owner);
+}
+
+/**
+ * The state as one seat is allowed to read it.
+ *
+ * Every card the viewer may not identify — an opponent's hole cards, the
+ * undealt stub, the burns — has its id replaced by an anonymous
+ * placeholder, in both `cardOwner` and `deck`. What survives is
+ * everything the redaction is not about: how many cards are where, who
+ * owns them, and what the pile depths are. A stub of 37 is public; WHICH
+ * 37 is not.
+ *
+ * The same placeholder is used for a card in both places, so the view
+ * stays internally consistent — `placements` reads the stub off `deck`
+ * and the burns off `cardOwner`, and a view whose two halves disagreed
+ * about a card's id would be a trap for whoever called it next.
+ *
+ * Nothing downstream reads these ids: `reduce` deals from the true state
+ * on the server, bots pick their own hole cards out by owner, and the
+ * table keys placements by whatever this returns.
+ */
 export function playerView(state: PokerState, viewer: SeatId): PokerState {
-  const cardOwner: PokerState["cardOwner"] = {};
   let hidden = 0;
+  const masked = new Map<PieceId, PieceId>();
+  const nameFor = (id: PieceId, owner: PokerState["cardOwner"][PieceId]): PieceId => {
+    if (isIdentifiable(state, owner, viewer)) return id;
+    const existing = masked.get(id);
+    if (existing !== undefined) return existing;
+    const stand = `${HIDDEN_CARD_PREFIX}${hidden++}`;
+    masked.set(id, stand);
+    return stand;
+  };
+
+  const cardOwner: PokerState["cardOwner"] = {};
   for (const [id, owner] of Object.entries(state.cardOwner)) {
-    const isOpponentHole = typeof owner === "number" && owner !== viewer;
-    const revealed = typeof owner === "number" && isHoleCardsRevealed(state, owner);
-    cardOwner[isOpponentHole && !revealed ? `${HIDDEN_CARD_PREFIX}${hidden++}` : id] = owner;
+    cardOwner[nameFor(id, owner)] = owner;
   }
-  return { ...state, cardOwner };
+  const deck = state.deck.map((id) => nameFor(id, state.cardOwner[id] ?? "deck"));
+
+  return { ...state, cardOwner, deck };
 }
 
 export function createPoker(
@@ -694,6 +759,7 @@ export function createPoker(
     setup: makeSetup(startingStack, bigBlind),
     reduce,
     legalActions,
+    validate,
     pieces,
     placements,
     playerView,

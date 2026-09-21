@@ -184,6 +184,16 @@ export function applyEventToTable(event: GameEvent): void {
       touched = true;
       break;
 
+    case "unmask":
+      // Unconditional, unlike `move` just below: the whole premise is
+      // that this piece is NOT in the map yet — the viewer was holding an
+      // anonymous stand-in for it. The stand-in is left alone and dropped
+      // by the batch's own reconcile a moment later; for the one frame
+      // they coexist they are identical backs in the same slot.
+      map[event.piece] = { ...event.at };
+      touched = true;
+      break;
+
     case "move":
       if (map[event.piece]) {
         // `event.to` is a caller-built Placement (see Dominoes'

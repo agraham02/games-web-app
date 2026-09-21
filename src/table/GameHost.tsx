@@ -87,15 +87,75 @@ export interface GameHostProps<S, A> {
   pendingLabel?: (state: S, seat: SeatId, live: GameRuntime<S, A>) => string;
   onRematch?: () => void;
   onLobby?: () => void;
+  /**
+   * Which seat is looking at this table. Omit offline — it defaults to the
+   * hero at seat 0. `null` is a spectator, who owns no hand.
+   */
+  viewerSeat?: SeatId | null;
+  /**
+   * True when the runtime is a server's frames rather than a local
+   * session. The only thing it changes is the dev panel, which is hidden.
+   *
+   * Not squeamishness about clutter — every control on that panel is
+   * inert online and says nothing about it. `advance` and `replaceState`
+   * are documented no-ops in `useOnlineRuntime` (the server owns the
+   * clock and the state), `pendingReveal` is always false, and no online
+   * table threads the pacing sliders through. So it renders a manual-turn
+   * toggle that does not step, a state editor whose edits are discarded,
+   * and five sliders that move nothing.
+   *
+   * A dev tool that lies is worse than no dev tool, and this is precisely
+   * the one somebody reaches for when an online table looks wrong.
+   */
+  serverDriven?: boolean;
   children: (live: GameRuntime<S, A>) => React.ReactNode;
 }
 
 /** Optional callout under a round's scores — "blocked", "nobody scored". */
 export type RoundNote = { tone: "warn" | "info"; title: string; body: string };
 
+/**
+ * The offline host: it owns the game.
+ *
+ * Split from `GameHostView` below when rooms arrived, because a hook
+ * cannot be skipped. An online table is driven by frames from a server and
+ * has no local session at all — calling `useGameRuntime` "but ignoring it"
+ * would deal a second, private game in the background and pace bots
+ * against nobody.
+ */
 export function GameHost<S, A>({
   definition,
   runtime,
+  ...rest
+}: GameHostProps<S, A>) {
+  const devSettings = useDevSettings();
+  const live = useGameRuntime(definition, {
+    ...runtime,
+    autoAdvance: !devSettings.manualMode,
+    speed: devSettings.speed,
+    turnHoldMs: devSettings.turnHoldMs,
+    endHoldMs: devSettings.endHoldMs,
+    roundHoldMs: devSettings.roundHoldMs,
+    // The store keeps the intuitive "higher = faster" multiplier (see
+    // its own doc); useChoreographer wants the raw ms it's actually
+    // built around, so the conversion happens right at this boundary.
+    dealStaggerMs: DEFAULT_DEAL_STAGGER_MS / devSettings.dealSpeed,
+  });
+  return <GameHostView<S, A> definition={definition} runtime={runtime} live={live} {...rest} />;
+}
+
+/**
+ * Everything a host renders, given a runtime from somewhere.
+ *
+ * Offline that runtime is `useGameRuntime`'s; online it is
+ * `useOnlineRuntime`'s, built from server frames. Neither this component
+ * nor anything below it can tell the difference, which is the whole reason
+ * the online path needed no new table code.
+ */
+export function GameHostView<S, A>({
+  definition,
+  runtime,
+  live,
   players,
   density,
   handZone,
@@ -111,21 +171,10 @@ export function GameHost<S, A>({
   pendingLabel,
   onRematch,
   onLobby,
+  viewerSeat,
+  serverDriven,
   children,
-}: GameHostProps<S, A>) {
-  const devSettings = useDevSettings();
-  const live = useGameRuntime(definition, {
-    ...runtime,
-    autoAdvance: !devSettings.manualMode,
-    speed: devSettings.speed,
-    turnHoldMs: devSettings.turnHoldMs,
-    endHoldMs: devSettings.endHoldMs,
-    roundHoldMs: devSettings.roundHoldMs,
-    // The store keeps the intuitive "higher = faster" multiplier (see
-    // its own doc); useChoreographer wants the raw ms it's actually
-    // built around, so the conversion happens right at this boundary.
-    dealStaggerMs: DEFAULT_DEAL_STAGGER_MS / devSettings.dealSpeed,
-  });
+}: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
   // Synced into the shared table store, not read as a prop threaded
   // through PieceLayer — the piece that actually needs this (a hero-hand
   // card, in any game) lives several components below here, and a
@@ -165,7 +214,9 @@ export function GameHost<S, A>({
   const seatViews = players(live.state, live).map((view) =>
     winningSeats?.includes(view.seat) ? { ...view, winning: true } : view,
   );
-  const board = (standings ?? winLoseStandings)(live.state, live, seatViews);
+  const board = standings
+    ? standings(live.state, live, seatViews)
+    : winLoseStandings(live.state, live, seatViews, viewerSeat);
 
   // `pieces` is contractually fixed once `setup` has run (see its own
   // doc — the runtime calls it once and caches it), so rebuilding a
@@ -191,10 +242,17 @@ export function GameHost<S, A>({
       topZone={topZone}
       bottomZone={bottomZone}
       pileAnchor={pileAnchor}
+      viewerSeat={viewerSeat}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
-      <HeroWinFlourish show={winningSeats?.includes(HERO) ?? false} />
+      <HeroWinFlourish
+        show={
+          // A spectator has no side to celebrate, so confetti for one would
+          // be confetti for a game they are not in.
+          viewerSeat !== null && (winningSeats?.includes(viewerSeat ?? HERO) ?? false)
+        }
+      />
       <GameToaster />
 
       {/* Was already a finished component (see /lab/phases) but nothing
@@ -222,8 +280,8 @@ export function GameHost<S, A>({
 
       <GameEndSummary
         show={live.showSummary}
-        winnerName={winnerLabel(live, seatViews)}
-        winnerColour={winnerColour(live, seatViews)}
+        winnerName={winnerLabel(live, seatViews, viewerSeat)}
+        winnerColour={winnerColour(live, seatViews, viewerSeat)}
         subtitle={gameTitle}
         standings={board}
         stats={stats?.(live.state, live)}
@@ -231,6 +289,7 @@ export function GameHost<S, A>({
         onLobby={onLobby}
       />
 
+      {serverDriven ? null : (
       <DevPanel
         pendingReveal={live.pendingReveal}
         advance={live.advance}
@@ -247,26 +306,65 @@ export function GameHost<S, A>({
         onDebugStateChange={(next) => live.replaceState(next as S)}
         scenarios={scenarios?.(live)}
       />
+      )}
 
       {children(live)}
     </TableSurface>
   );
 }
 
-function winnerLabel<S, A>(live: GameRuntime<S, A>, seats: SeatView[]): string {
-  if (live.winner === 0) return "You";
+/**
+ * Who "You" is, which is not always seat 0.
+ *
+ * These three read the viewer's seat rather than assuming the hero owns
+ * it — the same `HERO`-is-seat-0 assumption `playerViews` was already
+ * fixed for, left behind in the shared host. Online it produced two
+ * wrong endings at once: whoever happened to sit at seat 0 winning told
+ * EVERYBODY "You won", and a viewer winning from any other seat got the
+ * literal word "Winner", because `seatViews` deliberately omits the
+ * viewer's own seat and there was nothing else to look them up in.
+ *
+ * `null` is a spectator, who is nobody at this table — so no seat is
+ * ever "You" for them.
+ */
+function isViewer(viewerSeat: SeatId | null | undefined, seat: SeatId | null): boolean {
+  if (seat === null) return false;
+  if (viewerSeat === null) return false; // Spectator.
+  return seat === (viewerSeat ?? HERO);
+}
+
+export function winnerLabel<S, A>(
+  live: GameRuntime<S, A>,
+  seats: SeatView[],
+  viewerSeat: SeatId | null | undefined,
+): string {
+  if (isViewer(viewerSeat, live.winner)) return "You";
   const seat = seats.find((s) => s.seat === live.winner);
   return seat?.name ?? "Winner";
 }
 
-function winnerColour<S, A>(live: GameRuntime<S, A>, seats: SeatView[]): string {
-  if (live.winner === 0) return "var(--color-brass-300)";
+export function winnerColour<S, A>(
+  live: GameRuntime<S, A>,
+  seats: SeatView[],
+  viewerSeat: SeatId | null | undefined,
+): string {
+  if (isViewer(viewerSeat, live.winner)) return "var(--color-brass-300)";
   return seats.find((s) => s.seat === live.winner)?.colour ?? "var(--color-brass-300)";
 }
 
-function winLoseStandings<S, A>(_state: S, live: GameRuntime<S, A>, seats: SeatView[]) {
+export function winLoseStandings<S, A>(
+  _state: S,
+  live: GameRuntime<S, A>,
+  seats: SeatView[],
+  viewerSeat: SeatId | null | undefined,
+) {
+  // A spectator is in no row of their own; everybody else gets one,
+  // because `seats` omits whoever is looking.
+  const mine = viewerSeat === null ? null : (viewerSeat ?? HERO);
   return [
-    { seat: 0, name: "You", total: live.winner === 0 ? 1 : 0 },
+    ...(mine === null
+      ? []
+      : [{ seat: mine, name: "You", total: live.winner === mine ? 1 : 0 }]),
     ...seats.map((s) => ({ seat: s.seat, name: s.name, total: live.winner === s.seat ? 1 : 0 })),
   ].sort((a, b) => b.total - a.total);
 }

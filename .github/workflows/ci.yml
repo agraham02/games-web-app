@@ -1,0 +1,237 @@
+# CI, and CD for `main`.
+#
+# Five jobs run in parallel and each answers a different question, because
+# each layer of tests in this repo is blind to something the others catch
+# (see CLAUDE.md, "Testing it"). Nothing here is decorative: every one has
+# found a real bug, or exists because the class of bug is one we have hit.
+#
+#   check    Is it correct?        typecheck + lint + ~800 unit tests
+#   harness  Does the server hold? adversarial WebSocket traffic, no UI
+#   e2e      Does it work for two people in real browsers?
+#   build    Does it BOOT in production? production install, prod deps only
+#   docker   Does the container image work? (Fly, Koyeb, a VPS)
+#
+# On `main`, when all five pass, `deploy` triggers Render and `verify`
+# waits until the live site reports the commit it just shipped. Both are
+# no-ops until the two settings in deploy.md exist, so this file is safe to
+# merge before any hosting does.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Also how you redeploy `main` by hand: Actions -> CI -> Run workflow.
+  workflow_dispatch:
+
+# A newer push to the same branch makes an older run pointless — except on
+# `main`, where a run in flight may be a DEPLOY, and cancelling one of
+# those half way is worse than letting it finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  check:
+    name: Typecheck, lint, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  harness:
+    name: WebSocket harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # The harness needs a running server, and needs the debug endpoints
+      # that only exist outside production — so this is the dev server, not
+      # `npm start`. `tsx server.ts` is the same entry point `npm run dev`
+      # wraps, minus the file watcher that would only get in the way here.
+      - name: Start the server
+        run: |
+          PORT=3000 NODE_ENV=development npx tsx server.ts > server.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:3000/healthz > /dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          echo "The server never came up:"; cat server.log; exit 1
+      - run: npm run harness
+      - name: Server log
+        if: failure()
+        run: cat server.log
+
+  e2e:
+    name: Browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Playwright starts its own server on :3210 (see playwright.config.ts).
+      - run: npm run e2e
+      - name: Keep the traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  build:
+    name: Production build and boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The check that earns this job its place. The server is TypeScript
+      # that is never compiled, so `tsx` and `cross-env` are RUNTIME
+      # dependencies — and moving either into devDependencies passes every
+      # test and the build, then dies on the first production install. So
+      # drop the dev dependencies, exactly as a production install would,
+      # and see whether it still starts.
+      - name: Boot it the way production does
+        run: |
+          npm prune --omit=dev
+          PORT=3100 npm start > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3100/healthz > /dev/null 2>&1; then break; fi
+            if [ "$i" = 60 ]; then echo "Never came up:"; cat server.log; exit 1; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:3100/room > /dev/null
+          # The debug routes dump a room unredacted and can hang up on a
+          # player. Production must refuse them outright.
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/debug/rooms)
+          if [ "$code" != 404 ]; then echo "/debug/rooms answered $code in production, not 404"; exit 1; fi
+      - name: Server log
+        if: failure()
+        run: cat server.log
+
+  docker:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t table-games .
+      - name: Run it and check it answers
+        run: |
+          docker run -d --name tg -p 3200:3000 table-games
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3200/healthz > /dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          echo "The container never became healthy:"; docker logs tg; exit 1
+
+  # ------------------------------------------------------------------
+  # Deploy. Only `main`, only after everything above.
+  # ------------------------------------------------------------------
+  deploy:
+    name: Deploy to Render
+    needs: [check, harness, e2e, build, docker]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A GitHub Environment, so you can add "required reviewers" to it later
+    # if you ever want a human to press the button. Not required.
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    # Two deploys at once would race each other for the same service.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    outputs:
+      triggered: ${{ steps.hook.outputs.triggered }}
+    steps:
+      - name: Trigger the deploy hook
+        id: hook
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::notice::RENDER_DEPLOY_HOOK_URL is not set, so CI passed and nothing was deployed. See deploy.md."
+            echo "triggered=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `ref` pins the deploy to THIS commit, so a later push cannot
+          # slip in between the tests passing and the deploy starting.
+          curl -fsS -X POST "${HOOK}&ref=${GITHUB_SHA}" > /dev/null
+          echo "triggered=true" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Verify the live site
+    needs: deploy
+    if: needs.deploy.outputs.triggered == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # "The health check passed" is not the same as "the deploy finished":
+      # the platform keeps the OLD instance serving until the new one is
+      # healthy, so a stale build answers /healthz just as well. Asking
+      # which commit is live is the only way to tell them apart.
+      - name: Wait for this commit to be live
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "::warning::Repository variable APP_URL is not set, so the deploy was triggered but not verified. See deploy.md."
+            exit 0
+          fi
+          echo "Waiting for ${GITHUB_SHA} at ${APP_URL}"
+          deadline=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            # A generous per-request timeout: a free instance that has been
+            # asleep takes about a minute to answer at all.
+            body=$(curl -fsS --max-time 90 "${APP_URL%/}/healthz" 2>/dev/null || true)
+            if [ -n "$body" ]; then
+              live=$(echo "$body" | jq -r '.commit // ""')
+              if [ "$live" = "$GITHUB_SHA" ]; then
+                echo "Live: $live"
+                exit 0
+              fi
+              if [ -z "$live" ]; then
+                # A host that does not report a commit (see GIT_COMMIT in
+                # deploy.md). Healthy is the most that can be said.
+                echo "::notice::The site is healthy but does not report a commit, so this deploy could only be confirmed as up, not as new."
+                exit 0
+              fi
+              echo "Still serving ${live}"
+            fi
+            sleep 15
+          done
+          echo "::error::${GITHUB_SHA} never became live within 15 minutes. Check the deploy log in the Render dashboard."
+          exit 1

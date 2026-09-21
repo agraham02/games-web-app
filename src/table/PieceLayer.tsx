@@ -266,8 +266,16 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   // piece, no matter how often the real values change (see
   // `useHeroTurnActive`'s and `useHeroHoverIndex`'s own docs — the same
   // trick `useBoardView` above already uses).
+  // Whose hand this is, from the geometry's point of view rather than from
+  // a hardcoded seat 0. Online the viewer sits wherever the server seated
+  // them, and a spectator's `viewerSeat` is null — so no hand on the table
+  // gets the hero treatment, which is exactly right for somebody watching.
+  const viewerSeat = geometry ? geometry.viewerSeat : HERO;
   const isHeroHand = Boolean(
-    placement && placement.zone === "hand" && (placement.seat ?? HERO) === HERO,
+    placement &&
+      placement.zone === "hand" &&
+      viewerSeat !== null &&
+      (placement.seat ?? HERO) === viewerSeat,
   );
   // Hover/tap-preview needs a real face to preview — meaningless (and,
   // on touch, actively in the way of a direct tap-to-select) on a card

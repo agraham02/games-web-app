@@ -129,6 +129,32 @@ const USES_POT_ODDS: Record<BotDifficulty, boolean> = { casual: false, steady: t
 const BLUFF_CHANCE: Record<BotDifficulty, number> = { casual: 0.02, steady: 0.05, sharp: 0.15 };
 const RAISE_THRESHOLD: Record<BotDifficulty, number> = { casual: 0.8, steady: 0.62, sharp: 0.55 };
 
+/**
+ * How strong a hand needs to be before a tier is willing to let a raise
+ * turn into shoving its ENTIRE remaining stack — separate from, and much
+ * higher than, `RAISE_THRESHOLD` (which only gates making SOME raise).
+ * Without this, a fuzz sim at fixed 6-max/steady turned up the exact
+ * "no strategy" complaint reported: `avgRaisesBeforeShove` and
+ * `avgPotInBBsAtShove` both scaled up with starting depth (2.4 raises
+ * / 16 BB pot at 10 BB deep vs. 6.5 raises / 672 BB pot at 400 BB deep)
+ * while the overall preflop-all-in RATE stayed flat at ~7-8% regardless
+ * of depth — proof the shove wasn't coming from hand strength at all.
+ * `sizeBet`'s target is a fraction of `potTotal`, which roughly doubles
+ * with every raise; `Math.min(range.max, target)` then silently
+ * converts "I wanted to bet a healthy fraction of the pot" into "I just
+ * jammed my whole stack" the moment that fraction first crosses the
+ * remaining stack — with nothing ever asking whether the hand
+ * justified going that far. A real player tightens up and starts just
+ * calling once a raise would commit their whole deep stack on a merely
+ * decent hand; see `SHORT_STACK_BB` for the one case that's correctly
+ * exempt.
+ */
+const SHOVE_THRESHOLD: Record<BotDifficulty, number> = { casual: 0.7, steady: 0.8, sharp: 0.85 };
+/** Below this effective-stack depth, shoving a merely-decent hand is
+ * standard push/fold strategy, not a leak — real ranges widen sharply
+ * as stack-to-blind ratio shrinks, so `SHOVE_THRESHOLD` doesn't apply. */
+const SHORT_STACK_BB = 15;
+
 function chooseBettingAction(
   state: PokerState,
   seat: SeatId,
@@ -154,6 +180,17 @@ function chooseBettingAction(
   const canRaise = !state.raiseCapped && range.max > (state.streetCommitted[seat] ?? 0);
   if (canRaise && (effective >= RAISE_THRESHOLD[tier] || bluffing)) {
     const to = sizeBet(state, seat, range, tier, rng, effective);
+    const stackInBBs = (state.stacks[seat] ?? 0) / state.bigBlind;
+    const shoveJustified =
+      effective >= SHOVE_THRESHOLD[tier] || stackInBBs <= SHORT_STACK_BB || bluffing;
+    // The sizing worked out to an all-in shove, but nothing about THIS
+    // hand actually earns one — build the pot with a check/call instead
+    // of jamming a deep stack on a merely-decent hand (see
+    // `SHOVE_THRESHOLD`'s doc). Same `toCall === 0` case as the big
+    // blind's free option below: still a real decision (this seat was
+    // about to raise a bet already on the table), just not one that
+    // owes a call.
+    if (to >= range.max && !shoveJustified) return toCall === 0 ? { t: "check" } : { t: "call" };
     // "bet" vs "raise" is decided by whether ANYONE has bet this street
     // yet — not by whether THIS seat owes a call. Those disagree exactly
     // once: the big blind's own free preflop option, where `toCall` is 0

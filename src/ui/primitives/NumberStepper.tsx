@@ -25,6 +25,17 @@ export interface NumberStepperProps {
    * "cards", "points". Renders as "Fewer tricks" / "More tricks".
    */
   label?: string;
+  /**
+   * Whether the value may be changed at all.
+   *
+   * Distinct from the range ends, which each button already guards for
+   * itself: this is "not right now, by anybody". Without it a caller
+   * could only gate its `onChange`, which leaves two buttons that look
+   * exactly as pressable as ever and quietly do nothing.
+   */
+  disabled?: boolean;
+  /** Why it cannot be changed, as a tooltip on both buttons. */
+  title?: string;
 }
 
 export function NumberStepper({
@@ -34,6 +45,8 @@ export function NumberStepper({
   onChange,
   step = 1,
   label = "value",
+  disabled = false,
+  title,
 }: NumberStepperProps) {
   const button =
     "flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30";
@@ -43,7 +56,8 @@ export function NumberStepper({
       <button
         type="button"
         onClick={() => onChange(Math.max(min, value - step))}
-        disabled={value <= min}
+        disabled={disabled || value <= min}
+        title={title}
         aria-label={`Fewer ${label}`}
         className={button}
       >
@@ -62,7 +76,8 @@ export function NumberStepper({
       <button
         type="button"
         onClick={() => onChange(Math.min(max, value + step))}
-        disabled={value >= max}
+        disabled={disabled || value >= max}
+        title={title}
         aria-label={`More ${label}`}
         className={button}
       >

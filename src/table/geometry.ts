@@ -60,10 +60,10 @@ export type ZoneName =
   | "boneyard"
   | "hand"
   /** A fixed 5-slot row for poker's community cards — see `resolveTable`
-   * for why it sits above `center`'s own pot pile rather than needing a
-   * second independent "middle of the table" guess. */
+   * for why it sits above `center`'s own pot readout rather than needing
+   * a second independent "middle of the table" guess. */
   | "community"
-  /** Poker's own mini-scale pot pile, anchored below `community` — see
+  /** Poker's own pot-total badge box, anchored below `community` — see
    * `engine/types.ts`'s `ZoneId` doc for why this is not `"center"`. */
   | "pot"
   /** Poker's own remaining-deck stub, tucked beside `burnt` below `pot`
@@ -71,12 +71,40 @@ export type ZoneName =
   | "stub"
   /** Poker's own burnt-card pile, beside `stub` — see `engine/types.ts`'s
    * `ZoneId` doc for why this is not `"discard"`. */
-  | "burnt";
+  | "burnt"
+  /** BS's single central face-down stack, dead centre with `reveal`
+   * stacked above it — see `engine/types.ts`'s `ZoneId` doc for why this
+   * is neither `"deck"`, `"discard"` nor `"trick"`. */
+  | "pile"
+  /** The face-up row a challenged play is turned over into, above
+   * `pile` — see `engine/types.ts`'s `ZoneId` doc. */
+  | "reveal";
+
+/**
+ * Where a given SEAT is sitting, from this viewer's chair.
+ *
+ * `TableGeometry.seats` is ordered by POSITION, not by seat id — index 0
+ * is always the bottom-centre chair and the rest walk the ring from
+ * there. Offline the two coincide, because the viewer is seat 0 and
+ * `seatAt(i)` is the identity; online they do not, and indexing the array
+ * with a seat id silently returns somebody else's chair.
+ *
+ * It did exactly that. A player at seat 1 saw every opponent's hand one
+ * position out — seat 2's tiles on the top edge instead of the left,
+ * seat 3's on the right instead of the top — and seat 0's hand wrapped
+ * around to index 0, which is the viewer's OWN chair, so the leader's
+ * tiles were drawn face-down underneath the player's hand.
+ */
+export function slotForSeat(geometry: TableGeometry, seat: SeatId): SeatSlot | undefined {
+  return geometry.seats.find((slot) => slot.seat === seat);
+}
 
 export interface TableGeometry {
   box: Box;
   density: Density;
   seats: SeatSlot[];
+  /** See `ResolveOptions.viewerSeat`. Echoed so layout needs no second source. */
+  viewerSeat: SeatId | null;
   zones: Record<ZoneName, Box>;
   /**
    * The box a growing pile assembly (deck + fanned discard) may occupy.
@@ -451,10 +479,31 @@ export interface ResolveOptions {
    * about where its piles belong.
    */
   pileAnchor?: number;
+  /**
+   * Whose point of view the table is drawn from. Defaults to seat 0, which
+   * is every offline game.
+   *
+   * Seats are laid out by POSITION and then labelled, so pinning a
+   * different viewer bottom-centre is a relabelling rather than a second
+   * layout: position 0 is always "the person looking at this screen", and
+   * the seat ids walk anticlockwise from there. Everything downstream
+   * still speaks in real seat ids, which is what keeps a game's own state
+   * — hands, bids, scores, all keyed by seat — from needing to be rewritten
+   * per viewer.
+   *
+   * `null` is a spectator: nobody is at the bottom, no hand belongs to the
+   * viewer, and every seat gets a pod.
+   */
+  viewerSeat?: SeatId | null;
 }
 
 export function resolveTable(opts: ResolveOptions): TableGeometry {
   const { seats: seatCount, width, height } = opts;
+  // `undefined` means "no opinion", which is the offline default of seat 0.
+  // `null` is a deliberate spectator and is NOT the same thing.
+  const viewerSeat = opts.viewerSeat === undefined ? HERO : opts.viewerSeat;
+  const seatBase = viewerSeat ?? HERO;
+  const watching = viewerSeat === null;
   const density = opts.density ?? resolveDensity(width, height);
   const spec = DENSITY[density];
 
@@ -540,21 +589,30 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
 
   const seats: SeatSlot[] = [
     {
-      seat: HERO,
+      seat: seatBase,
       x: width / 2,
-      y: height - handZone / 2,
+      // A spectator has no hand strip to sit above, so the bottom pod
+      // would be centred on the very edge of the viewport and half of it
+      // would be off screen. It gets the same inset every other edge uses.
+      y: watching ? height - podInset / 2 : height - handZone / 2,
       anchor: "bottom",
       rotation: 0,
-      isHero: true,
+      isHero: !watching,
     },
   ];
 
-  let seat: SeatId = 1;
+  /**
+   * Position index, not a seat id. The two coincide offline because the
+   * viewer is seat 0; online they do not, and conflating them is what
+   * would put somebody else's cards in your hand.
+   */
+  let position = 1;
+  const seatAt = (i: number): SeatId => (i + seatBase) % seatCount;
 
   // Left edge, bottom to top — the hero's immediate left comes first.
   for (let i = 0; i < nLeft; i++) {
     seats.push({
-      seat: seat++,
+      seat: seatAt(position++),
       x: ringLeft + podInset / 2,
       y: ringBottom - ((i + 0.5) / nLeft) * sideH,
       anchor: "left",
@@ -566,7 +624,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // Top edge, left to right.
   for (let i = 0; i < nTop; i++) {
     seats.push({
-      seat: seat++,
+      seat: seatAt(position++),
       x: topLeft + ((i + 0.5) / nTop) * topW,
       y: ringTop + podInset / 2,
       anchor: "top",
@@ -578,7 +636,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // Right edge, top to bottom — ends at the hero's immediate right.
   for (let i = 0; i < nRight; i++) {
     seats.push({
-      seat: seat++,
+      seat: seatAt(position++),
       x: ringRight - podInset / 2,
       y: sideTop + ((i + 0.5) / nRight) * sideH,
       anchor: "right",
@@ -624,16 +682,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   );
   const communityBottom = cy - communityOffset - communityH / 2 + communityH;
 
-  // Pot: a small pile of decorative chip pieces, sized off `miniCard`
-  // (see `ZoneName`'s doc) so it reads as a chip pile rather than a
-  // second row of playing cards. Anchored to `community`'s own actual
-  // bottom edge plus a real gap — not to a fraction of `cy` the way an
-  // earlier version assumed — so the two zones cannot overlap regardless
-  // of how little vertical room a viewport leaves: if there isn't enough
-  // room below the community row for every row the pile could ever need,
-  // the BOX shrinks to what's actually there rather than reaching down
-  // past `play`'s own bottom edge, the same "give ground on the
-  // tightest viewport" trade `pileRegion` already makes.
+  // Pot: box for the pot-total badge, sized off `miniCard` (see
+  // `ZoneName`'s doc) — originally to hold a small fanned chip pile,
+  // kept as the box's footprint now that the pile has been replaced by
+  // a plain "$" readout (see `engine/types.ts`'s `ZoneId` doc), since a
+  // single-line badge fits it with room to spare and the anchoring below
+  // is the part that actually matters. Anchored to `community`'s own
+  // actual bottom edge plus a real gap — not to a fraction of `cy` the
+  // way an earlier version assumed — so the two zones cannot overlap
+  // regardless of how little vertical room a viewport leaves: if there
+  // isn't enough room below the community row for the box's wanted
+  // height, the BOX shrinks to what's actually there rather than
+  // reaching down past `play`'s own bottom edge, the same "give ground
+  // on the tightest viewport" trade `pileRegion` already makes.
   const potGap = spec.miniCard.h * 0.3;
   const potRows = 3;
   const potHWanted = spec.miniCard.w * (1 + 0.85 * (potRows - 1));
@@ -664,6 +725,28 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const stubY = potY + potH + stubGap;
   const stubCardW = spec.miniCard.w * 1.3;
   const stubPairGap = spec.miniCard.w * 0.3;
+
+  // BS: one central face-down pile with the face-up `reveal` row directly
+  // above it. Laid out as a PAIR centred on `cy` rather than as two
+  // independent guesses at "the middle of the table", because that is the
+  // only arrangement in which the two cannot overlap — the same reason
+  // poker's community/pot/stub/burnt are computed as one chain rather than
+  // each from its own fraction of `cy` (see `engine/types.ts`'s `ZoneId`).
+  //
+  // The gap between them gives ground first on a viewport too short for
+  // both rows; past that the pair keeps its size and is clamped as far
+  // inside `play` as it will go, the same "being drawable beats being
+  // perfectly contained" trade every zone below `community` already makes.
+  const bsGapWanted = spec.card.h * 0.3;
+  const bsGap = Math.max(0, Math.min(bsGapWanted, play.h - spec.card.h * 2));
+  const bsPairH = spec.card.h * 2 + bsGap;
+  const bsTop = Math.max(play.y, Math.min(cy - bsPairH / 2, play.y + play.h - bsPairH));
+  // Four cards is as many as one rank can hold, so a reveal never needs a
+  // fifth slot. They deliberately do not overlap — the whole point of the
+  // row is that all of them are legible at once — so it wants its full
+  // width, clamped to the play area for a narrow phone.
+  const bsRevealGap = spec.card.w * 0.16;
+  const bsRevealW = Math.min(play.w * 0.94, spec.card.w * 4 + bsRevealGap * 3);
 
   const pileGap = spec.card.w * 0.45;
   const deckX = cx - spec.card.w / 2 - pileGap;
@@ -813,6 +896,13 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     pot: { x: cx - potW / 2, y: potY, w: potW, h: potH },
     stub: { x: cx - stubPairGap / 2 - stubCardW, y: stubY, w: stubCardW, h: stubH },
     burnt: { x: cx + stubPairGap / 2, y: stubY, w: stubCardW, h: stubH },
+    pile: {
+      x: cx - spec.card.w / 2,
+      y: bsTop + spec.card.h + bsGap,
+      w: spec.card.w,
+      h: spec.card.h,
+    },
+    reveal: { x: cx - bsRevealW / 2, y: bsTop, w: bsRevealW, h: spec.card.h },
   };
 
   // The line the pile assembly is centred on.
@@ -849,6 +939,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     box,
     density,
     seats,
+    viewerSeat,
     zones,
     pileRegion,
     pileAxis,

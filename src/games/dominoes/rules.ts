@@ -91,6 +91,7 @@ import {
   sideOf,
 } from "./state";
 import type { ChainEnd, DomAction, DomRules, DomState, PlacedTile } from "./types";
+import { validateByEnumeration } from "../_shared/validate";
 
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 4;
@@ -219,7 +220,9 @@ export function startRound(state: DomState, rng: Rng): ReduceResult<DomState> {
   events.push({
     t: "announce",
     seat: opener,
-    text: opener === HERO ? "You lead" : `${botName(opener)} leads`,
+    actor: opener,
+    text: "leads",
+    selfText: "lead",
     tone: "info",
   });
 
@@ -270,7 +273,7 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
       faceUp: seat === HERO,
     });
     if (seat !== HERO) {
-      events.push({ t: "announce", seat, text: `${botName(seat)} draws`, tone: "info" });
+      events.push({ t: "announce", seat, actor: seat, text: "drew", tone: "info" });
     }
     // The turn does not move — they still have to play or draw again.
     return {
@@ -284,8 +287,11 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
     events.push({
       t: "announce",
       seat,
-      text: `${seatName(seat)} ${seat === HERO ? "pass" : "passes"}`,
-      tone: seat === HERO ? "bad" : "info",
+      actor: seat,
+      text: "passes",
+      selfText: "pass",
+      tone: "info",
+      selfTone: "bad",
     });
     // Everyone in succession — nobody can move, so the round is blocked.
     if (passes >= state.seats) {
@@ -337,7 +343,9 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
     events.push({
       t: "announce",
       seat,
-      text: `${botName(seat)} plays ${action.tile.replace("-", "–")}`,
+      actor: seat,
+      text: `plays ${action.tile.replace("-", "–")}`,
+      selfText: `play ${action.tile.replace("-", "–")}`,
       tone: "info",
     });
   }
@@ -664,6 +672,7 @@ export function createDominoes(
     setup: makeSetup(rules, target),
     reduce,
     legalActions,
+    validate: validateByEnumeration(legalActions),
     pieces,
     placements,
     playerView,

@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { PieceId } from "@/engine/types";
+import type { PieceId, SeatId } from "@/engine/types";
 import { resolveTable, type Density, type TableGeometry, type ZoneName } from "./geometry";
 import { useTableStore } from "./store";
 import { PieceLayer } from "./PieceLayer";
@@ -42,6 +42,8 @@ export interface TableSurfaceProps {
   className?: string;
   /** Fill the viewport (default) or the parent box. */
   fill?: "viewport" | "parent";
+  /** See `ResolveOptions.viewerSeat`. Omit offline; `null` is a spectator. */
+  viewerSeat?: SeatId | null;
 }
 
 export function TableSurface({
@@ -56,6 +58,7 @@ export function TableSurface({
   children,
   className,
   fill = "viewport",
+  viewerSeat,
 }: TableSurfaceProps) {
   const ref = useRef<HTMLDivElement>(null);
   const setGeometry = useTableStore((s) => s.setGeometry);
@@ -95,9 +98,10 @@ export function TableSurface({
         topZone,
         bottomZone,
         pileAnchor,
+        viewerSeat,
       }),
     );
-  }, [size, seats, density, handZone, topZone, bottomZone, pileAnchor, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, pileAnchor, viewerSeat, setGeometry]);
 
   return (
     <div

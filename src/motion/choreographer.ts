@@ -22,6 +22,28 @@ export interface TimedStep {
 
 const MS = 1000;
 
+/**
+ * How long an `unmask` occupies before the event that moves the piece is
+ * allowed to run.
+ *
+ * Zero looks right and is not. An unmask puts a piece the viewer has
+ * never seen onto the board at the slot it is about to leave, and a
+ * `<Piece>` mounts with `initial={false}` — it SNAPS to wherever it is
+ * first rendered. If the move lands before that mount has been painted,
+ * the piece's first painted position is its destination, so Motion has
+ * nothing to animate from and the card simply appears on the table.
+ *
+ * That is what an opponent's play looked like online: the tile did not
+ * fly out of their hand, it materialised in the middle of the board. The
+ * fix is one painted frame at the origin, and this is deliberately a
+ * couple of them rather than one — a device dropping frames under a deal
+ * would otherwise fall back to the same snap.
+ *
+ * Small enough to be invisible against `DURATION.play` (300ms), and it
+ * only ever costs anything on a move somebody else made.
+ */
+const UNMASK_SETTLE = 50;
+
 export interface ChoreographOptions {
   /**
    * Overrides `STAGGER.deal` (ms between one deal event starting and the
@@ -111,6 +133,17 @@ export function choreograph(
         });
         break;
 
+      case "unmask":
+        // Zero OFFSET, because this rides with the gesture rather than
+        // queueing behind it — but a real duration, because the piece it
+        // introduces has to be painted at its origin before anything
+        // moves it. See `UNMASK_SETTLE`: with a duration of zero the
+        // card materialised on the board instead of flying out of the
+        // hand it came from, which is exactly the hitch the zero was
+        // meant to avoid.
+        steps.push({ event, offset: 0, duration: UNMASK_SETTLE });
+        break;
+
       case "pause":
         // Same weight as a single ordinary `move` — DURATION.play, not
         // a fresh constant — because the whole point is that a turn
@@ -187,4 +220,83 @@ export function totalDuration(steps: readonly TimedStep[]): number {
     end = Math.max(end, t + s.duration);
   }
   return end;
+}
+
+/**
+ * How long a step blocks the queue on its own, regardless of what comes
+ * next.
+ *
+ * Most events block nothing: their effect is an animation that runs on
+ * the compositor while the queue moves on, and how soon the NEXT event
+ * starts is that event's `offset`. Three are different, because they are
+ * time itself rather than something that takes time:
+ *
+ *  - `think` renders nothing. It exists solely so an opponent appears to
+ *    be deciding, so its whole `ms` has to run out.
+ *  - `unmask` renders a piece that has never been on this screen, and the
+ *    move that follows must not land in the same paint.
+ *  - `pause` is a beat by definition. LRC emits one ahead of a roll's
+ *    chip moves so the dice can be READ before the chips they decided
+ *    start flying, and the draining loop used to honour only the first
+ *    two — so the beat existed in `choreograph`, was documented as
+ *    obeying skip and reduced motion, and did nothing at all.
+ */
+function blockingMs(event: GameEvent, step: TimedStep | undefined): number {
+  if (event.t === "think") return event.ms;
+  if (event.t === "unmask" || event.t === "pause") return step?.duration ?? 0;
+  return 0;
+}
+
+/**
+ * How long a step of the queue waits before the next one starts. The
+ * single home for a rule that is easy to get subtly wrong, and that the
+ * SERVER now needs as well as the browser.
+ *
+ * TWO clocks decide it, and the bug history is entirely about
+ * conflating them: `next.offset` is how long the UPCOMING event wants to
+ * wait (and `0` is meaningful — it is how `choreograph` says "these play
+ * concurrently"), while `blockingMs` is how long THIS event holds the
+ * queue no matter what. The wait is whichever is longer.
+ */
+export function gapAfter(
+  event: GameEvent,
+  next: GameEvent,
+  opts: ChoreographOptions = {},
+): number {
+  // Both, not `next` alone: `choreograph`'s "same run" detection reads
+  // the event before, so timing `next` in isolation would always see it
+  // as the first of its kind and lose every stagger.
+  const [current, upcoming] = choreograph([event, next], opts);
+  return Math.max(blockingMs(event, current), upcoming?.offset ?? beatOf(event));
+}
+
+/**
+ * How long a step takes when nothing overlaps or follows it: chained
+ * slightly before the animation finishes, because a full stop between
+ * every action reads as lag rather than as weight.
+ */
+export function beatOf(event: GameEvent): number {
+  const [step] = choreograph([event]);
+  if (!step) return 0;
+  return step.duration * (event.t === "think" ? 1 : 0.72);
+}
+
+/**
+ * Milliseconds from a batch starting to its playback going idle — the
+ * moment the browser calls `onIdle` and the game is allowed to move on.
+ *
+ * Not `totalDuration`, though the two look alike. That is when the last
+ * animation FINISHES; this is when the loop is done waiting, which is at
+ * the last event being APPLIED (its animation carries on underneath the
+ * hold that follows). What a turn costs to watch is this one.
+ *
+ * The server uses it to space out bot turns, because it does not wait on
+ * any client to finish showing one — see `RoomRuntime`.
+ */
+export function playbackMs(events: readonly GameEvent[], opts: ChoreographOptions = {}): number {
+  let total = 0;
+  for (let i = 0; i < events.length - 1; i++) {
+    total += gapAfter(events[i]!, events[i + 1]!, opts);
+  }
+  return total;
 }
