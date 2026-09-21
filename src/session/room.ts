@@ -53,6 +53,17 @@ export const MAX_NAME_LENGTH = 20;
 export const MIN_ROOM_PLAYERS = 2;
 
 /**
+ * The most people one room will hold.
+ *
+ * Comfortably above the ten seats of the largest game, because spectators
+ * are real and a room is allowed to have more people in it than chairs.
+ * It exists so that the number is BOUNDED at all: a room is an in-memory
+ * object on a single process, every member is broadcast to on every
+ * roster change, and nothing anywhere said no.
+ */
+export const MAX_ROOM_MEMBERS = 24;
+
+/**
  * Codes are uppercase and skip I and O, which are the two letters people
  * reliably mistype as 1 and 0 when reading a code off someone else's
  * screen. 24^4 is still 331,776 rooms.
@@ -121,7 +132,8 @@ export type RoomError =
   | "no-game-running"
   | "not-in-game"
   | "cannot-target-self"
-  | "bad-seat-count";
+  | "bad-seat-count"
+  | "room-full";
 
 export type RoomEffect =
   | { t: "startSession"; gameId: GameId; settings: RawSettings; seats: number; difficulty: BotDifficulty }
@@ -447,6 +459,11 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       }
 
       if (nameTaken(room, name)) return fail("name-taken");
+
+      // Checked for newcomers only: somebody already in the room is
+      // reconnecting, and a cap that refused THEM would turn a full room
+      // into one nobody could rejoin after a dropped socket.
+      if (Object.keys(room.members).length >= MAX_ROOM_MEMBERS) return fail("room-full");
 
       if (room.privacy === "private") {
         return {

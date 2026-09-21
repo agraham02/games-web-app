@@ -50,10 +50,21 @@ export const OFFLINE_VIEW: PokerView = {
 };
 
 export function standings(view: PokerView, state: PokerState, _live: Live, seats: SeatView[]) {
-  return [
-    { seat: view.viewerSeat, name: "You", total: state.stacks[view.viewerSeat] ?? 0 },
-    ...seats.map((s) => ({ seat: s.seat, name: s.name, total: state.stacks[s.seat] ?? 0 })),
-  ].sort((a, b) => b.total - a.total);
+  // Built from the real seat range and named by COMPARISON, never by
+  // prepending the viewer.
+  //
+  // `SPECTATOR_SEAT` is -1 and -1 is an ordinary number: prepending
+  // `{ seat: viewerSeat, name: "You" }` gave a spectator a row for a seat
+  // that does not exist, scored 0, sorted in among the real ones. The same
+  // -1 class that put a partner badge on a spectator's table.
+  const nameOf = (seat: SeatId) =>
+    seat === view.viewerSeat
+      ? "You"
+      : (seats.find((s) => s.seat === seat)?.name ?? view.nameFor(seat));
+  return Array.from({ length: state.seats }, (_, i) => {
+    const seat = i as SeatId;
+    return { seat, name: nameOf(seat), total: state.stacks[seat] ?? 0 };
+  }).sort((a, b) => b.total - a.total);
 }
 
 /**

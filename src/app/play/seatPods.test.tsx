@@ -25,7 +25,12 @@ import { TestClock } from "@/session/clock";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { SeatView } from "@/table/SeatRing";
 
-import { playerViews as bs } from "./bs/table";
+import { playerViews as bs, standings as bsStandings } from "./bs/table";
+import { standings as dominoesStandings } from "./dominoes/table";
+import { standings as lrcStandings } from "./lrc/table";
+import { standings as pokerStandings } from "./poker/table";
+import { standings as rummyStandings } from "./rummy/table";
+import { standings as spadesStandings } from "./spades/table";
 import { playerViews as dominoes } from "./dominoes/table";
 import { playerViews as lrc } from "./lrc/table";
 import { playerViews as poker } from "./poker/table";
@@ -179,6 +184,93 @@ describe("a seat a bot has taken over", () => {
       // read as "nobody is away" rather than as undefined behaviour.
       const offline = CALLERS[gameId](0, state, seats);
       expect(offline.every((v) => v.away === false), `${gameId} offline`).toBe(true);
+    });
+  }
+});
+
+/**
+ * Nobody gets a row for a seat they are not sitting in.
+ *
+ * `SPECTATOR_SEAT` is -1, and -1 is a perfectly ordinary number. Three of
+ * the six games built their game-end standings by PREPENDING
+ * `{ seat: viewerSeat, name: "You" }` to the real seats, which for a
+ * watcher meant a row for seat -1, scored zero, sorted in among the
+ * players. The two that got it right built from the seat range and
+ * decided the name by comparison, which is the shape they all use now.
+ *
+ * The same -1 class that once put a "Partner" badge on a spectator's
+ * table and showed them a hero badge reading "You - $0". It keeps coming
+ * back, so it is swept for rather than fixed one game at a time.
+ */
+describe("standings, seen by somebody who is not playing", () => {
+  const SPECTATOR = -1 as SeatId;
+
+  /**
+   * Each game's rows, for one viewer. The signatures genuinely differ -
+   * Rummy curries the seat count the way its `playerViews` does - so they
+   * are adapted one by one rather than pretended to match.
+   */
+  type Row = { seat: number; name: string };
+  const ROWS: Record<GameId, (v: SeatId, state: unknown, seats: number) => Row[]> = {
+    spades: (v, state, seats) =>
+      (spadesStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.spades(v, state, seats)),
+    dominoes: (v, state, seats) =>
+      (dominoesStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.dominoes(v, state, seats)),
+    poker: (v, state, seats) =>
+      (pokerStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.poker(v, state, seats)),
+    lrc: (v, state, seats) =>
+      (lrcStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.lrc(v, state, seats)),
+    bs: (v, state, seats) =>
+      (bsStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.bs(v, state, seats)),
+    rummy: (v, state, seats) => (rummyStandings as AnyFn)(viewFor(v), seats)(state),
+  };
+
+  /**
+   * Games whose rows name the viewer at all.
+   *
+   * Rummy deliberately calls everybody by name, including you - it is the
+   * one whose scorecard reads as a list of players rather than a list
+   * with you in it. Spades names a PAIR ("You & Bo"), because its rows
+   * are teams rather than seats, which is why this is a substring test.
+   */
+  const SAYS_YOU: Record<GameId, boolean> = {
+    spades: true,
+    dominoes: true,
+    poker: true,
+    lrc: true,
+    bs: true,
+    rummy: false,
+  };
+
+  for (const gameId of Object.keys(ROWS) as GameId[]) {
+    it(`${gameId}: gives a spectator no row of their own`, () => {
+      const seats = SEATS[gameId];
+      const state = dealt(gameId, seats);
+      const rows = ROWS[gameId](SPECTATOR, state, seats);
+
+      for (const row of rows) {
+        expect(row.seat, `${gameId} listed seat ${row.seat}`).toBeGreaterThanOrEqual(0);
+        expect(row.seat).toBeLessThan(seats);
+      }
+      // And nobody is called "You", because nobody watching is.
+      for (const row of rows) {
+        expect(row.name, `${gameId} called a row "${row.name}"`).not.toMatch(/\bYou\b/);
+      }
+    });
+
+    it(`${gameId}: still names a seated player's own row`, () => {
+      const seats = SEATS[gameId];
+      const state = dealt(gameId, seats);
+      const seat = 1 as SeatId;
+      const rows = ROWS[gameId](seat, state, seats);
+
+      for (const row of rows) {
+        expect(row.seat).toBeGreaterThanOrEqual(0);
+        expect(row.seat).toBeLessThan(seats);
+      }
+      if (SAYS_YOU[gameId]) {
+        expect(rows.filter((r) => /\bYou\b/.test(r.name))).toHaveLength(1);
+      }
     });
   }
 });

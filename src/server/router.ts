@@ -344,9 +344,14 @@ export class Router {
   private admit(session: SessionId, code: string): void {
     const waiting = this.awaiting.get(session);
     this.awaiting.delete(session);
-    this.registry.place(session, code);
     const runtime = this.registry.get(code);
+    // Located only once there is something to be located IN. Placing
+    // first put a requester who had already gone - or whose room had been
+    // reaped out from under them - into `located` pointing at a room they
+    // were never attached to, which is the one map the whole
+    // "one person is one room" invariant is read from.
     if (!runtime || !waiting) return;
+    this.registry.place(session, code);
     runtime.attach(session, waiting.peer.connection);
   }
 
@@ -390,7 +395,11 @@ export class Router {
     if (peer.session && peer.session !== session) {
       const previous = this.registry.roomOf(peer.session);
       previous?.detach(peer.session, peer.connection);
-      this.awaiting.delete(peer.session);
+      // The knock goes too. Dropping only the `awaiting` entry left the
+      // request itself sitting on the leader's list, where approving it
+      // could never reach anybody - the socket it belonged to now speaks
+      // for somebody else.
+      this.withdrawQuietly(peer.session);
     }
 
     peer.session = session;

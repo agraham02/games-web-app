@@ -234,6 +234,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "not-in-game": "you are not at the table",
   "cannot-target-self": "that one only works on somebody else",
   "bad-seat-count": "that seat count does not fit this game",
+  "room-full": "this room is full",
   "no-room": "you are not in a room",
   "bad-message": "that request could not be handled",
   "no-such-room": "no room with that code",

@@ -21,6 +21,7 @@ import {
   isSeatLive,
   makeCode,
   openSeats,
+  MAX_ROOM_MEMBERS,
   MIN_ROOM_PLAYERS,
   seatOf,
   teamIndex,
@@ -282,6 +283,27 @@ describe("starting a game", () => {
         { actor: LEADER, now: 11 },
       );
       expect(res.ok).toBe(false);
+    });
+
+    it("holds a bounded number of people, and still lets them back in", () => {
+      // Nothing capped this. A room is an in-memory object on one process
+      // and every member is broadcast to on every roster change, so the
+      // number wanted a ceiling whether or not anybody would ever reach
+      // it. Well above the ten seats of the largest game, because
+      // spectators are real and a room may hold more people than chairs.
+      const names = Array.from({ length: MAX_ROOM_MEMBERS - 1 }, (_, i) => `P${i}`);
+      const r = withMembers(names);
+      expect(Object.keys(r.members)).toHaveLength(MAX_ROOM_MEMBERS);
+
+      expect(
+        applyCommand(r, { t: "join", name: "Late" }, { actor: "s-late", now: 99 }),
+      ).toEqual({ ok: false, error: "room-full" });
+
+      // But somebody already in it is RECONNECTING, not arriving. A cap
+      // that refused them would turn a full room into one nobody could
+      // get back into after a dropped socket.
+      const back = applyCommand(r, { t: "join", name: "P0" }, { actor: "s-0", now: 100 });
+      expect(back.ok).toBe(true);
     });
 
     it("refuses to move the teams once a game has dealt", () => {
