@@ -11,6 +11,7 @@
  */
 
 import { memo } from "react";
+import { Bot } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
@@ -57,6 +58,23 @@ export interface SeatView {
    * `src/games/poker/state.ts` for how it's derived.
    */
   badge?: "D" | "SB" | "BB";
+  /**
+   * A real person owns this seat and a bot is playing it for them — they
+   * closed the tab, their phone slept, or they stepped out to the lobby.
+   *
+   * Only ever true online, and only for a seat with an OWNER: a seat
+   * nobody ever sat in is played by a bot too, but there is nothing there
+   * to have gone away, and flagging it would tell every table with an
+   * empty chair that somebody had abandoned it. The distinction is made
+   * where the frame is read (`awayFrom`), not here.
+   *
+   * Why it needs saying at all: from the other side of the table a bot
+   * playing Bo's hand is indistinguishable from Bo playing it — same
+   * name, same pod, same tiles — so the table quietly stops being the
+   * game people think they are in. Rung 1/2 per POLICY.md, the same
+   * always-visible ambient weight as `partner`.
+   */
+  away?: boolean;
 }
 
 function initialsOf(name: string): string {
@@ -132,11 +150,33 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
         </div>
         {view.thinking ? <ThinkingRing /> : null}
         {view.badge ? <PositionBadge label={view.badge} /> : null}
+        {view.away ? <AwayBadge name={view.name} /> : null}
       </div>
 
-      <div className={`max-w-full truncate ${s.name} leading-none font-semibold text-bone-50`}>
+      <div
+        className={`max-w-full truncate ${s.name} leading-none font-semibold ${
+          // Their name, in the weight of somebody not at the table. The
+          // badge says a bot is playing; this stops the pod from reading
+          // as fully present at a glance, which is how you actually take
+          // a table in.
+          view.away ? "text-bone-400" : "text-bone-50"
+        }`}
+      >
         {view.name}
       </div>
+
+      {view.away ? (
+        // The status line, in `warn` rather than in the pod's ordinary
+        // muted tone: it has to be findable at a glance across a table,
+        // and it sits directly above `meta`, which is already bone-400.
+        // Not `loss` — nothing has gone wrong, somebody is just not here.
+        <div
+          className={`max-w-full truncate ${s.meta} leading-none font-bold`}
+          style={{ color: "var(--color-warn)" }}
+        >
+          Away
+        </div>
+      ) : null}
 
       {view.partner ? (
         <div className={`max-w-full truncate ${s.meta} leading-none font-bold text-brass-300/90`}>
@@ -172,6 +212,32 @@ function PositionBadge({ label }: { label: "D" | "SB" | "BB" }) {
       className="absolute -right-1 -bottom-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-brass-400 px-1 text-[9px] leading-none font-extrabold text-felt-950 ring-1 ring-felt-950/60"
     >
       {label}
+    </div>
+  );
+}
+
+/**
+ * "A bot is playing this hand."
+ *
+ * Bottom-LEFT of the avatar, which is the one corner nothing else claims:
+ * `PositionBadge` owns bottom-right and `WinnerCrown` the top edge, and a
+ * seat can genuinely be all three at once — poker's dealer steps away and
+ * their bot wins the match. Sized and shaped like `PositionBadge` so the
+ * two read as one family of marker rather than two ideas.
+ *
+ * A glyph rather than the word, because the pod is 64px wide at compact
+ * density and "Away" already has the line below the name. `title` and
+ * `aria-label` carry the whole sentence for anyone who needs it.
+ */
+function AwayBadge({ name }: { name: string }) {
+  const title = `${name} stepped away — a bot is playing this seat`;
+  return (
+    <div
+      aria-label={title}
+      title={title}
+      className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded-full bg-bone-200 text-felt-950 ring-1 ring-felt-950/60"
+    >
+      <Bot size={10} strokeWidth={2.5} aria-hidden />
     </div>
   );
 }

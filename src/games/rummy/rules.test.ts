@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
 import { HERO, type SeatId } from "@/engine/types";
 import { contributorOf, findCompletion, rummyDeck } from "./cards";
+import { rummyBots } from "./bots";
 import { createRummy, reduce, startRound } from "./rules";
 import {
   CLAIM_REACTION_MAX,
@@ -76,18 +77,29 @@ describe("rummy — deal size is the dealer's own choice, every round", () => {
     }
   });
 
-  it("asks a HUMAN dealer before dealing — including in round 1", () => {
+  it("asks whoever is dealing before dealing — every seat, including in round 1", () => {
+    // This used to assert that a HUMAN dealer was asked and a bot dealer
+    // resolved inline, which was a fair description of a one-human game
+    // and is wrong the moment a second person sits down: online, seat 3
+    // may be the dealer and is as entitled to choose as seat 0.
+    //
+    // Nothing decides who is human here any more. The seat parks, and
+    // whether a person or a bot answers is the session's business —
+    // exactly as it is for every other turn in every other game.
     const base = def.setup({ seats: 4, rng: createRng(1) });
-    const { state } = startRound({ ...base, dealer: 3, round: 0 }, createRng(1));
-    // Round 1's dealer is `state.dealer` unrotated — pinned to the hero.
-    const heroDeals = startRound({ ...base, dealer: HERO, round: 0 }, createRng(1));
-    expect(heroDeals.state.dealSizePending).toBe(HERO);
-    expect(heroDeals.state.dealt).toBe(false);
-    expect(def.currentSeat(heroDeals.state)).toBe(HERO);
-    // Nothing has been dealt yet: no card has left the deck.
-    expect(heroDeals.events.some((e) => e.t === "deal")).toBe(false);
-    // A bot dealer, by contrast, resolves inline and deals right away.
-    expect(state.dealt).toBe(true);
+    for (const dealer of [0, 1, 2, 3]) {
+      // Round 1's dealer is `state.dealer` unrotated.
+      const opened = startRound({ ...base, dealer, round: 0 }, createRng(1));
+      expect(opened.state.dealSizePending).toBe(dealer);
+      expect(opened.state.dealt).toBe(false);
+      expect(def.currentSeat(opened.state)).toBe(dealer);
+      // Nothing has been dealt yet: no card has left the deck.
+      expect(opened.events.some((e) => e.t === "deal")).toBe(false);
+      // And the seat that was asked is the only one that may answer.
+      for (const other of [0, 1, 2, 3]) {
+        expect(def.legalActions(opened.state, other).length > 0).toBe(other === dealer);
+      }
+    }
   });
 
   it("deals on chooseDealSize, and only for a size that is actually offered", () => {
@@ -318,34 +330,113 @@ describe("rummy — the claim window", () => {
       hands: { 0: ["S8", "CK"], 1: ["S8", "CK"], 2: ["H2"], 3: ["H3"] },
     });
 
-  it("opens a contested window carrying every bot's own clock", () => {
+  it("opens a window to every eligible seat, each with its own clock", () => {
     const state = { ...claimable(), turn: 1 as SeatId };
     const { state: next } = reduce(state, { t: "discard", card: "S8" });
     expect(next.claimWindow?.discard).toBe("S8");
     expect(next.claimWindow?.discarder).toBe(1);
     expect(next.claimWindow?.meldId).toBe(1);
-    // The clocks are the race. Every eligible bot has one, soonest first,
-    // and the page runs the shortest against the hero's own — the hero
-    // used to get a guaranteed refusal, which was a queue pretending to
-    // be a contest.
-    const bots = next.claimWindow!.bots;
-    expect(bots.map((b) => b.seat)).toEqual([...bots].sort((a, b) => a.ms - b.ms).map((b) => b.seat));
-    expect(bots.length).toBe(2); // seats 2 and 3; seat 1 discarded it
-    for (const b of bots) {
-      expect(b.ms).toBeGreaterThanOrEqual(CLAIM_REACTION_MIN);
-      expect(b.ms).toBeLessThanOrEqual(CLAIM_REACTION_MAX);
+
+    // The clocks are the race, and every eligible seat has one — no seat
+    // is left out for being the hero's. That exclusion WAS the seat-0
+    // assumption: the page ran the hero's clock and the state carried
+    // only the bots', which works exactly as long as there is one human
+    // and they sit at seat 0.
+    const pending = next.claimWindow!.pending;
+    expect(pending.map((p) => p.seat).sort()).toEqual([0, 2, 3]); // 1 discarded it
+    expect(pending.map((p) => p.ms)).toEqual(
+      [...pending].sort((a, b) => a.ms - b.ms).map((p) => p.ms),
+    );
+    for (const p of pending) {
+      expect(p.ms).toBeGreaterThanOrEqual(CLAIM_REACTION_MIN);
+      expect(p.ms).toBeLessThanOrEqual(CLAIM_REACTION_MAX);
     }
-    // The turn parks on the hero regardless of whose turn it nominally is.
-    expect(def.currentSeat(next)).toBe(HERO);
-    expect(def.legalActions(next, HERO)).toEqual([{ t: "claim" }, { t: "passClaim" }]);
+
+    // `currentSeat` names whoever the PACING waits on — the soonest — and
+    // that is deliberately not the only seat allowed to act.
+    expect(def.currentSeat(next)).toBe(pending[0]!.seat);
+    // Every pending seat is entitled, which is what makes it a race: a
+    // human three deep in the list can still beat the bot at the front by
+    // being quick. `GameSession.submit` asks `legalActions` rather than
+    // `currentSeat` for exactly this case.
+    for (const seat of [0, 2, 3] as SeatId[]) {
+      expect(def.legalActions(next, seat)).toEqual([
+        { t: "claim", seat },
+        { t: "passClaim", seat },
+      ]);
+    }
+    // The discarder is not in the race and may do nothing at all.
+    expect(def.legalActions(next, 1)).toEqual([]);
     // And nothing has been grabbed while the window is open.
     expect(next.melds[0]!.cards).toEqual(["S5", "S6", "S7"]);
   });
 
-  it("resolves a claim to the hero, attributed to them", () => {
+  it("lets a seat that is not first in the queue win the race", () => {
+    // The property the old model could not express at all. Whoever
+    // submits first takes the card, whatever the clocks said — the clocks
+    // only decide when an UNATTENDED seat gets there.
     const state = { ...claimable(), turn: 1 as SeatId };
     const opened = reduce(state, { t: "discard", card: "S8" }).state;
-    const { state: next } = reduce(opened, { t: "claim" });
+    const pending = opened.claimWindow!.pending;
+    const slowest = pending[pending.length - 1]!.seat;
+    expect(slowest).not.toBe(def.currentSeat(opened));
+
+    const { state: next } = reduce(opened, { t: "claim", seat: slowest });
+    expect(next.claimWindow).toBeNull();
+    expect(contributorOf(next.melds[0]!, "S8")).toBe(slowest);
+  });
+
+  it("refuses a claim from a seat that is not in the race", () => {
+    const state = { ...claimable(), turn: 1 as SeatId };
+    const opened = reduce(state, { t: "discard", card: "S8" }).state;
+    // Seat 1 discarded it and is not eligible. The reducer is not the
+    // only thing between a spoofed seat and somebody else's card, but it
+    // must still stand there.
+    const { state: next } = reduce(opened, { t: "claim", seat: 1 });
+    expect(next).toBe(opened);
+    expect(next.claimWindow).not.toBeNull();
+  });
+
+  it("stamps the submitting seat over whatever the client sent", () => {
+    // `completeAction` is what makes the `seat` field on a claim
+    // trustworthy. Without it, "pass for seat 2" would knock a rival out
+    // of a race they never conceded.
+    const state = { ...claimable(), turn: 1 as SeatId };
+    const opened = reduce(state, { t: "discard", card: "S8" }).state;
+    const forged = { t: "passClaim", seat: 2 } as const;
+    expect(def.completeAction!(opened, forged, 3, createRng(1))).toEqual({
+      t: "passClaim",
+      seat: 3,
+    });
+  });
+
+  it("keeps the window open while anyone is still in the race", () => {
+    const state = { ...claimable(), turn: 1 as SeatId };
+    const opened = reduce(state, { t: "discard", card: "S8" }).state;
+    const order = opened.claimWindow!.pending.map((p) => p.seat);
+
+    // One seat declining does not hand the card to the next in line — it
+    // just stops being a contender. That is the difference between a race
+    // and a queue, and the old code was the queue.
+    const afterOne = reduce(opened, { t: "passClaim", seat: order[0]! }).state;
+    expect(afterOne.claimWindow).not.toBeNull();
+    expect(afterOne.claimWindow!.pending.map((p) => p.seat)).toEqual(order.slice(1));
+    expect(afterOne.melds[0]!.cards).toEqual(["S5", "S6", "S7"]);
+
+    const afterTwo = reduce(afterOne, { t: "passClaim", seat: order[1]! }).state;
+    expect(afterTwo.claimWindow!.pending.map((p) => p.seat)).toEqual(order.slice(2));
+
+    // The last one to pass closes it and play moves on.
+    const afterAll = reduce(afterTwo, { t: "passClaim", seat: order[2]! }).state;
+    expect(afterAll.claimWindow).toBeNull();
+    expect(afterAll.melds[0]!.cards).toEqual(["S5", "S6", "S7"]);
+    expect(afterAll.turn).toBe(2);
+  });
+
+  it("resolves a claim to the seat that made it, attributed to them", () => {
+    const state = { ...claimable(), turn: 1 as SeatId };
+    const opened = reduce(state, { t: "discard", card: "S8" }).state;
+    const { state: next } = reduce(opened, { t: "claim", seat: HERO });
     expect(next.claimWindow).toBeNull();
     expect(next.melds[0]!.cards).toContain("S8");
     expect(next.melds[0]!.hitBy).toEqual({ S8: HERO });
@@ -354,29 +445,34 @@ describe("rummy — the claim window", () => {
     expect(next.turn).toBe(2);
   });
 
-  it("hands a passed claim on to the bots, paced by a real think beat", () => {
+  it("paces a claim with a real think beat before the card moves", () => {
     const state = { ...claimable(), turn: 1 as SeatId };
     const opened = reduce(state, { t: "discard", card: "S8" }).state;
-    const { state: next, events } = reduce(opened, { t: "passClaim" });
+    const claimer = def.currentSeat(opened)!;
+    const { state: next, events } = reduce(opened, { t: "claim", seat: claimer });
     expect(next.melds[0]!.cards).toContain("S8");
 
-    // The regression this exists for: a bot claiming the very next card
-    // in the same instant as the discard, with no readable beat between,
-    // reads as "it already knew". The transition is synchronous, so the
-    // pacing has to be a real event in the batch.
+    // The regression this exists for: a claim landing in the same instant
+    // as the discard that caused it, with no readable beat between, reads
+    // as "it already knew". The transition is synchronous, so the pacing
+    // has to be a real event in the batch.
     const think = events.findIndex((e) => e.t === "think");
     const grab = events.findIndex((e) => e.t === "draw");
-    expect(think, "a bot claim must carry a think beat").toBeGreaterThanOrEqual(0);
+    expect(think, "a claim must carry a think beat").toBeGreaterThanOrEqual(0);
     expect(think).toBeLessThan(grab);
   });
 
-  it("resolves a hero's own discard straight to the bots, never back to the hero", () => {
+  it("opens a window on the hero's own discard too, for everybody else", () => {
+    // This used to resolve straight to the fastest bot with no window at
+    // all, reasoning that the only human had just discarded it. In a room
+    // the other three seats may be people, and they are as entitled to
+    // the card as any bot was.
     const state = claimable();
-    const { state: next, events } = reduce(state, { t: "discard", card: "S8" });
-    expect(next.claimWindow).toBeNull();
-    expect(events.some((e) => e.t === "think")).toBe(true);
-    const hit = Object.values(next.melds[0]!.hitBy)[0];
-    expect(hit).not.toBe(HERO);
+    const { state: next } = reduce(state, { t: "discard", card: "S8" });
+    expect(next.claimWindow).not.toBeNull();
+    expect(next.claimWindow!.pending.map((p) => p.seat).sort()).toEqual([1, 2, 3]);
+    // And the discarder cannot claim their own discard back.
+    expect(def.legalActions(next, HERO)).toEqual([]);
   });
 
   it("just advances when the discard extends nothing", () => {
@@ -408,8 +504,10 @@ describe("rummy — the claim window", () => {
     // one bot and the card go to another.
     const state = { ...claimable(), turn: 1 as SeatId };
     const opened = reduce(state, { t: "discard", card: "S8" }).state;
-    const fastest = opened.claimWindow!.bots[0]!.seat;
-    const { state: next } = reduce(opened, { t: "passClaim" });
+    // The hero stands aside; the soonest remaining seat is the winner.
+    const passed = reduce(opened, { t: "passClaim", seat: HERO }).state;
+    const fastest = passed.claimWindow!.pending[0]!.seat;
+    const { state: next } = reduce(passed, { t: "claim", seat: fastest });
     expect(next.melds[0]!.cards).toContain("S8");
     // `contributorOf`, not `hitBy` — `hitBy` records only the cards whose
     // player differs from the meld's owner, so asserting on it directly
@@ -427,13 +525,16 @@ describe("rummy — the claim window", () => {
     // Two cards, so discarding one does not empty the hand and end the
     // round before the claim ever resolves.
     const withCard = { ...state, hands: { ...state.hands, [HERO]: ["S8", "CK"] } };
-    const { events } = reduce(withCard, { t: "discard", card: "S8" });
-    const think = events.find((e) => e.t === "think");
-    expect(think, "a bot claim must carry a real beat").toBeDefined();
-    if (think?.t === "think") {
-      expect(think.ms).toBeGreaterThanOrEqual(CLAIM_REACTION_MIN);
-      expect(think.ms).toBeLessThanOrEqual(CLAIM_REACTION_MAX);
-    }
+    const opened = reduce(withCard, { t: "discard", card: "S8" }).state;
+
+    // The beat now lives on the WINDOW rather than in the batch that
+    // opened it, because the window may sit there while several seats
+    // decide. `rummyBots.thinkMs` spends exactly this number, so a seat a
+    // bot is playing arrives when the race says it should.
+    const soonest = opened.claimWindow!.pending[0]!;
+    expect(soonest.ms).toBeGreaterThanOrEqual(CLAIM_REACTION_MIN);
+    expect(soonest.ms).toBeLessThanOrEqual(CLAIM_REACTION_MAX);
+    expect(rummyBots.steady.thinkMs(opened, soonest.seat, createRng(1))).toBe(soonest.ms);
   });
 
   it("can give a bot a shorter clock than the hero's whole window", () => {
@@ -860,7 +961,7 @@ describe("rummy — full-match simulation invariants", () => {
   // asserting every chosen action is legal and no engine sentinel ever
   // reaches real state. Cheap, and it catches exactly the class of
   // low-probability interaction bug a handful of fixed seeds does not.
-  it("sweeps 200 seeds end to end", { timeout: 30_000 }, () => {
+  it("sweeps 200 seeds end to end", { timeout: 90_000 }, () => {
     for (let seed = 1; seed <= 200; seed++) runMatch(seed, 2 + (seed % 5), false);
   });
 

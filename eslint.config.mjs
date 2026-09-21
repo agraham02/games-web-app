@@ -13,6 +13,19 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // A leading underscore means "this parameter exists to satisfy a
+      // signature, not because the body wants it". `GameDefinition` fixes
+      // the shape of `startRound(state, rng)` for five games, and Rummy
+      // deals from a state-derived generator rather than the one it is
+      // handed — so the argument has to stay and must not be a warning.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

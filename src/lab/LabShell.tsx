@@ -16,6 +16,7 @@ const ROUTES = [
   { href: "/lab/tokens", label: "Tokens" },
   { href: "/lab/phases", label: "Phases" },
   { href: "/lab/rummy", label: "Rummy" },
+  { href: "/lab/redact", label: "Redact" },
 ];
 
 export function LabNav() {

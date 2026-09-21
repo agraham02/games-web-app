@@ -756,3 +756,139 @@ describe("pile assembly — portrait and landscape are different, not relabelled
     }
   });
 });
+
+describe("viewer-relative seating", () => {
+  /**
+   * Online, the person looking at the screen is rarely seat 0. Rather than
+   * teach every game to renumber its own state per viewer — hands, bids and
+   * scores are all keyed by seat — the table lays seats out by POSITION and
+   * labels them from the viewer. Position 0 is always "you".
+   */
+  const box = { seats: 4, width: 1024, height: 768 };
+
+  it("puts the viewer bottom-centre whoever they are", () => {
+    for (const viewer of [0, 1, 2, 3]) {
+      const g = resolveTable({ ...box, viewerSeat: viewer });
+      const bottom = g.seats.find((s) => s.anchor === "bottom")!;
+      expect(bottom.seat).toBe(viewer);
+      expect(bottom.isHero).toBe(true);
+      expect(bottom.x).toBeCloseTo(box.width / 2, 0);
+    }
+  });
+
+  it("keeps every seat present and distinct under rotation", () => {
+    for (const viewer of [0, 1, 2, 3]) {
+      const g = resolveTable({ ...box, viewerSeat: viewer });
+      const ids = g.seats.map((s) => s.seat).sort();
+      expect(ids).toEqual([0, 1, 2, 3]);
+    }
+  });
+
+  it("preserves who sits to your left regardless of your seat number", () => {
+    // Numbering runs anticlockwise from the hero, so the seat one higher
+    // than yours is always on your left. That relationship is the whole
+    // point of rotating rather than renumbering, and a partnership game
+    // depends on it: partners must stay across the table.
+    for (const viewer of [0, 1, 2, 3]) {
+      const g = resolveTable({ ...box, viewerSeat: viewer });
+      const left = g.seats.find((s) => s.anchor === "left")!;
+      const top = g.seats.find((s) => s.anchor === "top")!;
+      expect(left.seat).toBe((viewer + 1) % 4);
+      expect(top.seat).toBe((viewer + 2) % 4); // your partner, across
+    }
+  });
+
+  it("defaults to seat 0 when nobody says otherwise", () => {
+    // Every offline game relies on this, so it is worth pinning that
+    // `undefined` and an explicit 0 are the same table.
+    const implicit = resolveTable(box);
+    const explicit = resolveTable({ ...box, viewerSeat: 0 });
+    expect(implicit.seats).toEqual(explicit.seats);
+    expect(implicit.viewerSeat).toBe(0);
+  });
+
+  it("gives a spectator no hero and a pod at every seat", () => {
+    // `null` is deliberately not the same as `undefined`: one is somebody
+    // watching, the other is nobody having said.
+    const g = resolveTable({ ...box, viewerSeat: null });
+    expect(g.viewerSeat).toBeNull();
+    expect(g.seats.every((s) => !s.isHero)).toBe(true);
+    expect(g.seats.map((s) => s.seat).sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it("keeps a spectator's bottom pod fully on screen", () => {
+    // With no hand strip to sit above, the bottom pod would otherwise be
+    // centred on the viewport edge with half of it cut off.
+    const g = resolveTable({ ...box, viewerSeat: null, handZone: 0 });
+    const bottom = g.seats.find((s) => s.anchor === "bottom")!;
+    expect(bottom.y).toBeLessThan(box.height);
+  });
+});
+
+/**
+ * BS's two central zones.
+ *
+ * Laid out as a PAIR about `cy` rather than as two independent guesses at
+ * "the middle of the table", which is the only arrangement in which they
+ * cannot overlap. Poker learned that the hard way: three separate rounds of
+ * fixes, each moving one zone off a shared `cy` anchor, before the answer
+ * turned out to be one vertical chain (see `ZoneId`). This asserts the
+ * property directly instead of waiting for a screenshot to disagree.
+ */
+describe("bs — the pile and the reveal row", () => {
+  it("never overlap, at any viewport or seat count", () => {
+    for (const vp of VIEWPORTS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        const { pile, reveal } = g.zones;
+        const where = `${vp.name} / ${seats} seats`;
+        // The reveal row is above the pile, with a real gap between them, so
+        // a card lifted off the stack has somewhere to land that is not the
+        // stack.
+        expect(reveal.y + reveal.h, `${where}: reveal overlaps the pile`)
+          .toBeLessThanOrEqual(pile.y + 0.01);
+      }
+    }
+  });
+
+  it("keeps the pair inside the play area wherever it fits at all", () => {
+    for (const vp of VIEWPORTS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        const { play, pile, reveal } = g.zones;
+        const where = `${vp.name} / ${seats} seats`;
+        const wanted = g.card.h * 2;
+        // On a viewport with room for both rows the pair must sit inside
+        // `play`; below that it keeps its size and sits proud, which is the
+        // same "being drawable beats being perfectly contained" trade every
+        // zone below `community` already makes.
+        if (play.h >= wanted) {
+          expect(reveal.y, `${where}: reveal above the play area`)
+            .toBeGreaterThanOrEqual(play.y - 0.01);
+          expect(pile.y + pile.h, `${where}: pile below the play area`)
+            .toBeLessThanOrEqual(play.y + play.h + 0.01);
+        }
+        // Horizontally centred on the play area in every case — the pile is
+        // the focal point of this game and has nothing to make room for.
+        expect(pile.x + pile.w / 2, `${where}: pile off centre`)
+          .toBeCloseTo(play.x + play.w / 2, 5);
+        expect(reveal.x + reveal.w / 2, `${where}: reveal off centre`)
+          .toBeCloseTo(play.x + play.w / 2, 5);
+      }
+    }
+  });
+
+  it("holds four cards in the reveal row wherever the width allows", () => {
+    // Four is as many as one rank can hold, so a reveal never needs a fifth
+    // slot — but it must never need fewer than four either, or a challenged
+    // four-card claim cannot be read.
+    for (const vp of VIEWPORTS) {
+      const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
+      const { play, reveal } = g.zones;
+      if (play.w >= g.card.w * 4.5) {
+        expect(reveal.w, `${vp.name}: reveal row too narrow for four cards`)
+          .toBeGreaterThanOrEqual(g.card.w * 4);
+      }
+    }
+  });
+});

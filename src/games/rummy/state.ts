@@ -184,12 +184,65 @@ export function claimReactions(
 ): Array<{ seat: SeatId; ms: number }> {
   const span = CLAIM_REACTION_MAX - CLAIM_REACTION_MIN;
   return eligibleClaimSeats(state, discarder)
-    .filter((s) => s !== HERO)
+    // Every eligible seat, with no filter for who is sitting in it. The
+    // hero used to be excluded because the page ran their clock instead;
+    // now a seat's reaction time is what a BOT would spend on it, and a
+    // seat with a person in it simply never spends it — they answer the
+    // window themselves, or their own time runs out.
     .map((seat) => ({
       seat,
       ms: CLAIM_REACTION_MIN + (hashString(`${card}|${state.round}|${discarder}|${seat}`) % span),
     }))
     .sort((a, b) => a.ms - b.ms || a.seat - b.seat);
+}
+
+
+/**
+ * The longest anybody gets to answer a claim, however slow their rivals.
+ *
+ * Lived on the play page until the claim became a server-side race. It is
+ * here now because two things need the same number and must not disagree
+ * about it: the ring the player watches, and the deadline the session
+ * enforces if they never answer.
+ */
+export const CLAIM_MS = 5000;
+
+/**
+ * How much longer the SERVER waits than the player's own ring shows.
+ *
+ * The two clocks are deliberately not tuned to fire together. The ring is
+ * the player's, and it should be the one that resolves an ordinary race;
+ * the server's is a backstop for a client that has stopped running its
+ * own — a backgrounded tab throttles timers to about one a minute, and
+ * that must not park the table. Firing them simultaneously would make a
+ * claim pressed on the buzzer a coin toss between the two.
+ */
+export const CLAIM_GRACE_MS = 900;
+
+/**
+ * How long this seat has before the race is decided without them.
+ *
+ * Not a fixed five seconds: every seat drew a reaction time when the
+ * window opened, and an unattended one spends its own as a `think` before
+ * its bot takes the card. So a player's real deadline is the soonest time
+ * belonging to somebody ELSE — the moment the first rival can arrive —
+ * capped at `CLAIM_MS` for when every rival is slow.
+ *
+ * Excluding the seat's own time is the part worth stating. A seat with a
+ * person in it never spends its reaction time; that number exists only so
+ * the seat can be played by a bot when nobody is there. Counting it as a
+ * deadline would have players racing themselves, and — since the list is
+ * sorted — would give whoever drew the shortest one the least time to
+ * act, which is precisely backwards.
+ */
+export function claimDeadlineMs(state: RummyState, seat: SeatId): number {
+  const rivals = state.claimWindow?.pending.filter((p) => p.seat !== seat) ?? [];
+  return Math.min(CLAIM_MS, rivals[0]?.ms ?? CLAIM_MS);
+}
+
+/** Is this seat actually in the race for the current discard? */
+export function inClaimRace(state: RummyState, seat: SeatId): boolean {
+  return state.claimWindow?.pending.some((p) => p.seat === seat) ?? false;
 }
 
 /** Total cards held across every seat — the stalemate checkpoint's metric. */

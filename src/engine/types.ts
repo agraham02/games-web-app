@@ -43,15 +43,16 @@ export type ZoneId =
    */
   | "community"
   /**
-   * Poker's own decorative pot pile — deliberately NOT `"center"`.
-   * `"center"` (LRC's pot/dice overlay) draws its chips at table-card
-   * scale, which is fine when nothing else shares that space; poker's
-   * community row does, and a table-scaled chip pile's own footprint
-   * structurally reaches back up past table-centre and into it on every
-   * viewport, not just a cramped one. This zone draws its chips at MINI
-   * scale (the same size LRC's own per-seat `collected` piles already
-   * use) and is geometrically anchored below the community row with a
-   * real gap, so the two can never overlap by construction.
+   * Poker's own pot-total readout — deliberately NOT `"center"`.
+   * `"center"` (LRC's pot/dice overlay) draws at table-card scale, which
+   * is fine when nothing else shares that space; poker's community row
+   * does. No pieces are placed here — a decorative fanned chip pile used
+   * to live in this zone and was dropped for a plain "$" total instead
+   * (simpler, and structurally can't reweave into the community row the
+   * way a growing fan could) — but the zone stays: it's still what a
+   * game-specific pot badge reads its box from, geometrically anchored
+   * below the community row with a real gap so the two can never overlap
+   * by construction.
    */
   | "pot"
   /**
@@ -76,6 +77,37 @@ export type ZoneId =
    * not Rummy's contested table-centre real estate afterward.
    */
   | "burnt"
+  /**
+   * BS's single central stack of played-but-unverified cards —
+   * deliberately NOT `"deck"` or `"discard"`. Those two are offset from
+   * table centre by `card.w/2 + 0.45*card.w` in opposite directions,
+   * precisely so they can sit side by side; a game with only ONE pile
+   * placed in either of them reads as visibly off-centre with nothing
+   * beside it to explain why. And it cannot be `"trick"`: that box is
+   * `card.h * 2.6` tall around `cy`, which leaves nowhere for the
+   * face-up `"reveal"` row this pile hands its top cards to.
+   *
+   * So: its own box, dead centre, with `"reveal"` stacked above it and a
+   * real gap between — the same "dedicated, non-overlapping by
+   * construction" answer `"community"`/`"pot"`/`"stub"`/`"burnt"` are,
+   * arrived at for the same reason rather than guessed at.
+   *
+   * Every card here is face down to EVERYONE, including whoever played
+   * it. That is not a redaction compromise, it is the game: a claim is
+   * worth doubting exactly because nobody can see it.
+   */
+  | "pile"
+  /**
+   * The cards from a challenged play, turned face up for everyone while
+   * the table reads the verdict — BS's one moment of public truth.
+   *
+   * A row rather than a stack, because the whole point is that all 1-4
+   * of them are legible at once. It sits ABOVE `"pile"` (see there for
+   * why neither reuses an existing zone), and the cards reach it by a
+   * real `move`, so the reveal is a gesture off the top of the pile
+   * rather than an appearance.
+   */
+  | "reveal"
   /**
    * A chain of pieces laid end to end — dominoes' line of play. Unlike
    * every other zone, position here is NOT derived from index/count:
@@ -305,6 +337,24 @@ export type GameEvent =
    */
   | { t: "slam"; piece: PieceId; shake: PieceId[]; final: boolean }
   /**
+   * A piece the viewer could not previously identify enters their picture
+   * at the position it already occupies.
+   *
+   * Emitted ONLY by the multiplayer redaction layer (`session/redact.ts`),
+   * never by a game's own `reduce` — a game has no notion of a viewer who
+   * was being kept in the dark. When an opponent plays from a concealed
+   * hand, the watching client holds an anonymous stand-in in that slot and
+   * has never seen the real card; this puts the real piece exactly where
+   * the stand-in was so the `play` that follows can fly out of the hand
+   * rather than popping into being on the table.
+   *
+   * Rides immediately in front of that play with zero offset and zero
+   * duration, so the two land in the same frame — the same shape `slam`
+   * uses to ride in front of its own `move`, and for the same reason: two
+   * events, one gesture.
+   */
+  | { t: "unmask"; piece: PieceId; at: Placement }
+  /**
    * A deliberate beat with nothing to place. Some legal actions
    * genuinely move no piece — LRC's roll landing entirely on dots is
    * the first case — and without this, that turn snapped straight to
@@ -329,7 +379,45 @@ export type GameEvent =
    */
   | { t: "think"; seat: SeatId; ms: number }
   /** Surfaced as a toast. Never blocks. */
-  | { t: "announce"; seat?: SeatId; text: string; tone?: Tone }
+  /**
+   * Surfaced as a toast. Never blocks.
+   *
+   * `actor` is how a line gets a NAME without the engine knowing any
+   * names. Offline that hardly mattered — one human, always seat 0, so
+   * `seat === HERO ? "You" : botName(seat)` was correct by construction.
+   * In a room it is wrong twice over: every viewer needs their own "You",
+   * and everybody else needs the name of the person actually sitting
+   * there rather than the bot name that seat would have had.
+   *
+   * So the engine writes the PREDICATE and names the actor by seat; the
+   * client composes. `selfText` exists because English will not let one
+   * template cover both — "Sam leads" and "You lead" differ in the verb,
+   * not just the subject — so a line whose verb changes supplies the
+   * second-person form alongside. Most do not need it: past tense agrees
+   * either way, which is what POLICY already asks toasts to use.
+   */
+  | {
+      t: "announce";
+      seat?: SeatId;
+      text: string;
+      tone?: Tone;
+      /** Whose line this is. The client prefixes their name. */
+      actor?: SeatId;
+      /** The `text` to use when the actor is the viewer. */
+      selfText?: string;
+      /**
+       * The `tone` to use when the actor is the viewer.
+       *
+       * Same problem as `selfText` and the same shape of answer. "Takes
+       * the trick" is good news to exactly one person at the table and
+       * neutral news to everyone else, and games were writing
+       * `tone: winner === HERO ? "good" : "info"` — which offline is
+       * correct by construction and online colours the toast for the
+       * wrong player. The engine states both readings; the client picks
+       * the one that belongs to whoever is looking.
+       */
+      selfTone?: Tone;
+    }
   | { t: "phase"; phase: string }
   | { t: "score"; deltas: Record<SeatId, number> }
   | { t: "roundEnd"; round: number }
@@ -392,6 +480,127 @@ export interface GameDefinition<S, A> {
 
   /** Redacts hidden information. Bots for seat N only ever see view(N). */
   playerView(state: S, viewer: SeatId): S;
+
+  /**
+   * Resolves any randomness a submitted action carries, authoritatively.
+   *
+   * `reduce` takes no rng on purpose, so a game whose move has a random
+   * OUTCOME has to bake that outcome into the action before reducing —
+   * LRC's roll is `{t:"roll", dice:[...]}`, already decided. Offline the
+   * client resolving that is harmless, because offline the client IS the
+   * authority. Online it is a cheat vector: a player who can author their
+   * own dice can choose them.
+   *
+   * So the session re-resolves every human action through this before it
+   * reduces, and whatever the client sent is discarded. Implement it only
+   * if a human action can carry a random outcome; nearly nothing does.
+   */
+  completeAction?(state: S, action: A, seat: SeatId, rng: Rng): A;
+
+  /**
+   * What to do for a LIVE seat that does not act in time, and how long
+   * to wait. Return null when this seat may take as long as it likes.
+   *
+   * Almost nothing needs one. A game where the table simply waits for you
+   * is the normal case and is fine: everybody else is waiting on a person
+   * who is right there. This exists for the case where they are NOT —
+   * Rummy's claim race, where a discarded card is offered to several
+   * seats at once and the whole table is parked until each answers.
+   *
+   * That was resolved by a `setTimeout` on the play page, which worked
+   * exactly as long as the page was the only authority. Online it is a
+   * stall waiting to happen: a backgrounded tab has its timers throttled
+   * to about one a minute, so one player switching apps mid-race froze
+   * the game for everyone else. A client-side clock cannot be what makes
+   * a shared table progress.
+   *
+   * So the driver enforces it. The client still runs its own countdown —
+   * it is what draws the ring — but it is now a nicety rather than the
+   * mechanism, and the two are deliberately not tuned to fire together
+   * (see Rummy's `CLAIM_GRACE_MS`).
+   */
+  deadline?(state: S, seat: SeatId): {
+    ms: number;
+    action: A;
+    /**
+     * What this wait IS, so the driver can tell being asked again about
+     * the same one from a new one starting.
+     *
+     * A deadline is re-armed on every settle, and a settle happens on
+     * every frame - so a wait that spans other people's moves used to
+     * restart from full each time one arrived. BS opens a window after
+     * every play and answers it seat by seat, so a person's ten seconds
+     * were quietly reset by the seats ahead of them, and reconnecting
+     * reset them again. Return a value that is stable for as long as the
+     * same wait is running and different when a new one begins, and the
+     * driver counts down the ORIGINAL span instead of starting over.
+     *
+     * Omit it and the old behaviour stands: every re-arm is a fresh wait,
+     * which is right for a deadline that only ever spans its own turn.
+     */
+    key?: string;
+  } | null;
+
+  /**
+   * How much dead air this particular turn deserves before the next one
+   * is revealed. Return undefined — as almost every game always should —
+   * to leave it to the driver.
+   *
+   * This does NOT hand the game control of pacing. The driver still owns
+   * WHEN: it adds its own measurement of how long the last frame takes to
+   * WATCH (`playbackMs`, on the server) and its own speed multiplier and
+   * reduced-motion rule (in the browser). This is only the beat AFTER
+   * that, the one the driver would otherwise take as a flat constant.
+   *
+   * It exists because a flat constant assumes every turn has something to
+   * look at, and one does not: BS resolves its challenge window by giving
+   * each entitled seat a turn in reaction-time order, and a seat that
+   * lets the play go produces no events at all. At the default 900ms a
+   * table of three opponents spent ~2.7s showing nothing after EVERY
+   * play. BS returns a small number while a window is open, so those
+   * turns read as a flicker of eyes around the table (each declining
+   * seat's pod lights on its own via `seatCue`) instead of dead air.
+   *
+   * The same seam as `deadline?()`, which already lets a game state a
+   * duration in ms for a rules-driven wait; this is its counterpart for a
+   * rules-driven hurry.
+   */
+  turnHold?(state: S, seat: SeatId): number | undefined;
+
+  /**
+   * Is this actually a well-formed, legal action for this seat? Return a
+   * reason to refuse it, or null to allow it.
+   *
+   * The session's gate is `legalActions(state, seat).length !== 0` — "is
+   * there something this seat may do right now". That is the right
+   * question for WHOSE TURN it is, and it is deliberately not
+   * `currentSeat` (see `GameSession.submit`). But it says nothing about
+   * whether the action that arrived is one of the things they may do, and
+   * online the action is arbitrary JSON off a socket. Offline that gap
+   * was unreachable, because the only thing authoring actions was the
+   * UI's own action bar.
+   *
+   * Set membership against `legalActions` is not the answer. Poker
+   * returns `{t:"bet", to: range.min}` as ONE representative of a
+   * continuous range, so exact matching would refuse every bet but the
+   * minimum. Only the game knows the shape of its own legality.
+   *
+   * Two real holes this closes, both reachable from a socket by a player
+   * whose turn it genuinely is:
+   *  - Spades: `reducePlay` filters the named card out of your hand (a
+   *    no-op if you never held it) and adds it to the trick regardless —
+   *    so you could play a card sitting in somebody else's hand, and
+   *    piece ids are guessable.
+   *  - Poker: `Math.round("abc")` is `NaN`, `Math.max/min` propagate it,
+   *    and `if (added <= 0)` is FALSE for `NaN` — so it writes through to
+   *    every stack and the table's money becomes `NaN`.
+   *
+   * Implement it wherever `reduce` would believe something a stranger
+   * said. A game that omits it keeps the old behaviour, which is correct
+   * for LRC: its only action carries a roll, and `completeAction` already
+   * throws the client's away.
+   */
+  validate?(state: S, seat: SeatId, action: A): string | null;
 
   currentSeat(state: S): SeatId | null;
   isOver(state: S): boolean;

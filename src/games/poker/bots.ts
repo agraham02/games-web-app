@@ -163,6 +163,24 @@ const SHOVE_BB: Record<BotDifficulty, number> = { casual: 10, steady: 12, sharp:
  * Below it, a single raise may not exceed `MAX_RAISE_STACK_FRACTION` of
  * the stack, which is what stops one pot from busting a player who is
  * merely ahead rather than crushing.
+ *
+ * This is also the answer to a SECOND, independent route to the same
+ * all-in symptom, found by a separate fuzz sweep: `sizeBet` targets a
+ * fraction of the pot, the pot roughly doubles with every raise, and
+ * `Math.min(range.max, target)` then silently turns "bet a healthy
+ * fraction of the pot" into "jam my whole stack" the moment that
+ * fraction first crosses the remaining stack — with nothing asking
+ * whether the hand justified going that far. The tell was that
+ * `avgRaisesBeforeShove` and `avgPotInBBsAtShove` both scaled with
+ * starting depth (2.4 raises / 16 BB pot at 10 BB deep, 6.5 raises /
+ * 672 BB pot at 400 BB deep) while the preflop all-in RATE stayed flat
+ * at ~7-8% regardless — proof the shove was coming from the arithmetic
+ * rather than from hand strength.
+ *
+ * Capping the raise is preferred here over downgrading it to a call:
+ * the hand is still worth betting, just not worth the stack, and a bot
+ * that goes passive every time its sizing overshoots stops applying
+ * pressure at all.
  */
 const COMMIT_EQUITY: Record<BotDifficulty, number> = { casual: 0.78, steady: 0.75, sharp: 0.7 };
 const MAX_RAISE_STACK_FRACTION = 0.5;
@@ -244,6 +262,7 @@ function isBluffing(state: PokerState, seat: SeatId, tier: BotDifficulty, p: Bot
   const key = `bluff|${state.hand}|${state.communityOrder.length}|${seat}|${seatHoleCards(state, seat).join("")}`;
   return stableRoll(key) < BLUFF_CHANCE[tier] * p.bluff;
 }
+
 
 function chooseBettingAction(
   state: PokerState,

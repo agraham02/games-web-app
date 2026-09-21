@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { choreograph, totalDuration } from "./choreographer";
+import { choreograph, gapAfter, playbackMs, totalDuration } from "./choreographer";
 import type { GameEvent } from "@/engine/types";
 import { DURATION, STAGGER } from "./presets";
 
@@ -163,5 +163,85 @@ describe("choreograph", () => {
       const [, second] = choreograph([{ t: "pause" }, { t: "pause" }]);
       expect(second!.offset).toBe(0);
     });
+  });
+
+  describe("unmask", () => {
+    it("takes long enough to be painted before anything moves it", () => {
+      // This asserted a duration of ZERO, on the reasoning that a
+      // redaction-layer event is bookkeeping rather than a gesture and a
+      // real duration would split one motion into two. The reasoning
+      // missed what an unmask actually introduces: a piece this viewer
+      // has NEVER seen. `<Piece>` mounts with `initial={false}`, so it
+      // snaps to wherever it is first painted — and with a duration of
+      // zero the move landed in the same paint, making the destination
+      // the first painted position. Motion had nothing to animate from
+      // and the card materialised on the table instead of leaving a
+      // hand, which is the opposite of what the zero was protecting.
+      //
+      // Short enough to read as one gesture against `DURATION.play`.
+      const [step] = choreograph([
+        { t: "unmask", piece: "S-A", at: { zone: "hand", seat: 3, index: 0, count: 1, faceUp: false } },
+      ]);
+      expect(step!.offset).toBe(0);
+      expect(step!.duration).toBeGreaterThan(0);
+      expect(step!.duration).toBeLessThan(DURATION.play * 1000 / 2);
+    });
+
+    it("rides with the gesture rather than queueing in front of it", () => {
+      // Zero OFFSET is still right: the two are one motion. It is the
+      // DRAIN that holds for an unmask's duration (see
+      // `useChoreographer`), the same way it does for `think` — so this
+      // stays 0 and the wait comes from the event's own time.
+      const steps = choreograph([
+        { t: "unmask", piece: "S-A", at: { zone: "hand", seat: 3, index: 0, count: 1, faceUp: false } },
+        { t: "play", piece: "S-A", from: 3, to: "trick" },
+      ]);
+      expect(steps[1]!.offset).toBe(0);
+    });
+  });
+});
+
+/**
+ * What playback actually waits, as opposed to what each step is
+ * described as taking. The two differ, and the difference is the whole
+ * reason `gapAfter` exists as one shared function: the browser plays by
+ * it, and the server spaces out bot turns by it.
+ */
+describe("gapAfter / playbackMs", () => {
+  const move = (piece: string): GameEvent => ({ t: "move", piece, to: { zone: "hand", index: 0, count: 1, faceUp: true } });
+
+  it("holds the queue for a pause, so a roll's dice can be read before the chips fly", () => {
+    // `pause` had a duration in `choreograph` and was documented as a
+    // beat, but the playback loop only blocked on `think` and `unmask` —
+    // so the next move started in the same tick and the beat did nothing.
+    expect(gapAfter({ t: "pause" }, move("a"))).toBe(DURATION.play * 1000);
+  });
+
+  it("still lets concurrent events overlap", () => {
+    // The other direction, which is what conflating the two clocks has
+    // broken before: a hold must not leak onto events that carry none.
+    expect(gapAfter(move("a"), { t: "announce", seat: 0, actor: 0, text: "x", tone: "info" } as GameEvent)).toBe(0);
+  });
+
+  it("waits out a bot's whole think, and no more", () => {
+    expect(gapAfter({ t: "think", seat: 1, ms: 800 }, { t: "pause" })).toBe(800);
+  });
+
+  it("counts a bot's turn as think + beat + stagger, ending at the last event applied", () => {
+    // What LRC sends for a bot roll: think, pause, then a run of moves.
+    const turn: GameEvent[] = [{ t: "think", seat: 1, ms: 800 }, { t: "pause" }, move("a"), move("b")];
+    const stagger = STAGGER.deal * 1000;
+    expect(playbackMs(turn)).toBe(800 + DURATION.play * 1000 + stagger);
+    // And NOT `totalDuration`, which reads an offset of 0 as "starts with
+    // the previous step" and so calls this turn 800ms long. Playback
+    // serialises the think and the pause, so it really takes longer —
+    // pacing the server off `totalDuration` would have under-counted
+    // exactly the turns that trip clients into skipping.
+    expect(playbackMs(turn)).toBeGreaterThan(totalDuration(choreograph(turn)));
+  });
+
+  it("is zero for a batch of one, which applies and is immediately idle", () => {
+    expect(playbackMs([move("a")])).toBe(0);
+    expect(playbackMs([])).toBe(0);
   });
 });

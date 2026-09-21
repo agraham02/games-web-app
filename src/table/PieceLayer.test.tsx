@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { doubleSixSet } from "@/games/_shared/tiles";
 import { rummyDeck } from "@/games/rummy/cards";

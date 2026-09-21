@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.github
+test-results
+playwright-report
+coverage
+*.log
+.env*
+!.env.example
+README.md
+continue.md
+e2e
+scripts/ws-harness.ts

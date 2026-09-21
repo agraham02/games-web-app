@@ -120,6 +120,22 @@ interface TableState {
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
   reset(placements: PlacementMap, meta: Record<PieceId, PieceMeta>): void;
+  /**
+   * Adds descriptions for pieces the viewer could not previously name,
+   * without touching a single placement.
+   *
+   * Only multiplayer needs it, and it is not a nicety. `PieceLayer`
+   * renders NOTHING for a piece it cannot describe, and a piece revealed
+   * mid-batch — an opponent playing from a concealed hand — has no meta
+   * until the batch's own `reset` at the end of it. So the `unmask` that
+   * puts the card at the hand it is leaving drew nothing at all, the
+   * move that followed had no painted origin to animate from, and the
+   * card simply materialised on the table when the batch settled.
+   *
+   * Merging rather than replacing, because this runs mid-batch against a
+   * placement map the events are actively editing.
+   */
+  learnMeta(meta: Record<PieceId, PieceMeta>): void;
   setPlacement(id: PieceId, p: Placement): void;
   patch(id: PieceId, partial: Partial<Placement>): void;
   patchMany(ids: readonly PieceId[], partial: Partial<Placement>): void;
@@ -198,6 +214,18 @@ export const useTableStore = create<TableState>((set) => {
     handOrder: null,
 
     setGeometry: (geometry) => set({ geometry }),
+
+    learnMeta: (meta) =>
+      set((s) => {
+        let fresh = false;
+        for (const id of Object.keys(meta)) {
+          if (!s.meta[id]) { fresh = true; break; }
+        }
+        // Identity is load-bearing here — every `<Piece>` subscribes to
+        // this map, so a new object with the same contents would
+        // re-render the whole table for nothing.
+        return fresh ? { meta: { ...meta, ...s.meta } } : {};
+      }),
 
     reset: (placements, meta) =>
       set((s) => ({ meta, ...commit(s, placements) })),

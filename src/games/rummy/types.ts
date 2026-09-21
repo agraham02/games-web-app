@@ -54,17 +54,30 @@ export interface ClaimWindow {
   discarder: SeatId;
   meldId: number;
   /**
-   * Every eligible BOT's reaction time for this card, in ms, soonest
-   * first — the field that turns the claim from a queue into a race.
+   * Every seat still in the race, with its reaction time in ms, soonest
+   * first. A seat leaves this list the moment it claims or passes; when
+   * the list empties, play moves on.
    *
-   * It used to be neither: the hero got a fixed 5s refusal and only then
-   * did a bot get a look, so a claim could not actually be contested.
-   * Now every seat is running the same clock, and the winner is whoever
-   * reaches the card first. The times live in STATE rather than in the
-   * page because they decide who wins, and that has to be replayable from
-   * a seed like everything else here (see `claimReactions`).
+   * This is the field that turns the claim from a queue into a race, and
+   * it took two goes to get right. First the hero got a fixed 5s refusal
+   * and only then did a bot get a look, so a claim could not actually be
+   * contested. Then every eligible BOT drew a reaction time and the hero
+   * raced the fastest of them — which was a real race, but only because
+   * "the hero" was a synonym for "the one human".
+   *
+   * Now the list is simply every eligible seat, with no opinion about who
+   * is sitting in any of them. A seat nobody is at is played by its bot
+   * and spends its reaction time as a `think`; a seat with a person in it
+   * is offered the window and races the clock. `currentSeat` names the
+   * soonest, which is who the PACING waits on, and `legalActions` entitles
+   * all of them — so a human three deep in this list can still beat the
+   * bot at the front of it by being quick, which is the whole point.
+   *
+   * The times live in STATE rather than in a page because they decide who
+   * wins, and that has to replay from a seed like everything else here
+   * (see `claimReactions`).
    */
-  bots: ReadonlyArray<{ seat: SeatId; ms: number }>;
+  pending: ReadonlyArray<{ seat: SeatId; ms: number }>;
 }
 
 export interface RoundResult {
@@ -135,5 +148,14 @@ export type RummyAction =
   | { t: "layNewMeld"; cards: PieceId[] }
   | { t: "extendMeld"; meldId: number; card: PieceId }
   | { t: "discard"; card: PieceId }
-  | { t: "claim" }
-  | { t: "passClaim" };
+  /**
+   * A claim names its seat, unlike every other action here, because a
+   * claim window entitles SEVERAL seats at once — so "whoever is on
+   * turn" is not enough to say who grabbed the card.
+   *
+   * Never trusted from a client. `completeAction` overwrites it with the
+   * seat the session knows submitted, so a spoofed one claims for the
+   * spoofer or not at all.
+   */
+  | { t: "claim"; seat: SeatId }
+  | { t: "passClaim"; seat: SeatId };

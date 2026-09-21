@@ -1,99 +1,104 @@
-# Continue — session handoff (2026-08-17)
+# Continue — session handoff (2026-09-20)
 
-Four of five games are real and playtested: LRC, Dominoes, Spades, Rummy
-500. Poker is the only one left, unbuilt. `npm run check` clean at **360
-tests**. This file is a fresh handoff — the blow-by-blow of how Rummy got
-here across ~13 playtest rounds is in git history and in memory (start
-from [[rummy-implementation]] and follow its `[[links]]`), not repeated
-here.
+All **six** games are real and all six play online in a room. The
+architecture is in CLAUDE.md and not repeated here; this is what is worth
+knowing before touching the multiplayer layer.
 
-## Where things stand
+```
+npm run check     922 tests, 51 files   (typecheck + lint + test)
+npm run harness    30 scenarios          (needs `npm run dev`)
+npm run e2e        18 browser tests      (chromium + a phone profile)
+```
 
-**Rummy 500** is feature-complete and has had the most scrutiny of any
-game in this app — real-money-feeling mechanics (the claim race), a
-correctness-vs-reachability bug (the claim window was dead for a whole
-session before anyone noticed), house-rule edge cases (a set closing at
-three cards), and a full pass on responsive layout. Nothing known-broken
-remains. Two things worth a deliberate look next time you're in it:
+CI runs all three on every push and PR to `main`, plus a
+production-install boot and a docker build, and only then triggers the
+Render deploy — `render.yaml` has `autoDeployTrigger: "off"`, so nothing
+ships on a red suite. See `deploy.md`.
 
-- **Round-win confetti was never confirmed fixed.** The likely cause (the
-  `cardPoints` tens-scoring bug feeding a wrong `result.winner`) was
-  fixed a long time ago in this session, and there's a test that a hero
-  who scores most is reported as the winner — but nobody has watched a
-  round end since and confirmed the confetti actually fires. Cheap to
-  check, worth doing before assuming it's fine.
-- The board sheet's expanded-card scaling (`expandedCardSize` in
-  `page.tsx`) was retuned this session against real numbers (0.72 floor,
-  capped by the panel's actual content width) but only verified by
-  reading the math, not by eye at a real 15+ meld board. If Rummy ever
-  gets a long-match playtest, that's the screen to watch.
+## What just happened
 
-**Spades, Dominoes, LRC** all got shared-layer improvements this session
-(bot difficulty, dealer/opener randomness audit, responsive menus,
-bigger phone cards) but no game-specific playtest — they should still be
-in the state the last dedicated session left them
-([[spades-implementation]]).
+A second audit of the room layer, prompted by getting it ready for a V1
+launch. The first audit's findings were nearly all closed already; the
+value this time was in what came AFTER it, because BS landed in between
+and BS is the first game to run a multi-seat race after **every** play
+rather than once a round. Three real bugs, none of which any test could
+see:
 
-## Standing conventions worth knowing before touching anything
+**A bot's turn could silently rewind the game.** `settled()` stashed the
+turn as a SNAPSHOT of the position it was scheduled for, and nothing
+cleared it when somebody else acted first. BS grants the seat on turn its
+plays while a window is open — that interrupt is the only defence a
+ten-second window has — so a person using it had their play rolled back a
+beat later, cards and all.
 
-These are the load-bearing ones; CLAUDE.md has the full architectural
-picture.
+**Every resolved challenge leaked four cards.** `reduceTake` cleared
+`pendingTake` but not `reveal`, so `playerView` went on shipping the
+challenged cards under their real ids while `placements` correctly drew
+them face down. `redact.test.ts` could not see it because
+`PUBLIC_ONCE_SEEN.bs` deleted the key before it looked.
 
-- **Bot difficulty is a real, wired setting now**, on all four games —
-  `DifficultyPicker` (shared 3-stop slider) + `botTable(seats, tier)`,
-  one tier for the whole table. It used to default to `steady`
-  everywhere with nothing ever overriding it, silently. If a future
-  "opponents feel the same regardless of difficulty" report comes in,
-  check whether the SETUP SCREEN is actually passing `difficulty` through
-  — that exact silent-no-op is what happened here.
-- **A pannable fan cannot be clipped and never should be layered with
-  more decoration without checking `FanSlot.visible` first.** See
-  [[pannable-fan-has-no-clip]] — this bit twice (the fan itself, then
-  `StagedRing` following it out from under a pod).
-- **`Placement.dimmed`/`highlighted`/`tappable` exist specifically so a
-  game can offer interaction without revealing legality.** See
-  [[no-hand-holding-ui]] before adding any affordance that might leak
-  what's playable.
-- **Don't offer a decline button when accepting is free.** Rummy's claim
-  bar had a "Pass" button until the user asked "who would want to pass
-  up free points?" — and the honest answer was nobody, ever, in any
-  state. See [[no-free-choice-buttons]].
-- **A component's `transition` prop in Motion applies to its `exit`
-  too.** A `repeat: Infinity` animation used as both the resting state
-  and the exit means the exit never completes and `AnimatePresence`
-  never unmounts the element — it looked like a leftover pulse running
-  forever behind cards that had already flipped. See
-  [[motion-exit-inherits-transition]].
-- **When "is this closed / exhausted / complete" depends on cards that
-  aren't in the collection you're asking about, you cannot answer from
-  that collection's own members.** Rummy's "is this meld dead" question
-  needed the whole board, not the one meld — a 3-ace set is closed the
-  instant the 4th ace lands in someone else's RUN. See
-  [[rummy-dead-meld-needs-whole-board]].
-- **`DevPanel` takes a generic `scenarios` slot** — labelled one-shot
-  callbacks a game supplies for states that are correct but hard to
-  reach naturally (Rummy's claim window fires on the order of once every
-  dozen rounds). Reach for this before accepting "untestable without
-  grinding" for any future feature.
+**A deadline outlived its turn.** A seat that dropped mid-window had a
+bot answer for it in a beat, and ten seconds later the orphaned timer
+fired into a CURRENT window the seat was entitled to all over again.
 
-## Known non-issues, in case they come up again
+And on the client, **BS's player on turn was never shown a Play button**:
+the action band preferred the challenge outright, and a window enrols
+every seat but the claimer, so the seat on turn is always also entitled
+to call. The interrupt existed in the rules and was unreachable in the UI.
 
-- **LRC has no difficulty control, deliberately.** Rolling is the only
-  legal action and the dice are random — `lrcBots`' tiers differ only in
-  pacing, so a slider that changes nothing but reaction speed would
-  promise a difference the game doesn't have.
-- **Landscape Rummy on a short phone shows a rotate prompt, not a
-  layout.** A side-rail version was built, measured, and worked
-  (86px → 223px of table) — then scrapped at the user's request rather
-  than kept as a second layout to maintain. It's recoverable from git
-  (`PeekRail`'s `edge` prop, `ResolveOptions.sideZone`) if ever wanted
-  back. See [[short-viewport-has-no-budget]].
+## Testing a room by hand
 
-## Next up
+Two tabs on `localhost` will NOT give you two players — `localStorage` is
+per-ORIGIN, so two tabs are one PERSON. Use two origins, which is what
+`allowedDevOrigins` in `next.config.ts` is for:
 
-Poker (NL Hold'em) is the only unbuilt game. Nothing in this repo has
-scoped it yet — no engine sketch, no UI decisions made. Read
-`CLAUDE.md`'s "Adding a game" checklist and the shared-layer
-`[[rummy-implementation]]` note on what groundwork already exists
-(compress-then-pan, `HandZone`, the generic dev state editor, the
-`scenarios` slot) before re-deriving any of it.
+- player one: `http://localhost:3000/room`
+- player two: `http://127.0.0.1:3000/room`
+
+Two browser profiles or two devices work too. The e2e tests use separate
+browser CONTEXTS for the same reason.
+
+## Things that bit, and would bite again
+
+- **Each bug was found by doing the NEXT thing.** The freeze needed a
+  real socket; the two-tab storm needed a browser; this round's rewind
+  needed a game that races after every play. Green tests either side.
+- **A test that passes either way pins nothing.** Two of this round's
+  tests passed against the unfixed code on the first attempt — one
+  because a full `drain()` let later turns re-add what the bug had
+  removed, one because it ran against an undealt `setup()` and never
+  reached the code it was aiming at. Revert the fix and watch the test
+  fail before believing it.
+- **An exemption wider than its own argument hides the next bug.**
+  `PUBLIC_ONCE_SEEN.bs` was justified by "a reveal is public", which is
+  true only while the cards are face up. Unconditional, it deleted the
+  evidence.
+- **`legalActions` is the turn gate, not the action gate.**
+  `GameDefinition.validate?()` is the seam that closes it. LRC is the one
+  online game without one, and that is now a stated decision the sweep
+  enforces rather than a hole nobody noticed.
+- **`SPECTATOR_SEAT` is -1, and -1 is an ordinary number.** Third outing
+  for this: after the partner badge and the "$0" hero badge, it was
+  game-end standings rows. Swept for now, across all six games.
+- **A control the server refuses must say so.** The lobby stayed fully
+  interactive during a match; the picker was refused server-side and
+  rendered nothing, and the team buttons were not refused at all — they
+  updated the roster while the table's partnerships did not move.
+- **A shell that hand-rolls what `table.tsx` should own WILL drift.** BS
+  avoided every one of these traps by sharing `statsFor`, `onPieceTap`
+  and now `barMode`.
+
+## Known and deliberately not done
+
+- **One instance only.** Rooms are live in-memory objects. Fine for the
+  ~10 players this is launching to; revisit with a shared store or sticky
+  routing, not a config flag.
+- **A window's serial cost is by design.** Several live seats each get
+  their own full window, so one play can park a big table for a while.
+  That is deliberate — see `ChallengeWindow.pending` — and is listed in
+  `fixes.md` rather than quietly changed.
+- **No WebKit.** Playwright runs chromium and a chromium phone profile.
+  Mobile Safari is a plausible target and is untested.
+- `reqId` idempotency is promised in `protocol.ts`'s header and
+  implemented nowhere.
+- The rest of the open list, with reasons, is in `fixes.md`.
