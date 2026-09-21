@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Cinzel, Figtree, Source_Serif_4 } from "next/font/google";
+import type { ReactNode } from "react";
 import { MotionProvider } from "./MotionProvider";
 import "./globals.css";
 
@@ -35,7 +36,11 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// An explicit type rather than Next's global `LayoutProps<"/">`. That one is
+// GENERATED into `.next/types` by `next dev` / `next build`, so it exists on a
+// machine that has ever run either and on no fresh checkout - which made
+// `npm run check` fail for anybody who had not, and CI on its first run.
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
