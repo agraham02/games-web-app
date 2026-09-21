@@ -49,17 +49,23 @@ export function RoomScreen({ code }: { code?: string }) {
   // made of cards the player no longer had, and pressing Play sent ids
   // that were not in their hand. The server refused it, correctly, and the
   // player got a toast for a move they had no way to know was stale.
-  // Adjusted during render against a key rather than cleared in an effect:
-  // an effect would paint one frame with the stale selection still lifted,
-  // and this file already carries one hard-won exception to that rule.
+  // Cleared in an effect, and NOT adjusted during render.
+  //
+  // Adjusting during render is React's documented way to reset state when
+  // a key changes, and it was the first thing tried here - but `held` is
+  // not read by this component alone. The table lifts the selected pieces
+  // through the placement store, so clearing it mid-render updates a
+  // `Piece` while `RoomScreen` is still rendering, which React warns
+  // about in the console. A frame of stale lift is the lesser problem by
+  // far: before this, the selection was stale for the whole next hand.
   const handKey = `${api.room?.gameId ?? ""}:${api.room?.gameRunning ?? false}:${
     api.frame?.round ?? -1
   }`;
-  const [heldFor, setHeldFor] = useState(handKey);
-  if (heldFor !== handKey) {
-    setHeldFor(handKey);
-    if (held.length > 0) setHeld([]);
-  }
+  useEffect(() => {
+    // Clearing during render reaches into the piece store mid-render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHeld([]);
+  }, [handKey]);
 
   // Keep the address bar honest. A room reached by code, created fresh, or
   // rejoined automatically on reconnect should all end up with the code in

@@ -293,6 +293,8 @@ function GamePicker({ api }: { api: RoomApi }) {
                 value={room.seats || entry.defaultSeats}
                 min={entry.minSeats}
                 max={entry.maxSeats}
+                disabled={locked}
+                title={lockedWhy}
                 onChange={(v) => leader && update(entry.id, room.settings, v)}
                 label="seats"
               />
@@ -306,6 +308,8 @@ function GamePicker({ api }: { api: RoomApi }) {
                 value={(room.settings.target as number) ?? 3}
                 min={1}
                 max={20}
+                disabled={locked}
+                title={lockedWhy}
                 onChange={(v) => leader && update(entry.id, { ...room.settings, target: v })}
                 label="rounds to win"
               />
@@ -384,6 +388,8 @@ function GamePicker({ api }: { api: RoomApi }) {
                   min={2}
                   max={1000}
                   step={10}
+                  disabled={locked}
+                  title={lockedWhy}
                   onChange={(v) => leader && update(entry.id, { ...room.settings, bigBlind: v })}
                   label="big blind"
                 />
@@ -418,6 +424,8 @@ function GamePicker({ api }: { api: RoomApi }) {
                   value={(room.settings.target as number) ?? 3}
                   min={1}
                   max={9}
+                  disabled={locked}
+                  title={lockedWhy}
                   onChange={(v) => leader && update(entry.id, { ...room.settings, target: v })}
                   label="rounds to win"
                 />
@@ -434,6 +442,8 @@ function GamePicker({ api }: { api: RoomApi }) {
                   value={Math.round(((room.settings.windowMs as number) ?? 10_000) / 1000)}
                   min={2}
                   max={20}
+                  disabled={locked}
+                  title={lockedWhy}
                   onChange={(v) =>
                     leader && update(entry.id, { ...room.settings, windowMs: v * 1000 })
                   }
