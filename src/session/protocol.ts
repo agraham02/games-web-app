@@ -263,7 +263,19 @@ export type ServerMessage =
   | { t: "room"; room: RoomView }
   | { t: "frame"; frame: FrameView }
   /** The recipient is no longer in any room — kicked, left, or it expired. */
-  | { t: "left"; reason: "left" | "kicked" | "room-closed" }
+  | {
+      t: "left";
+      /**
+       * Why you are not in the room.
+       *
+       * `denied` is its own reason rather than being folded into
+       * `room-closed`: a leader saying no and a room that no longer
+       * exists are different things to be told, and the second is a lie
+       * about a room that is very much still there. It was the only
+       * answer a refused knock had.
+       */
+      reason: "left" | "kicked" | "room-closed" | "denied";
+    }
   /** Waiting on a private room's leader to decide. */
   | { t: "pending"; code: RoomCode }
   /**

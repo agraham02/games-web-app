@@ -155,9 +155,11 @@ export function useRoom(): RoomApi {
             announce(
               message.reason === "kicked"
                 ? "You were removed"
-                : message.reason === "room-closed"
-                  ? "That room is closed"
-                  : "You left the room",
+                : message.reason === "denied"
+                  ? "They did not let you in"
+                  : message.reason === "room-closed"
+                    ? "That room is closed"
+                    : "You left the room",
               message.reason === "left" ? "info" : "bad",
             );
             break;

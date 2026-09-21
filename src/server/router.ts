@@ -241,7 +241,7 @@ export class Router {
         if (command.t === "approve") this.admit(command.session, runtime.code);
         if (command.t === "deny") {
           const waiting = this.awaiting.get(command.session);
-          waiting?.peer.connection.send({ t: "left", reason: "room-closed" });
+          waiting?.peer.connection.send({ t: "left", reason: "denied" });
           this.awaiting.delete(command.session);
         }
         runtime.broadcastRoom();

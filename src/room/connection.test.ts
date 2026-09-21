@@ -139,6 +139,32 @@ describe("being replaced by another tab", () => {
     socket.onmessage?.({ data: JSON.stringify(message) });
   }
 
+  it("replays a knock to a remount, and forgets one the server has dropped", () => {
+    // A client-side navigation remounts everything above this class, and
+    // the "waiting to be let in" screen was not cached - so going
+    // anywhere and coming back lost it while the leader still had the
+    // request on their list.
+    //
+    // The other half matters as much: the server drops its `awaiting`
+    // entry when the socket that knocked closes, so a knock that survived
+    // a RECONNECT was one nobody could ever answer. `hello` saying "you
+    // are not in a room" is where that is found out.
+    const { connection, socket } = connected();
+    deliver(socket, { t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: false });
+    deliver(socket, { t: "pending", code: "ABCD" });
+
+    const seen: { t: string }[] = [];
+    connection.subscribe({ onMessage: (m) => seen.push(m), onStatus: () => {} });
+    expect(seen.filter((m) => m.t === "pending")).toHaveLength(1);
+
+    // The socket comes back and the server does not know us.
+    deliver(socket, { t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: false });
+
+    const later: { t: string }[] = [];
+    connection.subscribe({ onMessage: (m) => later.push(m), onStatus: () => {} });
+    expect(later.filter((m) => m.t === "pending")).toHaveLength(0);
+  });
+
   it("stands down instead of fighting for the socket", () => {
     const { connection, socket } = connected();
     const opened = sockets.length;

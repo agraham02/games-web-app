@@ -124,6 +124,15 @@ export class RoomConnection {
   session: string | null = null;
   lastRoom: unknown = null;
   lastFrame: unknown = null;
+  /**
+   * The knock we are still waiting on an answer to.
+   *
+   * Cached for the same reason the room is: a client-side navigation
+   * remounts everything above this class, and without it the "waiting to
+   * be let in" screen was simply lost - the person landed back on the
+   * entry screen while the leader still had their request.
+   */
+  lastPending: unknown = null;
 
   private socket: WebSocket | null = null;
   private attempt = 0;
@@ -164,6 +173,7 @@ export class RoomConnection {
     }
     if (this.lastRoom) listener.onMessage(this.lastRoom as ServerMessage);
     if (this.lastFrame) listener.onMessage(this.lastFrame as ServerMessage);
+    if (this.lastPending) listener.onMessage(this.lastPending as ServerMessage);
     listener.onStatus(this.status);
     return () => this.listeners.delete(listener);
   }
@@ -270,10 +280,20 @@ export class RoomConnection {
         if (!message.inRoom) {
           this.lastRoom = null;
           this.lastFrame = null;
+          // A knock does not survive the socket that made it: the server
+          // drops its `awaiting` entry when that socket closes, so a
+          // request cached across a reconnect is one nobody can answer.
+          // Forgetting it here is what lets the hook stop waiting.
+          this.lastPending = null;
         }
+        break;
+      case "pending":
+        this.lastPending = message;
         break;
       case "room":
         this.lastRoom = message;
+        // Being in a room is the answer to the knock.
+        this.lastPending = null;
         // A room view supersedes any frame from a game that is no longer
         // running, or the next mount would replay a table nobody is at.
         if (!message.room.gameRunning) this.lastFrame = null;
@@ -284,6 +304,7 @@ export class RoomConnection {
       case "left":
         this.lastRoom = null;
         this.lastFrame = null;
+        this.lastPending = null;
         break;
       case "error":
         // The one error a reconnect cannot fix. Retrying hides it behind
