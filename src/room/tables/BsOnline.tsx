@@ -118,7 +118,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         than anything in the hand band: that band has one owner (`HandZone`),
         and a second claimant on it is how a layout starts fighting itself.
       */}
-      <div className="absolute top-2 right-2 z-[1900] flex gap-2">
+      <div className="absolute top-2 right-2 z-1900 flex gap-2">
         {room.youAreLeader ? (
           <Button size="sm" tone="danger" onClick={api.endGame}>
             End game

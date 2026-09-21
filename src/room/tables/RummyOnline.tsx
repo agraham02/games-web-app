@@ -132,7 +132,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
           else's game too. */}
       {short ? <RotateNotice touch={touch} /> : null}
 
-      <div className="absolute top-2 right-2 z-[1900] flex gap-2">
+      <div className="absolute top-2 right-2 z-1900 flex gap-2">
         {room.youAreLeader ? (
           <Button size="sm" tone="danger" onClick={api.endGame}>
             End game

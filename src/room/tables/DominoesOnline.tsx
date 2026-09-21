@@ -170,7 +170,7 @@ export function DominoesOnline({
         one owner (`HandZone`), and a second claimant on it is how the
         layout starts fighting itself.
       */}
-      <div className="absolute top-2 right-2 z-[1900] flex gap-2">
+      <div className="absolute top-2 right-2 z-1900 flex gap-2">
         {room.youAreLeader ? (
           <Button size="sm" tone="danger" onClick={api.endGame}>
             End game
