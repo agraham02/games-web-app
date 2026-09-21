@@ -310,9 +310,16 @@ async function main(): Promise<void> {
     // The refusal is the deterministic part: bots keep playing in the
     // background, so a fingerprint comparison alone would be racing them.
     const err = await impostor.until((m) => m.t === "error");
+    // The CODE is the contract; the message is a sentence for a person,
+    // because it goes straight onto the toast seam and used to say the
+    // engine's own reason string at them.
     assert(
-      err.message === "not-your-turn",
-      `expected not-your-turn, got ${JSON.stringify(err.message)}`,
+      err.code === "move-refused",
+      `expected move-refused, got ${JSON.stringify(err.code)}`,
+    );
+    assert(
+      err.message === "it is not your turn",
+      `expected a readable refusal, got ${JSON.stringify(err.message)}`,
     );
   });
 
