@@ -40,16 +40,34 @@ export function nextSeat(state: RummyState, seat: SeatId): SeatId {
    ============================================================ */
 
 /**
+ * Cards the deal must leave behind: one to flip face-up as the opening
+ * discard, and at least one for the stock.
+ *
+ * This used to be zero, which made the top of the range genuinely
+ * broken rather than merely tight — `maxDealSize(4)` was 13, four
+ * thirteens is the whole 52-card deck, so the round began with an empty
+ * stock and `discard: [null]`, and the next `legalDrawDepths` call
+ * crashed on it. Three seats at 17 was the same shape one card less
+ * severe: a legal deal that began with nothing to draw.
+ *
+ * Both were offered by `validDealSizes`, so both were reachable from
+ * the dealer's own picker in the UI — this was never only a bot
+ * problem, it just took a bot willing to pick the top of the range to
+ * surface it.
+ */
+const DEAL_RESERVE = 2;
+
+/**
  * The largest hand the deck can serve every seat, rounded down to an
- * ODD count.
+ * ODD count, leaving `DEAL_RESERVE` behind.
  *
  * Odd deliberately: a set is 3-4 and a run is 3+, and an even hand size
  * makes "pair everything off" a marginally better opening shape than it
  * should be. Odd removes that parity quirk without needing a rule about
- * it. 2 seats -> 25, 3 -> 17, 4 -> 13, 5 -> 9, 6 -> 7.
+ * it. 2 seats -> 25, 3 -> 15, 4 -> 11, 5 -> 9, 6 -> 7.
  */
 export function maxDealSize(seats: number): number {
-  const fits = Math.floor(DECK_SIZE / seats);
+  const fits = Math.floor((DECK_SIZE - DEAL_RESERVE) / seats);
   return Math.max(1, fits % 2 === 1 ? fits : fits - 1);
 }
 

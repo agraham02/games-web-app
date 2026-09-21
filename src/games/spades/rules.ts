@@ -171,6 +171,7 @@ function makeSetup(rules: SpadesRules) {
       trick: [],
       ledSuit: null,
       trumpBroken: false,
+      voids: { 0: [], 1: [], 2: [], 3: [] },
       leader: HERO,
       tricksWon: num(),
       won: arr(),
@@ -260,6 +261,7 @@ export function startRound(state: SpadesState, rng: Rng): ReduceResult<SpadesSta
       trick: [],
       ledSuit: null,
       trumpBroken: false,
+      voids: { 0: [], 1: [], 2: [], 3: [] },
       leader,
       tricksWon: { 0: 0, 1: 0, 2: 0, 3: 0 },
       won: { 0: [], 1: [], 2: [], 3: [] },
@@ -547,12 +549,23 @@ function reducePlay(state: SpadesState, card: PieceId): ReduceResult<SpadesState
   // leads — led OR sluffed, not led-only.
   const trumpBroken = state.trumpBroken || isTrump(card);
 
+  // Failing to follow the led suit is a permanent, public fact about
+  // this seat's hand — the single strongest read in a trick game, and
+  // unrecoverable later (see `SpadesState.voids`).
+  let voids = state.voids;
+  if (state.trick.length > 0 && state.ledSuit !== null && effectiveSuit(card) !== state.ledSuit) {
+    const known = voids[seat] ?? [];
+    if (!known.includes(state.ledSuit)) {
+      voids = { ...voids, [seat]: [...known, state.ledSuit] };
+    }
+  }
+
   const events: GameEvent[] = [{ t: "play", piece: card, from: seat, to: "trick" }];
   if (seat !== HERO) {
     events.push({ t: "announce", seat, text: `${botName(seat)} plays ${spadesCardLabel(card)}`, tone: "info" });
   }
 
-  let next: SpadesState = { ...state, hands, trick, ledSuit, trumpBroken };
+  let next: SpadesState = { ...state, hands, trick, ledSuit, trumpBroken, voids };
 
   if (trick.length < 4) {
     return { state: { ...next, turn: nextSeat(seat) }, events };

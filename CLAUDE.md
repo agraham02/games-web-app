@@ -6,10 +6,9 @@ Hold'em), Left Right Center. Priority is UI/UX — real-table motion,
 distinct phase screens, and Rummy's board information shown without
 clutter.
 
-**Status: four of five games are real.** Left Right Center, Dominoes,
-Spades and Rummy 500 have full rules, bots and play screens. Poker is
-the one still unbuilt. The shared layer is additionally exercised
-through `/lab`.
+**Status: all five games are real.** Left Right Center, Dominoes,
+Spades, Rummy 500 and Poker all have full rules, bots and play screens.
+The shared layer is additionally exercised through `/lab`.
 
 ```
 npm run dev      # play at /play/rummy, lab at /lab/seats
@@ -221,7 +220,7 @@ src/
   ui/         primitives/ (faces), phases/ (round & game screens),
               disclosure/ (rail, toast, sheets) — see POLICY.md
   lab/        harness fixtures and chrome
-app/play/     lrc · dominoes · spades · rummy
+app/play/     lrc · dominoes · spades · rummy · poker
 app/lab/      seats · motion · tokens · phases · rummy
 ```
 
@@ -254,6 +253,70 @@ only legal action and the dice are random, so its tiers differ only in
 pacing — a slider that changes nothing but reaction speed would promise
 a difference the game doesn't have.
 
+### A tier test has to be a match, not a diff
+
+Proving the tiers *behave* differently proves nothing about which one
+plays *better*, and the difference is not academic: measured for the
+first time, poker's `sharp` won only 40% of heads-up matches against
+`casual`, and Spades' `sharp` lost team matches to `steady` 10-24. Both
+were real strategy bugs that no behavioural-difference test could see —
+poker's `sharp` charged itself a positional penalty for completing the
+small blind, which heads-up is the BUTTON; Spades' `sharp` ducked to
+dodge bags even while the opponents were still short of their own
+contract, politely helping them make it.
+
+So every game with a picker now owns a head-to-head test asserting
+`sharp > steady > casual` over whole matches, alternating seats so the
+button/dealer advantage cannot decide it. Because every bot runs on a
+seeded `Rng`, these are **exact, not statistical** — a win-rate
+assertion on fixed seeds cannot flake. Re-run it after touching any
+tier constant: several tunings that looked obviously right moved the
+gradient the wrong way.
+
+### Seats are not clones
+
+`botTable(seats, tier)` hands every seat the same tier, so a table used
+to be one strategy running five times — obviously artificial, and in
+poker actively harmful, since identical thresholds on correlated reads
+had two bots re-raising each other in lockstep.
+[`_shared/botPersonality.ts`](src/games/_shared/botPersonality.ts)
+gives each seat a small, stable offset *inside* its tier, derived from
+`hashString` (the slam precedent) rather than an `Rng` — so a seed
+replays personalities exactly, and nothing had to be threaded through
+`BotStrategy.choose`'s fixed signature, which already receives `seat`.
+
+### A bot read that isn't on the state isn't a read
+
+`choose(state, seat, rng)` gets no history, so anything a human tracks
+across a round has to be captured as it happens. Three public fields
+exist only for this, and each is information every player at the table
+already has (so `playerView` leaves all three alone):
+
+- `PokerState.raisesThisStreet` — the fix for the all-in bug. Several
+  raise sequences produce the same `lastRaiseSize`, so it cannot be
+  inferred.
+- `SpadesState.voids` — a seat failing to follow is permanent and
+  public, but `won` is a flat unordered pile per seat, so after the
+  trick it is genuinely unrecoverable.
+- `DomState.passedEnds` — `passes` is a bare counter with no record of
+  who passed on what, and a pass is the strongest read in dominoes.
+
+### Poker strength is a probability, or it is nothing
+
+Poker's bots scored hands on an invented 0..1 scale and compared it
+against pot odds, which *is* a probability — two different units, so
+the comparison could not work. The scales also disagreed with each
+other (pocket aces preflop 0.95, a made full house 0.75), which is why
+bots jammed preflop and would not bet a real hand later. Retuning those
+constants was tried first and did not hold.
+[`equity.ts`](src/games/poker/equity.ts) replaces them with real
+seeded Monte Carlo equity — one honest number meaning the same thing on
+every street. It carries its own fast 7-card evaluator for speed, kept
+honest by a test asserting it orders 4000 random hands identically to
+`hand.ts`'s canonical `compareHandValues`; preflop results memoise by
+canonical shape (169 per opponent count), which is what makes the hot
+path free.
+
 ## Conventions
 
 - **Never call `Math.random()`** in engine or bot code. Everything goes
@@ -278,4 +341,6 @@ a difference the game doesn't have.
 3. Provide `placements(state, viewer)` — the choreographer reconciles
    against it, so a missed event self-corrects instead of desyncing.
 4. Compose the existing phase shells; only the slot content is new.
-5. Add bots per `BotDifficulty`. `thinkMs` is part of the feel.
+5. Add bots per `BotDifficulty`. `thinkMs` is part of the feel, and a
+   head-to-head test that the tiers really are ordered is not optional —
+   see "A tier test has to be a match, not a diff" above.

@@ -106,6 +106,25 @@ export interface PokerState {
    * new raise must at least match to reopen the action. */
   lastRaiseSize: number;
   /**
+   * How many full bets/raises have landed THIS street, reset to 0 when
+   * a street closes. Public information — everyone at the table can
+   * count the raises — so `playerView` leaves it alone.
+   *
+   * Carried on the state rather than inferred by the bots because a
+   * bot re-deriving a fact `rules.ts` already knows is how this game
+   * shipped its one pre-release bug (bots read "bet vs raise" off
+   * `amountToCall` while `legalActions` read it off
+   * `highestStreetCommitted`). `lastRaiseSize` cannot answer this:
+   * several different raise sequences produce the same increment.
+   *
+   * What reads it: `bots.ts` raises its required equity for each raise
+   * already faced. Without that, a bot's preflop strength never changes
+   * within a street, so two bots that both liked their hands re-raised
+   * each other until one was all-in — the reported "bots go all-in way
+   * too much" bug.
+   */
+  raisesThisStreet: number;
+  /**
    * Set once an incomplete (under-minraise) all-in raise happens this
    * street. Deliberate scope cut from exact casino rules: rather than
    * tracking, per seat, whether they'd already closed out their raise

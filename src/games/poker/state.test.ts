@@ -35,6 +35,7 @@ function makeState(overrides: Partial<PokerState> & Pick<PokerState, "seats">): 
     streetCommitted: {},
     totalCommitted: {},
     lastRaiseSize: 20,
+    raisesThisStreet: 0,
     raiseCapped: false,
     toAct: [],
     pendingShowdown: null,

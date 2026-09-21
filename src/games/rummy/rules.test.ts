@@ -59,15 +59,19 @@ function allCards(state: RummyState): string[] {
 
 describe("rummy — deal size is the dealer's own choice, every round", () => {
   it("offers only odd sizes the deck can serve", () => {
+    // 3 and 4 used to be 17 and 13 — deals that consume 51 and all 52
+    // cards, leaving a round with no stock and, at four seats, a
+    // `discard: [null]` that crashed the next `legalDrawDepths`. The
+    // deal now reserves a card to flip and a card to draw.
     expect(maxDealSize(2)).toBe(25);
-    expect(maxDealSize(3)).toBe(17);
-    expect(maxDealSize(4)).toBe(13);
+    expect(maxDealSize(3)).toBe(15);
+    expect(maxDealSize(4)).toBe(11);
     expect(maxDealSize(5)).toBe(9);
     expect(maxDealSize(6)).toBe(7);
     for (const seats of [2, 3, 4, 5, 6]) {
       for (const size of validDealSizes(seats)) {
         expect(size % 2, `${seats} seats / ${size}`).toBe(1);
-        expect(seats * size).toBeLessThanOrEqual(52);
+        expect(seats * size).toBeLessThanOrEqual(50);
       }
     }
   });

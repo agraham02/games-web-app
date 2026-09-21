@@ -94,6 +94,18 @@ export interface SpadesState {
   trick: TrickCardPlay[];
   ledSuit: Suit | null;
   trumpBroken: boolean;
+  /**
+   * Suits a seat has demonstrably run out of — recorded the moment it
+   * fails to follow a led suit. Public information: everyone at the
+   * table watched it happen, so `playerView` leaves it alone.
+   *
+   * On the state rather than re-derived by the bots because a bot is
+   * handed only the CURRENT trick and `won` (a flat, unordered pile per
+   * seat). Neither records which seat played which card in a finished
+   * trick, so "who is void in hearts" is genuinely not recoverable
+   * after the fact — it has to be captured as it happens.
+   */
+  voids: Record<SeatId, Suit[]>;
   /** Who leads the next trick — the round's opening leader, or the
    * winner of the last trick. */
   leader: SeatId;

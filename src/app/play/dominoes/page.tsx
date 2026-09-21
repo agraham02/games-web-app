@@ -693,7 +693,7 @@ function dominoScenarios(live: Live) {
 const DOMINO_BLURBS = {
   casual: "Plays whatever's in hand, no plan behind it.",
   steady: "Sheds its heaviest tiles first — enough to punish a careless hand.",
-  sharp: "Keeps its own options open, and squeezes a block when one's going cheap.",
+  sharp: "Remembers what you passed on and plays to it, and squeezes a block when one's going cheap.",
 };
 
 function SetupScreen({

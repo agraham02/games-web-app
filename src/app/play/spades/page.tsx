@@ -589,8 +589,8 @@ function pendingLabel(state: SpadesState, seat: SeatId): string {
  * bots.ts. */
 const SPADES_BLURBS = {
   casual: "Bids near the floor and plays low — never really counts its hand.",
-  steady: "Bids off a real hand-strength read, and wins tricks as cheaply as it can.",
-  sharp: "Protects its own nil, and won't spend a winner overtaking a partner who already has it.",
+  steady: "Bids off a real hand read, cashes its winners, and wins tricks as cheaply as it can.",
+  sharp: "Counts the cards played, remembers who is void, works a nil from either seat, and watches its bags.",
 };
 
 function SetupScreen({

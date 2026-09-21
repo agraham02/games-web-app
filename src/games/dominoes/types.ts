@@ -173,6 +173,19 @@ export interface DomState {
   turn: SeatId;
   /** Consecutive passes; equals `seats` when the round is blocked. */
   passes: number;
+  /**
+   * For each seat, the open-end numbers it has demonstrably been unable
+   * to play — recorded every time it passes. Public information:
+   * everyone watched the ends and watched the pass, so `playerView`
+   * leaves it alone.
+   *
+   * This is the strongest read in dominoes and was previously
+   * impossible for a bot to make: `passes` is a bare counter with no
+   * record of WHO passed or on WHAT. A pass on ends 3 and 5 says that
+   * seat holds no 3 and no 5 for the rest of the round, which is worth
+   * more than any amount of counting your own tiles.
+   */
+  passedEnds: Record<SeatId, number[]>;
   /** Who leads the next round. */
   opener: SeatId;
   /**

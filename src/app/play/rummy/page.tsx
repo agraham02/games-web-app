@@ -1964,7 +1964,7 @@ function pendingLabel(state: RummyState, seat: SeatId): string {
 const RUMMY_BLURBS = {
   casual: "Plays it safe and misses things. Good for learning the game.",
   steady: "Competent and fair. Will punish a loose discard, not every one.",
-  sharp: "Reads the board closely — rarely misses a lay-off, and won't feed your melds.",
+  sharp: "Knows which cards are already dead, watches the stock run down, and won't feed your melds.",
 };
 
 function SetupScreen({

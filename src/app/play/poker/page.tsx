@@ -512,12 +512,14 @@ function HandRankingsSheet({
    Setup
    ============================================================ */
 
-/** What each tier actually does — see `bots.ts`'s `PREFLOP_FLOOR`/
- * `USES_POT_ODDS`/`BLUFF_CHANCE` tables. */
+/** What each tier actually does — grounded in `bots.ts`'s own tables
+ * (`CALL_MARGIN`, `RAISE_EDGE`, `LIMPS_PREFLOP`, `BLUFF_CHANCE`), not
+ * generic copy. `blurbs` is a required prop precisely so this stays
+ * true of the code underneath it. */
 const POKER_BLURBS = {
-  casual: "Plays face value and rarely folds a made pair — no eye for the pot.",
-  steady: "Weighs pot odds before calling, and tightens up before the flop.",
-  sharp: "Reads draws and pot odds, varies its bet sizing, and bluffs just enough to keep you honest.",
+  casual: "Limps into most pots and calls too wide — it pays you off, but it never folds either.",
+  steady: "Raises or folds before the flop, and weighs the pot odds on every call.",
+  sharp: "Plays position, values its draws properly, varies its sizing, and bluffs just enough.",
 };
 
 function SetupScreen({

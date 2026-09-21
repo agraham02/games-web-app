@@ -39,16 +39,45 @@ function meld(id: number, owner: number, cards: string[], hitBy: Record<string, 
 }
 
 describe("rummy state — deal sizes", () => {
-  it("never serves more cards than the deck holds", () => {
+  /**
+   * "No more than the deck holds" was the invariant this asserted
+   * before, and it was one card too generous: four seats at thirteen is
+   * exactly 52, which passed, and left the round with an empty stock
+   * and `discard: [null]` — the next `legalDrawDepths` crashed on it.
+   * Three seats at seventeen was the same bug one card less severe.
+   * Both were offered by `validDealSizes`, so both were reachable from
+   * the dealer's picker in the UI.
+   *
+   * The deal must leave a card to flip AND a card to draw.
+   */
+  it("always leaves a card to flip and a card to draw", () => {
     for (let seats = 2; seats <= 6; seats++) {
-      expect(seats * maxDealSize(seats)).toBeLessThanOrEqual(52);
+      expect(seats * maxDealSize(seats)).toBeLessThanOrEqual(50);
       expect(maxDealSize(seats) % 2).toBe(1);
     }
   });
 
   it("lists every odd size from 1 up to the max", () => {
     expect(validDealSizes(6)).toEqual([1, 3, 5, 7]);
-    expect(validDealSizes(4)).toEqual([1, 3, 5, 7, 9, 11, 13]);
+    expect(validDealSizes(4)).toEqual([1, 3, 5, 7, 9, 11]);
+  });
+
+  /** The end-to-end version of the same guarantee: actually deal the
+   * biggest legal hand at every seat count and check the table is
+   * playable, not just that the arithmetic works out. */
+  it("produces a playable table at the largest legal deal, every seat count", () => {
+    for (let seats = 2; seats <= 6; seats++) {
+      const game = createRummy({ target: 150 });
+      const rng = createRng(3);
+      let state = game.setup({ seats, rng });
+      ({ state } = game.startRound!(state, rng));
+      if (state.dealSizePending !== null) {
+        ({ state } = game.reduce(state, { t: "chooseDealSize", size: maxDealSize(seats) }));
+      }
+      expect(state.stock.length, `seats ${seats}`).toBeGreaterThan(0);
+      expect(state.discard.length, `seats ${seats}`).toBeGreaterThan(0);
+      for (const id of state.discard) expect(typeof id).toBe("string");
+    }
   });
 });
 

@@ -600,9 +600,19 @@ describe("spades — full-match simulation invariants", () => {
   it("ends the match once a team falls to or below the auto-loss threshold", () => {
     const rng = createRng(55);
     const def = createSpades(STANDARD);
+    // A deliberately lopsided table. An all-steady table cannot drive
+    // this scenario any more: steady now reads its contract, cashes its
+    // winners and makes the bid, so after 347 rounds BOTH sides sat
+    // around +8800 and nothing ever reached the threshold. One side has
+    // to actually be losing for an auto-loss to be reachable at all.
+    const tiers = ["sharp", "casual", "sharp", "casual"] as const;
     // Target effectively unreachable; a tight auto-loss makes THAT the
     // only possible way this match ends — disambiguates the path taken.
-    let state: SpadesState = { ...def.setup({ seats: 4, rng }), target: 1_000_000, autoLoss: -1 };
+    let state: SpadesState = {
+      ...def.setup({ seats: 4, rng, difficulty: [...tiers] }),
+      target: 1_000_000,
+      autoLoss: -1,
+    };
     ({ state } = startRound(state, rng));
     let n = 0;
     while (!def.isOver(state) && n++ < 20000) {
@@ -611,7 +621,7 @@ describe("spades — full-match simulation invariants", () => {
         continue;
       }
       const seat = def.currentSeat(state)!;
-      const action = def.bots.steady.choose(def.playerView(state, seat), seat, rng);
+      const action = def.bots[tiers[seat]!].choose(def.playerView(state, seat), seat, rng);
       ({ state } = def.reduce(state, action));
     }
     expect(def.isOver(state)).toBe(true);

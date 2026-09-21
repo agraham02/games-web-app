@@ -30,6 +30,7 @@ function baseState(overrides: Partial<SpadesState> = {}): SpadesState {
     trick: [],
     ledSuit: null,
     trumpBroken: false,
+    voids: { 0: [], 1: [], 2: [], 3: [] },
     leader: 0,
     tricksWon: empty4(0),
     won: { 0: [], 1: [], 2: [], 3: [] },

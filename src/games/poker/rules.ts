@@ -143,6 +143,7 @@ export function makeSetup(startingStack: number, bigBlind: number) {
       streetCommitted: {},
       totalCommitted: {},
       lastRaiseSize: bigBlind,
+      raisesThisStreet: 0,
       raiseCapped: false,
       toAct: [],
       pendingShowdown: null,
@@ -221,6 +222,7 @@ export function startRound(state: PokerState, rng: Rng): ReduceResult<PokerState
     streetCommitted,
     totalCommitted,
     lastRaiseSize: state.bigBlind,
+    raisesThisStreet: 0,
     raiseCapped: false,
     toAct: [],
     pendingShowdown: null,
@@ -323,6 +325,7 @@ function reduceBetOrRaise(state: PokerState, to: number): ReduceResult<PokerStat
 
   let toAct: SeatId[];
   let lastRaiseSize = state.lastRaiseSize;
+  let raisesThisStreet = state.raisesThisStreet;
   // Explicit `boolean` annotation: the early-return guard above narrows
   // `state.raiseCapped` to the literal `false` from this point on, which
   // would otherwise infer this variable's type as `false` too and reject
@@ -331,6 +334,7 @@ function reduceBetOrRaise(state: PokerState, to: number): ReduceResult<PokerStat
 
   if (isFullRaise) {
     lastRaiseSize = increment;
+    raisesThisStreet += 1;
     const eligible = new Set(actableSeats(state).filter((s) => s !== seat));
     toAct = seatOrderAfter(seat, state.seats).filter((s) => eligible.has(s));
   } else {
@@ -363,6 +367,7 @@ function reduceBetOrRaise(state: PokerState, to: number): ReduceResult<PokerStat
     streetCommitted,
     totalCommitted,
     lastRaiseSize,
+    raisesThisStreet,
     raiseCapped,
     toAct,
   };
@@ -466,6 +471,7 @@ function advanceStreet(state: PokerState, events: GameEvent[]): PokerState {
     communityOrder,
     streetCommitted,
     lastRaiseSize: state.bigBlind,
+    raisesThisStreet: 0,
     raiseCapped: false,
     toAct: [],
   };
