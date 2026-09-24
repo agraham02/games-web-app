@@ -226,7 +226,12 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // turn it is never waits on an animation; the next batch flushes any
     // board still pending before it touches the store (`pump`).
     flushReset();
-    const vanishing = piecesNamed(current.events).some((id) => !(id in current.placements));
+    // Stand-ins included: the settled board names them by where they land,
+    // so one dealt under any other name — a masked pile's, say — is swapped
+    // out at the settle just as a real card is.
+    const vanishing = piecesNamed(current.events, { standIns: true }).some(
+      (id) => !(id in current.placements),
+    );
     const tail =
       vanishing && !prefersReducedMotion()
         ? tailMs(current.events, { dealStaggerMs: opts.dealStaggerMs }) /

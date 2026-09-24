@@ -132,8 +132,12 @@ Three things have gone wrong here already, all worth knowing:
   `projectEvents` now tracks what the viewer can identify DURING the
   batch — seen before, or played face up in it, forgotten at a
   `shuffle` — which is why `play` carries a required `faceUp`: it says
-  what was shown, and BS plays face down. The redaction test now also
-  asserts every event aims at a piece the viewer's table holds.
+  what was shown, and BS plays face down. What the viewer knew going into
+  a shuffle is swapped for stand-ins by a `mask`: two UNPAIRED lists
+  (real ids out, stand-ins in), handed out in the order the deal names
+  them, because a pairing would say whose hand each piece went to. The
+  redaction test asserts every event aims at a piece the viewer's table
+  holds, across whole matches of every game.
 
 The pattern: each was found by doing the NEXT thing (a second game, a
 real browser), not by more tests on the last one.

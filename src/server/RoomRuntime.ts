@@ -409,6 +409,15 @@ export class RoomRuntime {
     for (const id of [...Object.keys(placements), ...piecesNamed(events)]) {
       if (!meta[id] && allMeta[id]) meta[id] = allMeta[id];
     }
+    // ...and for the stand-ins a `mask` puts on the table mid-batch, which
+    // the settled board names differently. Shaped like what they replace —
+    // a hidden domino is still domino-shaped — and faceless, like every
+    // stand-in.
+    for (const event of events) {
+      if (event.t !== "mask") continue;
+      const kind = allMeta[event.drop[0]!]?.kind ?? "card";
+      for (const { piece } of event.add) meta[piece] ??= { kind, face: "" };
+    }
 
     const game = this.room.game;
     const seatNames: Array<string | null> = Array.from({ length: game?.seats ?? 0 }, (_, i) => {

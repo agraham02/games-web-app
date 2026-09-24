@@ -44,6 +44,16 @@ const MS = 1000;
  */
 const UNMASK_SETTLE = 50;
 
+/**
+ * How long a `mask` holds the queue before the shuffle and the deal behind
+ * it may run. It swaps real pieces for stand-ins, and the pieces it drops
+ * are the ones the sweep in front of it is still carrying into the pile —
+ * dropping them sooner would pull them out of the air. A little over a
+ * full sweep (`DURATION.sweep` plus ten pieces of `STAGGER.sweep`), which
+ * also reads as the shuffle it stands in front of.
+ */
+const MASK_SETTLE = 300;
+
 export interface ChoreographOptions {
   /**
    * Overrides `STAGGER.deal` (ms between one deal event starting and the
@@ -144,6 +154,10 @@ export function choreograph(
         steps.push({ event, offset: 0, duration: UNMASK_SETTLE });
         break;
 
+      case "mask":
+        steps.push({ event, offset: 0, duration: MASK_SETTLE });
+        break;
+
       case "pause":
         // Same weight as a single ordinary `move` — DURATION.play, not
         // a fresh constant — because the whole point is that a turn
@@ -235,6 +249,8 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  *    be deciding, so its whole `ms` has to run out.
  *  - `unmask` renders a piece that has never been on this screen, and the
  *    move that follows must not land in the same paint.
+ *  - `mask` swaps the pieces a sweep is still carrying into a pile for
+ *    stand-ins, so the shuffle and deal behind it wait for them to land.
  *  - `pause` is a beat by definition. LRC emits one ahead of a roll's
  *    chip moves so the dice can be READ before the chips they decided
  *    start flying, and the draining loop used to honour only the first
@@ -243,7 +259,7 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  */
 function blockingMs(event: GameEvent, step: TimedStep | undefined): number {
   if (event.t === "think") return event.ms;
-  if (event.t === "unmask" || event.t === "pause") return step?.duration ?? 0;
+  if (event.t === "unmask" || event.t === "mask" || event.t === "pause") return step?.duration ?? 0;
   return 0;
 }
 

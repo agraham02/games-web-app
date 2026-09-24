@@ -176,11 +176,14 @@ function piecesOf(event: GameEvent): PieceId[] {
  * shown mid-batch and face down again by its end (the last card of a
  * trick), and `PieceLayer` draws nothing for a piece it cannot describe.
  */
-export function piecesNamed(events: readonly GameEvent[]): PieceId[] {
+export function piecesNamed(
+  events: readonly GameEvent[],
+  opts: { standIns?: boolean } = {},
+): PieceId[] {
   const out: PieceId[] = [];
   for (const event of events) {
     const ids = event.t === "unmask" ? [event.piece] : piecesOf(event);
-    for (const id of ids) if (!isSentinel(id)) out.push(id);
+    for (const id of ids) if (opts.standIns || !isSentinel(id)) out.push(id);
   }
   return out;
 }
@@ -294,9 +297,52 @@ export function projectEvents(
   // Once per piece: an `unmask` puts the piece back where it started, so a
   // second one in front of a later event would snap it back there.
   const unmasked = new Set<PieceId>();
+  // What the last sweep gathered, and where to — the pile a shuffle is
+  // about to make anonymous.
+  let swept: { pieces: Set<PieceId>; to: Placement["zone"] } | null = null;
+  // Pieces the viewer knew until a shuffle, and the stand-ins the `mask`
+  // put in their place. Handed out in the order the deal NAMES them, which
+  // is what keeps the stand-in a piece gets from saying which piece it is.
+  const forgotten = new Set<PieceId>();
+  const pool: PieceId[] = [];
+  const alias = new Map<PieceId, PieceId>();
+
+  const nameOf = (id: PieceId): PieceId => {
+    const naming = namingFor(id, before, after, known);
+    // A revealed piece travels under its real id — the `unmask` just put
+    // that exact id on the board for it to move from.
+    if (naming.kind !== "conceal") return id;
+    if (!forgotten.has(id)) return naming.id;
+    let stand = alias.get(id);
+    if (stand === undefined && pool.length > 0) {
+      stand = pool.shift()!;
+      alias.set(id, stand);
+    }
+    return stand ?? naming.id;
+  };
 
   for (const event of events) {
-    if (event.t === "shuffle") known.clear();
+    if (event.t === "sweep") swept = { pieces: new Set(event.pieces), to: event.to };
+    if (event.t === "shuffle") {
+      // The viewer is holding these under their real ids, in the pile the
+      // sweep just carried them to. Dealt face down after the shuffle, they
+      // need a stand-in the table actually has — without one the deal
+      // aimed at nothing, and the piece popped into its new hand at the
+      // reconcile instead of flying there.
+      const drop = swept
+        ? [...known].filter((id) => swept!.pieces.has(id) && after[id] && !after[id]!.faceUp).sort()
+        : [];
+      if (drop.length > 0) {
+        const add = drop.map((_, k) => ({
+          piece: `${SENTINEL_PREFIX}shuffled:${k}`,
+          at: { zone: swept!.to, index: k, count: drop.length, faceUp: false },
+        }));
+        out.push({ t: "mask", drop, add });
+        for (const id of drop) forgotten.add(id);
+        pool.push(...add.map((a) => a.piece));
+      }
+      known.clear();
+    }
 
     // Facing is corrected BEFORE the id is swapped, so it can be looked
     // up by the real piece — a sentinel has no entry in `after`.
@@ -313,14 +359,7 @@ export function projectEvents(
       out.push({ t: "unmask", piece, at: naming.at, replaces: sentinelFor(naming.at) });
     }
 
-    out.push(
-      withPiece(faced, (id) => {
-        const naming = namingFor(id, before, after, known);
-        // A revealed piece travels under its real id — the `unmask` just
-        // put that exact id on the board for it to move from.
-        return naming.kind === "conceal" ? naming.id : id;
-      }),
-    );
+    out.push(withPiece(faced, nameOf));
   }
 
   return out;

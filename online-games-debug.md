@@ -121,14 +121,30 @@ these notes refer to.
 - **Fix:** `playerView` masks `given` for anyone off the giver's team
   (spectator seat −1 checked explicitly).
 
+## Dominoes (and BS)
+
+### A re-dealt tile popped into its new hand instead of flying
+- **Where:** round 2 onward. Tiles the viewer watched on the line (in BS, a
+  revealed card) are swept, shuffled and dealt face down to an opponent.
+- **Cause:** at the shuffle the viewer must lose track of them, so after
+  it they were renamed to slot stand-ins — which their table never held,
+  so the deal was a silent no-op and the tile appeared at the reconcile.
+- **Fix:** a new `mask` event in front of the `shuffle`: "drop these real
+  ids, add N stand-ins in that pile", deliberately UNPAIRED. The forgotten
+  pieces then take stand-ins in the order the deal names them, so no event
+  links a real id to a destination. `mask` blocks the queue 300ms so it
+  cannot pull tiles out of the sweep still landing; the server ships
+  face-down meta for the new stand-ins; and the online table's deferred
+  board swap now counts stand-ins, so the last dealt tiles are not cut off
+  mid-flight either.
+- **Tests:** redact.test.ts no-op test now covers Dominoes and BS with the
+  exemption removed (and asserts masks actually happen); "makes a shuffled
+  pile anonymous without saying which stand-in is which" deals two tiles
+  in both orders and gets identical events; router.test.ts "gives the
+  stand-ins a re-deal hands out a face-down face" on a real Dominoes room.
+
 ## Open gaps (known, not yet fixed)
 
-- **Dominoes and BS, rounds 2+:** a piece face up before the batch (a tile
-  on the line, a revealed BS card) is swept, shuffled and dealt face down to
-  an opponent. After the shuffle it must be anonymous, and the stand-in it is
-  renamed to is one the table never held, so that deal pops instead of
-  flying. Excused by name in redact.test.ts's no-op test — remove the
-  exemption when fixing.
 - **Poker's first deal** has no pile to fly from, offline or online
   (CLAUDE.md, "An animation needs a table…").
 

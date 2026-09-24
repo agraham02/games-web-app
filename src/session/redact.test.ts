@@ -258,6 +258,36 @@ describe("projectEvents", () => {
     }
   });
 
+  it("makes a shuffled pile anonymous without saying which stand-in is which", () => {
+    // Two tiles the viewer watched on the line, swept, shuffled and dealt
+    // to opponents. The viewer holds them under their real ids, so the deal
+    // needs stand-ins the table has — but a stand-in paired with a real id
+    // would say whose hand that tile went to. Dealing them in either order
+    // must look exactly the same to the viewer.
+    const line = (index: number) => ({ zone: "line" as const, index, count: 2, faceUp: true });
+    const before: PlacementMap = { "6-6": line(0), "6-5": line(1) };
+    const after: PlacementMap = { "6-6": hand(1, 0, 1, false), "6-5": hand(2, 0, 1, false) };
+    const deal = (first: PieceId, second: PieceId): GameEvent[] => [
+      { t: "sweep", pieces: ["6-6", "6-5"], to: "boneyard" },
+      { t: "shuffle", seed: 1 },
+      { t: "deal", piece: first, to: first === "6-6" ? 1 : 2, faceUp: false },
+      { t: "deal", piece: second, to: second === "6-6" ? 1 : 2, faceUp: false },
+    ];
+    const one = projectEvents(deal("6-6", "6-5"), before, after);
+    const other = projectEvents(deal("6-5", "6-6"), before, after);
+
+    const mask = one.find((e) => e.t === "mask");
+    expect(mask).toBeDefined();
+    // Every deal aims at a stand-in the mask put on the table.
+    const added = new Set(mask!.t === "mask" ? mask!.add.map((a) => a.piece) : []);
+    for (const e of one) if (e.t === "deal") expect(added.has(e.piece)).toBe(true);
+    // And nothing after the sweep can tell the two orders apart, except
+    // the seats — which the deal says anyway.
+    const blind = (events: GameEvent[]) =>
+      events.slice(1).map((e) => (e.t === "deal" ? { ...e, to: 0 } : e));
+    expect(blind(other)).toEqual(blind(one));
+  });
+
   it("never emits a real id for a piece the viewer cannot see, across a real deal", () => {
     // End to end against a genuine Spades deal: take the events a real
     // round produces and assert the projection for seat 0 names no card
@@ -718,26 +748,28 @@ describe("the whole frame, every game, every turn", () => {
        * places nothing before its first deal, so that deal has no pile to
        * fly from at all — a known gap, and not this one.
        *
-       * Also excused, and ALSO a known gap: a piece the viewer could read
-       * before the batch, dealt face down after a shuffle in it — a tile
-       * off the Dominoes line, a revealed BS card. After the shuffle it
-       * must go anonymous, and the stand-in it is renamed to is one the
-       * table never held, so that one deal pops rather than flies. Spades
-       * never reaches it: nothing is face up when a round is dealt.
+       * A piece the viewer could read before a shuffle — a tile off the
+       * Dominoes line, a revealed BS card — has to go anonymous at it, and
+       * the stand-in it is dealt as must be one the `mask` put on the table.
        */
       const misses: string[] = [];
       const blanks: string[] = [];
+      let masks = 0;
 
       everyFrame(gameId, ({ viewer, events, truthBefore, truthAfter }) => {
         const projected = projectEvents(events, truthBefore, truthAfter);
         const held = new Set(Object.keys(redactPlacements(truthBefore, {}).placements));
-        const aligned = projected.filter((e) => e.t !== "unmask");
+        const aligned = projected.filter((e) => e.t !== "unmask" && e.t !== "mask");
         expect(aligned).toHaveLength(events.length);
 
         let at = 0;
-        let shuffled = false;
         for (const event of projected) {
-          if (event.t === "shuffle") shuffled = true;
+          if (event.t === "mask") {
+            masks++;
+            for (const id of event.drop) held.delete(id);
+            for (const { piece } of event.add) held.add(piece);
+            continue;
+          }
           if (event.t === "unmask") {
             // Dropped, not kept: anything addressing the replaced stand-in
             // later in the batch would be a no-op on a real table too.
@@ -749,7 +781,6 @@ describe("the whole frame, every game, every turn", () => {
           const names = namesOf(event);
           namesOf(raw).forEach((real, i) => {
             if (!truthBefore[real]) return;
-            if (shuffled && truthBefore[real]!.faceUp) return;
             if (!held.has(names[i]!)) misses.push(`viewer ${viewer}: ${raw.t} ${real} as ${names[i]}`);
           });
           // A stand-in has no face; drawn face up it is a blank card.
@@ -761,6 +792,8 @@ describe("the whole frame, every game, every turn", () => {
 
       expect(misses.slice(0, 5)).toEqual([]);
       expect(blanks.slice(0, 5)).toEqual([]);
+      // Guards the guard: these two re-deal pieces the viewer could read.
+      if (gameId === "dominoes" || gameId === "bs") expect(masks).toBeGreaterThan(0);
     });
   }
 });

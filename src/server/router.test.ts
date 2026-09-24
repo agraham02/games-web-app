@@ -20,6 +20,7 @@ import { playbackMs } from "@/motion/choreographer";
 import { DEFAULT_TURN_HOLD_MS } from "@/session/GameSession";
 import { PROTOCOL_VERSION, type ServerMessage } from "@/session/protocol";
 import { createSpades } from "@/games/spades/rules";
+import { GAMES } from "@/session/registry";
 import type { PlacementMap } from "@/engine/types";
 import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
@@ -465,6 +466,53 @@ describe("the server, in process", () => {
         useTableStore.getState().reset(frame.placements, frame.meta);
       }
       expect(lingering.slice(0, 5)).toEqual([]);
+    });
+
+    it("gives the stand-ins a re-deal hands out a face-down face", () => {
+      // From round two, tiles the viewer watched on the line are swept,
+      // shuffled and dealt again. They go anonymous at the shuffle through
+      // a `mask`, whose stand-ins exist only mid-batch — so the settled
+      // board says nothing about them, and without meta `PieceLayer` would
+      // deal invisible tiles.
+      const h = host("p1");
+      const p2 = peerFor("p2");
+      send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+      send(h.peer, { t: "selectGame", gameId: "dominoes", settings: {}, seats: 4, difficulty: "steady" });
+      send(h.peer, { t: "startGame" });
+      const players = [h, p2];
+      const rules = GAMES.dominoes.create(GAMES.dominoes.parse({}));
+      for (let turn = 0; turn < 400; turn++) {
+        clock.drain();
+        const table = registry.get(h.code)!.debugDump().table as {
+          currentSeat: number | null;
+          round: number;
+          isOver: boolean;
+        } | null;
+        if (!table || table.isOver || table.round >= 3) break;
+        if (table.currentSeat === null) {
+          send(h.peer, { t: "nextRound" });
+          continue;
+        }
+        const who = players.find((p) => p.conn.last("frame")?.frame.seat === table.currentSeat);
+        if (!who) continue;
+        const legal = rules.legalActions(who.conn.last("frame")!.frame.state, table.currentSeat);
+        if (legal[0] === undefined) continue;
+        send(who.peer, { t: "action", action: legal[0] });
+      }
+
+      let masked = 0;
+      const faceless: string[] = [];
+      for (const { frame } of h.conn.all("frame")) {
+        for (const event of frame.events) {
+          if (event.t !== "mask") continue;
+          for (const { piece } of event.add) {
+            masked++;
+            if (frame.meta[piece]?.kind !== "tile") faceless.push(piece);
+          }
+        }
+      }
+      expect(masked, "a later round should have re-dealt tiles off the line").toBeGreaterThan(0);
+      expect(faceless).toEqual([]);
     });
 
     it("hands a seat to a bot the moment its owner disconnects", () => {

@@ -374,6 +374,18 @@ export type GameEvent =
       replaces?: PieceId;
     }
   /**
+   * `unmask`'s opposite, and like it emitted only by the redaction layer: a
+   * pile the viewer could read turns anonymous because it is about to be
+   * shuffled. Rides immediately in front of the `shuffle`.
+   *
+   * Deliberately two UNPAIRED lists. The viewer watched `drop` go into the
+   * pile, so naming them tells them nothing; what they must not learn is
+   * which stand-in each became, because the deal that follows says where
+   * every stand-in goes. `add` puts that many anonymous pieces where the
+   * dropped ones were, and which is which exists only on the server.
+   */
+  | { t: "mask"; drop: PieceId[]; add: Array<{ piece: PieceId; at: Placement }> }
+  /**
    * A deliberate beat with nothing to place. Some legal actions
    * genuinely move no piece — LRC's roll landing entirely on dots is
    * the first case — and without this, that turn snapped straight to

@@ -201,6 +201,15 @@ export function applyEventToTable(event: GameEvent): void {
       touched = true;
       break;
 
+    case "mask":
+      // Unpaired on purpose — see the event's doc. The pile keeps its size
+      // and its look (the dropped pieces were face-down in it); only the
+      // names change, and not in any order the viewer can follow.
+      for (const id of event.drop) delete map[id];
+      for (const { piece, at } of event.add) map[piece] = { ...at };
+      touched = true;
+      break;
+
     case "move":
       if (map[event.piece]) {
         // `event.to` is a caller-built Placement (see Dominoes'
