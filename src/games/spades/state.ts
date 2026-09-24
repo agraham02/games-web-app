@@ -79,6 +79,27 @@ export function isHiddenFromSelf(state: SpadesState, seat: SeatId): boolean {
 }
 
 /**
+ * Whether this seat has a vote to cast right now on its team going blind.
+ *
+ * The vote opens when the team's FIRST bid comes up, for both partners at
+ * once — that is what makes it a team decision rather than whoever
+ * happens to bid first deciding for both. It closes when the call is
+ * made, which `reduce` does the moment both votes are in.
+ */
+export function blindVoteOpen(state: SpadesState, seat: SeatId): boolean {
+  const partner = partnerOf(seat);
+  return (
+    state.phase === "bid" &&
+    state.exchange === null &&
+    Boolean(state.blindEligible[seat]) &&
+    state.blindCall[seat] === null &&
+    (state.turn === seat || state.turn === partner) &&
+    state.bids[seat] == null &&
+    state.bids[partner] == null
+  );
+}
+
+/**
  * True once this seat's PARTNER has already committed the team to
  * bidding blind — the synchronized team rule: whoever bids first for a
  * blind-eligible team decides for both partners, so a seat whose

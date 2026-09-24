@@ -33,10 +33,11 @@ import type {
 import { createRng, type Rng } from "@/engine/rng";
 import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
+import { tailMs } from "@/motion/choreographer";
 import type { FrameView } from "@/session/protocol";
 import { announce } from "@/ui/disclosure";
 import { composeAnnounce } from "@/session/announce";
-import { redactPlacements, sentinelFor } from "@/session/redact";
+import { piecesNamed, redactPlacements, sentinelFor } from "@/session/redact";
 import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -194,11 +195,48 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   // client that rolls its own dice is a client that can choose them.
   const [rng] = useState<Rng>(() => createRng(1));
 
+  /**
+   * A settled position whose adoption is waiting on the animations of the
+   * batch that produced it. See `settle`.
+   */
+  const pendingReset = useRef<{ frame: FrameView; timer: ReturnType<typeof setTimeout> } | null>(
+    null,
+  );
+  const flushReset = () => {
+    const pending = pendingReset.current;
+    if (!pending) return;
+    pendingReset.current = null;
+    clearTimeout(pending.timer);
+    useTableStore.getState().reset(pending.frame.placements, pending.frame.meta);
+  };
+
   const settle = () => {
     const current = playing.current;
     if (!current) return;
     setApplied(current);
-    useTableStore.getState().reset(current.placements, current.meta);
+
+    // The board is adopted when the batch's animations have FINISHED, if
+    // adopting it would pull a piece out from under one. A batch goes idle
+    // when its last event is applied, with that animation still running,
+    // and the settled position can name a piece differently from the batch:
+    // a trick's cards are collected face down, so the position holds
+    // stand-ins where the real cards are still in flight. Swapping ids
+    // unmounts the card that is flying, and the collect vanished the
+    // instant it began. The game state above is adopted at once, so whose
+    // turn it is never waits on an animation; the next batch flushes any
+    // board still pending before it touches the store (`pump`).
+    flushReset();
+    const vanishing = piecesNamed(current.events).some((id) => !(id in current.placements));
+    const tail =
+      vanishing && !prefersReducedMotion()
+        ? tailMs(current.events, { dealStaggerMs: opts.dealStaggerMs }) /
+          Math.max(0.05, opts.speed ?? 1)
+        : 0;
+    if (tail > 0) {
+      pendingReset.current = { frame: current, timer: setTimeout(flushReset, tail) };
+    } else {
+      useTableStore.getState().reset(current.placements, current.meta);
+    }
 
     if (current.isOver) {
       const delay = prefersReducedMotion() ? 0 : DEFAULT_END_HOLD_MS;
@@ -254,6 +292,9 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
 
     const next = backlog.shift()!;
     playing.current = next;
+    // Whatever the last batch was still animating, this one starts from its
+    // settled board.
+    flushReset();
     setLastAction(next.lastAction);
     // Learned BEFORE the events play, not after them.
     //
@@ -275,8 +316,14 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     else settle();
   };
 
+  // The last frame taken, so the same one is never queued twice. StrictMode
+  // runs this effect twice on mount, and the frame present at mount is the
+  // opening deal — so the first round's deal played twice. Compared by
+  // identity: every message off the socket is a fresh object.
+  const received = useRef<FrameView | null>(null);
   useEffect(() => {
-    if (!frame) return;
+    if (!frame || frame === received.current) return;
+    received.current = frame;
     queued.current.push(frame);
     pump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -337,7 +384,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // there instead; the `unmask` that follows is idempotent.
     for (const event of frame.events) {
       if (event.t !== "unmask") continue;
-      delete placements[sentinelFor(event.at)];
+      delete placements[event.replaces ?? sentinelFor(event.at)];
       placements[event.piece] = event.at;
     }
     useTableStore.getState().reset(placements, { ...start.meta, ...frame.meta });
@@ -395,6 +442,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   useEffect(() => {
     return () => {
       if (endHoldTimer.current !== null) clearTimeout(endHoldTimer.current);
+      if (pendingReset.current !== null) clearTimeout(pendingReset.current.timer);
       if (roundHoldTimer.current !== null) clearTimeout(roundHoldTimer.current);
     };
   }, []);

@@ -237,7 +237,8 @@ function reducePlay(state: BsState, cards: readonly PieceId[]): ReduceResult<BsS
   }
 
   for (const id of playing) {
-    events.push({ t: "play", piece: id, from: seat, to: "pile" });
+    // Face down: the whole game is that nobody may see what was put in.
+    events.push({ t: "play", piece: id, from: seat, to: "pile", faceUp: false });
   }
 
   const next: BsState = {

@@ -25,6 +25,8 @@ function baseState(overrides: Partial<SpadesState> = {}): SpadesState {
     hands: { 0: [], 1: [], 2: [], 3: [] },
     handRevealed: empty4(true),
     blindEligible: empty4(false),
+    blindVotes: empty4(null),
+    blindCall: empty4(null),
     bids: { 0: null, 1: null, 2: null, 3: null },
     exchange: null,
     trick: [],

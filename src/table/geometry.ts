@@ -656,8 +656,8 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const cx = play.x + play.w / 2;
   const cy = play.y + play.h / 2;
 
-  // Trick: a square-ish cluster at the centre, sized to hold a fanned
-  // pile of table cards without touching the seat pods.
+  // Trick: a square-ish cluster, sized to hold a fanned pile of table
+  // cards. Placed and bounded by `pileRegion` further down, not by `play`.
   const trickW = Math.min(play.w * 0.72, spec.card.w * 3.4);
   const trickH = Math.min(play.h * 0.62, spec.card.h * 2.6);
 
@@ -878,9 +878,24 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     h: floorH,
   };
 
+  // Centred on `pileRegion` rather than on `play`, and never larger than
+  // it. `play` clears the top pod but not the cards fanned below it, so a
+  // trick centred there looked right on a tall desktop and pushed the
+  // partner's card up into the top seat's hand on a laptop. `pileRegion`
+  // is already cleared of both — the same "a zone is cheaper than a
+  // collision" answer poker's centre needed.
+  const trickBoxW = Math.min(trickW, pileRegion.w);
+  const trickBoxH = Math.min(trickH, pileRegion.h);
+  const trick: Box = {
+    x: pileRegion.x + (pileRegion.w - trickBoxW) / 2,
+    y: pileRegion.y + (pileRegion.h - trickBoxH) / 2,
+    w: trickBoxW,
+    h: trickBoxH,
+  };
+
   const zones: Record<ZoneName, Box> = {
     play,
-    trick: { x: cx - trickW / 2, y: cy - trickH / 2, w: trickW, h: trickH },
+    trick,
     deck: { x: deckX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
     discard: { x: discardX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
     board: play,

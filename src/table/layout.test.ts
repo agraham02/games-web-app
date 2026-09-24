@@ -712,3 +712,57 @@ describe("hands, laid out from a seat that is not zero", () => {
     }
   });
 });
+
+describe("trick — stays clear of every opponent's hand", () => {
+  /**
+   * Reported from a laptop: the partner's trick card sat up inside the
+   * top seat's fanned hand. The trick was centred on `play`, which clears
+   * the top pod but not the cards hanging below it — so it looked right on
+   * a tall desktop and collided as soon as the screen got a little
+   * shorter. The laptop sizes are the reason this list is longer than
+   * `VIEWPORTS`: a browser window on a 1080p laptop is well under 900
+   * tall once its own chrome is paid for.
+   */
+  const TRICK_VIEWPORTS = [
+    ...VIEWPORTS,
+    { name: "laptop 1080p", w: 1917, h: 977 },
+    { name: "laptop 125%", w: 1536, h: 730 },
+    { name: "laptop small", w: 1366, h: 650 },
+    { name: "desktop 1440p", w: 2552, h: 1227 },
+  ];
+  const HAND = 13;
+
+  function rect(g: ReturnType<typeof resolveTable>, placement: Placement): Box {
+    const t = layoutPiece(placement, g, { kind: "card" });
+    const base = baseSize(g);
+    const w = base.w * t.scale;
+    const h = base.h * t.scale;
+    const cx = t.x + base.w / 2;
+    const cy = t.y + base.h / 2;
+    // A side seat's cards lie on their side, which swaps the footprint.
+    const turned = Math.round((((t.rotate % 180) + 180) % 180) / 90) === 1;
+    const [bw, bh] = turned ? [h, w] : [w, h];
+    return { x: cx - bw / 2, y: cy - bh / 2, w: bw, h: bh };
+  }
+
+  it("never overlaps an opponent's cards, on any screen", () => {
+    const hits: string[] = [];
+    for (const vp of TRICK_VIEWPORTS) {
+      for (const seats of [2, 3, 4, 5, 6]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        const trick = Array.from({ length: seats }, (_, seat) =>
+          rect(g, { zone: "trick", seat, index: 0, count: 1, faceUp: true }),
+        );
+        for (let seat = 1; seat < seats; seat++) {
+          for (let index = 0; index < HAND; index++) {
+            const card = rect(g, { zone: "hand", seat, index, count: HAND, faceUp: false });
+            trick.forEach((t, from) => {
+              if (overlapsBox(t, card)) hits.push(`${vp.name} ${seats} seats: seat ${from}'s trick card on seat ${seat}'s hand`);
+            });
+          }
+        }
+      }
+    }
+    expect([...new Set(hits)].slice(0, 8)).toEqual([]);
+  });
+});

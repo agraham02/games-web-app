@@ -82,9 +82,9 @@ describe("choreograph", () => {
 
   it("emits one step per event, in order", () => {
     const events: GameEvent[] = [
-      { t: "play", piece: "SA", from: 0, to: "trick" },
+      { t: "play", piece: "SA", from: 0, to: "trick", faceUp: true },
       { t: "think", seat: 1, ms: 600 },
-      { t: "play", piece: "SK", from: 1, to: "trick" },
+      { t: "play", piece: "SK", from: 1, to: "trick", faceUp: true },
       { t: "collect", pieces: ["SA", "SK"], to: 1 },
     ];
     const steps = choreograph(events);
@@ -194,7 +194,7 @@ describe("choreograph", () => {
       // stays 0 and the wait comes from the event's own time.
       const steps = choreograph([
         { t: "unmask", piece: "S-A", at: { zone: "hand", seat: 3, index: 0, count: 1, faceUp: false } },
-        { t: "play", piece: "S-A", from: 3, to: "trick" },
+        { t: "play", piece: "S-A", from: 3, to: "trick", faceUp: true },
       ]);
       expect(steps[1]!.offset).toBe(0);
     });

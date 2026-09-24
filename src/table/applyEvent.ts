@@ -40,6 +40,12 @@ import { useTableStore } from "./store";
  */
 function bucketKey(p: Placement, id: PieceId): string {
   if (p.hidden) return `hidden|${id}`;
+  // A trick is ONE pile in play order; its `seat` only says which way a
+  // card leans. Bucketed by seat, every trick card was index 0 of its own
+  // bucket, so all of them shared a z-index and the stacking fell to DOM
+  // order — which put the last card of a trick, collected before any
+  // reconcile could reorder it, underneath the three before it.
+  if (p.zone === "trick") return `trick|-|${p.group ?? "-"}`;
   return `${p.zone}|${p.seat ?? "-"}|${p.group ?? "-"}`;
 }
 
@@ -152,7 +158,7 @@ export function applyEventToTable(event: GameEvent): void {
         // Kept so the trick can offset each card toward whoever played it.
         seat: event.from,
         group: event.group,
-        faceUp: true,
+        faceUp: event.faceUp,
       });
       touched = true;
       break;
@@ -187,9 +193,10 @@ export function applyEventToTable(event: GameEvent): void {
     case "unmask":
       // Unconditional, unlike `move` just below: the whole premise is
       // that this piece is NOT in the map yet — the viewer was holding an
-      // anonymous stand-in for it. The stand-in is left alone and dropped
-      // by the batch's own reconcile a moment later; for the one frame
-      // they coexist they are identical backs in the same slot.
+      // anonymous stand-in for it. The real piece takes the stand-in's
+      // place in the same write, so the hand never holds one card too
+      // many: an identical back in an identical slot, swapped.
+      if (event.replaces) delete map[event.replaces];
       map[event.piece] = { ...event.at };
       touched = true;
       break;

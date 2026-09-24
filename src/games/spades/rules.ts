@@ -46,7 +46,7 @@ import type {
   SetupOptions,
 } from "@/engine/types";
 import { HERO } from "@/engine/types";
-import type { Rng } from "@/engine/rng";
+import { hashString, type Rng } from "@/engine/rng";
 import { botName } from "@/games/_shared/botIdentity";
 import { sortHandForDisplay } from "@/games/_shared/cards";
 import { resolveTrick } from "@/games/_shared/trickTaking";
@@ -64,6 +64,7 @@ import {
   HIDDEN_CARD,
   isBlindEligible,
   isHiddenFromSelf,
+  blindVoteOpen,
   isSecondBidder,
   legalPlays,
   minLegalBid,
@@ -74,7 +75,7 @@ import {
   teammates,
 } from "./state";
 import { AUTO_LOSS_SCORE, scoreRound, TARGET_SCORE } from "./scoring";
-import type { Bid, RoundResult, SpadesAction, SpadesState } from "./types";
+import type { Bid, BlindVote, RoundResult, SpadesAction, SpadesState } from "./types";
 import { validateByEnumeration } from "../_shared/validate";
 
 export const MIN_SEATS = 4;
@@ -169,6 +170,8 @@ function makeSetup(rules: SpadesRules) {
       hands: arr(),
       handRevealed: bool(true),
       blindEligible: bool(false),
+      blindVotes: { 0: null, 1: null, 2: null, 3: null },
+      blindCall: { 0: null, 1: null, 2: null, 3: null },
       bids: { 0: null, 1: null, 2: null, 3: null },
       exchange: null,
       trick: [],
@@ -261,6 +264,8 @@ export function startRound(state: SpadesState, rng: Rng): ReduceResult<SpadesSta
       hands,
       handRevealed,
       blindEligible,
+      blindVotes: { 0: null, 1: null, 2: null, 3: null },
+      blindCall: { 0: null, 1: null, 2: null, 3: null },
       bids: { 0: null, 1: null, 2: null, 3: null },
       exchange: null,
       trick: [],
@@ -283,8 +288,8 @@ export function startRound(state: SpadesState, rng: Rng): ReduceResult<SpadesSta
 
 export function reduce(state: SpadesState, action: SpadesAction): ReduceResult<SpadesState> {
   switch (action.t) {
-    case "look":
-      return reduceLook(state);
+    case "blindVote":
+      return reduceBlindVote(state, action.seat, { blind: action.blind, defer: action.defer });
     case "bid":
       return reduceBid(state, { tricks: action.tricks, nil: action.nil, blind: false });
     case "blindNil":
@@ -302,36 +307,62 @@ export function reduce(state: SpadesState, action: SpadesAction): ReduceResult<S
   }
 }
 
-function reduceLook(state: SpadesState): ReduceResult<SpadesState> {
-  const seat = currentSeat(state);
-  if (seat === null) return { state, events: [] };
-  const hand = state.hands[seat] ?? [];
-  // The shared table store only ever holds ONE viewer's picture (the
-  // hero's — see useGameRuntime's `definition.placements(current, HERO)`),
-  // so a `flip` event's `faceUp` has to already be hero-relative when it's
-  // emitted; `applyEventToTable` applies it verbatim with no idea who's
-  // watching. A non-hero seat looking at their OWN hand is real and
-  // legal, but must not flash it face up on the hero's screen — that was
-  // a real bug (a blind-eligible partner choosing to look, mid-round,
-  // visibly flipped their cards for the hero to see, if only briefly
-  // until the next reconcile corrected it back).
-  //
-  // Ordered by DISPLAY position (`handDisplayOrder`), not raw deal
-  // order — a hand renders suit-sorted (see `placements()`), so
-  // flipping in deal order visibly scrambles relative to what's on
-  // screen: card 7 flips, then card 2, then card 11, with no relation
-  // to their sorted left-to-right positions. Sorting the events first
-  // makes the reveal sweep across the hand the same direction it's laid
-  // out in.
-  const events: GameEvent[] = handDisplayOrder(hand, state.rules).map((id) => ({
-    t: "flip",
-    piece: id,
-    faceUp: seat === HERO,
-  }));
-  return {
-    state: { ...state, handRevealed: { ...state.handRevealed, [seat]: true } },
-    events,
-  };
+/**
+ * One partner's vote on going blind. Once both are in, the team's call is
+ * made and — if it is to look — both hands turn over together.
+ *
+ * Who decides, in order:
+ *  - Votes a PERSON cast (`defer: false`). Two that agree decide; two that
+ *    disagree are settled by a coin, hashed from the position rather than
+ *    drawn from an `Rng` so a seed replays it.
+ *  - Otherwise, both partners are bots, and the vote of whichever bids
+ *    first decides — the old rule, where the first bidder decided for both.
+ */
+function reduceBlindVote(state: SpadesState, seat: SeatId, vote: BlindVote): ReduceResult<SpadesState> {
+  if (!blindVoteOpen(state, seat) || state.blindVotes[seat]) return { state, events: [] };
+  const partner = partnerOf(seat);
+  const blindVotes = { ...state.blindVotes, [seat]: vote };
+  const theirs = blindVotes[partner];
+  if (!theirs) return { state: { ...state, blindVotes }, events: [] };
+
+  const first = state.turn;
+  const firm = [blindVotes[first]!, blindVotes[partnerOf(first)]!].filter((v) => !v.defer);
+  let blind: boolean;
+  let split = false;
+  if (firm.length === 2 && firm[0]!.blind !== firm[1]!.blind) {
+    split = true;
+    blind = hashString(`spades-blind|${state.round}|${teamOf(first)}|${state.scores[first] ?? 0}`) % 2 === 0;
+  } else {
+    blind = (firm[0] ?? blindVotes[first]!).blind;
+  }
+
+  const blindCall = { ...state.blindCall, [seat]: blind, [partner]: blind };
+  let handRevealed = state.handRevealed;
+  const events: GameEvent[] = [];
+  if (!blind) {
+    handRevealed = { ...handRevealed, [seat]: true, [partner]: true };
+    // Hero-relative, like every flip: a bot team looking must not turn
+    // its cards over on the hero's screen. Online, `projectEvents`
+    // corrects the facing per viewer. Display-ordered, so the reveal
+    // sweeps across the hand in the order it is laid out.
+    for (const s of [first, partnerOf(first)]) {
+      for (const id of handDisplayOrder(state.hands[s] ?? [], state.rules)) {
+        events.push({ t: "flip", piece: id, faceUp: s === HERO });
+      }
+    }
+  }
+  const verdict = blind ? "go blind" : "look";
+  events.push({
+    t: "announce",
+    seat: first,
+    actor: first,
+    // Composed as "<name> and partner …", so it reads "You and partner…"
+    // for the first bidder and by name for everyone else.
+    text: split ? `and partner split the vote — the coin says ${verdict}` : `and partner ${verdict}`,
+    tone: "info",
+  });
+
+  return { state: { ...state, blindVotes, blindCall, handRevealed }, events };
 }
 
 function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
@@ -381,19 +412,9 @@ function reduceBid(state: SpadesState, bid: Bid): ReduceResult<SpadesState> {
     for (const id of handDisplayOrder(state.hands[partner] ?? [], state.rules)) {
       events.push({ t: "flip", piece: id, faceUp: partner === HERO });
     }
-  } else if (!bid.blind && state.blindEligible[partner] && !handRevealed[partner] && bids[partner] == null) {
-    // Synchronized team decision, the mirror-image direction: this bid
-    // just LOOKED (bid.blind === false — the "look" step already ran).
-    // If the partner hasn't bid yet and is still blind-eligible and
-    // hidden, the team just committed to looking — reveal the
-    // partner's hand right now, exactly like reduceLook would for
-    // their own "look" action, so they never see a "go blind" option
-    // that no longer exists for this team.
-    handRevealed = { ...handRevealed, [partner]: true };
-    for (const id of handDisplayOrder(state.hands[partner] ?? [], state.rules)) {
-      events.push({ t: "flip", piece: id, faceUp: partner === HERO });
-    }
   }
+  // The mirror image — a team that chose to LOOK — needs nothing here: the
+  // vote that decided it turned both hands over (`reduceBlindVote`).
 
   if (seat !== HERO) {
     events.push({
@@ -495,19 +516,13 @@ function reduceExchangeGive(state: SpadesState, cards: [PieceId, PieceId]): Redu
   // partner only in the sense that other opponents don't get to see them
   // first, not that the partner never does.
   //
-  // KNOWN SMALL GAP: `applyEvent.ts`'s "play" case hardcodes
-  // `faceUp: true` for every seat (correct for an ordinary trick play,
-  // which really is visible to everyone) — unlike `flip`/`draw`, it has
-  // no per-event override, so these 2 cards briefly render face up to
-  // an OPPONENT-viewing hero too during this one animated step, before
-  // `placements()`'s own reconcile (fixed above) corrects it back down.
-  // Not fixed here: doing so means either threading viewer-awareness
-  // into "play" (shared by every game's real trick-play mechanic) or
-  // switching this specific transfer to a `move` event with a
-  // caller-built `Placement`. Worth doing if this transient flash is
-  // ever actually reported — nobody has hit it yet, unlike the
-  // persistent reconcile-level leak this same investigation found.
-  const events: GameEvent[] = realCards.map((id) => ({ t: "play", piece: id, from: ex.giver, to: "discard" }));
+  // Face up to the giver's side only, which is what `placements` says of
+  // the discard too. Written for HERO, like every deal, and corrected per
+  // viewer by `projectEvents` online. It used to be face up for everyone
+  // for the length of the animation, because `play` had no facing of its
+  // own; an opponent-side hero saw the two cards flash as they crossed.
+  const faceUp = teamOf(HERO) === teamOf(ex.giver);
+  const events: GameEvent[] = realCards.map((id) => ({ t: "play", piece: id, from: ex.giver, to: "discard", faceUp }));
   return {
     state: { ...state, hands, exchange: { ...ex, stage: "take", given: realCards } },
     events,
@@ -572,7 +587,7 @@ function reducePlay(state: SpadesState, card: PieceId): ReduceResult<SpadesState
     }
   }
 
-  const events: GameEvent[] = [{ t: "play", piece: card, from: seat, to: "trick" }];
+  const events: GameEvent[] = [{ t: "play", piece: card, from: seat, to: "trick", faceUp: true }];
   if (seat !== HERO) {
     events.push({
       t: "announce",
@@ -696,6 +711,12 @@ export function currentSeat(state: SpadesState): SeatId | null {
   if (state.exchange) {
     return state.exchange.stage === "give" ? state.exchange.giver : state.exchange.taker;
   }
+  // A blind vote entitles both partners at once. This names whichever has
+  // not voted yet, first bidder first — it is what the pacing waits on,
+  // and what makes the session run a bot's vote at all.
+  if (blindVoteOpen(state, state.turn)) {
+    return state.blindVotes[state.turn] ? partnerOf(state.turn) : state.turn;
+  }
   return state.turn;
 }
 
@@ -708,6 +729,14 @@ export function isOver(state: SpadesState): boolean {
 }
 
 export function legalActions(state: SpadesState, seat: SeatId): SpadesAction[] {
+  // Before the `currentSeat` gate: the vote is open to both partners at
+  // once, and `currentSeat` can only name one of them.
+  if (blindVoteOpen(state, seat)) {
+    if (state.blindVotes[seat]) return [];
+    return [true, false].flatMap((blind) =>
+      [false, true].map((defer): SpadesAction => ({ t: "blindVote", seat, blind, defer })),
+    );
+  }
   if (currentSeat(state) !== seat) return [];
 
   if (state.exchange) {
@@ -738,9 +767,9 @@ export function legalActions(state: SpadesState, seat: SeatId): SpadesAction[] {
 
   if (state.phase === "bid") {
     if (isHiddenFromSelf(state, seat)) {
-      // "look" is off the table once the partner already committed the
-      // team to bidding blind — see `mustBidBlind`'s doc.
-      const out: SpadesAction[] = mustBidBlind(state, seat) ? [] : [{ t: "look" }];
+      // Still hidden past the vote means the team went blind: there is no
+      // looking now, only which blind bid.
+      const out: SpadesAction[] = [];
       if (minLegalBid(state, seat) === 0) out.push({ t: "blindNil" });
       // A blind numeric bid's minimum of 6 is never blocked by the Board
       // rule (6 always exceeds minLegalBid's ceiling of 4), so every
@@ -756,6 +785,17 @@ export function legalActions(state: SpadesState, seat: SeatId): SpadesAction[] {
   }
 
   return legalPlays(state, seat).map((card): SpadesAction => ({ t: "play", card }));
+}
+
+/**
+ * Stamps a vote with the seat that really sent it, and marks it a
+ * person's. Only a person's submission passes through here — a bot's
+ * choice goes straight to `reduce` — which is exactly what makes `defer`
+ * trustworthy: a client cannot claim to be a bot, or somebody else.
+ */
+export function completeAction(_state: SpadesState, action: SpadesAction, seat: SeatId): SpadesAction {
+  if (action.t !== "blindVote") return action;
+  return { ...action, seat, defer: false };
 }
 
 export function pieces(state: SpadesState): Record<PieceId, PieceMeta> {
@@ -866,6 +906,16 @@ export function playerView(state: SpadesState, viewer: SeatId): SpadesState {
     const visible = seat === viewer && !isHiddenFromSelf(state, seat);
     hands[seat] = visible ? hand : hand.map(() => HIDDEN_CARD);
   }
+  // The two cards a Blind Nil bidder passes across are face up to their
+  // own side and down to everyone else — `placements` says so of the
+  // discard — so the state must not name them either. It did: opponents
+  // and spectators were sent both cards for the length of the exchange.
+  // A spectator is seat -1, on nobody's team, and is checked for by name
+  // rather than trusted to fall out of `teamOf`'s arithmetic.
+  const ex = state.exchange;
+  if (ex?.given && (viewer < 0 || teamOf(viewer) !== teamOf(ex.giver))) {
+    return { ...state, hands, exchange: { ...ex, given: [HIDDEN_CARD, HIDDEN_CARD] } };
+  }
   return { ...state, hands };
 }
 
@@ -881,6 +931,7 @@ export function createSpades(
     reduce,
     legalActions,
     validate: validateByEnumeration(legalActions),
+    completeAction,
     pieces,
     placements,
     playerView,
@@ -898,4 +949,4 @@ export const spades = createSpades();
 // simple questions about a position. `HIDDEN_CARD` stays internal — only
 // `playerView` needs it. The play screen defines its own local
 // `seatName` from `botName` directly, matching Dominoes' page.tsx.
-export { isBlindEligible, isHiddenFromSelf, legalPlays, minLegalBid, mustBidBlind, partnerOf, teamOf, teammates };
+export { blindVoteOpen, isBlindEligible, isHiddenFromSelf, legalPlays, minLegalBid, mustBidBlind, partnerOf, teamOf, teammates };

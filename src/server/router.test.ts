@@ -19,6 +19,11 @@ import { TestClock } from "@/session/clock";
 import { playbackMs } from "@/motion/choreographer";
 import { DEFAULT_TURN_HOLD_MS } from "@/session/GameSession";
 import { PROTOCOL_VERSION, type ServerMessage } from "@/session/protocol";
+import { createSpades } from "@/games/spades/rules";
+import type { PlacementMap } from "@/engine/types";
+import { applyEventToTable } from "@/table/applyEvent";
+import { useTableStore } from "@/table/store";
+import type { SpadesState } from "@/games/spades/types";
 import { EMPTY_ROOM_TTL_MS, RoomRegistry } from "./RoomRegistry";
 import type { Connection } from "./RoomRuntime";
 import { makePeer, Router, type Peer } from "./router";
@@ -390,6 +395,76 @@ describe("the server, in process", () => {
       const refusal = watcher.conn.last("error")!;
       expect(refusal.code).toBe("move-refused");
       expect(refusal.message).toBe("you are not at the table");
+    });
+
+    it("sends the face of every card it plays face up, even one gone by the end of the frame", () => {
+      // The last card of a trick is played face up and collected face down
+      // in one reduce, so the settled board a frame's meta was built from
+      // no longer holds it — and `PieceLayer` draws nothing for a piece it
+      // cannot describe. Watched from the spectator seat, which can see
+      // every trick card and no hand.
+      const { code, peer, conn, p2 } = twoPlayerSpades();
+      const watcher = peerFor("watcher");
+      send(watcher.peer, { t: "joinRoom", code, name: "Watcher" });
+      send(watcher.peer, { t: "enterGame", as: "spectator" });
+      // Both players stay seated and take their own turns, as a client
+      // would: from the redacted state in their own latest frame. (Walking
+      // both away, or dropping both, ends the game instead.)
+      const players = [
+        { peer, conn },
+        { peer: p2.peer, conn: p2.conn },
+      ];
+      const rules = createSpades();
+      for (let turn = 0; turn < 200; turn++) {
+        clock.drain();
+        const on = (registry.get(code)!.debugDump().table as { currentSeat: number | null })
+          .currentSeat;
+        const who = players.find((p) => p.conn.last("frame")?.frame.seat === on);
+        if (on === null || !who) break;
+        const frame = who.conn.last("frame")!.frame;
+        const legal = rules.legalActions(frame.state as SpadesState, on);
+        const action = legal.find((a) => a.t === "bid" && !a.nil) ?? legal[0];
+        if (!action) break;
+        send(who.peer, { t: "action", action });
+      }
+
+      let plays = 0;
+      const faceless: string[] = [];
+      for (const { frame } of watcher.conn.all("frame")) {
+        for (const event of frame.events) {
+          if (event.t !== "play" || !event.faceUp) continue;
+          plays++;
+          if (!frame.meta[event.piece]?.face) faceless.push(event.piece);
+        }
+      }
+      expect(plays, "the bots should have played some tricks").toBeGreaterThan(8);
+      expect(faceless).toEqual([]);
+
+      // And the hand it left is one card shorter the moment it leaves —
+      // replayed through the table store exactly as the online client
+      // does. A card unmasked from a hidden hand used to leave its
+      // stand-in behind until the frame reconciled, which for the last
+      // card of a trick meant a back sitting in the hand through the hold
+      // and the collect, seconds after the card had flown.
+      const frames = watcher.conn.all("frame").map((m) => m.frame);
+      const start = frames.findIndex((f) => f.events.length === 0);
+      const store = useTableStore.getState();
+      const inHand = (map: PlacementMap, seat: number) =>
+        Object.values(map).filter((q) => q.zone === "hand" && q.seat === seat).length;
+      store.reset(frames[start]!.placements, frames[start]!.meta);
+      const lingering: string[] = [];
+      for (const frame of frames.slice(start + 1)) {
+        useTableStore.getState().learnMeta(frame.meta);
+        for (const event of frame.events) {
+          applyEventToTable(event);
+          if (event.t !== "play") continue;
+          const now = inHand(useTableStore.getState().placements, event.from);
+          const settled = inHand(frame.placements, event.from);
+          if (now !== settled) lingering.push(`seat ${event.from}: ${now} in hand, should be ${settled}`);
+        }
+        useTableStore.getState().reset(frame.placements, frame.meta);
+      }
+      expect(lingering.slice(0, 5)).toEqual([]);
     });
 
     it("hands a seat to a bot the moment its owner disconnects", () => {

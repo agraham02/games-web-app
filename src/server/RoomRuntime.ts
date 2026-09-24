@@ -29,7 +29,7 @@ import type { Rng } from "@/engine/rng";
 import { DEFAULT_TURN_HOLD_MS, GameSession, type SessionFrame } from "@/session/GameSession";
 import { playbackMs } from "@/motion/choreographer";
 import { gameEntry, type GameId, type RawSettings } from "@/session/registry";
-import { projectEvents, redactPlacements } from "@/session/redact";
+import { piecesNamed, projectEvents, redactPlacements } from "@/session/redact";
 import {
   applyCommand,
   connectedCount,
@@ -401,8 +401,12 @@ export class RoomRuntime {
     // It leaks nothing: these are exactly the pieces the redaction has
     // already decided this seat may identify, and a card they can name is
     // a card whose face they are entitled to.
+    const events = projectEvents(frame.events, truthBefore, truthAfter);
     const meta: Record<PieceId, PieceMeta> = { ...standInMeta };
-    for (const id of Object.keys(placements)) {
+    // ...and for anything the batch names on the way, which the settled
+    // board may no longer hold: the last card of a trick is played face up
+    // and collected face down in one reduce. See `piecesNamed`.
+    for (const id of [...Object.keys(placements), ...piecesNamed(events)]) {
       if (!meta[id] && allMeta[id]) meta[id] = allMeta[id];
     }
 
@@ -416,7 +420,7 @@ export class RoomRuntime {
 
     return {
       seq: frame.seq,
-      events: projectEvents(frame.events, truthBefore, truthAfter),
+      events,
       state: definition.playerView(after, asSeat),
       placements,
       meta,

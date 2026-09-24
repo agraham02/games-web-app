@@ -300,3 +300,28 @@ export function playbackMs(events: readonly GameEvent[], opts: ChoreographOption
   }
   return total;
 }
+
+/**
+ * Milliseconds from a batch going idle to its last animation finishing —
+ * the part of a batch that `playbackMs` deliberately does not count.
+ *
+ * Playback goes idle when the last event is APPLIED, with its animation
+ * still running underneath. That is right for pacing, and harmless offline,
+ * where the reconcile that follows keeps every piece's id. Online it does
+ * not: the settled position names a card that has just gone face down by a
+ * stand-in, and swapping ids mid-flight unmounts the card that was flying.
+ * A trick's `collect` is exactly that, and it vanished the instant it began.
+ */
+export function tailMs(events: readonly GameEvent[], opts: ChoreographOptions = {}): number {
+  let start = 0;
+  let end = 0;
+  for (let i = 0; i < events.length; i++) {
+    if (i > 0) start += gapAfter(events[i - 1]!, events[i]!, opts);
+    const [step] = choreograph([events[i]!], opts);
+    // `think` is a wait, not an animation, and it always blocks the queue
+    // until it is over — so it can never still be running at the end.
+    if (events[i]!.t === "think") continue;
+    end = Math.max(end, start + (step?.duration ?? 0));
+  }
+  return Math.max(0, end - start);
+}

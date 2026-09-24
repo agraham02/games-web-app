@@ -170,7 +170,7 @@ describe("spades — blind eligibility and the hidden hand", () => {
     const eligible = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     let { state } = startRound(eligible, rng);
     expect(state.handRevealed[0]).toBe(false);
-    ({ state } = reduce(state, { t: "blindBid", tricks: 6 }));
+    ({ state } = reduce(teamVotes(state, true), { t: "blindBid", tricks: 6 }));
     expect(state.bids[0]).toEqual({ tricks: 6, nil: false, blind: true });
     expect(state.handRevealed[0]).toBe(true);
   });
@@ -180,7 +180,7 @@ describe("spades — blind eligibility and the hidden hand", () => {
     const def = createSpades();
     const eligible = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     let { state } = startRound(eligible, rng);
-    ({ state } = reduce(state, { t: "blindNil" }));
+    ({ state } = reduce(teamVotes(state, true), { t: "blindNil" }));
     expect(state.handRevealed[0]).toBe(false);
     ({ state } = reduce(state, { t: "bid", tricks: 3, nil: false })); // seat 1
     expect(state.handRevealed[0]).toBe(false);
@@ -194,6 +194,14 @@ describe("spades — blind eligibility and the hidden hand", () => {
     expect(state.phase).toBe("play");
   });
 });
+
+/** Both partners of whoever bids first vote the same way, as people. */
+function teamVotes(state: SpadesState, blind: boolean): SpadesState {
+  const first = state.turn;
+  const partner = ((first + 2) % 4) as SeatId;
+  const s = reduce(state, { t: "blindVote", seat: first, blind, defer: false }).state;
+  return reduce(s, { t: "blindVote", seat: partner, blind, defer: false }).state;
+}
 
 describe("spades — synchronized team blind decision", () => {
   function eligible(seed: number) {
@@ -211,36 +219,32 @@ describe("spades — synchronized team blind decision", () => {
     // partner gets no turn at all.
     const { def, state } = eligible(9);
     let s = state;
-    ({ state: s } = reduce(s, { t: "blindNil" })); // seat 0 goes blind
+    ({ state: s } = reduce(teamVotes(s, true), { t: "blindNil" })); // seat 0 goes blind
     ({ state: s } = reduce(s, { t: "bid", tricks: 3, nil: false })); // seat 1
     expect(def.currentSeat(s)).toBe(2);
     expect(mustBidBlind(s, 2)).toBe(true);
     const legal = def.legalActions(s, 2);
-    expect(legal.some((a) => a.t === "look")).toBe(false);
+    expect(legal.some((a) => a.t === "blindVote" || a.t === "bid")).toBe(false);
     expect(legal.some((a) => a.t === "blindBid" || a.t === "blindNil")).toBe(true);
   });
 
-  it("auto-reveals the partner's hand the instant the first bidder chooses to look", () => {
+  it("turns both hands over when the team votes to look", () => {
     const { def, state } = eligible(9);
-    let s = state;
-    expect(s.handRevealed[2]).toBe(false);
-    ({ state: s } = reduce(s, { t: "look" })); // seat 0 looks
-    ({ state: s } = reduce(s, { t: "bid", tricks: 4, nil: false })); // seat 0's actual bid, non-blind
-    // Partner (seat 2) hasn't even had a turn yet, but the team already
-    // committed to looking, so their hand is revealed pre-emptively.
+    let s = teamVotes(state, false);
+    expect(s.handRevealed[0]).toBe(true);
     expect(s.handRevealed[2]).toBe(true);
+    expect(s.blindCall).toMatchObject({ 0: false, 2: false });
+    ({ state: s } = reduce(s, { t: "bid", tricks: 4, nil: false })); // seat 0
     ({ state: s } = reduce(s, { t: "bid", tricks: 2, nil: false })); // seat 1
     expect(def.currentSeat(s)).toBe(2);
-    // Ordinary bid pad, never the blind-choice screen — the team decision
-    // already resolved.
-    const legal = def.legalActions(s, 2);
-    expect(legal.every((a) => a.t === "bid")).toBe(true);
+    // Ordinary bid pad, never the blind one — the team already decided.
+    expect(def.legalActions(s, 2).every((a) => a.t === "bid")).toBe(true);
   });
 
   it("bot bidders honour the lock — never returns 'look' once the partner went blind", () => {
     const { def, state } = eligible(21);
     let s = state;
-    ({ state: s } = reduce(s, { t: "blindNil" })); // seat 0 goes blind
+    ({ state: s } = reduce(teamVotes(s, true), { t: "blindNil" })); // seat 0 goes blind
     ({ state: s } = reduce(s, { t: "bid", tricks: 3, nil: false })); // seat 1
     expect(def.currentSeat(s)).toBe(2);
     const view = def.playerView(s, 2);
@@ -254,7 +258,7 @@ describe("spades — synchronized team blind decision", () => {
     it("mirrors the exact bid onto the partner, reveals their hand, and skips their turn", () => {
       const { def, state } = eligible(9);
       let s = state;
-      ({ state: s } = reduce(s, { t: "blindBid", tricks: 6 })); // seat 0, first bidder
+      ({ state: s } = reduce(teamVotes(s, true), { t: "blindBid", tricks: 6 })); // seat 0, first bidder
       expect(s.bids[0]).toEqual({ tricks: 6, nil: false, blind: true });
       expect(s.bids[2]).toBe(s.bids[0]); // literally the same object — see scoring.ts's doc
       expect(s.handRevealed[2]).toBe(true); // partner's cards turn over immediately
@@ -274,7 +278,7 @@ describe("spades — synchronized team blind decision", () => {
       // flows through endRound correctly — target is 6, not 12.
       const { def, state } = eligible(9);
       let s = state;
-      ({ state: s } = reduce(s, { t: "blindBid", tricks: 6 })); // seat 0 + mirrored seat 2
+      ({ state: s } = reduce(teamVotes(s, true), { t: "blindBid", tricks: 6 })); // seat 0 + mirrored seat 2
       ({ state: s } = reduce(s, { t: "bid", tricks: 3, nil: false })); // seat 1
       ({ state: s } = reduce(s, { t: "bid", tricks: 2, nil: false })); // seat 3
       expect(s.phase).toBe("play");
@@ -305,7 +309,7 @@ describe("spades — synchronized team blind decision", () => {
     it("a SECOND bidder's own blind numeric bid stays individual (no mirroring)", () => {
       const { def, state } = eligible(9);
       let s = state;
-      ({ state: s } = reduce(s, { t: "blindNil" })); // seat 0 — individual, exchange-based
+      ({ state: s } = reduce(teamVotes(s, true), { t: "blindNil" })); // seat 0 — individual, exchange-based
       ({ state: s } = reduce(s, { t: "bid", tricks: 3, nil: false })); // seat 1
       expect(def.currentSeat(s)).toBe(2);
       ({ state: s } = reduce(s, { t: "blindBid", tricks: 6 })); // seat 2, SECOND bidder
@@ -334,7 +338,7 @@ describe("spades — hand-reveal flips are ordered for display, not deal order",
     expect(def.currentSeat(state)).toBe(2);
 
     const heroHandBefore = state.hands[0] ?? [];
-    const { state: next, events } = reduce(state, { t: "blindBid", tricks: 6 }); // seat 2
+    const { state: next, events } = reduce(teamVotes(state, true), { t: "blindBid", tricks: 6 }); // seat 2
     expect(next.handRevealed[0]).toBe(true); // hero's hand really did reveal
 
     const heroFlipOrder = events
@@ -359,7 +363,7 @@ describe("spades — the blind-nil card exchange", () => {
     let state: SpadesState = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     ({ state } = startRound(state, rng));
 
-    ({ state } = reduce(state, { t: "blindNil" })); // seat 0
+    ({ state } = reduce(teamVotes(state, true), { t: "blindNil" })); // seat 0
     ({ state } = reduce(state, { t: "bid", tricks: 3, nil: false })); // seat 1
     expect(minLegalBid(state, 2)).toBe(4);
     ({ state } = reduce(state, { t: "bid", tricks: 4, nil: false })); // seat 2
@@ -399,7 +403,7 @@ describe("spades — the blind-nil card exchange", () => {
     const def = createSpades();
     let state: SpadesState = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     ({ state } = startRound(state, rng));
-    ({ state } = reduce(state, { t: "blindNil" }));
+    ({ state } = reduce(teamVotes(state, true), { t: "blindNil" }));
     ({ state } = reduce(state, { t: "bid", tricks: 3, nil: false }));
     ({ state } = reduce(state, { t: "bid", tricks: 4, nil: false }));
     ({ state } = reduce(state, { t: "bid", tricks: 2, nil: false }));
@@ -422,7 +426,7 @@ describe("spades — the blind-nil card exchange", () => {
     const def = createSpades();
     let state: SpadesState = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
     ({ state } = startRound(state, rng));
-    ({ state } = reduce(state, { t: "blindNil" })); // seat 0
+    ({ state } = reduce(teamVotes(state, true), { t: "blindNil" })); // seat 0
     ({ state } = reduce(state, { t: "bid", tricks: 3, nil: false }));
     ({ state } = reduce(state, { t: "bid", tricks: 4, nil: false }));
     ({ state } = reduce(state, { t: "bid", tricks: 2, nil: false }));
@@ -629,5 +633,103 @@ describe("spades — full-match simulation invariants", () => {
     // The LOSING team's score is the one at/under the threshold.
     const losingTeamSeats: [SeatId, SeatId] = state.winningSeats!.includes(0) ? [1, 3] : [0, 2];
     expect(state.scores[losingTeamSeats[0]]).toBeLessThanOrEqual(-1);
+  });
+});
+
+describe("spades — the team votes on going blind", () => {
+  /** Team 0 (seats 0 and 2) trails by 100, and `leader` bids first. */
+  function eligible(leader: SeatId) {
+    const rng = createRng(9);
+    const def = createSpades();
+    const dealer = ((leader + 3) % 4) as SeatId;
+    const base = { ...def.setup({ seats: 4, rng }), dealer, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    return { def, state: startRound(base, rng).state };
+  }
+  const vote = (s: SpadesState, seat: SeatId, blind: boolean, defer = false) =>
+    reduce(s, { t: "blindVote", seat, blind, defer }).state;
+
+  it("opens to both partners at once when the team's first bid comes up", () => {
+    const { def, state } = eligible(0);
+    expect(def.currentSeat(state)).toBe(0);
+    // Seat 2 is not on turn, and may vote anyway.
+    expect(def.legalActions(state, 0).every((a) => a.t === "blindVote")).toBe(true);
+    expect(def.legalActions(state, 2).every((a) => a.t === "blindVote")).toBe(true);
+    expect(def.legalActions(state, 2).length).toBeGreaterThan(0);
+    // Nobody bids until the team has decided.
+    expect(def.legalActions(state, 0).some((a) => a.t === "bid" || a.t === "blindBid")).toBe(false);
+  });
+
+  it("waits on whichever partner has not voted yet", () => {
+    const { def, state } = eligible(0);
+    const s = vote(state, 2, true); // the partner votes first
+    expect(def.currentSeat(s)).toBe(0);
+    expect(def.legalActions(s, 2)).toEqual([]);
+    const t = vote(state, 0, true);
+    expect(def.currentSeat(t)).toBe(2);
+  });
+
+  it("goes blind when both vote blind, and then only blind bids are offered", () => {
+    const { def, state } = eligible(0);
+    const s = vote(vote(state, 0, true), 2, true);
+    expect(s.blindCall).toMatchObject({ 0: true, 2: true });
+    expect(s.handRevealed[0]).toBe(false);
+    const legal = def.legalActions(s, 0);
+    expect(legal.length).toBeGreaterThan(0);
+    expect(legal.every((a) => a.t === "blindBid" || a.t === "blindNil")).toBe(true);
+  });
+
+  it("lets a person overrule a bot, whichever of them bids first", () => {
+    // The reported case: a bot partner bidding first used to decide for
+    // both of them.
+    for (const leader of [0, 2] as SeatId[]) {
+      const { state } = eligible(leader);
+      const bot = leader === 2 ? 2 : 0;
+      const person = bot === 2 ? 0 : 2;
+      const blind = vote(vote(state, bot, false, true), person, true);
+      expect(blind.blindCall[person]).toBe(true);
+      const look = vote(vote(state, bot, true, true), person, false);
+      expect(look.blindCall[person]).toBe(false);
+    }
+  });
+
+  it("leaves a team of bots to its first bidder, as before", () => {
+    const { state } = eligible(0);
+    expect(vote(vote(state, 0, true, true), 2, false, true).blindCall[0]).toBe(true);
+    expect(vote(vote(state, 0, false, true), 2, true, true).blindCall[0]).toBe(false);
+  });
+
+  it("settles a split between two people with a coin that replays from the seed", () => {
+    const outcomes = new Set<boolean>();
+    for (let round = 1; round <= 12; round++) {
+      const { state } = eligible(0);
+      const at = { ...state, round };
+      const once = vote(vote(at, 0, true), 2, false).blindCall[0];
+      const again = vote(vote(at, 0, true), 2, false).blindCall[0];
+      expect(again).toBe(once);
+      outcomes.add(once!);
+    }
+    // A coin, not a rule that always favours one side.
+    expect([...outcomes].sort()).toEqual([false, true]);
+  });
+
+  it("never asks a team that is not eligible", () => {
+    const { def, state } = eligible(0);
+    // Seats 1 and 3 lead, not trail.
+    expect(def.legalActions(state, 1)).toEqual([]);
+    expect(def.legalActions(state, 3)).toEqual([]);
+  });
+
+  it("records a submitted vote as a person's, cast by whoever sent it", () => {
+    // `defer` is what lets a person overrule a bot, so a client must not
+    // be able to claim it, or to vote in somebody else's name.
+    const def = createSpades();
+    const { state } = eligible(0);
+    const spoof = { t: "blindVote" as const, seat: 2 as SeatId, blind: true, defer: true };
+    expect(def.completeAction!(state, spoof, 0, createRng(1))).toEqual({
+      t: "blindVote",
+      seat: 0,
+      blind: true,
+      defer: false,
+    });
   });
 });

@@ -5,11 +5,12 @@
  *
  * The genuinely game-specific parts:
  *
- *  - **the bid pad.** `BlindChoiceDialog` (a blind-eligible seat's
- *    look-or-go-blind choice) is a rung-6 `BlockingDialog` — nothing to
- *    compare against yet, since the hand is still hidden at that exact
- *    decision. An ORDINARY bid is different: deciding how much to bid
- *    means looking at your own hand, so `NumericBidPanel` is a
+ *  - **the bid pad.** `BlindVoteDialog` (a trailing team's vote on going
+ *    blind) and `BlindChoiceDialog` (the blind bid that follows) are
+ *    rung-6 `BlockingDialog`s — nothing to compare against yet, since the
+ *    hand is still hidden at those exact decisions. An ORDINARY bid is
+ *    different: deciding how much to bid means looking at your own
+ *    hand, so `NumericBidPanel` is a
  *    non-modal floating panel instead (POLICY.md: "never put reference
  *    information in a modal").
  *  - **the exchange bar.** The Blind Nil card exchange is DIFFERENT: it

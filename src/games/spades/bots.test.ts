@@ -26,6 +26,8 @@ function baseState(overrides: Partial<SpadesState> = {}): SpadesState {
     hands: arr(),
     handRevealed: bool(true),
     blindEligible: bool(false),
+    blindVotes: { 0: null, 1: null, 2: null, 3: null },
+    blindCall: { 0: null, 1: null, 2: null, 3: null },
     bids: { 0: null, 1: null, 2: null, 3: null },
     exchange: null,
     trick: [],
@@ -117,22 +119,24 @@ describe("spades bots — blind bidding honesty", () => {
     });
   }
 
-  it("never lets a casual bot go blind, however eligible", () => {
+  it("never lets a casual bot vote to go blind, however eligible", () => {
     const state = eligibleHiddenState(hand13);
     for (let seed = 0; seed < 30; seed++) {
       const action = spadesBots.casual.choose(state, 0, createRng(seed));
-      expect(action).toEqual({ t: "look" });
+      expect(action).toEqual({ t: "blindVote", seat: 0, blind: false, defer: true });
     }
   });
 
-  it("steady/sharp sometimes go blind when eligible", () => {
+  it("steady/sharp sometimes vote blind when eligible, and always defer", () => {
+    // Deferring is what lets a person on the team overrule them.
     const state = eligibleHiddenState(hand13);
     for (const tier of ["steady", "sharp"] as const) {
-      const actions = Array.from({ length: 60 }, (_, seed) =>
-        spadesBots[tier].choose(state, 0, createRng(seed)).t,
+      const votes = Array.from({ length: 60 }, (_, seed) =>
+        spadesBots[tier].choose(state, 0, createRng(seed)),
       );
-      expect(actions).toContain("look");
-      expect(actions.some((t) => t === "blindNil" || t === "blindBid")).toBe(true);
+      expect(votes.every((v) => v.t === "blindVote" && v.defer)).toBe(true);
+      expect(votes.some((v) => v.t === "blindVote" && v.blind)).toBe(true);
+      expect(votes.some((v) => v.t === "blindVote" && !v.blind)).toBe(true);
     }
   });
 

@@ -16,6 +16,7 @@
  * here uses it.)
  */
 
+import { StrictMode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSpades } from "@/games/spades/rules";
@@ -73,6 +74,50 @@ function realDealFrame(gameId: GameId = "spades", seats = 4): FrameView {
 }
 
 const definition = createSpades();
+
+/**
+ * Every frame Ada is sent over the first few tricks of a two-human table,
+ * with both humans playing whatever their own frame says is legal.
+ */
+function playedFrames(): FrameView[] {
+  const clock = new TestClock();
+  const registry = new RoomRegistry({ clock, seed: 4242 });
+  const router = new Router(registry, () => clock.now());
+  const say = (peer: Peer, message: unknown) => router.onMessage(peer, JSON.stringify(message));
+  const adaConn = new Recorder();
+  const boConn = new Recorder();
+  const ada = makePeer(adaConn, 0);
+  const bo = makePeer(boConn, 0);
+  say(ada, { t: "hello", token: "ada", protocol: PROTOCOL_VERSION });
+  say(ada, { t: "createRoom", name: "Ada" });
+  const code = (adaConn.sent.find((m) => m.t === "room") as Extract<ServerMessage, { t: "room" }>).room.code;
+  say(bo, { t: "hello", token: "bo", protocol: PROTOCOL_VERSION });
+  say(bo, { t: "joinRoom", code, name: "Bo" });
+  say(ada, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+  say(ada, { t: "startGame" });
+
+  const lastFrame = (conn: Recorder) =>
+    [...conn.sent].reverse().find((m): m is Extract<ServerMessage, { t: "frame" }> => m.t === "frame")?.frame;
+  const players = [
+    { peer: ada, conn: adaConn },
+    { peer: bo, conn: boConn },
+  ];
+  for (let turn = 0; turn < 30; turn++) {
+    clock.drain();
+    const on = (registry.get(code)!.debugDump().table as { currentSeat: number | null }).currentSeat;
+    const who = players.find((p) => lastFrame(p.conn)?.seat === on);
+    if (on === null || !who) break;
+    const legal = definition.legalActions(lastFrame(who.conn)!.state as SpadesState, on);
+    const action = legal.find((a) => a.t === "bid" && !a.nil) ?? legal[0];
+    if (!action) break;
+    say(who.peer, { t: "action", action });
+  }
+  return adaConn.sent
+    .filter((m): m is Extract<ServerMessage, { t: "frame" }> => m.t === "frame")
+    .map((m) => JSON.parse(JSON.stringify(m.frame)) as FrameView);
+}
+
+
 
 function mount(frame: FrameView, withStart = true) {
   return renderHook(() =>
@@ -191,6 +236,37 @@ describe("the opening deal, online", () => {
 
     tick(20_000);
     expect(Object.values(handCounts())).toEqual([13, 13, 13, 13]);
+  });
+
+  it("deals once under StrictMode, not twice", () => {
+    // Reported as "the shuffle runs twice, only on the first round". The
+    // frame effect queues whatever frame it is handed, and StrictMode runs
+    // every effect twice on mount — so the opening deal was queued twice
+    // and played twice: the viewer's cards unmasked back into the deck
+    // and dealt all over again. Only the first round, because only the
+    // opening frame is present at mount.
+    const frame = realDealFrame();
+    const me = String(frame.seat);
+    const mine: number[] = [];
+    const unsubscribe = useTableStore.subscribe(() => mine.push(handCounts()[me] ?? 0));
+    renderHook(
+      () =>
+        useOnlineRuntime<SpadesState, SpadesAction>({
+          frame,
+          submit: () => {},
+          nextRound: () => {},
+          initial: () => openingPosition(definition, 4, frame.seat),
+        }),
+      { wrapper: StrictMode },
+    );
+
+    tick(READY_BEAT_MS + 1);
+    for (let i = 0; i < 60; i++) tick(500);
+    unsubscribe();
+
+    expect(Math.max(...mine)).toBe(13);
+    const full = mine.indexOf(13);
+    expect(mine.slice(full).every((n) => n === 13), "the hand emptied and was dealt again").toBe(true);
   });
 
   it("leaves no phantom cards behind in the deck", () => {
@@ -329,5 +405,67 @@ describe.each([
     expect(new Set(Object.keys(useTableStore.getState().placements))).toEqual(
       new Set(Object.keys(frame.placements)),
     );
+  });
+});
+
+describe("a trick, online", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    useTableStore.getState().reset({}, {});
+    visibility("visible");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("lets the collected cards finish flying to the winner before the board is adopted", () => {
+    // The settled position holds the won trick as face-down stand-ins, so
+    // adopting it swaps the real cards out. That used to happen the moment
+    // the collect was APPLIED — the batch goes idle there — and the cards
+    // were unmounted 20ms into a 580ms flight: no animation at all.
+    const frames = playedFrames();
+    let current = frames[0]!;
+    const { rerender } = renderHook(() =>
+      useOnlineRuntime<SpadesState, SpadesAction>({
+        frame: current,
+        submit: () => {},
+        nextRound: () => {},
+        initial: () => openingPosition(definition, 4, current.seat),
+      }),
+    );
+    for (let i = 0; i < 40; i++) tick(500);
+
+    const lifetimes: number[] = [];
+    for (const frame of frames.slice(1)) {
+      current = frame;
+      rerender();
+      const collect = frame.events.find((e) => e.t === "collect");
+      let landed = -1;
+      for (let t = 0; t < 8000; t += 20) {
+        tick(20);
+        if (!collect) continue;
+        const map = useTableStore.getState().placements;
+        const inPile = collect.pieces.some((id) => map[id]?.zone === "collected");
+        if (landed < 0 && inPile) landed = t;
+        if (landed >= 0 && !inPile) {
+          lifetimes.push(t - landed);
+          break;
+        }
+      }
+    }
+    expect(lifetimes.length, "the table should have finished some tricks").toBeGreaterThan(0);
+    // DURATION.collect is 0.42s before the per-card stagger.
+    for (const ms of lifetimes) expect(ms).toBeGreaterThanOrEqual(400);
   });
 });

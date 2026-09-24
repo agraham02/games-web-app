@@ -287,8 +287,14 @@ export type GameEvent =
   | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean }
   /** Taking a piece from a shared pile into a hand. */
   | { t: "draw"; piece: PieceId; from: ZoneId; to: SeatId; faceUp: boolean }
-  /** Hand -> table. */
-  | { t: "play"; piece: PieceId; from: SeatId; to: ZoneId; group?: number }
+  /**
+   * Hand -> table. `faceUp` is required, not defaulted, because it decides
+   * more than the picture: a piece played face up has been SHOWN to the
+   * table, and the redaction layer names it to every viewer on that basis
+   * (see `projectEvents`). BS plays face down, and a default of "up" would
+   * have been a leak waiting for the next game that forgot to say so.
+   */
+  | { t: "play"; piece: PieceId; from: SeatId; to: ZoneId; faceUp: boolean; group?: number }
   /** Arbitrary relocation when nothing more specific fits. */
   | { t: "move"; piece: PieceId; to: Placement }
   | { t: "flip"; piece: PieceId; faceUp: boolean }
@@ -353,7 +359,20 @@ export type GameEvent =
    * uses to ride in front of its own `move`, and for the same reason: two
    * events, one gesture.
    */
-  | { t: "unmask"; piece: PieceId; at: Placement }
+  | {
+      t: "unmask";
+      piece: PieceId;
+      at: Placement;
+      /**
+       * The stand-in the viewer was holding in that slot, which the real
+       * piece now takes the place of. Named by the redaction layer so the
+       * table can drop it without knowing redaction exists. Leaving it for
+       * the batch's reconcile was invisible only while the batch ended
+       * soon after: the last card of a trick is followed by a hold and a
+       * collect, and the leftover back sat in the hand for seconds.
+       */
+      replaces?: PieceId;
+    }
   /**
    * A deliberate beat with nothing to place. Some legal actions
    * genuinely move no piece — LRC's roll landing entirely on dots is

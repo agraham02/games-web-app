@@ -116,7 +116,10 @@ export function redactPlacements(
  * went out under its real id) while Spades hid it, because Spades does
  * place its deck before dealing and so happened to take the safe branch.
  *
- * So visibility is judged over BOTH ends of the batch, not just the start.
+ * So visibility is judged over BOTH ends of the batch, not just the start
+ * — and, since the ends are not the whole story, over the middle too:
+ * `known` is every piece this viewer can identify at this point in the
+ * batch (see `projectEvents`).
  */
 type Naming =
   /** Concealed throughout. Never the real id. */
@@ -126,20 +129,24 @@ type Naming =
   /** Public at both ends; the real id was never a secret. */
   | { kind: "public" };
 
-function namingFor(piece: PieceId, before: PlacementMap, after: PlacementMap): Naming {
+function namingFor(
+  piece: PieceId,
+  before: PlacementMap,
+  after: PlacementMap,
+  known: ReadonlySet<PieceId>,
+): Naming {
   const was = before[piece];
   const now = after[piece];
   const hiddenBefore = Boolean(was) && !was!.faceUp;
   const hiddenAfter = Boolean(now) && !now!.faceUp;
 
-  if (hiddenBefore && !hiddenAfter) return { kind: "reveal", at: { ...was! } };
-  if (hiddenBefore || hiddenAfter) {
-    // Named by where it WAS when it already existed, so the stand-in the
-    // viewer is looking at is the one that moves; by where it lands when
-    // it is new to the table, which is the deal case.
-    return { kind: "conceal", id: sentinelFor(hiddenBefore ? was! : now!) };
+  if (!hiddenAfter || known.has(piece)) {
+    return hiddenBefore ? { kind: "reveal", at: { ...was! } } : { kind: "public" };
   }
-  return { kind: "public" };
+  // Named by where it WAS when it already existed, so the stand-in the
+  // viewer is looking at is the one that moves; by where it lands when
+  // it is new to the table, which is the deal case.
+  return { kind: "conceal", id: sentinelFor(hiddenBefore ? was! : now!) };
 }
 
 /** Every piece id an event names, for the generic rewrite below. */
@@ -163,6 +170,22 @@ function piecesOf(event: GameEvent): PieceId[] {
 }
 
 /**
+ * Every real piece a projected batch names — which, after `projectEvents`,
+ * is exactly the set this viewer may identify during it. The server ships
+ * meta for these as well as for the settled board, because a card can be
+ * shown mid-batch and face down again by its end (the last card of a
+ * trick), and `PieceLayer` draws nothing for a piece it cannot describe.
+ */
+export function piecesNamed(events: readonly GameEvent[]): PieceId[] {
+  const out: PieceId[] = [];
+  for (const event of events) {
+    const ids = event.t === "unmask" ? [event.piece] : piecesOf(event);
+    for (const id of ids) if (!isSentinel(id)) out.push(id);
+  }
+  return out;
+}
+
+/**
  * Corrects an event's `faceUp` to what THIS viewer is entitled to see.
  *
  * A game writes `faceUp: seat === HERO` when it deals, because offline
@@ -182,6 +205,17 @@ function piecesOf(event: GameEvent): PieceId[] {
  * and this must never be the thing that reveals one.
  */
 function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
+  if (event.t === "play") {
+    // A play is judged against the board only while the piece is still
+    // where the play put it. Spades' exchange lands in the discard and
+    // stays there, face up to one side and down to the other, so the board
+    // is the authority. The last card of a trick is collected face-down in
+    // the same batch, and correcting its play to match would turn over a
+    // card every player at the table watched land face up.
+    const landed = after[event.piece];
+    if (!landed || landed.zone !== event.to || landed.faceUp === event.faceUp) return event;
+    return { ...event, faceUp: landed.faceUp };
+  }
   if (event.t !== "deal" && event.t !== "draw" && event.t !== "flip") return event;
   const landed = after[event.piece];
   if (!landed || landed.faceUp === event.faceUp) return event;
@@ -239,20 +273,49 @@ export function projectEvents(
   after: PlacementMap,
 ): GameEvent[] {
   const out: GameEvent[] = [];
+  // What this viewer can identify at this point in the batch: what they
+  // could already see, plus anything played face up in front of them.
+  //
+  // Both ends of the batch are not enough. The last card of a trick goes
+  // from a hidden hand to a face-down won pile in one reduce, so judged by
+  // its ends it was a secret — and every other player watched a blank
+  // card land on the trick, while the player who led it saw nothing move
+  // at all, because the stand-in their play was renamed to was one their
+  // table had never held. The three cards already on the trick went the
+  // same way: face up before, face down after, and their collect aimed at
+  // stand-ins nobody had, so the trick vanished at the reconcile instead
+  // of flying to its winner.
+  //
+  // A shuffle forgets everything. A card the viewer watched go into the
+  // deck is anonymous once it has been shuffled, and naming it in the
+  // deal that follows would say whose hand it went to.
+  const known = new Set<PieceId>();
+  for (const [id, placement] of Object.entries(before)) if (placement.faceUp) known.add(id);
+  // Once per piece: an `unmask` puts the piece back where it started, so a
+  // second one in front of a later event would snap it back there.
+  const unmasked = new Set<PieceId>();
 
   for (const event of events) {
-    // Announcements are prose the engine wrote about the table; they name
-    // no pieces and are already public.
-    for (const piece of piecesOf(event)) {
-      const naming = namingFor(piece, before, after);
-      if (naming.kind === "reveal") out.push({ t: "unmask", piece, at: naming.at });
-    }
+    if (event.t === "shuffle") known.clear();
 
     // Facing is corrected BEFORE the id is swapped, so it can be looked
     // up by the real piece — a sentinel has no entry in `after`.
+    const faced = withFacing(event, after);
+    if (faced.t === "play" && faced.faceUp) known.add(faced.piece);
+
+    // Announcements are prose the engine wrote about the table; they name
+    // no pieces and are already public.
+    for (const piece of piecesOf(event)) {
+      if (unmasked.has(piece)) continue;
+      const naming = namingFor(piece, before, after, known);
+      if (naming.kind !== "reveal") continue;
+      unmasked.add(piece);
+      out.push({ t: "unmask", piece, at: naming.at, replaces: sentinelFor(naming.at) });
+    }
+
     out.push(
-      withPiece(withFacing(event, after), (id) => {
-        const naming = namingFor(id, before, after);
+      withPiece(faced, (id) => {
+        const naming = namingFor(id, before, after, known);
         // A revealed piece travels under its real id — the `unmask` just
         // put that exact id on the board for it to move from.
         return naming.kind === "conceal" ? naming.id : id;

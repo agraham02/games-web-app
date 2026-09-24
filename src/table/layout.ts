@@ -421,9 +421,17 @@ export function layoutPiece(
       const dy = seat.y - cy;
       const len = Math.hypot(dx, dy) || 1;
       const radius = Math.min(trick.w, trick.h) * 0.26;
+      // ...but never so far that the card leaves the trick box. On a short
+      // screen the box is squeezed between the top seat's hand and the
+      // hero's, and a full offset would carry a card back out into one of
+      // them; the cards overlapping each other a little more is the
+      // better trade.
+      const reachX = Math.max(0, trick.w / 2 - (art.w * tableScale) / 2);
+      const reachY = Math.max(0, trick.h / 2 - (art.h * tableScale) / 2);
+      const clamp = (v: number, reach: number) => Math.max(-reach, Math.min(reach, v));
       const { x, y } = centred(
-        cx + (dx / len) * radius,
-        cy + (dy / len) * radius,
+        cx + clamp((dx / len) * radius, reachX),
+        cy + clamp((dy / len) * radius, reachY),
         g,
       );
       return {

@@ -16,7 +16,7 @@ import type { Rng } from "@/engine/rng";
 import { isJokerId, parseCard, cardId, type Suit } from "@/games/_shared/cards";
 import { resolveTrick } from "@/games/_shared/trickTaking";
 import { cardStrength, effectiveSuit, isTrump, spadesDeck, type SpadesRules } from "./cards";
-import { isHiddenFromSelf, legalPlays, minLegalBid, mustBidBlind, partnerOf } from "./state";
+import { blindVoteOpen, isHiddenFromSelf, legalPlays, minLegalBid, partnerOf } from "./state";
 import type { SpadesAction, SpadesState } from "./types";
 
 function bestOf(items: readonly PieceId[], score: (id: PieceId) => number, rng: Rng): PieceId {
@@ -272,23 +272,28 @@ function opponentVoidIn(state: SpadesState, seat: SeatId, suit: Suit): boolean {
 }
 
 function chooseBidTurn(state: SpadesState, seat: SeatId, rng: Rng, tier: BotDifficulty): SpadesAction {
+  if (blindVoteOpen(state, seat)) {
+    // Always a deferring vote: a bot never overrules a person on its team
+    // (see `reduceBlindVote`). What it would PREFER still matters, because
+    // with a bot for a partner too, the first bidder's vote decides.
+    //
+    // Casual never goes blind — a cautious player who always looks first.
+    // Steady/sharp weigh it purely against the score deficit, since the
+    // hand is redacted at this point: there is nothing else TO weigh,
+    // which is the whole point.
+    //
+    // Only the first bidder's preference can ever count — beside a person
+    // a bot's vote defers, and beside another bot the first bidder decides
+    // — so the partner draws nothing for a vote that cannot matter.
+    if (state.turn !== seat) return { t: "blindVote", seat, blind: false, defer: true };
+    const deficit = (state.scores[((seat + 1) % 4) as SeatId] ?? 0) - (state.scores[seat] ?? 0);
+    const boldness = tier === "sharp" ? 0.6 : 0.3;
+    const blind = tier !== "casual" && deficit >= 100 && rng.next() < boldness;
+    return { t: "blindVote", seat, blind, defer: true };
+  }
   if (isHiddenFromSelf(state, seat)) {
-    // Synchronized team decision (see mustBidBlind's doc in state.ts) —
-    // once the partner has already bid blind, "look" is not a legal
-    // choice for this seat at all, regardless of tier or deficit. Not
-    // just a UI restriction: `legalActions` no longer offers `{t:"look"}`
-    // in this state, but a bot decides independently of that list here,
-    // so it has to honour the same rule itself or it'd bypass it outright.
-    if (!mustBidBlind(state, seat)) {
-      // Casual never goes blind — a cautious player who always looks
-      // first. Steady/sharp weigh going blind purely against the score
-      // deficit, since the hand is redacted at this point — there is
-      // nothing else TO weigh, which is the whole point.
-      if (tier === "casual") return { t: "look" };
-      const deficit = (state.scores[((seat + 1) % 4) as SeatId] ?? 0) - (state.scores[seat] ?? 0);
-      const boldness = tier === "sharp" ? 0.6 : 0.3;
-      if (deficit < 100 || rng.next() >= boldness) return { t: "look" };
-    }
+    // Past the vote and still hidden: the team went blind, so the only
+    // question left is which blind bid.
     if (minLegalBid(state, seat) === 0 && rng.next() < 0.4) return { t: "blindNil" };
     return { t: "blindBid", tricks: 6 };
   }

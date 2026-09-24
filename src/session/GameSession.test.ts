@@ -7,8 +7,8 @@
 // server, where it is far more expensive to find.
 
 import { describe, expect, it } from "vitest";
-import { createSpades } from "@/games/spades/rules";
-import type { SpadesAction } from "@/games/spades/types";
+import { blindVoteOpen, createSpades } from "@/games/spades/rules";
+import type { SpadesAction, SpadesState } from "@/games/spades/types";
 import { createLrc } from "@/games/lrc/rules";
 import { createPoker, DEFAULT_BIG_BLIND, DEFAULT_STARTING_STACK } from "@/games/poker/rules";
 import { betRange } from "@/games/poker/state";
@@ -430,6 +430,12 @@ describe("legalActions as the submit gate", () => {
       // is the only thing stopping a generous window holding up a table.
       if (typeof s.turn === "number") seats.add(s.turn);
       return { seats, why: "everyone still able to doubt the play, plus the seat on turn" };
+    }
+    if (gameId === "spades") {
+      // The blind vote: both partners of a trailing team, at once.
+      const sp = state as SpadesState;
+      const seats = ([0, 1, 2, 3] as SeatId[]).filter((x) => blindVoteOpen(sp, x) && !sp.blindVotes[x]);
+      if (seats.length > 0) return { seats: new Set(seats), why: "both partners on a blind vote who have not voted" };
     }
     return null;
   }

@@ -123,6 +123,18 @@ Three things have gone wrong here already, all worth knowing:
   nothing for the viewer's own face-up cards. Every unit test passed and
   the table was empty. Only a real browser caught it.
 
+- **Both ends of a batch are not the whole batch.** The last card of a
+  Spades trick goes from a hidden hand to a face-down won pile in one
+  reduce, so judged by its ends it was a secret: everybody else saw a
+  blank card land, and the player who led it saw nothing move, because
+  its stand-in was one their table never held (`moveTo` skips those
+  silently). The three cards already on the trick went the same way.
+  `projectEvents` now tracks what the viewer can identify DURING the
+  batch — seen before, or played face up in it, forgotten at a
+  `shuffle` — which is why `play` carries a required `faceUp`: it says
+  what was shown, and BS plays face down. The redaction test now also
+  asserts every event aims at a piece the viewer's table holds.
+
 The pattern: each was found by doing the NEXT thing (a second game, a
 real browser), not by more tests on the last one.
 

@@ -411,6 +411,7 @@ function reduceLayNewMeld(state: RummyState, cards: readonly PieceId[]): ReduceR
     piece: card,
     from: seat,
     to: "board" as const,
+    faceUp: true,
     group: meld.id,
   }));
   events.push({
@@ -454,7 +455,7 @@ function reduceExtendMeld(
 
   const next = applyExtend(state, meld, card, seat);
   const events: GameEvent[] = [
-    { t: "play", piece: card, from: seat, to: "board", group: meld.id },
+    { t: "play", piece: card, from: seat, to: "board", faceUp: true, group: meld.id },
   ];
   return endTurnIfEmpty(noteProgress(next), events);
 }
@@ -497,7 +498,7 @@ function reduceDiscard(state: RummyState, card: PieceId): ReduceResult<RummyStat
   }
   if (!hand.includes(card)) return { state, events: [] };
 
-  const events: GameEvent[] = [{ t: "play", piece: card, from: seat, to: "discard" }];
+  const events: GameEvent[] = [{ t: "play", piece: card, from: seat, to: "discard", faceUp: true }];
   const afterDiscard: RummyState = {
     ...state,
     hands: { ...state.hands, [seat]: hand.filter((c) => c !== card) },
@@ -591,7 +592,7 @@ function reduceClaim(state: RummyState, seat: SeatId): ReduceResult<RummyState> 
     hands: { ...state.hands, [seat]: [...(state.hands[seat] ?? []), window.discard] },
   };
   const next = applyExtend(taken, meld, window.discard, seat);
-  events.push({ t: "play", piece: window.discard, from: seat, to: "board", group: meld.id });
+  events.push({ t: "play", piece: window.discard, from: seat, to: "board", faceUp: true, group: meld.id });
   events.push({
     t: "announce",
     seat,
