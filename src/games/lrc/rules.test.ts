@@ -163,17 +163,25 @@ describe("reduce — one roll", () => {
     expect(chipsHeld(next, passRight(state, roller))).toBe(CHIPS_PER_PLAYER + 1);
   });
 
-  it("dots move nothing, but the roll still gets a pause beat, never an empty batch", () => {
+  it("dots move nothing, but the roll is still shown, never an empty batch", () => {
     // The reported bug: a dots roll used to produce ZERO events, which
     // useGameRuntime.submitAction special-cased into calling onIdle
     // synchronously — no settle beat at all, so the turn snapped
     // straight to the next one and read as visibly rushed next to a
-    // roll that moved a real chip. See the `pause` event's own doc.
+    // roll that moved a real chip. The dice themselves are that beat now.
     const { state } = fresh(4, 3);
     const { state: next, events } = lrc.reduce(state, { t: "roll", dice: ["dot", "dot", "dot"] });
     expect(next.chipOwner).toEqual(state.chipOwner);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toEqual({ t: "pause" });
+    expect(events).toEqual([{ t: "dice", seat: state.turn, faces: ["dot", "dot", "dot"] }]);
+  });
+
+  it("throws the dice before anything they decided moves", () => {
+    // Reported: the roll and the chips it decides looked simultaneous.
+    // The dice are an event in the same queue, so they come first.
+    const { state } = fresh(4, 3);
+    const { events } = lrc.reduce(state, { t: "roll", dice: ["L", "C", "R"] });
+    expect(events[0]).toEqual({ t: "dice", seat: state.turn, faces: ["L", "C", "R"] });
+    expect(events.slice(1).filter((e) => e.t === "move")).toHaveLength(3);
   });
 
   it("never returns an empty events array for a legal roll, across a real sweep", () => {

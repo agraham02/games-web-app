@@ -158,6 +158,10 @@ export function choreograph(
         steps.push({ event, offset: 0, duration: MASK_SETTLE });
         break;
 
+      case "dice":
+        steps.push({ event, offset: 0, duration: (DURATION.diceTumble + DURATION.diceRead) * MS });
+        break;
+
       case "pause":
         // Same weight as a single ordinary `move` — DURATION.play, not
         // a fresh constant — because the whole point is that a turn
@@ -251,6 +255,8 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  *    move that follows must not land in the same paint.
  *  - `mask` swaps the pieces a sweep is still carrying into a pile for
  *    stand-ins, so the shuffle and deal behind it wait for them to land.
+ *  - `dice` has to be SEEN: the chips a roll decides wait until the dice
+ *    have tumbled and been read.
  *  - `pause` is a beat by definition. LRC emits one ahead of a roll's
  *    chip moves so the dice can be READ before the chips they decided
  *    start flying, and the draining loop used to honour only the first
@@ -259,7 +265,9 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  */
 function blockingMs(event: GameEvent, step: TimedStep | undefined): number {
   if (event.t === "think") return event.ms;
-  if (event.t === "unmask" || event.t === "mask" || event.t === "pause") return step?.duration ?? 0;
+  if (event.t === "unmask" || event.t === "mask" || event.t === "pause" || event.t === "dice") {
+    return step?.duration ?? 0;
+  }
   return 0;
 }
 

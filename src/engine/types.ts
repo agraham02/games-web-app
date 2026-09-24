@@ -404,6 +404,16 @@ export type GameEvent =
    */
   | { t: "pause" }
   /**
+   * Dice are thrown — LRC's roll, shown before anything it decided moves.
+   * A cosmetic flourish, like `slam`, and an event for the same reason: it
+   * goes through the queue, so the chips behind it wait until the dice
+   * have tumbled and been read, and it obeys skip and reduced motion for
+   * free. It used to be a bare `pause` with the dice drawn on their own
+   * clock off `lastAction`, and the two drifted: the chips flew while the
+   * dice were still appearing. `faces` are the real, already-decided dice.
+   */
+  | { t: "dice"; seat: SeatId; faces: string[] }
+  /**
    * Bot deliberation. A first-class event, not a setTimeout in the UI:
    * it is what makes an opponent feel like a person rather than a
    * function that returns instantly.

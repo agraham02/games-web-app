@@ -28,6 +28,13 @@ export const DURATION = {
      */
     sweep: 0.16,
     /**
+     * LRC's dice: how long they tumble, and then how long they sit still
+     * to be read before any chip they decided moves. The choreographer
+     * holds the queue for both; the dice overlay tumbles for the first.
+     */
+    diceTumble: 0.6,
+    diceRead: 0.45,
+    /**
      * Caribbean dominoes' slam, start to settled — the tile rising toward
      * the viewer, the drop, and the board's rattle afterwards. Longer than
      * any other single-piece gesture because it deliberately is one: the

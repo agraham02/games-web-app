@@ -14,7 +14,8 @@ import type { SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { chipsHeld, diceCountFor } from "@/games/lrc/state";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
-import { TRANSITIONS } from "@/motion/presets";
+import { DURATION, TRANSITIONS, prefersReducedMotion } from "@/motion/presets";
+import { onDice } from "@/table/fx";
 import { DiceFace } from "@/ui/primitives/DiceFace";
 import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
@@ -161,20 +162,6 @@ export function playerViews(view: LrcView, state: LrcState, live: Live): SeatVie
   return out;
 }
 
-/**
- * A bot's move only ever animates AFTER its dice settle: `revealBotTurn`
- * prepends a real `think` event, so the choreographer holds the actual
- * chip-move animation back until that beat (which comfortably outlasts
- * the tumble) finishes. The hero's own roll had no equivalent — clicking
- * Roll called `submitAction` immediately, which pushes the chip-move
- * events to the choreographer right away, with nothing holding them
- * back the way `think` does for a bot. The tumble and the chip's actual
- * flight ran side by side instead of tumble-then-flight, which is
- * exactly the "it looks like they're happening simultaneously" gap
- * reported live. Matching bots' feel means the hero's OWN move needs
- * the same kind of held beat, sized to the tumble it's covering for.
- */
-
 /** The one game-specific slot: the Roll button and the dice it produces. */
 export function LrcControls({ live }: { live: Live }) {
   // The dice are NOT rolled here any more. They used to be — the screen
@@ -185,13 +172,9 @@ export function LrcControls({ live }: { live: Live }) {
   // client that authors its own roll can choose it. The roll is now
   // resolved by whoever owns the game (the session offline, the server
   // online) via `completeAction`, and the beat that used to come from
-  // delaying the submit comes from a `pause` the engine emits instead —
-  // which has the side benefit of obeying skip and reduced motion, as a
-  // client-side `setTimeout` never did.
-  //
-  // The dice this shows are therefore the real, already-decided ones,
-  // read back off `lastAction`, and the tumble is a reveal over a known
-  // value exactly as it always was.
+  // delaying the submit is the engine's own `dice` event — which the chips
+  // wait behind, and which obeys skip and reduced motion as a client-side
+  // `setTimeout` never did. The dice shown are the real, decided ones.
   const roll = () => {
     if (live.busy) return; // Mid-roll — ignore a second click.
     // Empty: whatever were sent would be discarded anyway.
@@ -199,30 +182,14 @@ export function LrcControls({ live }: { live: Live }) {
   };
 
   const showRoll = live.isHeroTurn;
-  const lastRoll =
-    live.lastAction?.action.t === "roll" && live.lastAction.action.dice.length > 0
-      ? live.lastAction.action.dice
-      : null;
 
   return (
     <>
       <TurnIndicator label="Your turn — roll" show={showRoll} />
 
-      <DiceOverlay
-        dice={lastRoll}
-        // `.action`, not the `{seat, action}` wrapper: `submitAction`
-        // stores the exact SAME action object `pendingRoll` already
-        // held (see its own comment — only WHEN it's applied is
-        // delayed, not what it resolves to), so once it fires,
-        // `live.lastAction.action` is === the `pendingRoll` we were
-        // already showing. Comparing the wrapper instead — a NEW object
-        // every time regardless — made the tumble reset and replay a
-        // second time the instant submitAction landed, even though it's
-        // the same roll: the exact "dice rolled twice" bug reported
-        // live. Bot rolls are unaffected — `bot.choose()` always builds
-        // a genuinely new action, so this is still a real change then.
-        revision={live.lastAction?.action}
-      />
+      {/* Driven by the `dice` event as the queue reaches it, not by
+          `lastAction` — see the event's doc. */}
+      <DiceOverlay />
 
       <div
         className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 flex justify-center pb-4"
@@ -256,93 +223,71 @@ type Face = "L" | "R" | "C" | "dot";
  * simple to reason about — every cycling die is doing this same walk,
  * just starting from a different offset. */
 const TUMBLE_SEQUENCE: readonly Face[] = ["dot", "L", "C", "R"];
-const TUMBLE_TICK_MS = 90;
+const TUMBLE_TICK_MS = 100;
 /**
- * Shortened from 6 when the roll became server-authoritative. The tumble
- * used to have the screen's own delay to play inside; it now plays over
- * the `pause` the engine emits before the chips move, and a tumble longer
- * than that beat would still be cycling while chips fly.
+ * Derived from `DURATION.diceTumble`, the same number the choreographer
+ * holds the queue for, so the dice cannot still be tumbling when the chips
+ * they decided start to move. It was a separate hand-tuned count once, and
+ * that is how the two drifted apart.
  */
-const TUMBLE_TICKS = 3;
+const TUMBLE_TICKS = Math.max(1, Math.round((DURATION.diceTumble * 1000) / TUMBLE_TICK_MS));
 
 /**
  * Transient dice display — not a Piece (see dice.ts / DiceFace.tsx for
- * why), just a self-contained overlay keyed to the last roll.
+ * why), just an overlay that shows the latest roll.
  *
- * `revision` is `live.lastAction` — a new object every roll, even when
- * two rolls produce identical dice (e.g. two "all dots"). Deriving the
- * AnimatePresence key from ITS identity, via a monotonic counter bumped
- * whenever that reference changes, is what makes the exit/enter
- * animation replay correctly on a repeat result — a key built from the
- * dice values themselves wouldn't change between two identical rolls.
+ * It tumbles when the `dice` event is APPLIED — the moment the queue
+ * reaches the roll — through the same one-shot channel the slam uses, so
+ * it is in step with the chips behind it by construction. It used to key
+ * off `lastAction`, which lands when a turn ARRIVES: a bot's dice tumbled
+ * during its thinking beat, and a person's arrived late behind the
+ * previous roll's exit while the chips were already flying.
  *
- * The result is already decided by the time this ever runs — `reduce`
- * is synchronous, so `dice` is the real, final roll from the moment
- * this component sees it. The tumble below is a reveal animation over
- * an already-known value, same as a slot machine: brief, deterministic
- * cycling, then landing on the true result.
+ * The result is already decided when this runs; the tumble is a reveal
+ * over a known value, same as a slot machine. Each roll mounts under its
+ * own key and the old one fades out UNDERNEATH it (a one-cell grid), so a
+ * new roll never waits for the last one to leave before it appears.
  */
-function DiceOverlay({
-  dice,
-  revision,
-}: {
-  dice: readonly Face[] | null;
-  revision: unknown;
-}) {
-  // "Adjusting state during render," per React's own docs — the
-  // sanctioned way to derive a monotonic id from a changing prop
-  // reference, and to reset `tick` in that same instant. NOT a ref
-  // mutation: calling a state setter mid-render makes React discard and
-  // re-run this render immediately, so it never commits an inconsistent
-  // value the way a raw ref write could. The interval below only ever
-  // calls setTick from INSIDE its async callback, never synchronously
-  // in the effect body — that's the distinction the lint rule cares
-  // about (a synchronous setState in an effect can cascade renders;
-  // one from a real async event, a timer tick, is exactly what effects
-  // are for).
-  const [rollId, setRollId] = useState(0);
-  const [seenRevision, setSeenRevision] = useState<unknown>(null);
-  const [tick, setTick] = useState(0);
-  if (revision !== seenRevision) {
-    setSeenRevision(revision);
-    setRollId((n) => n + 1);
-    setTick(0);
-  }
+function DiceOverlay() {
+  const [roll, setRoll] = useState<{ id: number; faces: Face[] } | null>(null);
+  const [tick, setTick] = useState(TUMBLE_TICKS);
+
+  useEffect(
+    () =>
+      onDice(({ faces }) => {
+        setRoll((prev) => ({ id: (prev?.id ?? 0) + 1, faces: faces as Face[] }));
+        // Reduced motion: the result, without the tumble.
+        setTick(prefersReducedMotion() ? TUMBLE_TICKS : 0);
+      }),
+    [],
+  );
 
   useEffect(() => {
-    if (!dice || dice.length === 0) return;
-    const id = setInterval(() => {
-      setTick((t) => {
-        const next = t + 1;
-        if (next >= TUMBLE_TICKS) clearInterval(id);
-        return next;
-      });
-    }, TUMBLE_TICK_MS);
-    return () => clearInterval(id);
-    // Re-tumble whenever a genuinely new roll arrives, not on every
-    // render — rollId is exactly that signal.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rollId]);
+    if (!roll || tick >= TUMBLE_TICKS) return;
+    const id = setTimeout(() => setTick((t) => t + 1), TUMBLE_TICK_MS);
+    return () => clearTimeout(id);
+  }, [roll, tick]);
 
   const settled = tick >= TUMBLE_TICKS;
-  const shown = dice?.map((real, i) =>
+  const shown = roll?.faces.map((real, i) =>
     settled ? real : TUMBLE_SEQUENCE[(tick + i) % TUMBLE_SEQUENCE.length]!,
   );
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 flex justify-center"
+      className="pointer-events-none absolute inset-x-0 grid place-items-center"
       style={{ top: "38%" }}
     >
-      <AnimatePresence mode="wait">
-        {shown && shown.length > 0 ? (
+      <AnimatePresence initial={false}>
+        {roll && shown && shown.length > 0 ? (
           <motion.div
-            key={rollId}
+            key={roll.id}
             initial={{ opacity: 0, scale: 0.85 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
             transition={TRANSITIONS.ui}
             className="flex gap-2"
+            style={{ gridArea: "1 / 1" }}
           >
             {shown.map((face, i) => (
               <DiceFace key={i} face={face} size={48} />

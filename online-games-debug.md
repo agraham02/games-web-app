@@ -143,6 +143,28 @@ these notes refer to.
   in both orders and gets identical events; router.test.ts "gives the
   stand-ins a re-deal hands out a face-down face" on a real Dominoes room.
 
+## Left Right Center
+
+### The roll and the chips it decides looked simultaneous (or rushed)
+- **Cause:** two clocks. The chips waited behind a bare `pause` (300ms),
+  while the dice overlay tumbled on its own timer (270ms) keyed off
+  `lastAction` — which lands when a turn ARRIVES, so a bot's dice tumbled
+  during its `think`, and a person's new dice first waited for the last
+  roll's exit (`AnimatePresence mode="wait"`) while the chips already flew.
+- **Fix:** a cosmetic `dice` event (the `slam` pattern) replaces the
+  `pause` in front of a roll's moves. The choreographer blocks on it for
+  `DURATION.diceTumble + DURATION.diceRead` (0.6s + 0.45s); applying it
+  fires `emitDice` (fx.ts), and the overlay tumbles off that, with its
+  tick count DERIVED from `diceTumble` so the two cannot drift. New dice
+  mount over the old ones instead of waiting for them to leave. Obeys skip,
+  speed and reduced motion; the server's bot pacing counts it via
+  `playbackMs`.
+- **Tests:** choreographer.test.ts "dice" (chips wait tumble + read);
+  lrc/rules.test.ts (dice first, then moves); app/play/lrc/table.test.tsx
+  (overlay tumbles at once and has settled by the end of the tumble).
+- **Status:** confirmed by playtest in a browser, 2026-09-24. Spades and
+  Dominoes likewise; the online pass continues with the remaining games.
+
 ## Open gaps (known, not yet fixed)
 
 - **Poker's first deal** has no pile to fly from, offline or online

@@ -165,6 +165,27 @@ describe("choreograph", () => {
     });
   });
 
+  describe("dice", () => {
+    it("holds every chip back until the dice have tumbled AND been read", () => {
+      // The report: the roll and its result looked simultaneous. The dice
+      // tumble for `diceTumble` (the overlay derives its tumble from the
+      // same number), then sit still for `diceRead`, and only then may the
+      // first chip start to move.
+      const dice: GameEvent = { t: "dice", seat: 0, faces: ["L", "dot", "C"] };
+      const move: GameEvent = {
+        t: "move",
+        piece: "chip-0-0",
+        to: { zone: "collected", seat: 1, index: 0, count: 1, faceUp: true },
+      };
+      const wait = gapAfter(dice, move);
+      expect(wait).toBe((DURATION.diceTumble + DURATION.diceRead) * 1000);
+      expect(wait).toBeGreaterThan(DURATION.diceTumble * 1000);
+      // And the server, which paces bot turns by how long a frame takes
+      // to watch, counts it too.
+      expect(playbackMs([dice, move])).toBeGreaterThanOrEqual(wait);
+    });
+  });
+
   describe("unmask", () => {
     it("takes long enough to be painted before anything moves it", () => {
       // This asserted a duration of ZERO, on the reasoning that a

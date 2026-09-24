@@ -1,5 +1,5 @@
 /**
- * One-shot piece flourishes — currently just the slam.
+ * One-shot flourishes — the slam, and LRC's dice.
  *
  * **Why this is not the table store.** Everything in `store.ts` is table
  * STATE: where a piece is, whether it is face up, what it is doing. It
@@ -42,4 +42,23 @@ export function onSlam(listener: Listener): () => void {
 
 export function emitSlam(fx: SlamFx): void {
   for (const listener of listeners) listener(fx);
+}
+
+/** Dice thrown — see the `dice` event. */
+export interface DiceFx {
+  seat: number;
+  faces: string[];
+}
+
+const diceListeners = new Set<(fx: DiceFx) => void>();
+
+export function onDice(listener: (fx: DiceFx) => void): () => void {
+  diceListeners.add(listener);
+  return () => {
+    diceListeners.delete(listener);
+  };
+}
+
+export function emitDice(fx: DiceFx): void {
+  for (const listener of diceListeners) listener(fx);
 }

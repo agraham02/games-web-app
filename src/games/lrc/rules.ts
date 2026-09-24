@@ -161,16 +161,14 @@ export function reduce(state: LrcState, action: LrcAction): ReduceResult<LrcStat
   // oldest-held first — a stable pre-roll snapshot, so a later die in
   // this same roll never double-claims a chip an earlier die already
   // moved away.
-  // A beat before anything moves, so the dice can be READ before the
-  // chips they decided start flying. This used to be done by the play
-  // screen holding its own roll back for the length of the tumble, which
-  // it could only do because it had rolled the dice itself — and rolling
-  // your own dice is exactly what an online player must not do. Making it
-  // an event puts the beat under the choreographer, where it obeys skip,
-  // the speed multiplier and reduced motion like every other pause.
+  // The dice are thrown, and seen, before anything moves: the `dice`
+  // event holds the queue while they tumble and then sit still to be
+  // read, so the chips they decided fly only after that. This used to be
+  // a bare `pause` with the dice drawn on the table's own clock, and the
+  // two drifted — the chips flew while the dice were still appearing.
   const owned = ownedChips(state, seat);
   let cursor = 0;
-  if (action.dice.length > 0) events.push({ t: "pause" });
+  if (action.dice.length > 0) events.push({ t: "dice", seat, faces: [...action.dice] });
 
   for (const face of action.dice) {
     if (face === "dot") continue;
