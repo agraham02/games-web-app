@@ -122,7 +122,8 @@ export function SettingsSheet({
   onChange: (key: string, value: boolean) => void;
 }) {
   return (
-    <InfoSheet open={open} title="Settings" onClose={onClose}>
+    // From the right, where the Settings button sits.
+    <InfoSheet open={open} title="Settings" onClose={onClose} side="right">
       <div className="flex flex-col gap-3">
         {settings.map((s) => (
           <Toggle

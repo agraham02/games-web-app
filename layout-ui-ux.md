@@ -64,9 +64,6 @@ table**, instead of waiting for a screenshot.
   stack going all-in...") is written for people who already play. It
   should say what the game is in plain words; the Hands sheet's glossary
   has the vocabulary.
-- The in-game Settings sheet slides over the hero's own cards. It is
-  dismissible, but POLICY.md wants the hand visible under any sheet
-  (`PeekRail`'s `offsetBottom` is the precedent).
 
 ### Poker says "Round" where players say "hand"
 - The round intro and scorecard eyebrow are shared ("Round 3"). For poker
@@ -79,6 +76,9 @@ table**, instead of waiting for a screenshot.
   in development.
 
 ## Already fixed (for reference)
+- Settings and Poker's Hands rose from the bottom over the hero's cards —
+  now drawers from the right, where their buttons are, dimming the rest of
+  the screen; tap outside, the X or Esc closes (`InfoSheet`'s `side`).
 - Spades' trick overlapped the top seat's hand on a laptop — trick now
   centred in `pileRegion` (layout.test.ts "trick — stays clear").
 - Poker's community row overlapped the top seats' cards on a laptop, and

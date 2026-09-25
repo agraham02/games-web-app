@@ -84,4 +84,26 @@ describe("SettingsSheet", () => {
     fireEvent.click(hints);
     expect(onChange).toHaveBeenCalledWith("hints", false);
   });
+
+  it("dims the rest of the screen, and closes from the dim, the X or Esc", () => {
+    const onClose = vi.fn();
+    render(
+      <SettingsSheet open onClose={onClose} settings={SETTINGS} values={{}} onChange={() => {}} />,
+    );
+    fireEvent.click(screen.getByTestId("sheet-backdrop"));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+  it("slides in from the right, where its button is", () => {
+    // It rose from the bottom, over the player's own hand, while its
+    // button sits top-right.
+    render(
+      <SettingsSheet open onClose={() => {}} settings={SETTINGS} values={{}} onChange={() => {}} />,
+    );
+    const drawer = document.querySelector("aside")!;
+    expect(drawer.className).toContain("right-0");
+    expect(drawer.className).not.toContain("bottom-0");
+  });
 });

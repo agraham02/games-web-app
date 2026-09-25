@@ -708,7 +708,8 @@ function HandRankingsSheet({
     hole.length + community.length >= 5 ? bestOfSeven([...hole, ...community]).category : null;
 
   return (
-    <InfoSheet open={open} title="Hand rankings" onClose={onClose}>
+    // From the right, where the Hands button sits.
+    <InfoSheet open={open} title="Hand rankings" onClose={onClose} side="right">
       <ul className="flex flex-col gap-1.5">
         {HAND_CATEGORY_INFO.map((entry) => {
           const highlighted = entry.category === current;

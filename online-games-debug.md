@@ -308,6 +308,10 @@ these notes refer to.
   - Always available: a "Table words" glossary in the Hands sheet.
 - **Tests:** table/gameSettings.test.tsx; poker table.test.tsx "hints,
   and what is always shown". Checked live in a browser.
+- **Follow-up — drawers, not bottom sheets.** Settings and Hands slide in
+  from the right, the side their buttons are on, and dim the rest of the
+  screen; tapping the dim, the X or Esc closes them. Built into the shared
+  `InfoSheet` (`side` prop), and POLICY.md's rung 5 updated to match.
 
 ## Open gaps (known, not yet fixed)
 
