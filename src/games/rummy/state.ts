@@ -223,21 +223,52 @@ export const CLAIM_GRACE_MS = 900;
  * How long this seat has before the race is decided without them.
  *
  * Not a fixed five seconds: every seat drew a reaction time when the
- * window opened, and an unattended one spends its own as a `think` before
- * its bot takes the card. So a player's real deadline is the soonest time
+ * window opened, and an unattended one waits out its own before its bot
+ * takes the card (`claimHoldMs`). So a player's real deadline is the soonest time
  * belonging to somebody ELSE — the moment the first rival can arrive —
  * capped at `CLAIM_MS` for when every rival is slow.
  *
  * Excluding the seat's own time is the part worth stating. A seat with a
  * person in it never spends its reaction time; that number exists only so
  * the seat can be played by a bot when nobody is there. Counting it as a
- * deadline would have players racing themselves, and — since the list is
+ * deadline would have people racing themselves, and — since the list is
  * sorted — would give whoever drew the shortest one the least time to
  * act, which is precisely backwards.
+ *
+ * The same goes for every OTHER person's time, which is why `isBot`
+ * exists: at a table with two people in the race, one's number used to be
+ * the other's deadline, so a person could get barely a second to beat a
+ * rival who was never going to arrive then. Only a bot arrives on a
+ * schedule; people beat each other by pressing first. Without `isBot`
+ * every rival counts, which is exactly right offline, where the only
+ * person is the one asking.
  */
-export function claimDeadlineMs(state: RummyState, seat: SeatId): number {
-  const rivals = state.claimWindow?.pending.filter((p) => p.seat !== seat) ?? [];
+export function claimDeadlineMs(
+  state: RummyState,
+  seat: SeatId,
+  isBot: (seat: SeatId) => boolean = () => true,
+): number {
+  const rivals =
+    state.claimWindow?.pending.filter((p) => p.seat !== seat && isBot(p.seat)) ?? [];
   return Math.min(CLAIM_MS, rivals[0]?.ms ?? CLAIM_MS);
+}
+
+/**
+ * How long a bot at the front of the race still waits before it claims —
+ * its reaction time, less what the race has already used (`elapsed`).
+ *
+ * This is the wait that makes the race real. A bot used to claim after the
+ * table's ordinary beat and spend its reaction time as a `think` in the
+ * frame AFTERWARDS, so the card was already gone on the server while the
+ * person's ring still showed time left, and a press inside the ring lost.
+ * Spending it here, before `reduce`, puts the bot's arrival at the same
+ * moment as the end of the ring it is racing.
+ */
+export function claimHoldMs(state: RummyState, seat: SeatId): number | undefined {
+  const window = state.claimWindow;
+  const mine = window?.pending.find((p) => p.seat === seat);
+  if (!window || !mine) return undefined;
+  return Math.max(0, mine.ms - (window.elapsed ?? 0));
 }
 
 /** Is this seat actually in the race for the current discard? */
@@ -282,21 +313,52 @@ export function layableMelds(hand: readonly PieceId[]): PieceId[][] {
  * for an action, have no legal one, return an illegal one, `reduce`
  * would no-op, and the same seat would be asked again forever — so it
  * is worth the belt-and-braces of asking twice.
+ *
+ * `pool` is the rest of the pickup — the cards that rode along above
+ * `card` — and a meld made only of those and `card` does not count (see
+ * `usesHandCard`). The direct search is asked with the pool kept apart so
+ * it looks for exactly what `legalDrawDepths` found when it allowed the
+ * pickup, which is what keeps this list non-empty.
  */
-export function mandatoryMelds(hand: readonly PieceId[], card: PieceId): PieceId[][] {
+export function mandatoryMelds(
+  hand: readonly PieceId[],
+  card: PieceId,
+  pool: readonly PieceId[] = [],
+): PieceId[][] {
   const out: PieceId[][] = [];
   const seen = new Set<string>();
+  const pickup = { card, pool };
   const add = (meld: PieceId[] | null) => {
     if (!meld || meld.length < MIN_MELD || !meld.includes(card)) return;
+    if (!usesHandCard(meld, pickup)) return;
     const key = [...meld].sort().join(",");
     if (seen.has(key)) return;
     seen.add(key);
     out.push(meld);
   };
 
+  const own = hand.filter((c) => c !== card && !pool.includes(c));
+  add(findCompletion(card, own, pool));
   add(findCompletion(card, hand));
   for (const meld of layableMelds(hand)) add(meld);
   return out;
+}
+
+/**
+ * Does a meld made after a discard pickup use at least one card the player
+ * already HELD, rather than only cards off the pile?
+ *
+ * `legalDrawDepths` already refused a pickup that could not meet this, so
+ * a pile holding three kings in a row cannot be dug up and laid as a set
+ * by somebody holding no king at all. It still has to be asked of the meld
+ * actually laid: somebody holding one king could otherwise take all three
+ * off the pile, lay those, and keep their own.
+ */
+export function usesHandCard(
+  cards: readonly PieceId[],
+  pickup: { card: PieceId; pool: readonly PieceId[] },
+): boolean {
+  return cards.some((c) => c !== pickup.card && !pickup.pool.includes(c));
 }
 
 /** Every (meld, card) pair this seat could lay off onto the board. */

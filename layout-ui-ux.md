@@ -21,6 +21,73 @@ table**, instead of waiting for a screenshot.
 
 ## Open
 
+### The table's centre runs into the seats — fix it ONCE, centrally
+The user has reported this in nearly every game: Spades' trick, Poker's
+board and betting panel, and now Rummy's piles. Each got its own fix,
+one screenshot at a time. It needs one shared fix, plus a check of each
+game's own centre.
+
+**Rummy, reported 2026-09-25** (4 seats, board sheet resting): the stock
+and discard sit under the top seat's hand, and the "15 in stock" badge
+sits on it. The window was 1905×988 in screenshot pixels, probably
+1524×790 CSS at 125% Windows scaling. Measured with `resolveTable` +
+`layoutPiece`, with Rummy's `bottomZone` (hand header + `SHEET_PEEK_H`):
+
+| Viewport | `pileRegion` y | Minimum used? | Top hand's bottom | Deck's top | Overlap |
+|---|---|---|---|---|---|
+| 1524×790 | 177–331 | yes | 200 | 148 | 52px |
+| 1536×730 | 152–306 | yes | 200 | 123 | 77px |
+| 1366×650 | 152–306 | yes | 200 | 123 | 77px |
+| 1440×900 | 216–402 | no | 200 | 203 | clear (3px) |
+| 1905×988 | 216–490 | no | 200 | 247 | clear |
+
+**Root cause (shared).** `pileRegion` in `geometry.ts` is computed
+correctly: it clears the pods and the fanned hands. Then a MINIMUM is
+applied (`floorH = card.h × 1.2`, `floorW = two cards`), and when the
+room left is smaller, the region grows equally up and down, straight
+into the top seat's cards and the bottom sheet. The code says this is on
+purpose: "a pile that cannot be drawn is worse than one sitting a little
+close". That was a phone-landscape answer, but on a laptop with Rummy's
+board sheet the minimum is met on ordinary windows. The layout test that
+guards the pile ("keeps a clear gap between the pile and every opponent's
+own cards") SKIPS every viewport where the minimum was used, so the
+failing case is the one case not tested.
+
+Each centre zone also sizes its pieces on its own: the Spades trick and
+Poker's board scale down to fit `pileRegion`, but Rummy's deck and
+discard (`pileAssembly`) and BS's `pile`/`reveal` draw full-size cards
+and rely on that minimum. Poker's betting panel is a centre item placed
+from the hand zone with no reserved space.
+
+**The central fix, proposed:**
+1. **Pieces shrink, the region does not grow.** Keep `pileRegion` at what
+   the clearances leave. Give `TableGeometry` one `centreScale` (≤ 1):
+   the largest scale at which each game's centre content fits the
+   region. Every centre zone (deck, discard, trick, community, pot,
+   stub, pile, reveal) draws at that scale. Allow a region smaller than
+   the minimum only below a real legibility limit (a card under ~40px
+   tall), and only on the short-phone path (`isShortViewport`), which
+   already has its own rules.
+2. **Chrome over the centre is reserved, not laid on top.** Poker's
+   betting panel and Rummy's stock badge take space from the region's
+   budget (as `topZone`/`bottomZone` do, and reported through
+   `TableGeometry.reserved`), not a free position above the hand zone.
+3. **One test for every game's centre.** Replace the skip with an
+   assertion over `TABLE_VIEWPORTS` × seat counts × each game's own
+   `bottomZone`: no centre piece or centre chrome overlaps any
+   opponent's hand, pod, or the reserved bands. It must include laptop
+   heights, since every report so far came from a laptop window.
+
+**Per game, after that:**
+- Rummy: `pileAssembly`'s deck + fan and `StockBadge` at `centreScale`.
+  The discard fan's pan range is derived from the region, so check it at
+  the smaller scale.
+- BS: `pile`/`reveal` are sized from `spec.card`, so same treatment.
+- Dominoes: `line` has its own camera and fits the chain already. Only
+  check its clearance against the top rack on laptop heights.
+- Poker: the panel reservation above covers the 1366×650 residue below.
+- Spades: the trick already scales; just include it in the shared test.
+
 ### Poker: betting panel vs the board on short laptop windows
 - At 1366×650 the panel (now a single 96px row on wide screens) still
   overlaps the flop by ~12px. Between the board's bottom and the hero's
@@ -34,9 +101,9 @@ table**, instead of waiting for a screenshot.
   the board on phone landscape.
 
 ### Centre zones not yet audited against HANDS on laptop heights
-- Rummy's deck/discard piles, BS's `pile`/`reveal` pair, Dominoes' `line`.
-  Spades' trick and Poker's community row both collided; these are the same
-  shape.
+- Rummy: now measured and reported (see "The table's centre runs into the
+  seats" above).
+- BS's `pile`/`reveal` pair and Dominoes' `line` are still to be measured.
 
 ### The round-end summary hides the table
 - It blurs and covers the felt, so at a poker showdown you cannot look at

@@ -313,12 +313,89 @@ these notes refer to.
   screen; tapping the dim, the X or Esc closes them. Built into the shared
   `InfoSheet` (`side` prop), and POLICY.md's rung 5 updated to match.
 
+## Rummy 500
+
+### Four aces could not be melded, and "Create meld" took them into the hand
+- **Seen:** two aces taken off the discard pile with two more in hand;
+  "Create meld" put all four in the hand instead of melding, and melding
+  them from the hand was then refused as not allowed.
+- **Cause:** one bug, both halves. The move check (`validate`) was
+  `validateByEnumeration(legalActions)`, and Rummy's `legalActions` lists
+  ONE meld per starting card — enough for a bot, nowhere near every valid
+  meld. The pickup bar sends two moves (pickup, then meld); the pickup was
+  on the list, four aces was not. Offline too: the session runs the same
+  check. The same trap CLAUDE.md records for Poker and BS.
+- **Fix:** Rummy's own `validate`: a new meld is checked by SHAPE (turn,
+  phase, in hand, no duplicates, a real set or run, includes the pickup's
+  owed card) — the same checks `reduceLayNewMeld` makes; everything else
+  stays on the list, which is complete for those actions.
+- **Tests:** rummy rules.test.ts "the move check accepts every valid meld"
+  (fails with `illegal-action` on the old check).
+
+### A bot won the "Rummy!" race while the ring still had time on it
+- **Seen:** two people, two bots. The claimer pressed "Rummy!" inside the
+  ring and the card went to a bot anyway. Another time the window "went by
+  really fast", faster on one screen than the other.
+- **Cause:** a bot's claim was made after the table's flat 900ms beat, and
+  its reaction time (1.1–5.5s) was a `think` inside the claim's OWN frame,
+  so it played on screen after the server had already given it the card.
+  A press was only in time within about 900ms of the ring appearing,
+  whatever the ring said. Offline had the same flaw, since the offline
+  runtime uses the same session loop.
+  Second cause, for two people: a person's ring was the soonest rival's
+  reaction time, and the other PERSON counted as a rival, so a ring could
+  be ~1s against somebody who was never going to arrive then.
+- **Fix:**
+  - Rummy's `turnHold` makes a bot wait out its reaction time BEFORE it
+    claims (`claimHoldMs`), and the claim's `think` is now 0.
+  - `claimDeadlineMs` takes `isBot`, so rings race bots only. The session
+    passes `isLive` to `deadline?()` for this (a new optional argument),
+    and the client passes `frame.botSeats` through `RummyView.isBot`.
+  - A pass records `elapsed` on the window, so a bot after a person who
+    let the card go does not start its whole reaction time again.
+- **Tests:** GameSession.test.ts "the claim race" (a press 50ms before the
+  bot's time wins; the bot claims at its time; no restart after a pass;
+  two people race the bot, not each other). Also rules.test.ts claim tests.
+- **Known gap:** offline, the browser scales a hold by its speed setting
+  and drops it under reduced motion, so at any speed but 1x (or with
+  reduced motion on) a bot arrives sooner than the ring shows.
+- **Not changed, by the rules:** the discarder cannot call Rummy on their
+  own discard. Pagat's 500 Rum: "Any player other than the one who just
+  discarded may call 'Rummy!'".
+
+### The claim toast said "Seat 3 claimed"
+- A seat with no name is a bot's. The online toast fell back to "Seat N"
+  while the pods say "Bot N". It says "Bot N" now (`useOnlineRuntime`).
+  Worth knowing when reading a report: that toast meant a BOT got the
+  card, not the person who pressed.
+
+### Nobody else could see the dealer choosing the deal size
+- The table parks on the dealer while they choose, and other players saw
+  nothing. Their hand-zone header now says "<name> choosing how many
+  cards to deal".
+
+### "Create meld" was offered for three kings that were all on the pile
+- **Rule:** a meld made from a pickup must use at least one card you
+  already held. `legalDrawDepths` enforced it for the pickup, so pressing
+  was refused, but the button did not check it, and the meld itself was
+  never checked. Someone holding one king could take three off the pile,
+  lay those, and keep their own.
+- **Fix:** `usesHandCard` in `state.ts`, enforced by `reduceLayNewMeld`,
+  `validate` and `mandatoryMelds` (so bots follow it too). The pickup bar
+  disables the button and says "use a card from your hand".
+- **Tests:** rules.test.ts "a pickup's meld needs a card from the hand".
+
 ## Open gaps (known, not yet fixed)
 
-- None known in the games playtested so far (Spades, Dominoes, LRC, Poker).
-  Rummy and BS have not had their online playtest yet.
+- None known in the games playtested so far (Spades, Dominoes, LRC, Poker,
+  Rummy). BS is next.
+- Rummy: a lost claim race is only told by the toast and the claimer's
+  chip on the meld. The user read a missing chip as "I got it". Offered,
+  not built: the claim bar says "You got it" / "Bot 3 got there first"
+  for a moment after the race.
 - The centre-zone audit in Poker's layout note above, deferred to the
-  larger layout pass.
+  larger layout pass. Rummy's pile now has measurements there too; see
+  `layout-ui-ux.md`, "The table's centre runs into the seats".
 
 
 ## Techniques that worked

@@ -15,7 +15,8 @@ import { betRange } from "@/games/poker/state";
 import { createRummy } from "@/games/rummy/rules";
 import { createBs } from "@/games/bs/rules";
 import type { BsAction, BsState } from "@/games/bs/types";
-import { claimReactions } from "@/games/rummy/state";
+import { CLAIM_GRACE_MS, claimReactions } from "@/games/rummy/state";
+import type { RummyAction, RummyState } from "@/games/rummy/types";
 import type { GameDefinition, SeatId } from "@/engine/types";
 import { GAMES, GAME_IDS, type GameId } from "./registry";
 import { GameSession, type SessionFrame } from "./GameSession";
@@ -645,6 +646,116 @@ describe("a live seat that never answers", () => {
     expect(session.snapshot().melds[0]!.cards).toContain("S8");
     clock.advance(60_000);
     expect(session.snapshot().melds[0]!.cards).toContain("S8");
+  });
+});
+
+/**
+ * Rummy's claim race is decided when the ring says it is.
+ *
+ * Found online with two people and two bots: a player pressed "Rummy!"
+ * with time left on the ring and a bot got the card. The bot claimed after
+ * the table's flat 900ms beat and spent its reaction time as a `think`
+ * AFTER the claim — so the card was gone on the server while the ring
+ * still ran. These drive the session the way both drivers do, with the
+ * game's own `turnHold`.
+ */
+describe("the claim race", () => {
+  function race(
+    pending: Array<{ seat: number; ms: number }>,
+    live: (seat: number) => boolean,
+  ) {
+    const clock = new TestClock();
+    const rummy = createRummy({ target: 200 });
+    const session = new GameSession({
+      definition: rummy,
+      seats: 4,
+      seed: 4242,
+      clock,
+      isSeatLive: live,
+      turnHoldMs: (state, seat) => rummy.turnHold?.(state, seat) ?? 900,
+    });
+    const base = session.snapshot();
+    session.adoptState({
+      ...base,
+      dealt: true,
+      dealSizePending: null,
+      phase: "draw" as const,
+      turn: 2,
+      melds: [{ id: 1, owner: 1, cards: ["S5", "S6", "S7"], hitBy: {} }],
+      nextMeldId: 2,
+      discard: ["S8"],
+      claimWindow: { discard: "S8", discarder: 1, meldId: 1, pending },
+    });
+    session.settled();
+    return { clock, rummy, session };
+  }
+  const claimedBy = (session: GameSession<RummyState, RummyAction>) =>
+    session.snapshot().melds[0]!.hitBy["S8"];
+
+  it("lets a person win with a press just inside the fastest bot's time", () => {
+    const { clock, session } = race(
+      [
+        { seat: 3, ms: 2000 },
+        { seat: 0, ms: 3000 },
+        { seat: 2, ms: 4000 },
+      ],
+      (s) => s === 0,
+    );
+    clock.advance(1950);
+    expect(session.snapshot().claimWindow, "the bot claimed before its time").not.toBeNull();
+    expect(session.submit(0, { t: "claim", seat: 0 }).ok).toBe(true);
+    expect(claimedBy(session)).toBe(0);
+  });
+
+  it("gives the card to the bot when its time comes", () => {
+    const { clock, session } = race(
+      [
+        { seat: 3, ms: 2000 },
+        { seat: 0, ms: 3000 },
+        { seat: 2, ms: 4000 },
+      ],
+      (s) => s === 0,
+    );
+    clock.advance(2001);
+    expect(claimedBy(session)).toBe(3);
+  });
+
+  it("does not start a bot's clock again after a person lets the card go", () => {
+    // The person is first in the list, so the table waits on them. Their
+    // ring runs out at the bot's time; the bot has already waited that long.
+    const { clock, rummy, session } = race(
+      [
+        { seat: 0, ms: 1200 },
+        { seat: 3, ms: 2000 },
+        { seat: 2, ms: 4000 },
+      ],
+      (s) => s === 0,
+    );
+    expect(rummy.deadline!(session.snapshot(), 0, (s) => s === 0)!.ms).toBe(2000 + CLAIM_GRACE_MS);
+    clock.advance(2000);
+    // What the person's own ring submits when it runs out.
+    expect(session.submit(0, { t: "passClaim", seat: 0 }).ok).toBe(true);
+    session.settled();
+    clock.advance(1);
+    expect(claimedBy(session)).toBe(3);
+  });
+
+  it("races two people against the bot, not against each other", () => {
+    // Seat 0's reaction time used to be seat 2's deadline — 1.2s — though
+    // nobody was ever going to claim at that moment.
+    const { clock, rummy, session } = race(
+      [
+        { seat: 0, ms: 1200 },
+        { seat: 2, ms: 1500 },
+        { seat: 3, ms: 3000 },
+      ],
+      (s) => s === 0 || s === 2,
+    );
+    const live = (s: number) => s === 0 || s === 2;
+    expect(rummy.deadline!(session.snapshot(), 2, live)!.ms).toBe(3000 + CLAIM_GRACE_MS);
+    clock.advance(2500);
+    expect(session.submit(2, { t: "claim", seat: 2 }).ok).toBe(true);
+    expect(claimedBy(session)).toBe(2);
   });
 });
 

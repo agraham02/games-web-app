@@ -83,6 +83,8 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
       },
       // A seat somebody owns but is not currently in — see `awayFrom`.
       awayFor: awayFrom(frame),
+      // Whoever is not live, owned or not: that is who the claim races.
+      isBot: (seat: SeatId) => frame.botSeats.includes(seat),
     }),
     [frame, room.members],
   );

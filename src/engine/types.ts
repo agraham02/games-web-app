@@ -559,8 +559,12 @@ export interface GameDefinition<S, A> {
    * it is what draws the ring — but it is now a nicety rather than the
    * mechanism, and the two are deliberately not tuned to fire together
    * (see Rummy's `CLAIM_GRACE_MS`).
+   *
+   * `isLive` says which seats have a person in them, which only the
+   * driver knows. Rummy needs it: a person's deadline is when the soonest
+   * BOT arrives, and another person's reaction time is not a deadline.
    */
-  deadline?(state: S, seat: SeatId): {
+  deadline?(state: S, seat: SeatId, isLive?: (seat: SeatId) => boolean): {
     ms: number;
     action: A;
     /**
@@ -605,6 +609,17 @@ export interface GameDefinition<S, A> {
    * The same seam as `deadline?()`, which already lets a game state a
    * duration in ms for a rules-driven wait; this is its counterpart for a
    * rules-driven hurry.
+   *
+   * Rummy uses it the other way round, for a rules-driven WAIT: a bot in
+   * the claim race waits out its reaction time here, before it claims.
+   * Spent as a `think` inside the frame instead, it played after the
+   * server had already given the bot the card, so a person pressing
+   * inside their ring lost a race that looked open. A beat that decides
+   * who wins has to happen before `reduce`, not after it.
+   *
+   * Offline, the browser still scales this by its speed setting and drops
+   * it under reduced motion, like any other hold. For Rummy's race that
+   * means a bot arrives sooner than the ring says at any speed but 1x.
    */
   turnHold?(state: S, seat: SeatId): number | undefined;
 

@@ -3,11 +3,14 @@ import { createRng } from "@/engine/rng";
 import { HERO, type SeatId } from "@/engine/types";
 import { contributorOf, findCompletion, rummyDeck } from "./cards";
 import { rummyBots } from "./bots";
-import { createRummy, reduce, startRound } from "./rules";
+import { createRummy, reduce, startRound, turnHold } from "./rules";
 import {
+  CLAIM_MS,
   CLAIM_REACTION_MAX,
   CLAIM_REACTION_MIN,
+  claimDeadlineMs,
   claimReactions,
+  mandatoryMelds,
   maxDealSize,
   validDealSizes,
 } from "./state";
@@ -516,25 +519,60 @@ describe("rummy — the claim window", () => {
     expect(contributorOf(next.melds[0]!, "S8")).toBe(fastest);
   });
 
-  it("spends the winning bot's own reaction time as the visible beat", () => {
-    // When the HERO discarded there is no window and no page timer, so the
-    // pause has to come from the event batch — and it should be the bot's
-    // real reaction time, not a constant. A claim that resolves instantly
-    // reads as "it already knew", which was reported exactly that way.
+  it("spends the winning bot's own reaction time BEFORE it claims", () => {
+    // A claim that resolves instantly reads as "it already knew", which was
+    // reported exactly that way — so the bot waits its reaction time. It
+    // used to wait it as a `think` inside the claim's own frame, which
+    // plays AFTER the claim is made: online the card was gone while a
+    // person's ring still ran, and a press inside the ring lost. The wait
+    // is the session's hold now (`turnHold`), and the think is nothing.
     const state = { ...claimable(), turn: HERO, phase: "meld" as const };
     // Two cards, so discarding one does not empty the hand and end the
     // round before the claim ever resolves.
     const withCard = { ...state, hands: { ...state.hands, [HERO]: ["S8", "CK"] } };
     const opened = reduce(withCard, { t: "discard", card: "S8" }).state;
 
-    // The beat now lives on the WINDOW rather than in the batch that
-    // opened it, because the window may sit there while several seats
-    // decide. `rummyBots.thinkMs` spends exactly this number, so a seat a
-    // bot is playing arrives when the race says it should.
     const soonest = opened.claimWindow!.pending[0]!;
     expect(soonest.ms).toBeGreaterThanOrEqual(CLAIM_REACTION_MIN);
     expect(soonest.ms).toBeLessThanOrEqual(CLAIM_REACTION_MAX);
-    expect(rummyBots.steady.thinkMs(opened, soonest.seat, createRng(1))).toBe(soonest.ms);
+    expect(turnHold(opened, soonest.seat)).toBe(soonest.ms);
+    expect(rummyBots.steady.thinkMs(opened, soonest.seat, createRng(1))).toBe(0);
+    // Every other turn keeps the driver's ordinary beat.
+    expect(turnHold(withCard, HERO)).toBeUndefined();
+  });
+
+  it("counts a pass as time gone, so the next bot does not start again", () => {
+    // A person passes when their ring runs out, at the soonest rival's
+    // time. The bot after them has already waited that long.
+    const state = claimable();
+    const pending = [
+      { seat: 0, ms: 1200 },
+      { seat: 2, ms: 2000 },
+      { seat: 3, ms: 4000 },
+    ];
+    const open = { ...state, claimWindow: { discard: "S8", discarder: 1, meldId: 1, pending } };
+    const passed = reduce(open, { t: "passClaim", seat: 0 }).state;
+    expect(passed.claimWindow!.elapsed).toBe(2000);
+    expect(turnHold(passed, 2)).toBe(0);
+    expect(turnHold(passed, 3)).toBe(2000);
+  });
+
+  it("times a person's ring by the bots alone, never by another person", () => {
+    const state = claimable();
+    const pending = [
+      { seat: 0, ms: 1200 },
+      { seat: 2, ms: 1500 },
+      { seat: 3, ms: 3000 },
+    ];
+    const open = { ...state, claimWindow: { discard: "S8", discarder: 1, meldId: 1, pending } };
+    // Offline everybody else is a bot, which is the default.
+    expect(claimDeadlineMs(open, 2)).toBe(1200);
+    // Seats 0 and 2 are both people: each races seat 3, the only bot.
+    const isBot = (s: number) => s === 3;
+    expect(claimDeadlineMs(open, 0, isBot)).toBe(3000);
+    expect(claimDeadlineMs(open, 2, isBot)).toBe(3000);
+    // With no bot in the race, the longest wait.
+    expect(claimDeadlineMs(open, 2, () => false)).toBe(CLAIM_MS);
   });
 
   it("can give a bot a shorter clock than the hero's whole window", () => {
@@ -983,5 +1021,83 @@ describe("rummy — full-match simulation invariants", () => {
     expect(claimWindowsOpened, "no discard was ever claimable across 60 matches").toBeGreaterThan(
       5,
     );
+  });
+});
+
+describe("the move check accepts every valid meld", () => {
+  /**
+   * Reported: taking two aces off the discard pile with two more in hand,
+   * "Create meld" put all four in the hand instead of melding them — and
+   * melding them from the hand was then "not allowed".
+   *
+   * Both halves were one bug. The table sends the pickup and the meld as
+   * two moves, and the session checks each against `legalActions` — which
+   * lists ONE meld per starting card, not every valid one. Four aces was
+   * not on the list, so the pickup went through and the meld did not.
+   */
+  const state = fixture({
+    phase: "draw",
+    discard: ["D9", "CA", "DA"],
+    hands: { 0: ["HA", "SA", "D6", "C2", "C4", "HJ", "S3", "S7", "S9"], 1: [], 2: [], 3: [] },
+    stock: ["H2", "H3"],
+  });
+
+  it("takes the pickup and lays the four aces, as the table sends them", () => {
+    const afterDraw = reduce(state, { t: "drawDiscard", depth: 2 }).state;
+    const meld = { t: "layNewMeld" as const, cards: ["CA", "DA", "HA", "SA"] };
+    expect(def.validate!(afterDraw, 0, meld)).toBeNull();
+    const done = reduce(afterDraw, meld).state;
+    expect(done.melds.at(-1)?.cards).toEqual(["CA", "DA", "HA", "SA"]);
+    expect(done.mandatory).toBeNull();
+  });
+
+  it("still refuses a meld that is not one, or skips the card the pickup owes", () => {
+    const afterDraw = reduce(state, { t: "drawDiscard", depth: 2 }).state;
+    // Not a meld.
+    expect(def.validate!(afterDraw, 0, { t: "layNewMeld", cards: ["CA", "D6", "S9"] })).not.toBeNull();
+    // A meld, but without the ace the pickup obliges (CA, the deepest).
+    expect(def.validate!(afterDraw, 0, { t: "layNewMeld", cards: ["DA", "HA", "SA"] })).not.toBeNull();
+    // Cards not in the hand.
+    expect(def.validate!(afterDraw, 0, { t: "layNewMeld", cards: ["CA", "DA", "HK"] })).not.toBeNull();
+    // Somebody else's turn.
+    expect(def.validate!(afterDraw, 1, { t: "layNewMeld", cards: ["CA", "DA", "HA"] })).not.toBeNull();
+    // Not even the right shape.
+    expect(def.validate!(afterDraw, 0, { t: "layNewMeld", cards: "CA" } as never)).not.toBeNull();
+  });
+});
+
+describe("a pickup's meld needs a card from the hand", () => {
+  /**
+   * Reported: with three kings sitting in the discard pile, "Create meld"
+   * offered to lay them as a set with no card from the hand. The rule is
+   * that a meld made from a pickup uses at least one card you already
+   * held; the pickup refused it, but the button did not know.
+   */
+  const state = fixture({
+    phase: "draw",
+    discard: ["D9", "SK", "HK", "H9", "CK"],
+    hands: { 0: ["DK", "C2", "C4", "HJ", "S3"], 1: [], 2: [], 3: [] },
+    stock: ["H2", "H3"],
+  });
+
+  it("refuses the pile's own kings, and takes them with the one in hand", () => {
+    const afterDraw = reduce(state, { t: "drawDiscard", depth: 4 }).state;
+    expect(afterDraw.mandatory?.card).toBe("SK");
+
+    const pileOnly = { t: "layNewMeld" as const, cards: ["SK", "HK", "CK"] };
+    expect(def.validate!(afterDraw, 0, pileOnly)).not.toBeNull();
+    expect(reduce(afterDraw, pileOnly).state).toBe(afterDraw);
+
+    const withHand = { t: "layNewMeld" as const, cards: ["SK", "HK", "DK"] };
+    expect(def.validate!(afterDraw, 0, withHand)).toBeNull();
+    expect(reduce(afterDraw, withHand).state.mandatory).toBeNull();
+  });
+
+  it("never lists a pile-only meld for the obligation, so a bot cannot lay one", () => {
+    const afterDraw = reduce(state, { t: "drawDiscard", depth: 4 }).state;
+    const hand = afterDraw.hands[0]!;
+    const melds = mandatoryMelds(hand, "SK", afterDraw.mandatory!.pool);
+    expect(melds.length).toBeGreaterThan(0);
+    for (const m of melds) expect(m).toContain("DK");
   });
 });

@@ -64,6 +64,7 @@ import {
   MIN_SEATS,
   CLAIM_GRACE_MS,
   claimDeadlineMs,
+  claimHoldMs,
   claimReactions,
   claimableMeld,
   inClaimRace,
@@ -74,6 +75,7 @@ import {
   legalDrawDepths,
   mandatoryMelds,
   maxDealSize,
+  usesHandCard,
   meldById,
   nextSeat,
   seatsOf,
@@ -96,14 +98,12 @@ export const HIDDEN_CARD: PieceId = "??";
 const NO_PROGRESS_LAPS = 20;
 
 /**
- * The beat before a claim that the RACE did not already supply.
+ * The beat before a claim lands, once the race has been decided.
  *
- * When the hero was offered the window, the page has already spent the
- * winning bot's reaction time in real time waiting for it, so the engine
- * only needs enough of a pause that the claim does not land in the same
- * frame as the pass. When the hero DISCARDED the card there was no window
- * and no page timer, so the bot's own reaction time becomes the beat —
- * which is what makes it look like the bot noticed rather than knew.
+ * The race itself is spent BEFORE the claim — a bot waits out its reaction
+ * time as the session's hold (`turnHold`), and a person spends theirs
+ * deciding — so all this needs is enough of a pause that the card does not
+ * leave the pile in the same instant the claim is made.
  */
 const CLAIM_SETTLE_MS = 220;
 
@@ -400,8 +400,12 @@ function reduceLayNewMeld(state: RummyState, cards: readonly PieceId[]): ReduceR
   if (!cards.every((c) => hand.includes(c))) return { state, events: [] };
   if (!isValidMeld(cards)) return { state, events: [] };
 
-  // A pending pickup obligation must be discharged by THIS meld.
+  // A pending pickup obligation must be discharged by THIS meld, and
+  // with a card the player already held — see `usesHandCard`.
   if (state.mandatory && !cards.includes(state.mandatory.card)) {
+    return { state, events: [] };
+  }
+  if (state.mandatory && !usesHandCard(cards, state.mandatory)) {
     return { state, events: [] };
   }
 
@@ -446,7 +450,7 @@ function reduceExtendMeld(
   // "can still be" matters: blocking unconditionally would livelock a
   // seat holding an obligation it has no way to satisfy. See
   // `legalActions`' matching guard.
-  if (state.mandatory && mandatoryMelds(hand, state.mandatory.card).length > 0) {
+  if (state.mandatory && mandatoryMelds(hand, state.mandatory.card, state.mandatory.pool).length > 0) {
     return { state, events: [] };
   }
   if (!hand.includes(card)) return { state, events: [] };
@@ -493,7 +497,7 @@ function reduceDiscard(state: RummyState, card: PieceId): ReduceResult<RummyStat
   const hand = state.hands[seat] ?? [];
   // See `reduceExtendMeld` for why this is "can still be discharged"
   // rather than a flat block.
-  if (state.mandatory && mandatoryMelds(hand, state.mandatory.card).length > 0) {
+  if (state.mandatory && mandatoryMelds(hand, state.mandatory.card, state.mandatory.pool).length > 0) {
     return { state, events: [] };
   }
   if (!hand.includes(card)) return { state, events: [] };
@@ -625,7 +629,12 @@ function reducePassClaim(state: RummyState, seat: SeatId): ReduceResult<RummySta
   if (pending.length === 0) {
     return advanceTurn({ ...state, claimWindow: null }, []);
   }
-  return { state: { ...state, claimWindow: { ...window, pending } }, events: [] };
+  // A pass is a clock running out, and it runs out when a rival could
+  // first arrive — so the race is at least that far along. Counted over
+  // every rival, since `reduce` does not know who is a bot; by the time a
+  // bot is at the front, the seats ahead of it have passed at its time.
+  const elapsed = Math.max(window.elapsed ?? 0, claimDeadlineMs(state, seat));
+  return { state: { ...state, claimWindow: { ...window, pending, elapsed } }, events: [] };
 }
 
 /* ============================================================
@@ -805,12 +814,22 @@ export function completeAction(
 export function deadline(
   state: RummyState,
   seat: SeatId,
+  isLive?: (seat: SeatId) => boolean,
 ): { ms: number; action: RummyAction } | null {
   if (!inClaimRace(state, seat)) return null;
   return {
-    ms: claimDeadlineMs(state, seat) + CLAIM_GRACE_MS,
+    // Only the bots' times are deadlines — see `claimDeadlineMs`.
+    ms: claimDeadlineMs(state, seat, isLive ? (s) => !isLive(s) : undefined) + CLAIM_GRACE_MS,
     action: { t: "passClaim", seat },
   };
+}
+
+/**
+ * A bot in the claim race waits out its reaction time BEFORE it claims.
+ * See `claimHoldMs`; every other turn keeps the driver's ordinary beat.
+ */
+export function turnHold(state: RummyState, seat: SeatId): number | undefined {
+  return claimHoldMs(state, seat);
 }
 
 export function currentSeat(state: RummyState): SeatId | null {
@@ -870,7 +889,7 @@ export function legalActions(state: RummyState, seat: SeatId): RummyAction[] {
   // the meld that discharges it — including the discard that would
   // otherwise end the turn.
   if (state.mandatory) {
-    const melds = mandatoryMelds(hand, state.mandatory.card);
+    const melds = mandatoryMelds(hand, state.mandatory.card, state.mandatory.pool);
     if (melds.length > 0) {
       return melds.map((cards) => ({ t: "layNewMeld", cards }));
     }
@@ -1061,6 +1080,41 @@ export function standingsOf(state: RummyState) {
 }
 
 /* ============================================================
+   The action gate
+   ============================================================ */
+
+const byEnumeration = validateByEnumeration(legalActions);
+
+/**
+ * Whether an arriving action is one this seat may make.
+ *
+ * Every Rummy action is checked against `legalActions` EXCEPT a new meld.
+ * A meld is any valid set or run the hand can make — any 3 or 4 of a rank,
+ * any run of 3+ — and `legalActions` lists one per starting card, which is
+ * what a bot needs and nowhere near all of them. Checked by membership,
+ * four aces was refused: the table's "Create meld" sent the pickup and the
+ * meld as two moves, the pickup went through, and the meld did not, leaving
+ * the cards in hand and "not allowed" to be melded from there either.
+ * Poker and BS cannot enumerate their legal sets for the same reason (see
+ * CLAUDE.md, "The turn gate and the action gate"); for a meld, the SHAPE is
+ * checked instead — exactly what `reduceLayNewMeld` itself refuses.
+ */
+export function validate(state: RummyState, seat: SeatId, action: RummyAction): string | null {
+  if (action?.t !== "layNewMeld") return byEnumeration(state, seat, action);
+  if (state.phase !== "meld" || state.claimWindow || seat !== state.turn) return "not your meld to lay";
+  const cards: unknown = action.cards;
+  if (!Array.isArray(cards) || !cards.every((c) => typeof c === "string")) return "cards must be a list";
+  const hand = state.hands[seat] ?? [];
+  if (cards.length < MIN_MELD) return "a meld needs three cards";
+  if (new Set(cards).size !== cards.length) return "a card twice";
+  if (!cards.every((c) => hand.includes(c))) return "not in your hand";
+  if (!isValidMeld(cards)) return "not a set or a run";
+  if (state.mandatory && !cards.includes(state.mandatory.card)) return "the pickup's card must be in it";
+  if (state.mandatory && !usesHandCard(cards, state.mandatory)) return "it needs a card from your hand";
+  return null;
+}
+
+/* ============================================================
    Factory
    ============================================================ */
 
@@ -1075,12 +1129,13 @@ export function createRummy(
     setup: makeSetup(opts.target ?? DEFAULT_TARGET),
     reduce,
     legalActions,
-    validate: validateByEnumeration(legalActions),
+    validate,
     pieces,
     placements,
     playerView,
     completeAction,
     deadline,
+    turnHold,
     currentSeat,
     isOver,
     startRound,

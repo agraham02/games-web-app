@@ -126,6 +126,13 @@ export interface RummyView {
    * nobody to step away. Supplied by `awayFrom(frame)`.
    */
   awayFor?: (seat: SeatId) => boolean;
+  /**
+   * Whether a bot is playing that seat right now. The claim ring races
+   * the soonest bot only — another person's reaction time is not a
+   * deadline (see `claimDeadlineMs`). Offline every other seat is a bot,
+   * which is what leaving it out means.
+   */
+  isBot?: (seat: SeatId) => boolean;
 }
 
 /** One human at seat 0, everyone else a bot — the single-player table. */
@@ -558,7 +565,7 @@ export function RummyTable({
 
   usePanWiring();
   useClearOnTurnEnd(live.isHeroTurn, clearSelection);
-  useClaimCountdown(live, seat);
+  useClaimCountdown(live, seat, view.isBot);
   useCloseSheetOnTurnEnd(live.isHeroTurn, setSnap);
   useHandSort(state.hands[seat] ?? [], sortMode);
 
@@ -583,7 +590,7 @@ export function RummyTable({
 
   const bar = heroTurn
     ? claiming
-      ? <ClaimBar live={live} seat={seat} />
+      ? <ClaimBar live={live} seat={seat} isBot={view.isBot} />
       : state.dealSizePending !== null
         ? <DealSizeBar live={live} />
         : pickupDepth !== null
@@ -607,7 +614,19 @@ export function RummyTable({
       <HandZone
         bar={bar}
         left={<HandStatus state={state} seat={seat} />}
-        center={<TurnIndicator inline show={heroTurn} label={turnLabel(state, seat)} />}
+        center={
+          !heroTurn && state.dealSizePending !== null ? (
+            // Somebody else's decision, and the table is parked on it —
+            // without this the other players saw nothing happen at all.
+            <HeroStatusBadge
+              inline
+              label={view.nameFor(state.dealSizePending)}
+              detail="choosing how many cards to deal"
+            />
+          ) : (
+            <TurnIndicator inline show={heroTurn} label={turnLabel(state, seat)} />
+          )
+        }
         right={<SortMenu mode={sortMode} onMode={setSortMode} />}
       />
 
@@ -745,9 +764,9 @@ function useFlippedMelds(melds: RummyState["melds"]): ReadonlySet<number> {
  * actually got the card, and a passed claim only ever removes the passer.
  * The worst a lagged timer can do is cost its own owner a card.
  */
-function useClaimCountdown(live: Live, seat: SeatId) {
+function useClaimCountdown(live: Live, seat: SeatId, isBot?: (seat: SeatId) => boolean) {
   const racing = inClaimRace(live.state, seat);
-  const ms = claimDeadlineMs(live.state, seat);
+  const ms = claimDeadlineMs(live.state, seat, isBot);
   useEffect(() => {
     if (!racing) return;
     const t = setTimeout(() => live.submitAction({ t: "passClaim", seat }), ms);
@@ -1060,7 +1079,11 @@ function PickupBar({
   // impossible: taking A♦ off the bottom of a pile that also holds K♠,
   // Q♦, Q♥ and 2♦ is exactly how you meld Q♦-K♦-A♦ with a king from
   // hand, and no arrangement of all six cards is a meld.
-  const ready = picked.length >= 3 && isValidMeld(picked) && picked.includes(deepest);
+  // And at least one card from the hand: a run of cards that already sits
+  // together on the pile is not a meld the player made (`usesHandCard`).
+  const fromHand = picked.some((c) => !taken.includes(c));
+  const ready =
+    picked.length >= 3 && isValidMeld(picked) && picked.includes(deepest) && fromHand;
 
   return (
     <>
@@ -1068,7 +1091,7 @@ function PickupBar({
         Cancel
       </BarButton>
       <span className="min-w-0 shrink truncate text-[10px] font-bold text-bone-300">
-        {pickupHint(depth, picked, ready)}
+        {pickupHint(depth, picked, ready, fromHand)}
       </span>
       <BarButton
         disabled={!ready}
@@ -1092,10 +1115,18 @@ function PickupBar({
 }
 
 /** POLICY.md: state the count in words rather than making someone count. */
-function pickupHint(depth: number, picked: readonly PieceId[], ready: boolean): string {
+function pickupHint(
+  depth: number,
+  picked: readonly PieceId[],
+  ready: boolean,
+  fromHand: boolean,
+): string {
   const n = `${depth} card${depth === 1 ? "" : "s"}`;
   if (ready) return `${n} · ${meldLabel(picked)}`;
   if (picked.length < 3) return `${n} · tap ${3 - picked.length} more`;
+  // The rule, once they have tried to break it — not a hint about which
+  // of their cards would do.
+  if (!fromHand) return `${n} · use a card from your hand`;
   return `${n} · not a meld yet`;
 }
 
@@ -1118,9 +1149,17 @@ function pickupHint(depth: number, picked: readonly PieceId[], ready: boolean): 
  * what happens when a bot simply gets there first. The engine keeps the
  * action; the screen just stops advertising it.
  */
-function ClaimBar({ live, seat }: { live: Live; seat: SeatId }) {
+function ClaimBar({
+  live,
+  seat,
+  isBot,
+}: {
+  live: Live;
+  seat: SeatId;
+  isBot?: (seat: SeatId) => boolean;
+}) {
   const window_ = live.state.claimWindow!;
-  const ms = claimDeadlineMs(live.state, seat);
+  const ms = claimDeadlineMs(live.state, seat, isBot);
   return (
     <>
       <span className="min-w-0 shrink truncate text-[10px] font-bold text-brass-300">

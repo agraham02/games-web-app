@@ -176,6 +176,15 @@ froze the game for everybody. The client still draws its ring, but it is
 a nicety now rather than the mechanism, and the two clocks are
 deliberately not tuned to fire together (`CLAIM_GRACE_MS`).
 
+**A bot waits out its reaction time BEFORE it claims** — as the session's
+hold, through `turnHold?()` — never as a `think` inside the claim's own
+frame. A frame's think plays after the move it rides with has already
+happened, so the card was gone on the server while a person's ring still
+ran, and presses inside the ring lost (found online, 2026-09). A beat
+that decides who wins belongs before `reduce`. A person's ring is the
+soonest BOT's time, never another person's: people beat each other by
+pressing first, so `deadline?()` is handed `isLive` for this.
+
 **The ws harness found the stall**, which is the layer that should have:
 it drives real sockets with no browser behind them, so a table that only
 moves because a page is running stops dead.
@@ -212,7 +221,7 @@ generous window can hold up.
 
 **A person's own deadline is NOT capped by the fastest rival**, which is
 where this deliberately parts company with Rummy. There, a seat gets at
-most until the quickest rival reacts, and that is right for a race
+most until the quickest bot rival reacts, and that is right for a race
 happening once a round. Here it would hand a player 250ms to answer a
 window that opens after every play. The seats ahead of you in the list
 have already had their turn by the time you get yours, so being beaten to
@@ -264,13 +273,16 @@ So `GameDefinition.validate?(state, seat, action)`, shaped after
 `validateByEnumeration` ([_shared/validate.ts](src/games/_shared/validate.ts)),
 which tests membership of the game's own `legalActions` — the same
 function the action bar is built from, so the button and the gate cannot
-disagree. **Two games cannot use it**, for the same reason in different
-clothes — the legal set is too big to enumerate, so `legalActions`
-publishes representatives and membership would refuse everything else.
-Poker returns `{t:"bet", to: range.min}` as one point on a continuous
-range; BS publishes one play per COUNT, because a play is any 1-to-4 card
-subset of a hand and there are 1,092 of those for thirteen cards. Both
-check the shape of a legal action by hand instead.
+disagree. **Three games cannot use it** (or not for every action), for
+the same reason in different clothes — the legal set is too big to
+enumerate, so `legalActions` publishes representatives and membership
+would refuse everything else. Poker returns `{t:"bet", to: range.min}` as
+one point on a continuous range; BS publishes one play per COUNT, because
+a play is any 1-to-4 card subset of a hand and there are 1,092 of those
+for thirteen cards; Rummy lists one meld per starting card, and a meld is
+any valid set or run — so four aces was refused, found in a playtest. All
+three check the shape of a legal action by hand instead (Rummy for
+`layNewMeld` only; its other actions are fully listed).
 
 ### An animation needs a table to play on, and a pile to fly from
 

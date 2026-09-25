@@ -86,7 +86,9 @@ function surfaceEventFor(frame: FrameView) {
       const { text, tone } = composeAnnounce(
         event,
         frame.seat,
-        (seat) => frame.seatNames[seat] ?? `Seat ${seat + 1}`,
+        // A seat with no name is a bot's, and the pods call it "Bot N" —
+        // "Seat 3 claimed" named nobody at the table.
+        (seat) => frame.seatNames[seat] ?? `Bot ${seat + 1}`,
       );
       announce(text, tone);
     }

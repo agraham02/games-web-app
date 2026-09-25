@@ -506,7 +506,10 @@ export class GameSession<S, A> {
    */
   private scheduleDeadline(seat: SeatId): void {
     this.clearDeadline();
-    const due = this.definition.deadline?.(this.state, seat);
+    // Liveness is the session's to know, and a race's deadline can depend
+    // on it: Rummy's ring is the soonest BOT's arrival, never another
+    // person's (see `claimDeadlineMs`).
+    const due = this.definition.deadline?.(this.state, seat, (s) => this.isLive(s));
     if (!due) {
       this.deadlineAnchor = null;
       return;

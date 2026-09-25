@@ -216,7 +216,7 @@ function chooseMeld(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): Rumm
   // and `mandatoryMelds` is the same list `legalActions` builds, so the
   // two can never disagree about what is available.
   if (state.mandatory) {
-    const candidates = mandatoryMelds(hand, state.mandatory.card);
+    const candidates = mandatoryMelds(hand, state.mandatory.card, state.mandatory.pool);
     const pick = bestOf(candidates, (m) => m.reduce((n, id) => n + cardValue(id), 0), rng);
     if (pick) return { t: "layNewMeld", cards: pick };
     // Only reachable via the same livelock guard `legalActions`
@@ -342,13 +342,12 @@ function makeBot(
       return chooseMeld(state, seat, rng, tier);
     },
     thinkMs(state, seat, rng) {
-      // A claim's beat is not this bot's pace — it is the reaction time
-      // drawn for this seat when the window opened, which is the number
-      // the race is actually run on. Spending anything else here would
-      // let a bot arrive at a different moment than the one every other
-      // seat is racing against.
-      const claiming = state.claimWindow?.pending.find((p) => p.seat === seat);
-      if (claiming) return claiming.ms;
+      // Nothing for a claim. Its reaction time is spent BEFORE the claim
+      // is made, as the session's hold (`turnHold`), because that is when
+      // it decides the race. Spent here, as a `think` inside the frame, it
+      // played out after the card was already gone — and a person pressing
+      // inside their ring lost to a claim that had not visibly happened.
+      if (state.claimWindow?.pending.some((p) => p.seat === seat)) return 0;
 
       const beat = pace(rng);
       // Drawing with no pile option, or melding under an obligation, is
