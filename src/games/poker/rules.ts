@@ -51,7 +51,6 @@ import type {
 } from "@/engine/types";
 import { HERO } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { botName } from "@/games/_shared/botIdentity";
 import { parseCard, shuffledDeck, standardDeck } from "@/games/_shared/cards";
 import { bestOfSeven } from "./hand";
 import {
@@ -95,15 +94,22 @@ export const MAX_STARTING_STACK = 20000;
  * per hidden card since this is a Record key, not an array slot. */
 const HIDDEN_CARD_PREFIX = "??";
 
+/**
+ * A card this viewer may not identify, as `playerView` names it. A masked
+ * hand is not REMOVED from the view — it keeps its owner, under
+ * placeholder ids — so anything reading a seat's cards off a view has to
+ * ask this before trusting them.
+ */
+export function isHiddenCard(id: PieceId): boolean {
+  return id.startsWith(HIDDEN_CARD_PREFIX);
+}
+
 const STREET_AFTER: Record<Exclude<PokerStreet, "river">, PokerStreet> = {
   preflop: "flop",
   flop: "turn",
   turn: "river",
 };
 
-function seatLabel(seat: SeatId): string {
-  return seat === HERO ? "You" : botName(seat);
-}
 
 /* ============================================================
    Setup and the deal
@@ -114,6 +120,15 @@ export function makeSetup(startingStack: number, bigBlind: number) {
     const seats = Math.min(MAX_SEATS, Math.max(MIN_SEATS, opts.seats));
     const stacks: Record<SeatId, number> = {};
     for (let s = 0; s < seats; s++) stacks[s] = startingStack;
+    // The whole deck, parked face down in the stub before anything is
+    // dealt — so the first deal has a pile to fly FROM. It placed nothing
+    // at all, and `moveTo` does nothing to a piece the table is not
+    // tracking: hand one's cards simply appeared, offline and online both.
+    // The order is not the shuffle (that happens in `startRound`) and is
+    // never sent anywhere readable: face-down cards go out as stand-ins.
+    const deck = standardDeck().map((c) => c.id);
+    const cardOwner: PokerState["cardOwner"] = {};
+    for (const id of deck) cardOwner[id] = "deck";
     return {
       seats,
       smallBlind: Math.max(1, Math.round(bigBlind / 2)),
@@ -122,8 +137,8 @@ export function makeSetup(startingStack: number, bigBlind: number) {
       button: 0,
       stacks,
       winner: null,
-      cardOwner: {},
-      deck: [],
+      cardOwner,
+      deck,
       communityOrder: [],
       folded: {},
       streetCommitted: {},
@@ -219,7 +234,18 @@ export function startRound(state: PokerState, rng: Rng): ReduceResult<PokerState
   events.push({ t: "phase", phase: "preflop" });
   events.push({
     t: "announce",
-    text: `${seatLabel(sb)} posts ${state.smallBlind} · ${seatLabel(bb)} posts ${state.bigBlind}`,
+    seat: sb,
+    actor: sb,
+    text: `posts the $${state.smallBlind} small blind`,
+    selfText: `post the $${state.smallBlind} small blind`,
+    tone: "info",
+  });
+  events.push({
+    t: "announce",
+    seat: bb,
+    actor: bb,
+    text: `posts the $${state.bigBlind} big blind`,
+    selfText: `post the $${state.bigBlind} big blind`,
     tone: "info",
   });
 
@@ -251,7 +277,9 @@ export function reduce(state: PokerState, action: PokerAction): ReduceResult<Pok
 function reduceFold(state: PokerState): ReduceResult<PokerState> {
   const seat = state.toAct[0];
   if (seat === undefined) return { state, events: [] };
-  const events: GameEvent[] = [{ t: "announce", text: `${seatLabel(seat)} folds`, tone: "info" }];
+  const events: GameEvent[] = [
+    { t: "announce", seat, actor: seat, text: "folds", selfText: "fold", tone: "info" },
+  ];
   const folded = { ...state.folded, [seat]: true };
   const next: PokerState = { ...state, folded, toAct: state.toAct.slice(1) };
   return afterStreetCloses(next, events);
@@ -264,7 +292,8 @@ function reduceCheckOrCall(state: PokerState, isCall: boolean): ReduceResult<Pok
   const stacks = { ...state.stacks };
   const streetCommitted = { ...state.streetCommitted };
   const totalCommitted = { ...state.totalCommitted };
-  let text = `${seatLabel(seat)} checks`;
+  let text = "checks";
+  let selfText = "check";
 
   if (isCall) {
     const toCall = Math.min(amountToCall(state, seat), stacks[seat] ?? 0);
@@ -272,11 +301,13 @@ function reduceCheckOrCall(state: PokerState, isCall: boolean): ReduceResult<Pok
       stacks[seat] = (stacks[seat] ?? 0) - toCall;
       streetCommitted[seat] = (streetCommitted[seat] ?? 0) + toCall;
       totalCommitted[seat] = (totalCommitted[seat] ?? 0) + toCall;
-      text = `${seatLabel(seat)} calls${stacks[seat] === 0 ? " — all in" : ""}`;
+      const allIn = stacks[seat] === 0 ? " — all in" : "";
+      text = `calls $${toCall}${allIn}`;
+      selfText = `call $${toCall}${allIn}`;
     }
   }
 
-  const events: GameEvent[] = [{ t: "announce", text, tone: "info" }];
+  const events: GameEvent[] = [{ t: "announce", seat, actor: seat, text, selfText, tone: "info" }];
   const next: PokerState = {
     ...state,
     stacks,
@@ -340,9 +371,10 @@ function reduceBetOrRaise(state: PokerState, to: number): ReduceResult<PokerStat
   const events: GameEvent[] = [
     {
       t: "announce",
-      text: `${seatLabel(seat)} ${highestBefore === 0 ? "bets" : "raises to"} ${clamped}${
-        isAllInShove ? " — all in" : ""
-      }`,
+      seat,
+      actor: seat,
+      text: `${highestBefore === 0 ? "bets" : "raises to"} $${clamped}${isAllInShove ? " — all in" : ""}`,
+      selfText: `${highestBefore === 0 ? "bet" : "raise to"} $${clamped}${isAllInShove ? " — all in" : ""}`,
       tone: "info",
     },
   ];
@@ -371,18 +403,28 @@ function reduceShowOrMuck(state: PokerState, show: boolean): ReduceResult<PokerS
     for (const card of seatHoleCards(state, seat)) {
       events.push({ t: "flip", piece: card, faceUp: true });
     }
-    events.push({ t: "announce", text: `${seatLabel(seat)} shows`, tone: "info" });
+    events.push({ t: "announce", seat, actor: seat, text: "shows", selfText: "show", tone: "info" });
   } else {
     // Piggybacks the same `folded`-driven hide `placements()` already
     // gives a real fold — payout is already fixed in
     // `pending.pendingDeltas`, so this has no effect beyond the visual.
     folded = { ...state.folded, [seat]: true };
+    // Said out loud: a hand quietly ending with somebody's cards still
+    // face down read as though they had folded, or never been there.
+    events.push({
+      t: "announce",
+      seat,
+      actor: seat,
+      text: "doesn't show — their hand lost",
+      selfText: "don't show — your hand lost",
+      tone: "info",
+    });
   }
 
   const order = pending.order.slice(1);
   let next: PokerState = { ...state, folded, pendingShowdown: { ...pending, order } };
   if (order.length === 0) {
-    next = finalizeHand(next, pending.winningSeats, pending.pendingDeltas, events, true);
+    next = finalizeHand(next, pending.winningSeats, pending.pendingDeltas, events, pending.contested);
   }
   return { state: next, events };
 }
@@ -414,7 +456,13 @@ function afterStreetCloses(state: PokerState, events: GameEvent[]): ReduceResult
  * events, so the reveal reads as a real turn-over. `PieceLayer`'s
  * `Flipper` already does a genuine 3D flip keyed off `flip`; this is
  * just making sure poker actually emits it instead of dealing face-up
- * outright. */
+ * outright.
+ *
+ * One step at a time, with a `pause` between each: the burn lands, then
+ * each card lands, turns over, and is seen before the next one leaves.
+ * Without them every step started at once — the burn was barely visible,
+ * and a flop's three cards flew and flipped together. Poker is a slow
+ * game; its board is dealt card by card. */
 function advanceStreet(state: PokerState, events: GameEvent[]): PokerState {
   const street = deriveStreet(state);
   const nextStreet = STREET_AFTER[street as Exclude<PokerStreet, "river">];
@@ -432,6 +480,7 @@ function advanceStreet(state: PokerState, events: GameEvent[]): PokerState {
     piece: burn,
     to: { zone: "burnt", index: burntCount - 1, count: burntCount, faceUp: false },
   });
+  events.push({ t: "pause" });
 
   const communityOrder = [...state.communityOrder];
   for (let i = 0; i < dealCount; i++) {
@@ -444,7 +493,9 @@ function advanceStreet(state: PokerState, events: GameEvent[]): PokerState {
       piece: card,
       to: { zone: "community", index: communityOrder.length - 1, count: 5, faceUp: false },
     });
+    events.push({ t: "pause" });
     events.push({ t: "flip", piece: card, faceUp: true });
+    events.push({ t: "pause" });
   }
 
   const streetCommitted: Record<SeatId, number> = {};
@@ -484,8 +535,9 @@ function settleHand(
   const { deltas, winningSeats } = awardPots(layers, bestHand, state.button, state.seats);
 
   if (!isShowdown) {
-    return { state: finalizeHand(state, winningSeats, deltas, events, false), events };
+    return { state: finalizeHand(state, winningSeats, deltas, events, []), events };
   }
+  const contested = contestingSeats(state);
 
   // Winners are auto-revealed — you don't get to hide that you won.
   for (const seat of winningSeats) {
@@ -493,13 +545,16 @@ function settleHand(
   }
 
   const order = seatOrderAfter(state.button, state.seats).filter(
-    (s) => contestingSeats(state).includes(s) && !winningSeats.includes(s),
+    (s) => contested.includes(s) && !winningSeats.includes(s),
   );
   if (order.length === 0) {
-    return { state: finalizeHand(state, winningSeats, deltas, events, true), events };
+    return { state: finalizeHand(state, winningSeats, deltas, events, contested), events };
   }
 
-  const next: PokerState = { ...state, pendingShowdown: { winningSeats, order, pendingDeltas: deltas } };
+  const next: PokerState = {
+    ...state,
+    pendingShowdown: { winningSeats, order, pendingDeltas: deltas, contested },
+  };
   return { state: next, events };
 }
 
@@ -508,22 +563,32 @@ function finalizeHand(
   winningSeats: SeatId[],
   deltas: Record<SeatId, number>,
   events: GameEvent[],
-  showdown: boolean,
+  showdownSeats: SeatId[],
 ): PokerState {
   const stacks = { ...state.stacks };
   for (const [seat, delta] of Object.entries(deltas)) {
     stacks[Number(seat)] = (stacks[Number(seat)] ?? 0) + delta;
   }
 
+  const net: Record<SeatId, number> = {};
+  for (const seat of Object.keys(state.folded).map(Number)) {
+    net[seat] = (deltas[seat] ?? 0) - (state.totalCommitted[seat] ?? 0);
+  }
+
   events.push({ t: "score", deltas });
-  events.push({
-    t: "announce",
-    text:
-      winningSeats.length === 1
-        ? `${seatLabel(winningSeats[0]!)} takes the pot`
-        : `${winningSeats.map(seatLabel).join(" & ")} split the pot`,
-    tone: winningSeats.includes(HERO) ? "good" : "info",
-  });
+  events.push(
+    winningSeats.length === 1
+      ? {
+          t: "announce",
+          seat: winningSeats[0]!,
+          actor: winningSeats[0]!,
+          text: "takes the pot",
+          selfText: "take the pot",
+          tone: "info",
+          selfTone: "good",
+        }
+      : { t: "announce", text: "The pot is split", tone: "info" },
+  );
   events.push({ t: "roundEnd", round: state.hand });
 
   const stillIn = liveMatchSeats({ seats: state.seats, stacks });
@@ -534,7 +599,7 @@ function finalizeHand(
     ...state,
     stacks,
     pendingShowdown: null,
-    result: { showdown, winningSeats, deltas },
+    result: { showdown: showdownSeats.length > 0, winningSeats, deltas, net, showdownSeats },
     winner,
   };
 }

@@ -165,10 +165,157 @@ these notes refer to.
 - **Status:** confirmed by playtest in a browser, 2026-09-24. Spades and
   Dominoes likewise; the online pass continues with the remaining games.
 
+## Poker
+
+**Status:** confirmed by playtest, 2026-09-25.
+
+### No deal animation on the first hand
+- **Cause:** `setup` placed no cards at all, and `moveTo` does nothing to a
+  piece the table is not tracking — so the first hand's hole cards had no
+  pile to fly from and simply appeared, offline and online. Long listed as
+  a known gap in CLAUDE.md.
+- **Fix:** `setup` parks all 52 cards face down in the stub (`cardOwner`
+  "deck"). The order is not the shuffle, and face-down cards reach clients
+  only as stand-ins, so it tells nobody anything.
+- **Tests:** Poker joined useOnlineRuntime.test.tsx's per-game opening-deal
+  suite (fails on the old `setup`).
+
+### Burn and board dealt all at once
+- **Cause:** a street was burn → move → flip → move → flip…, every step
+  with a zero gap, so the burn, the three flop cards and their flips all
+  started in the same frame.
+- **Fix:** `advanceStreet` puts a `pause` (which blocks the queue) after the
+  burn and after each card lands and each flip: burn is seen, then the
+  board comes one card at a time (a flop ~2.1s, turn/river ~0.9s). All-in
+  runouts get the same pacing.
+- **Tests:** poker rules.test.ts "dealing the board", timed with
+  `gapAfter` — the clock the table really plays by.
+
+### The betting panel was confusing
+- **Was:** a big gold Bet/Raise button over small grey Fold/Check/Call, a
+  slider for the amount, and no sign of the current bet or of what you had
+  already put in — so "Call $50" after a raise to $100 read as "the bet is
+  $50".
+- **Now:** a strip showing **Current bet**, **Your bet** and the pot; one
+  row of equal-weight buttons (Fold · Check/Call · Bet/Raise to); Call says
+  "Call $50 · matches $100"; the amount is a −/+ `NumberStepper` stepping
+  by the big blind (it gained a `format` prop for "$"), with ½ pot / Pot /
+  All in as quick fills. "Raise to $X" is kept — it is the standard
+  wording, and it matches "Current bet $X".
+- **Follow-up — "Your bet $0" on the flop.** Correct, but unlabelled: it is
+  THIS street's bet (each street starts at 0; earlier chips are in the
+  pot). The figure now carries a "Total bet $X" subtitle for the hand.
+  The call button's "matches $X" shows only when you already have chips
+  in this round — otherwise it just repeats the call amount. The user is
+  new to poker, and asked for the whole panel to be as unambiguous as
+  possible: prefer saying one thing once, plainly.
+- **Follow-up — pod text cut off.** "$4837 · bet $362" is wider than a
+  96px pod, so the bet was truncated. `SeatView.meta` may now be a list of
+  lines, and poker puts stack and bet on separate lines — the same height
+  a Spades partner pod already has, so the layout needed no change.
+- **Tests:** app/play/poker/table.test.tsx.
+
+### Community row overlapped the top seats' cards on a laptop
+- **Cause:** the same mistake as Spades' trick. Poker's centre chain
+  (community → pot → stub/burn) was anchored to `play`, which clears the
+  pods but not the cards fanned out of them. On laptop heights the row sat
+  in the top seats' hole cards; on phones its ends reached the side
+  seats'.
+- **Fix:** the community box is bounded by `pileRegion` (top clamped below
+  the top hands, width inside the side hands) and centred on it; the pot
+  and stub follow from its bottom as before. The layout squeezes the gaps
+  first, then shrinks the cards, when five do not fit.
+- **Tests:** layout.test.ts "poker's centre — stays clear of every
+  opponent's hand" (2–10 seats, phones and laptop sizes).
+- **Layout work from here on is collected in `layout-ui-ux.md`** for one
+  dedicated PR (user's request, 2026-09-25), including the audit of the
+  other games' centre zones.
+
+### Announcements named the wrong people online
+- **Cause:** poker baked names into its announcement TEXT with a
+  `seatLabel` helper — "You" for seat 0, a bot name for everyone else. The
+  other games pass `actor` + `selfText` and let each viewer's screen name
+  the mover. So online every player saw seat 0's moves as "You folds", and
+  people were called by bot names; offline it read "You checks".
+- **Fix:** every poker announcement carries `actor`/`selfText` (with the
+  amounts: "calls $20"); `seatLabel` is gone. A split pot, which has no one
+  actor, says "The pot is split".
+- **Tests:** poker rules.test.ts "announcements" — across a whole bot
+  match, no announcement names anybody in its text.
+
+### The end-of-hand summary was misleading
+- **Was:** it showed `result.deltas`, which is the PAYOUT (documented,
+  wrongly, as net) — +50 to a winner who had put in 20, +0 to players who
+  were down. A losing hand mucked at the showdown read "folded". Nothing
+  said why the hand was won.
+- **Fix:** `PokerHandResult` gained `net` (payout minus what the seat put
+  in) and `showdownSeats`; `deltas` keeps its payout meaning (tests rely on
+  it) with a corrected doc. The scorecard shows `net`, "lost" for a beaten
+  hand, names hands the viewer can see ("won · Pair of 10s"), titles a
+  showdown "You win with Pair of 10s", and explains a walkover in a note.
+  `describeHand`/`describeBest` in hand.ts do the naming.
+- **Tests:** poker table.test.tsx "the end-of-hand summary" (the net
+  column sums to zero), hand.test.ts "describeHand / describeBest".
+
+### "lost · Full house, Jacks and NaNs", and "Round 1" every hand
+- **NaN:** poker's `playerView` does not DROP a hand a viewer may not see;
+  it keeps it, owner and all, under placeholder ids (`??0`, `??1`). The
+  summary checked only that a seat had two cards, parsed the placeholders,
+  and named a hand from the board plus garbage. Now `isHiddenCard` (exported
+  from poker rules) gates it: a mucked loser reads just "lost". Worth
+  remembering for any code that reads another seat's cards off a view.
+- **Round 1:** `extractRound` read only a `round` field and fell back to 1;
+  poker's field is `hand`. So every hand was "Round 1", which also made a
+  CORRECT +/- look wrong next to a stack that had moved in earlier hands
+  (the user's screenshot: +40 on a stack of 2050 — right, after an earlier
+  +10). It now reads `hand` too.
+- The game itself scored the hand correctly throughout; both were display.
+- **Tests:** poker table.test.tsx "the summary, read from a player's own
+  view" (fails with "NaN" on the old code); session/structural.test.ts.
+
+### A showdown win was not explained
+- **Was:** at a showdown against players who mucked (bots always do), the
+  summary said "You win with …" and "lost", and nothing else — and mucking
+  made no announcement at all, so it read as though they had folded.
+- **Now:** every showdown gets a "Why you won" / "Why Mia won" note —
+  "Your Three Jacks beats Mia's Two pair…" for hands shown, and "Mia didn't
+  show their cards. At the end, a player who can't win may keep them
+  hidden — so theirs lost to yours." for hands kept hidden. Mucking
+  announces "doesn't show — their hand lost" (only losers are ever offered
+  a muck, so that is always true). Names, never guessed pronouns.
+- **Tests:** poker table.test.tsx (the mucked-loser test checks the note;
+  a visible loser gets "beats"), rules.test.ts announcements. Checked live.
+
+### The betting panel covered the board
+- At 1536×780 it sat over the flop. On wide screens it is now one ~96px
+  row just above the hand. Clear at 1536×780; the tighter 1366×650 case is
+  open in `layout-ui-ux.md`.
+
+### In-game settings, and Hints (user's design, 2026-09-25)
+- A SHARED mechanism, not a poker one: `src/table/gameSettings.tsx` (a
+  `GameSetting` list, a per-device `useGameSettings` store on
+  `useSyncExternalStore`, and `SettingsSheet`). A game opts in by passing
+  `settings` to `GameHost`/`GameHostView`, which then shows a Settings
+  button in a shared top-right row (online tables pass their Step away /
+  End game through `corner` so the two share one row), and hands the
+  values to the table content as `children(live, settings)`.
+- Poker is the first user: `POKER_SETTINGS` = Hints, on by default.
+  - Hints on: a line under each choice ("give up this hand", "match the
+    bet to stay in"...), and the hero's badge spelled out ("Big blind").
+  - Always on (user's call): "Your hand · Pair of 10s" in the panel and
+    above the cards; the winning hand in the summary; "Total bet" only
+    when it differs from this round's bet.
+  - Always available: a "Table words" glossary in the Hands sheet.
+- **Tests:** table/gameSettings.test.tsx; poker table.test.tsx "hints,
+  and what is always shown". Checked live in a browser.
+
 ## Open gaps (known, not yet fixed)
 
-- **Poker's first deal** has no pile to fly from, offline or online
-  (CLAUDE.md, "An animation needs a table…").
+- None known in the games playtested so far (Spades, Dominoes, LRC, Poker).
+  Rummy and BS have not had their online playtest yet.
+- The centre-zone audit in Poker's layout note above, deferred to the
+  larger layout pass.
+
 
 ## Techniques that worked
 

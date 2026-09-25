@@ -22,6 +22,7 @@ import type { PokerAction, PokerState } from "@/games/poker/types";
 import { GameHost } from "@/table/GameHost";
 import {
   OFFLINE_VIEW,
+  POKER_SETTINGS,
   PokerControls,
   pendingLabel,
   playerViews,
@@ -64,6 +65,7 @@ export default function PokerPlayPage() {
 
   return (
     <GameHost<PokerState, PokerAction>
+      settings={POKER_SETTINGS}
       key={gameKey}
       definition={definition}
       runtime={{ seats, difficulty: botTable(seats, difficulty) }}
@@ -79,7 +81,7 @@ export default function PokerPlayPage() {
       onRematch={() => setGameKey((k) => k + 1)}
       onLobby={() => setStarted(false)}
     >
-      {(live) => <PokerControls view={OFFLINE_VIEW} live={live} />}
+      {(live, prefs) => <PokerControls view={OFFLINE_VIEW} live={live} hints={prefs.hints ?? true} />}
     </GameHost>
   );
 }

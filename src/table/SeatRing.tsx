@@ -23,8 +23,12 @@ export interface SeatView {
   name: string;
   /** Avatar tint. Any CSS colour. */
   colour: string;
-  /** Second line: "bid 3 · won 2", "7 cards", etc. */
-  meta?: string;
+  /**
+   * Second line: "bid 3 · won 2", "7 cards", etc. A list is one line each —
+   * for a game with two things to say, like poker's stack and bet. Joined
+   * onto one line, "$4837 · bet $362" is wider than a pod and got cut off.
+   */
+  meta?: string | readonly string[];
   /** Highlights the pod and shows a pulse. */
   active?: boolean;
   thinking?: boolean;
@@ -184,11 +188,11 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
         </div>
       ) : null}
 
-      {view.meta ? (
-        <div className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>
-          {view.meta}
+      {(typeof view.meta === "string" ? [view.meta] : (view.meta ?? [])).map((line, i) => (
+        <div key={i} className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>
+          {line}
         </div>
-      ) : null}
+      ))}
     </motion.div>
   );
 });

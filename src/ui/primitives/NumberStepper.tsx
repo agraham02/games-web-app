@@ -36,6 +36,14 @@ export interface NumberStepperProps {
   disabled?: boolean;
   /** Why it cannot be changed, as a tooltip on both buttons. */
   title?: string;
+  /** How the number reads — "$125" rather than "125" for a bet. */
+  format?: (value: number) => string;
+  /**
+   * `sm` for a stepper that has to share a row with other controls — a
+   * setup screen has the height for the big number, a betting bar that
+   * must fit between the board and the hand does not.
+   */
+  size?: "md" | "sm";
 }
 
 export function NumberStepper({
@@ -47,9 +55,12 @@ export function NumberStepper({
   label = "value",
   disabled = false,
   title,
+  format,
+  size = "md",
 }: NumberStepperProps) {
+  const small = size === "sm";
   const button =
-    "flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30";
+    `flex ${small ? "h-9 w-9" : "h-11 w-11"} shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30`;
 
   return (
     <div className="flex items-center justify-center gap-3">
@@ -70,8 +81,10 @@ export function NumberStepper({
           is what it did. `min-w` keeps a one-digit value from collapsing
           the row, and `tnum` keeps digits equal width so the number does
           not jitter as it counts. */}
-      <span className="tnum min-w-[2ch] px-1 text-center font-display text-4xl font-extrabold text-brass-300">
-        {value}
+      <span
+        className={`tnum min-w-[2ch] px-1 text-center font-display ${small ? "text-2xl" : "text-4xl"} font-extrabold text-brass-300`}
+      >
+        {format ? format(value) : value}
       </span>
       <button
         type="button"

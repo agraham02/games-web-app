@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCard } from "@/games/_shared/cards";
-import { bestOfSeven, compareHandValues, evaluateFive, pokerRank } from "./hand";
+import { bestOfSeven, compareHandValues, describeBest, evaluateFive, pokerRank } from "./hand";
 
 function hand(ids: string[]) {
   return ids.map(parseCard);
@@ -130,5 +130,31 @@ describe("bestOfSeven", () => {
   it("handles exactly 5 and exactly 6 cards too, not only 7", () => {
     expect(bestOfSeven(hand(["SA", "SK", "SQ", "SJ", "S10"])).category).toBe(8);
     expect(bestOfSeven(hand(["SA", "SK", "SQ", "SJ", "S10", "H2"])).category).toBe(8);
+  });
+});
+
+describe("describeHand / describeBest", () => {
+  const cards = (...ids: string[]) => ids.map(parseCard);
+
+  it("names which pair, not just that there is one", () => {
+    expect(describeBest(cards("S10", "H10", "C2", "D7", "HK"))).toBe("Pair of 10s");
+    expect(describeBest(cards("SK", "HK", "C10", "D10", "H2"))).toBe("Two pair, Kings and 10s");
+    expect(describeBest(cards("SA", "H2", "C9", "D7", "HK"))).toBe("Ace high");
+  });
+
+  it("names the big hands a newcomer most wants to recognise", () => {
+    expect(describeBest(cards("SA", "SK", "SQ", "SJ", "S10"))).toBe("Royal flush");
+    expect(describeBest(cards("SK", "HK", "CK", "D10", "H10"))).toBe("Full house, Kings and 10s");
+    expect(describeBest(cards("S9", "H8", "C7", "D6", "H5"))).toBe("Straight, 9 high");
+  });
+
+  it("reads two hole cards before the flop", () => {
+    expect(describeBest(cards("S7", "H7"))).toBe("Pair of 7s");
+    expect(describeBest(cards("SA", "H2"))).toBe("Ace high");
+  });
+
+  it("takes the best five of seven", () => {
+    // The reported river: A♣ 2♥ on 9♠ 8♣ K♣ 10♣ 10♥.
+    expect(describeBest(cards("CA", "H2", "S9", "C8", "CK", "C10", "H10"))).toBe("Pair of 10s");
   });
 });

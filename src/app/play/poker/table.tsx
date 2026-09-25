@@ -14,13 +14,23 @@ import { motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { parseCard } from "@/games/_shared/cards";
-import { legalActions } from "@/games/poker/rules";
-import { amountToCall, betRange, positionBadge, potTotal, seatHoleCards } from "@/games/poker/state";
-import { bestOfSeven, HAND_CATEGORY_INFO, type HandCategory } from "@/games/poker/hand";
+import { isHiddenCard, legalActions } from "@/games/poker/rules";
+import {
+  amountToCall,
+  betRange,
+  highestStreetCommitted,
+  positionBadge,
+  potTotal,
+  seatHoleCards,
+} from "@/games/poker/state";
+import { bestOfSeven, describeBest, HAND_CATEGORY_INFO, type HandCategory } from "@/games/poker/hand";
 import type { PokerAction, PokerState } from "@/games/poker/types";
 import { TRANSITIONS } from "@/motion/presets";
 import { InfoSheet } from "@/ui/disclosure";
+import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import type { RoundNote } from "@/table/GameHost";
+import type { GameSetting } from "@/table/gameSettings";
 import { HandZone } from "@/table/HandZone";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -80,29 +90,99 @@ export function roundSummary(view: PokerView, state: PokerState) {
   const name = (seat: SeatId) => (seat === view.viewerSeat ? "You" : view.nameFor(seat));
   const colour = (seat: SeatId) => (seat === view.viewerSeat ? "var(--color-brass-300)" : view.colourFor(seat));
 
+  // The hand a seat made, named — but only when this viewer can see both
+  // of its cards. A winner's are always shown; a loser who mucked keeps
+  // theirs hidden. Hidden is not ABSENT: the view keeps a masked hand under
+  // placeholder ids, so "has two cards" is not the test. Parsing the
+  // placeholders gave a loser a hand they never held — "Full house, Jacks
+  // and NaNs", the board's jacks plus two unreadable cards.
+  const handOf = (seat: SeatId): string | null => {
+    if (!result.showdown) return null;
+    const hole = seatHoleCards(state, seat);
+    if (hole.length < 2 || hole.some(isHiddenCard)) return null;
+    return describeBest([...hole, ...state.communityOrder].map(parseCard));
+  };
+
   const rows: ScoreRow[] = Object.keys(state.folded)
     .map(Number)
-    .map((seat) => ({
-      seat,
-      name: name(seat),
-      colour: colour(seat),
-      detail: result.winningSeats.includes(seat)
-        ? "won"
-        : state.folded[seat]
-          ? "folded"
-          : undefined,
-      delta: result.deltas[seat] ?? 0,
-      total: state.stacks[seat] ?? 0,
-    }))
+    .map((seat) => {
+      const won = result.winningSeats.includes(seat);
+      // At the showdown and not a winner: they LOST, whether or not they
+      // showed. Mucking a beaten hand used to read as "folded", which is a
+      // different thing — a fold is giving up before the end.
+      const lost = !won && result.showdownSeats.includes(seat);
+      const hand = won || lost ? handOf(seat) : null;
+      const status = won ? "won" : lost ? "lost" : state.folded[seat] ? "folded" : undefined;
+      return {
+        seat,
+        name: name(seat),
+        colour: colour(seat),
+        detail: status && hand ? `${status} · ${hand}` : status,
+        // Net, not the payout: a winner who put in $20 of a $50 pot is up
+        // $30, and a player who put in $20 and lost is down $20 — which
+        // the payout showed as +50 and +0.
+        delta: result.net[seat] ?? 0,
+        total: state.stacks[seat] ?? 0,
+      };
+    })
     .sort((a, b) => b.total - a.total);
 
   const winners = result.winningSeats.map(name);
+  const solo = result.winningSeats.length === 1 ? result.winningSeats[0]! : null;
+  const soloHand = solo !== null ? handOf(solo) : null;
+  const verb = winners[0] === "You" ? "win" : "wins";
   const title =
-    winners.length === 1
-      ? `${winners[0]} ${winners[0] === "You" ? "win" : "wins"} the pot`
-      : `${winners.join(" & ")} split the pot`;
+    solo === null
+      ? `${winners.join(" & ")} split the pot`
+      : soloHand
+        ? `${winners[0]} ${verb} with ${soloHand}`
+        : `${winners[0]} ${verb} the pot`;
+  // Why it ended, in plain words — the thing a newcomer cannot infer, and
+  // the thing they asked for: winning at a showdown against somebody who
+  // never showed their cards read as winning for no reason at all.
+  const possessive = (seat: SeatId) => (seat === view.viewerSeat ? "your" : `${name(seat)}'s`);
+  const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+  let note: RoundNote | undefined;
+  if (!result.showdown) {
+    note = {
+      tone: "info",
+      title: "No showdown",
+      body: `Everyone else folded, so ${winners[0] === "You" ? "you win" : `${winners[0]} wins`} without showing any cards.`,
+    };
+  } else if (solo === null) {
+    note = { tone: "info", title: "A tie", body: "The best hands were equal, so the pot is shared." };
+  } else {
+    const losers = result.showdownSeats.filter((s) => !result.winningSeats.includes(s));
+    const shown = losers.flatMap((s) => {
+      const hand = handOf(s);
+      return hand ? [`${possessive(s)} ${hand}`] : [];
+    });
+    const hidden = losers.filter((s) => !handOf(s));
+    const sentences: string[] = [];
+    if (soloHand && shown.length > 0) {
+      sentences.push(`${capital(possessive(solo))} ${soloHand} beats ${listOf(shown)}.`);
+    }
+    if (hidden.length > 0) {
+      const who = listOf(hidden.map((s) => (s === view.viewerSeat ? "You" : name(s))));
+      const theirs = hidden.length === 1 && hidden[0] === view.viewerSeat ? "your" : "their";
+      sentences.push(
+        `${who} didn't show ${theirs} cards. At the end, a player who can't win may keep them hidden — so ${theirs === "your" ? "yours" : "theirs"} lost to ${solo === view.viewerSeat ? "yours" : `${name(solo)}'s`}.`,
+      );
+    }
+    note = {
+      tone: "info",
+      title: solo === view.viewerSeat ? "Why you won" : `Why ${name(solo)} won`,
+      body: sentences.join(" ") || "Theirs was the best hand at the showdown.",
+    };
+  }
 
-  return { title, rows };
+  return { title, rows, note };
+}
+
+/** "A", "A and B", "A, B and C". */
+function listOf(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 
 /** DevPanel's game-specific line — see GameHostProps.pendingLabel. */
@@ -130,7 +210,15 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
     const stack = state.stacks[seat] ?? 0;
     const bet = state.streetCommitted[seat] ?? 0;
 
-    const meta = busted ? "Out" : folded ? "Folded" : bet > 0 ? `$${stack} · bet $${bet}` : `$${stack}`;
+    // Two lines rather than "$4837 · bet $362" on one: that is wider than a
+    // pod, and the bet — the part that matters mid-hand — was the part cut off.
+    const meta = busted
+      ? "Out"
+      : folded
+        ? "Folded"
+        : bet > 0
+          ? [`$${stack}`, `bet $${bet}`]
+          : `$${stack}`;
 
     // Deliberately keyed off `lastAction`, not `currentSeat`/`toAct` —
     // see LRC's own doc on this exact pattern: `state.toAct[0]` already
@@ -159,9 +247,44 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
    the show-or-muck bar, and the hand-rankings sheet.
    ============================================================ */
 
-export function PokerControls({ view, live }: { view: PokerView; live: Live }) {
+/**
+ * Poker's in-game settings — see `gameSettings.tsx` for the shared
+ * mechanism every game can add to. Hints are ON by default: they exist for
+ * somebody who does not know the game yet, and that person does not know
+ * to go looking for them either.
+ */
+export const POKER_SETTINGS: readonly GameSetting[] = [
+  {
+    key: "hints",
+    label: "Hints",
+    description: "Explains each choice under its button, and spells out the dealer and blind markers.",
+    default: true,
+  },
+];
+
+/** This viewer's best hand so far, in words — or null when they hold none. */
+function heroHand(state: PokerState, seat: SeatId): string | null {
+  if (seat < 0 || state.folded[seat] !== false) return null;
+  const hole = seatHoleCards(state, seat);
+  if (hole.length < 2 || hole.some(isHiddenCard)) return null;
+  return describeBest([...hole, ...state.communityOrder].map(parseCard));
+}
+
+export function PokerControls({
+  view,
+  live,
+  hints = true,
+}: {
+  view: PokerView;
+  live: Live;
+  /** The player's Hints setting. */
+  hints?: boolean;
+}) {
   const state = live.state;
   const [hintsOpen, setHintsOpen] = useState(false);
+  // Always on, not a hint: what you are holding is the first thing a
+  // player needs to know, and a newcomer cannot read it off the cards.
+  const hand = heroHand(state, view.viewerSeat);
 
   const showdownPending = Boolean(state.pendingShowdown) && live.isHeroTurn;
   useShowdownCountdown(live, showdownPending);
@@ -193,21 +316,23 @@ export function PokerControls({ view, live }: { view: PokerView; live: Live }) {
                 label="You"
                 detail={`$${stack}${heroBet > 0 ? ` · bet $${heroBet}` : ""}`}
               />
-              {heroBadge ? <HeroPositionBadge label={heroBadge} /> : null}
+              {heroBadge ? <HeroPositionBadge label={heroBadge} spelled={hints} /> : null}
             </div>
           ) : undefined
         }
         center={
-          <TurnIndicator
-            inline
-            show={live.isHeroTurn && !showdownPending}
-            label={toCall > 0 ? `To call $${toCall}` : "Check or bet"}
-          />
+          live.isHeroTurn && !showdownPending ? (
+            <TurnIndicator inline show label={toCall > 0 ? `To call $${toCall}` : "Check or bet"} />
+          ) : hand ? (
+            <HeroStatusBadge inline label="Your hand" detail={hand} />
+          ) : undefined
         }
         right={<HintsButton onOpen={() => setHintsOpen(true)} />}
       />
 
-      {live.isHeroTurn && !state.pendingShowdown ? <BettingPanel view={view} live={live} /> : null}
+      {live.isHeroTurn && !state.pendingShowdown ? (
+        <BettingPanel view={view} live={live} hand={hand} hints={hints} />
+      ) : null}
 
       <HandRankingsSheet view={view} open={hintsOpen} onClose={() => setHintsOpen(false)} state={state} />
     </>
@@ -251,8 +376,17 @@ function PotBadge({ state }: { state: PokerState }) {
  * equivalent to hook into — this is that equivalent, living next to
  * `HeroStatusBadge` instead of on a pod.
  */
-function HeroPositionBadge({ label }: { label: "D" | "SB" | "BB" }) {
+function HeroPositionBadge({ label, spelled }: { label: "D" | "SB" | "BB"; spelled: boolean }) {
   const title = label === "D" ? "Dealer" : label === "SB" ? "Small blind" : "Big blind";
+  // With hints on, the word itself rather than two letters nobody new can
+  // read: "BB" means nothing until somebody has told you.
+  if (spelled) {
+    return (
+      <span className="rounded-full bg-brass-400 px-2 py-0.5 text-[10px] leading-none font-extrabold text-felt-950">
+        {title}
+      </span>
+    );
+  }
   return (
     <span
       title={title}
@@ -291,110 +425,200 @@ function HintsButton({ onOpen }: { onOpen: () => void }) {
  * slot, which is sized for a single compact row and this needs more.
  *
  * Remounts fresh every time it's the hero's turn (the parent only
- * renders it while `live.isHeroTurn`), so the slider's own local state
+ * renders it while `live.isHeroTurn`), so the stepper's own local state
  * starting at the fresh legal minimum needs no effect to reset it —
  * the same reasoning `NumericBidPanel` relies on.
  */
-function BettingPanel({ view, live }: { view: PokerView; live: Live }) {
+function BettingPanel({
+  view,
+  live,
+  hand,
+  hints,
+}: {
+  view: PokerView;
+  live: Live;
+  hand: string | null;
+  hints: boolean;
+}) {
   const state = live.state;
-  const legal = legalActions(state, view.viewerSeat);
+  const me = view.viewerSeat;
+  const legal = legalActions(state, me);
   const canFold = legal.some((a) => a.t === "fold");
   const canCheck = legal.some((a) => a.t === "check");
   const canCall = legal.some((a) => a.t === "call");
   const canBet = legal.some((a) => a.t === "bet");
   const canRaise = legal.some((a) => a.t === "raise");
 
-  const toCall = amountToCall(state, view.viewerSeat);
-  const range = canBet || canRaise ? betRange(state, view.viewerSeat) : null;
+  // The two numbers a player actually reasons with: what the bet IS, and
+  // what they have already put in. The call amount is the difference, and
+  // showing only the difference ("Call $50" after a raise to $100) read as
+  // "the bet is $50". Both used to be missing from the panel entirely.
+  const currentBet = highestStreetCommitted(state);
+  const myBet = state.streetCommitted[me] ?? 0;
+  const totalBet = state.totalCommitted[me] ?? 0;
+  const toCall = amountToCall(state, me);
+  const range = canBet || canRaise ? betRange(state, me) : null;
   const [amount, setAmount] = useState(range?.min ?? 0);
+  const allIn = range !== null && amount >= range.max;
 
   const submit = (action: PokerAction) => live.submitAction(action);
-  const submitBet = () => {
-    if (!range) return;
-    submit(canBet ? { t: "bet", to: amount } : { t: "raise", to: amount });
-  };
+  const verb = canBet ? "Bet" : "Raise to";
+
+  // Every choice the same size and weight. Making the raise big and gold
+  // and the rest small and grey was steering: the button you are shown
+  // first is the one you are being told to press.
+  const choice =
+    "flex flex-1 flex-col items-center justify-center rounded-xl bg-bone-50/8 px-2 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/18 hover:bg-brass-400/15 hover:text-brass-300";
 
   return (
     <div
       className="pointer-events-none absolute inset-x-0 z-1800 flex justify-center px-4"
-      style={{ bottom: "calc(var(--hand-zone, 150px) + 12px)" }}
+      style={{ bottom: "calc(var(--hand-zone, 150px) + 2px)" }}
     >
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={TRANSITIONS.ui}
-        className="pointer-events-auto flex w-[min(22rem,92vw)] flex-col gap-3 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-4 shadow-e2 backdrop-blur-md"
+        // ONE row on anything wider than a tablet. Stacked, the panel was
+        // ~275px tall and grew up from the hand into the middle of the
+        // table: on a laptop it sat over the flop, hiding the very cards
+        // the decision is about. A 1366x650 window leaves only ~120px
+        // between the board and the hero's cards, so the bar has to fit in
+        // that, not merely be shorter. A phone keeps the stack — it has the
+        // height, and not the width.
+        className="pointer-events-auto flex w-[min(24rem,94vw)] flex-col gap-3 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-4 shadow-e2 backdrop-blur-md lg:w-[min(64rem,96vw)] lg:flex-row lg:items-center lg:gap-3 lg:p-2.5"
       >
+        <dl className="grid grid-cols-4 gap-2 text-center lg:w-[25rem] lg:shrink-0">
+          <BetFigure label="Current bet" value={currentBet > 0 ? `$${currentBet}` : "None"} strong />
+          {/* This round only, which is the number a call is measured against —
+              so the whole hand's worth, which already sits in the pot, is
+              said underneath rather than seeming to have vanished at the flop. */}
+          <BetFigure
+            label="Your bet"
+            value={`$${myBet}`}
+            // Only when it differs: on the first round of betting the two
+            // are the same number, and saying it twice reads as two things.
+            sub={totalBet !== myBet ? `Total bet $${totalBet}` : undefined}
+            strong
+          />
+          <BetFigure label="Pot" value={`$${potTotal(state)}`} />
+          <BetFigure label="Your hand" value={hand ?? "—"} wrap />
+        </dl>
+
         {range ? (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between text-[11px] text-bone-400">
-              <span>{canBet ? "Bet" : "Raise to"}</span>
-              <span className="tnum font-bold text-brass-300">${amount}</span>
-            </div>
-            <input
-              type="range"
+          <div className="flex flex-col items-center gap-2 lg:shrink-0 lg:flex-row">
+            {/* Dropped on the bar, where every pixel of height is table: the
+                button beside it already says "Raise to $X". */}
+            <span className="text-[11px] font-semibold tracking-wide text-bone-400 uppercase lg:hidden">
+              {verb}
+            </span>
+            <NumberStepper
+              value={amount}
               min={range.min}
               max={range.max}
-              step={Math.max(1, Math.round(state.bigBlind / 2))}
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
-              className="w-full accent-brass-400"
-              disabled={range.min === range.max}
+              step={state.bigBlind}
+              onChange={setAmount}
+              label="chips"
+              format={(v) => `$${v}`}
+              size="sm"
             />
-            <div className="flex gap-1.5">
+            <div className="flex w-full gap-1.5 lg:w-auto lg:flex-col lg:gap-1">
               {betPresets(potTotal(state), range).map((preset) => (
                 <button
                   key={preset.label}
                   type="button"
                   onClick={() => setAmount(preset.to)}
-                  className="flex-1 rounded-full bg-bone-50/6 py-1.5 text-[10px] font-bold text-bone-200 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300"
+                  className="flex-1 rounded-full bg-bone-50/6 px-2.5 py-1.5 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 lg:py-0.5"
                 >
                   {preset.label}
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={submitBet}
-              className="w-full rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-2.5 text-sm font-extrabold text-felt-950 shadow-e2"
-            >
-              {amount >= range.max
-                ? `${canBet ? "Bet" : "Raise to"} $${amount} — all in`
-                : `${canBet ? "Bet" : "Raise to"} $${amount}`}
-            </button>
           </div>
         ) : null}
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 lg:flex-1">
           {canFold ? (
-            <button
-              type="button"
-              onClick={() => submit({ t: "fold" })}
-              className="flex-1 rounded-full bg-bone-50/8 py-2.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/18"
-            >
-              Fold
+            <button type="button" onClick={() => submit({ t: "fold" })} className={choice}>
+              <span>Fold</span>
+              {hints ? <ChoiceNote>give up this hand</ChoiceNote> : null}
             </button>
           ) : null}
           {canCheck ? (
-            <button
-              type="button"
-              onClick={() => submit({ t: "check" })}
-              className="flex-1 rounded-full bg-bone-50/8 py-2.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/18"
-            >
-              Check
+            <button type="button" onClick={() => submit({ t: "check" })} className={choice}>
+              <span>Check</span>
+              {hints ? <ChoiceNote>pass — no bet</ChoiceNote> : null}
             </button>
           ) : null}
           {canCall ? (
+            <button type="button" onClick={() => submit({ t: "call" })} className={choice}>
+              <span>Call ${toCall}</span>
+              {/* Only when it says something the amount does not: with
+                  nothing of yours in yet this round, the call IS the bet,
+                  and "Call $362 · matches $362" just repeats itself. Once
+                  you have chips in — a blind, or a bet somebody raised
+                  over — the two differ, and that is when it helps. */}
+              {myBet > 0 || hints ? (
+                <ChoiceNote>
+                  {myBet > 0 ? `matches $${currentBet}` : "match the bet"}
+                  {hints ? " to stay in" : ""}
+                </ChoiceNote>
+              ) : null}
+            </button>
+          ) : null}
+          {range ? (
             <button
               type="button"
-              onClick={() => submit({ t: "call" })}
-              className="flex-1 rounded-full bg-bone-50/8 py-2.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/18"
+              onClick={() => submit(canBet ? { t: "bet", to: amount } : { t: "raise", to: amount })}
+              className={choice}
             >
-              Call ${toCall}
+              <span>
+                {verb} ${amount}
+              </span>
+              {allIn ? (
+                <span className="text-[10px] font-semibold text-warn">all in</span>
+              ) : hints ? (
+                <ChoiceNote>others must match it</ChoiceNote>
+              ) : null}
             </button>
           ) : null}
         </div>
       </motion.div>
+    </div>
+  );
+}
+
+/** The quiet line under a choice — what it means, or what it matches. */
+function ChoiceNote({ children }: { children: React.ReactNode }) {
+  return <span className="text-[10px] font-semibold text-bone-400">{children}</span>;
+}
+
+function BetFigure({
+  label,
+  value,
+  sub,
+  strong,
+  wrap,
+}: {
+  label: string;
+  value: string;
+  /** A second, quieter figure underneath — like the call button's own. */
+  sub?: string;
+  strong?: boolean;
+  /** For words rather than a number ("Two pair, Kings and 10s"). */
+  wrap?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 rounded-lg bg-felt-950/50 px-2 py-1.5 ring-1 ring-bone-50/8">
+      <dt className="text-[10px] font-semibold tracking-wide text-bone-400 uppercase">{label}</dt>
+      <dd
+        className={`tnum font-extrabold ${
+          strong ? "text-lg text-brass-300" : wrap ? "text-[11px] leading-tight text-bone-100" : "text-sm text-bone-200"
+        }`}
+      >
+        {value}
+      </dd>
+      {sub ? <dd className="tnum text-[10px] font-semibold text-bone-400">{sub}</dd> : null}
     </div>
   );
 }
@@ -510,7 +734,30 @@ function HandRankingsSheet({
           Your current hand highlights here once the flop is dealt.
         </p>
       ) : null}
+
+      {/* Reference, so always here rather than behind the Hints setting. */}
+      <h4 className="mt-5 mb-2 font-display text-[13px] tracking-wide text-brass-300">Table words</h4>
+      <dl className="flex flex-col gap-1.5">
+        {GLOSSARY.map(([term, meaning]) => (
+          <div key={term} className="rounded-lg bg-bone-50/4 px-3 py-2">
+            <dt className="text-sm font-semibold text-bone-100">{term}</dt>
+            <dd className="text-[11px] text-bone-400">{meaning}</dd>
+          </div>
+        ))}
+      </dl>
     </InfoSheet>
   );
 }
 
+/** Plain-words meanings for the words a poker table uses without explaining. */
+const GLOSSARY: ReadonlyArray<readonly [string, string]> = [
+  ["Dealer (D)", "Marks who deals this hand. It moves one seat each hand, and whoever holds it acts last after the flop."],
+  ["Small blind (SB) and big blind (BB)", "The two players left of the dealer must put chips in before seeing their cards, so every hand has something to win."],
+  ["Current bet", "What everyone still in has to have put in this round. Each round — before the flop, the flop, the turn, the river — starts again at nothing."],
+  ["Check", "Stay in without putting chips in. Only possible when nobody has bet this round."],
+  ["Call", "Put in just enough to match the current bet."],
+  ["Bet / Raise to", "Put chips in, or more than the current bet; everyone else must match it or fold."],
+  ["Fold", "Give up the hand. You lose what you have already put in, but nothing more."],
+  ["All in", "Putting in every chip you have. You can only win as much from each player as you put in yourself."],
+  ["Side pot", "When someone is all in, the chips they could not match go into a separate pot they cannot win."],
+];

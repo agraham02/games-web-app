@@ -236,9 +236,10 @@ describe("projectEvents", () => {
   });
 
   it("conceals a whole poker deal from every seat but the one it belongs to", () => {
-    // End to end against the game that exposed the bug. Poker places no
-    // cards at all before dealing, which is what made its pre-batch
-    // placements empty and took the unsafe branch.
+    // End to end against the game that exposed the bug. Poker used to
+    // place no cards at all before dealing, which is what made its
+    // pre-batch placements empty and took the unsafe branch; it parks the
+    // deck in the stub now, and this still has to hold.
     const poker = createPoker();
     const rng = createRng(31337);
     const base = poker.setup({ seats: 4, rng });

@@ -34,8 +34,20 @@ export interface PokerHandResult {
    * ever compared, nothing was revealed. */
   showdown: boolean;
   winningSeats: SeatId[];
-  /** Net stack change this hand, per seat — for the round scorecard. */
+  /**
+   * What each seat was PAID from the pot(s) — only winners appear. Not a
+   * net change: a winner's own contribution is inside it, and a loser is
+   * simply absent. It was documented as "net", and the scorecard showed it
+   * as net: +50 for a winner who had put in 20, +0 for a player $20 down.
+   */
   deltas: Record<SeatId, number>;
+  /** Net stack change this hand, for every seat dealt in — payout minus
+   * what the seat put in. What the scorecard shows. */
+  net: Record<SeatId, number>;
+  /** Seats still in at a showdown, including any who then mucked — so a
+   * losing hand that was not shown reads as lost, not folded. Empty when
+   * the hand ended without one. */
+  showdownSeats: SeatId[];
 }
 
 /**
@@ -56,6 +68,8 @@ export interface PendingShowdown {
   order: SeatId[];
   /** Computed once, at showdown-start; applied once `order` empties. */
   pendingDeltas: Record<SeatId, number>;
+  /** Everyone still in when the showdown began — see `showdownSeats`. */
+  contested: SeatId[];
 }
 
 export interface PokerState {

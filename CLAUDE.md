@@ -308,11 +308,10 @@ Three rules keep it honest:
 - **Only the opening deal is seeded** (`dealtRound === 1`). Anything else
   a client first sees is a position, and the settle that follows adopts it.
 
-Poker is the known gap, and it is not an online one: it places nothing
-before its first deal, so that deal has no pile to fly from offline
-either. BS deliberately does not repeat it — `setup` returns an undealt
-state with all 52 cards parked on the pile, which is also where the pile
-lives once play starts.
+Poker used to be the gap: it placed nothing before its first deal, so
+that deal had no pile to fly from, offline or online. Its `setup` now
+parks the whole deck in the stub, as BS's parks all 52 cards on the pile —
+a game with a deal must place what it deals before dealing it.
 
 ### The server paces bot turns by what the last one takes to WATCH
 
@@ -652,6 +651,14 @@ app/play/     lrc · dominoes · spades · rummy · poker
 app/room/     the lobby and the online table
 app/lab/      seats · motion · tokens · phases · rummy · redact
 ```
+
+**In-game settings are shared.** A game's player preferences (Poker's
+Hints, first) are a `GameSetting[]` passed to `GameHost` as `settings`;
+the host shows one Settings button and sheet, keeps the values per device
+([gameSettings.tsx](src/table/gameSettings.tsx)), and passes them to the
+table content as `children(live, settings)`. Online corner controls go
+through the host's `corner` slot so they share that one row. Add a
+setting to a game by adding an entry to its list, never a per-game sheet.
 
 The dev panel also takes `scenarios` — labelled one-shot callbacks a game
 supplies for states only reachable by waiting (Rummy's claim window opens

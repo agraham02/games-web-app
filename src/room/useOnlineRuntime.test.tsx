@@ -334,15 +334,16 @@ describe("the opening deal, online", () => {
  * bank) with a different mix of real and stand-in ids, which is exactly
  * where a seed built from the wrong assumption would fail quietly.
  *
- * Poker is left out deliberately, and not because it is fine: it places
- * nothing before its first deal (`deck` is empty until dealt), so its
- * opening deal has no pile to fly from OFFLINE either. Online matches
- * offline here, and changing poker's own placements is a separate job.
+ * Poker was left out until its `setup` parked the deck in the stub: before
+ * that it placed nothing before its first deal, so the deal had no pile to
+ * fly from, offline or online — reported as "no deal animation on the
+ * first round".
  */
 describe.each([
   ["spades", 4],
   ["dominoes", 4],
   ["lrc", 6],
+  ["poker", 6],
 ] as const)("the opening deal, online — %s", (gameId, seats) => {
   beforeEach(() => {
     vi.useFakeTimers();

@@ -42,8 +42,14 @@ export function resolveWinningSeats<S>(state: S): SeatId[] | null {
 
 /** For a scorecard heading. Defaults to 1 for a round-less game. */
 export function extractRound<S>(state: S): number {
-  const maybe = state as unknown as { round?: number };
-  return typeof maybe.round === "number" ? maybe.round : 1;
+  // Poker counts HANDS, and calls the field that. Read only as `round`,
+  // every poker hand was "Round 1" — on the scorecard and the intro alike,
+  // which also made a correct +/- look wrong against a stack that had
+  // moved in earlier hands.
+  const maybe = state as unknown as { round?: number; hand?: number };
+  if (typeof maybe.round === "number") return maybe.round;
+  if (typeof maybe.hand === "number") return maybe.hand;
+  return 1;
 }
 
 export function extractRoundWinner<S>(state: S): SeatId | null {
