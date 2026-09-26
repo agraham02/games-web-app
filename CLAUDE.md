@@ -206,18 +206,22 @@ meant nearly three seconds of blank table after each play. So
 The division holds: the driver still decides WHEN. It keeps its own
 measurement of how long the last frame takes to WATCH (`playbackMs` on
 the server) and its own speed multiplier and reduced-motion rule; the
-game only replaces the constant beat that follows. What BS asks for is
-~120ms while a window is open, which turns those turns into a flicker of
-eyes travelling round the ring — each declining seat's pod lights on its
-own through `seatCue`, for free.
+game only replaces the constant beat that follows. What BS asks for while
+a window is open is the rest of that bot's reaction time (at least
+120ms), spent BEFORE it answers, as in Rummy's claim race. A whole window
+therefore costs about its longest reaction time, and it reads as a
+flicker of eyes travelling round the ring, each declining seat's pod
+lighting on its own through `seatCue`, for free.
 
-**A generous window must not be able to hold up the table.** Online a
-person gets ten seconds, which is only tolerable because `legalActions`
-also hands the seat ON TURN its plays while a window is open. The most
-natural thing that ends a window is the game moving on over the top of
-it. A bot never uses that interrupt — jumping its own queue gains it
-nothing, and the interrupt exists for people, who are the only ones a
-generous window can hold up.
+**While a window is open, the only moves are BS and Let it go** — for
+everyone, the seat on turn included (the user's rule, 2026-09-25). The
+seat on turn used to be allowed to play over the top of an open window,
+so a generous one could not hold up the table. In a playtest that read
+as somebody playing while the buttons were still up. The cost is
+accepted: a person who answers nothing holds the table until their
+deadline (ten seconds online). While the window is open the seat ring
+stays on the player who made the challengeable play, not on whoever the
+window is waiting on.
 
 **A person's own deadline is NOT capped by the fastest rival**, which is
 where this deliberately parts company with Rummy. There, a seat gets at
@@ -325,6 +329,27 @@ that deal had no pile to fly from, offline or online. Its `setup` now
 parks the whole deck in the stub, as BS's parks all 52 cards on the pile —
 a game with a deal must place what it deals before dealing it.
 
+**A stand-in's name is a slot, not a card.** An opponent's hidden card is
+named by where it sits (`#hand:2:-:3`), so after they play from the middle
+of a hand that name belongs to the card that slid into the gap. Two things
+follow, both found in BS in Chrome after every unit test had passed:
+
+- Whether a piece is still in flight is asked by POSITION, not by name:
+  the settled board is adopted late while any piece the batch moved sits
+  somewhere the board does not put it. Asked by name, every opponent's
+  play except from the last slot was pulled back into the hand the instant
+  it was applied.
+- Adopting the board snaps renamed stand-ins into place (`Placement.jump`,
+  set by `adopt()`) instead of animating them, or the card that just
+  landed flies back out of the pile. They are identical backs, so the snap
+  cannot be seen. A jump is a REMOUNT (the number is the element's key),
+  not an instant transition: Motion kept the interrupted flight's x/y
+  running after a zero-length transition, leaving a hand-sized card on
+  the pile.
+
+A test of this has to SUBSCRIBE to the store; a loop sampling it every
+20ms never sees a move and its undoing that happen in one timer callback.
+
 ### The server paces bot turns by what the last one takes to WATCH
 
 `RoomRuntime` used to space bot turns by a flat 900ms from the moment it
@@ -408,6 +433,12 @@ Counted over CONNECTED members, deliberately: somebody whose phone is
 asleep gets a bot seat the moment the deal happens, so counting them
 would admit exactly the game the rule exists to prevent.
 
+**The next round is the leader's to deal** (`mayContinueRound`, which gates
+the server and becomes `RoomView.youMayContinue`); everyone else's
+scorecard says who they are waiting on. It can never strand a table:
+while the leader is not at it, any seated player there may continue, and
+a leader who disconnects has already handed leadership on.
+
 ### Presence is table state, so it needs a frame
 
 `SeatView.away` marks a seat whose OWNER is not in it — read from
@@ -452,6 +483,21 @@ first mover lit for the rest of the game.
 
 `GameRuntime` gained `currentSeat` and `animating` for this. `busy` folds
 both together and cannot be un-folded by a caller.
+
+A third question has its own field: **is this chance still open?**
+`state` lags the newest move by one animation, which is right for
+drawing the table and wrong for a button offering something already
+taken. A bot's BS call or Rummy claim is made first and animated after,
+and the buttons stayed up through the animation. `GameRuntime.latest` is
+where the game has actually got to; a window's buttons need the window
+open in both. Anything that sets `state` without a frame (offline
+`replaceState`, behind the dev panel's scenarios) has to set `latest` too.
+
+**Selection marks are synced, never written from a state updater.** A
+held card's `selected`/`highlighted` flags live in the table store, and
+a toggle that patched the store inside `setHeld(prev => ...)` wrote to it
+during render. Keep the toggle pure and let `useHeldMarks` sync the
+store, which also re-applies the marks after each batch resets it.
 
 ### `HERO` is a default, not a fact
 

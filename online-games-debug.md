@@ -385,10 +385,242 @@ these notes refer to.
   disables the button and says "use a card from your hand".
 - **Tests:** rules.test.ts "a pickup's meld needs a card from the hand".
 
+## BS
+
+**Status:** committed 2026-09-25 (83fd8c2), after a code review. The last
+game of the online pass.
+
+### A bot's call was made before its pod finished "thinking" (found before playtest)
+- **Found by** checking BS for Rummy's claim-race flaw, since BS runs the
+  same shape of race after every play. Not yet seen in a playtest.
+- **Cause:** a bot answered a window after the 120ms `WINDOW_BEAT_MS` and
+  spent its reaction time (0.2–1.8s then, 1–3s now) as a `think` inside its own frame,
+  which plays after the answer is made. Every seat still in the queue
+  has a live "BS!" button, so a person pressing while a bot ahead of them
+  still looked undecided lost to a call already in.
+- **Fix:** BS's `turnHold(state, seat)` returns the rest of that bot's
+  reaction time (at least 120ms), and a window answer's `think` is 0. A
+  decline records `elapsed` on the window, so a window costs its longest
+  reaction time rather than the sum. The GameSession test harness now
+  uses the game's own `turnHold`, as both real drivers do.
+- **Tests:** GameSession.test.ts "lets a person beat a bot ahead of them
+  while that bot is still reacting" (fails on the old timing); bs
+  rules/bots tests updated.
+
+### "BS!" and "Let it go" stayed up after a bot had called
+- **Cause:** the bar reads `live.state`, the last state the table FINISHED
+  showing. A bot's call is made on the server first and then animated
+  (the reveal), and for that whole animation the old state still had the
+  window open. Rummy's claim bar had the same gap during a bot's claim.
+- **Fix:** `GameRuntime.latest`, the newest state the viewer has been
+  told about (online: the newest frame; offline: set as each frame
+  arrives). BS's `canCall` and Rummy's claim bar require the window in
+  both, so the buttons go the moment the move is made.
+- **Tests:** barMode.test.ts "takes the challenge down the moment somebody
+  else has called".
+- A bot calling before the person's ring ends is by design in BS: the
+  ring is 10s and the seats ahead answer in turn.
+
+### Clicking cards to play threw "Cannot update a component (`Piece`) while rendering `RoomScreen`"
+- **Cause:** `setHeld(prev => togglePlayCard(prev, id))`, and the toggle
+  patched the table store. React may run a state updater during render,
+  so that was a store write during render (and in development updaters run
+  twice). Spades' Blind Nil exchange had the identical pattern, online
+  and offline.
+- **Fix:** the toggles are pure; `useHeldMarks` (src/table) syncs the
+  store's marks from the held list in an effect, and re-applies them after
+  each batch resets the store. It replaced BS's own `useHeldLift`.
+- **Tests:** useHeldMarks.test.tsx.
+
+### A card picked to play barely looked picked
+- BS only lifted it 18px (`selected`). Rummy lifts AND rings it
+  (`selected` + `highlighted`); BS now does the same.
+
+### BS had Dominoes' slam
+- On ~38% of plays, on going out, and on a caught liar. The user wants
+  the slam on plays to be Dominoes' alone, and is fine with one when a
+  liar is caught, so that is the only slam BS keeps.
+
+### The hand woke up during somebody else's challenge window
+- **Cause:** the piece layer makes the hand live (full size, tappable)
+  on `live.isHeroTurn`. In a window, `currentSeat` names the first seat in
+  the answer queue, which is sometimes the viewer, so their hand came
+  alive for a turn where they could only call or let it go ("sometimes":
+  only when first in the queue).
+- **Fix:** `GameHost`'s optional `handActive(live)`, defaulting to
+  `isHeroTurn`. Both BS shells pass `canPlay`, so the hand is live only
+  when the viewer may play.
+
+### The bottom sheet (pile history) is gone
+- The user's call: BS does not need Rummy's sheet. It also covered the
+  bottom of the pile and part of the hand-to-pile flight path, which is
+  the likeliest reason plays looked un-animated.
+- A replay of real server frames through the client store (two people,
+  two bots, 44 plays, 9 of them the viewer's) found every `play` event
+  aimed at a piece the table held and moved it to the pile, so the data
+  is right. If a play still looks un-animated with the sheet gone, it is
+  a drawing problem. Ask whose plays (yours or others') and check in a
+  real browser; jsdom cannot judge motion.
+
+### Plays "sometimes" never flew from the hand to the pile (still, after the sheet went)
+- **Cause (online, any game, BS worst):** when a batch ends, the settled
+  board can rename a piece still in flight (a card played face down into
+  the pile becomes the pile's stand-in), so adopting it is delayed by the
+  flight's `tail`. But the NEXT batch adopted it at once, in `pump`. So the
+  flight survived only when nothing was queued behind it. BS answers every
+  play with a quick frame (a person's "Let it go"), so the card was swapped
+  out mid-air: about 20ms of a 400ms+ flight.
+- **Fix:** `pump` waits while a reset is pending, and the pending reset's
+  timer starts the next batch. Catch-up (`CATCH_UP_FRAMES`) still flushes
+  at once.
+- **Tests:** useOnlineRuntime.test.tsx "still lets them finish when the
+  next frame is already waiting" (20ms on the old code).
+
+### Other players' cards never flew to the pile (only your own did) — found in Chrome
+- **Seen, measured in two real browsers:** your cards flew ~450px to the
+  pile; every other player's moved 6–27px (their hand closing up) and
+  never left the hand. The one exception was a card from the LAST slot of
+  a hand.
+- **Cause:** you cannot see an opponent's cards, so their stand-ins are
+  named by SLOT ("#hand:2:-:3"). The online runtime delays adopting the
+  settled board only while a piece in flight would VANISH from it, and
+  checked that by name. After a play from the middle of a hand the name
+  survives, for the card that slid into the gap, so the board was adopted
+  the instant the play was applied and the card was pulled straight back.
+  jsdom tests sampling the store every 20ms never saw it: the move and the
+  snap-back happened inside one timer callback.
+- **Fix, three parts, all in `useOnlineRuntime.ts`:**
+  - A piece counts as in flight when the batch left it anywhere the
+    settled board does not, not only when its name is gone.
+  - `adopt()`: a stand-in whose settled place differs from where it is
+    drawn gets `Placement.jump`, so it snaps there instead of flying BACK
+    out of the pile under its reused name. Kept while the piece stays put,
+    because the next settle can land in the same tick and drop it before a
+    render; `moveTo` clears it.
+  - After a jump, the next batch waits `JUMP_BEAT_MS` (60ms) so the jump is
+    drawn before the piece moves again (a person playing twice quickly,
+    under the same slot name, had the card start at the pile).
+- **Tests:** useOnlineRuntime.test.tsx "lets another player's card fly to
+  the pile before the board is adopted" (subscribes to the store rather
+  than sampling; 0ms on the pile on the old code, and asserts the jump).
+- **Verified in Chrome** (two isolated contexts, 16 plays): every card
+  reaches the pile, none flies back, none is drawn under the top card.
+
+### A small (hand-sized) card sat on top of the pile
+- **Seen:** a half-size card back on the pile, sometimes for many
+  seconds. Caught in Chrome: an opponent's stand-in whose store placement
+  was back in the hand (`jump` set) but drawn at the pile, at hand scale.
+- **Cause:** the jump was an instant TRANSITION. The card's flight to the
+  pile (a spring) was often still running when it jumped, and Motion 13
+  kept running the old x/y/rotate animation after the jump; only scale
+  took. `{ duration: 0 }` and `{ type: false }` both failed this way.
+- **Fix:** `Placement.jump` is a NUMBER, new per adoption that jumps, and
+  the piece's element is keyed on it, so a jump remounts the piece at its
+  new place (`initial={false}`) and the old animation goes with the old
+  element. It is never cleared by a move (clearing changed the key and
+  remounted the card straight onto the pile, so its next play never
+  flew); the next jump replaces it. The hold before the next batch is
+  released by an effect after the jump has been COMMITTED; a fixed 60ms
+  beat lost the race when the page was busy.
+- **Verified in Chrome:** across several 2.5-minute runs, no hand card
+  sat on the pile for more than 3s (it was 18s before).
+
+### Catch-up skipped plays in ordinary BS play
+- `CATCH_UP_FRAMES` (2) counted frames. BS sends a burst of frames that
+  show nothing after every play (each "Let it go", each bot's decline),
+  so the next play was often skipped: applied instantly, with no flight.
+  Now it also needs `CATCH_UP_MS` (2.5s) of real playback queued.
+- **Tests:** useOnlineRuntime.test.tsx "does not skip a play queued behind
+  a burst of empty frames" (1ms on the pile on the old rule).
+- In Chrome, flights reaching the pile went from 63/67 to 72/73. The rare
+  remaining miss, seen with a DOM-querying sampler running every frame in
+  dev mode, could not be tied to a cause; watch for it.
+
+### A played card landed under the pile's top card
+- **Cause:** a `play` kept the player's seat on the piece (for the trick's
+  lean), and pieces are bucketed by zone AND seat, so the card became
+  index 0 of a pile of its own: z 300 against the pile top's 326. The
+  trick had already been special-cased for the same reason.
+- **Fix:** `applyEvent`'s `play` keeps the seat only when going to the
+  trick. Only `trick`, `hand` and `collected` read a seat, and a play
+  never goes to the other two. Also affects Rummy's discard and board.
+- **Tests:** applyEvent.test.ts "joins the pile already there rather than
+  starting one under it" (index 0 on the old code).
+
+### Reloading during a round or match break showed no summary
+- **Seen in Chrome:** after a reload while a round was over, the table
+  showed the finished position with no summary and no way to continue
+  (at match end, no Lobby button). The other player's screen had them.
+- **Cause:** React StrictMode (dev) mounts, cleans up and mounts again.
+  The reload's frame was settled on the first mount, which armed the
+  reveal timer; the cleanup cancelled it; the remount skipped the frame as
+  already received. Dev-only, but it is the build every playtest runs.
+- **Fix:** the reveal is an effect keyed on the settled frame (`applied`)
+  instead of a timer armed inside `settle`.
+- **Tests:** useOnlineRuntime.test.tsx "shows the round's summary to
+  somebody who reloads during the break" (and the match's). Verified in
+  Chrome.
+
+### Everyone saw "Next round"; only the party leader should
+- **User's rule (2026-09-25):** the leader continues; everyone else sees
+  "Waiting for <leader> to continue".
+- **Fix:** `mayContinueRound(room, session)` in room.ts gates the
+  server's `nextRound` and becomes `RoomView.youMayContinue`; the tables
+  pass `continueWaitingFor(room)` to `GameHost`'s `continueWaiting`, and
+  the scorecard shows that line instead of the button.
+- **Never stranded:** while the leader is away from the table (stepped
+  to the lobby), any seated player at it may continue. A leader who
+  DISCONNECTS (a reload counts) already hands leadership to the next
+  connected member and does not get it back, so after the leader reloads,
+  the other player becomes leader and continues. Verified in Chrome.
+- **Tests:** room.test.ts "who deals the next round";
+  RoundEndScorecard.test.tsx.
+- The match-end "Lobby" button is not "next game": it takes only the
+  person who presses it back to the lobby. Starting the next game is
+  already the leader's, from the lobby.
+
+### The turn ring jumped across the table after a play
+- During a window `seatCue` lit the seat the window was waiting on (the
+  first in its answer queue), which can be anyone. The user wants the ring
+  to stay on the player who made the play until the window is over; BS's
+  `playerViews` does that now.
+
+### Somebody played while BS / Let it go were still up
+- By design until now: the seat on turn could play over the top of an
+  open window. The user ruled it out: while a window is open, the only
+  moves are BS and Let it go. `legalActions`, `validate` and `reducePlay`
+  enforce it; `canPlay` is false through a window, so the hand is asleep
+  and the bar offers only the challenge. Trade-off: a person who answers
+  nothing holds the table until their deadline (10s online).
+- The bluff-calibration harness in bots.test.ts played the bluffer into
+  open windows; it now lets them go like everyone else.
+
+### Bots called BS too fast to follow
+- Reaction times were 0.22–1.8s, and a call a fifth of a second after a
+  play is faster than a person can take it in. Now 1–3s
+  (`REACTION_MIN`/`REACTION_MAX`), at the user's request.
+
+### Found in the code review before committing
+- **Dev scenarios lost their buttons.** Offline `replaceState` (the dev
+  panel's state editor and `scenarios`) set `state` but not the new
+  `latest`, and window buttons need the window open in both, so Rummy's
+  "Rummy! window" scenario drew no claim bar. `replaceState` sets both.
+- **Catch-up could play a frame straight after a jump.** `pump` checked
+  the post-jump hold before catch-up, and catch-up's own `flushReset` can
+  jump pieces; the next frame was then applied in the same render. The
+  hold is checked after catch-up now.
+
 ## Open gaps (known, not yet fixed)
 
 - None known in the games playtested so far (Spades, Dominoes, LRC, Poker,
-  Rummy). BS is next.
+  Rummy, BS).
+- BS: a rare opponent play that still does not fly (1 in 73 in Chrome,
+  under a heavy sampler in dev mode). No cause found; watch for it.
+- BS: a bot further down a window's answer list waits for the rest of its
+  reaction time after the seat before it, measured from that seat's
+  reaction time (`ChallengeWindow.elapsed`), not the clock. A person who
+  lets a play go quickly therefore brings the next bot's answer forward.
+  The state has no clock to do better; it has not been noticed in play.
 - Rummy: a lost claim race is only told by the toast and the claimer's
   chip on the meld. The user read a missing chip as "I got it". Offered,
   not built: the claim bar says "You got it" / "Bot 3 got there first"

@@ -88,6 +88,40 @@ from the hand zone with no reserved space.
 - Poker: the panel reservation above covers the 1366×650 residue below.
 - Spades: the trick already scales; just include it in the shared test.
 
+### BS: the centre pile was cut off at the bottom
+- Reported 2026-09-25 (screenshot, about 1524×790 CSS). The pile card
+  sat under BS's bottom sheet. The sheet is now REMOVED (the user's call:
+  BS does not need it), which also took it off the path cards fly from
+  the hand to the pile.
+- Still open: BS reserves no space for the band above the hand (the bar
+  with "Play" / "BS!"). Measured with `resolveTable`, 4 seats: the pile
+  clears that band by 14px at 1524×790, but runs 36px UNDER it at
+  1366×650 and 26px under it at 844×390 (landscape phone). The
+  `pile`/`reveal` pair is centred on `cy` of the whole table, not of
+  what the hand band leaves. Part of the central fix above: the centre
+  lays out inside the space left by every reserved band.
+
+### Hands that grow to most of the deck (BS, Rummy)
+- In BS a hand can reach ~40–52 cards (a player who keeps losing
+  challenges picks up the whole pile). Rummy can also grow large.
+- Rummy opts into compress-then-pan (`handScroll`, `usePanZone`, see
+  CLAUDE.md): the fan compresses to a floor, then pans. **BS does not
+  opt in**, so its fan keeps shrinking its step and past ~25 cards the
+  cards become slivers you cannot read or tap reliably.
+- Needs a plan for every form factor, not just turning panning on:
+  - Phone portrait (~390px wide): even panning shows only ~8–10 cards at
+    a time, so it needs a quick way to jump (e.g. the hand sorted by rank,
+    with a rank index to scroll to), since BS play is "find all your 7s".
+  - Phone landscape: the hand strip is already capped by the short-
+    viewport rules, so the fan has height for one row only.
+  - Laptop/desktop: two rows (or a wider arc) may fit before panning.
+  - Selection must survive panning. Selected cards off-screen should
+    still show as picked, e.g. a count in the bar ("3 picked").
+- Check the opponents' side too: a seat holding 40 face-down cards fans
+  them next to its pod, and that fan's reach was sized for ordinary
+  hands (`cardSideReach`/`cardTopReach` use one card, not the fan's
+  length, so check the length does not run into neighbours).
+
 ### Poker: betting panel vs the board on short laptop windows
 - At 1366×650 the panel (now a single 96px row on wide screens) still
   overlaps the flop by ~12px. Between the board's bottom and the hero's
