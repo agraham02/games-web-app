@@ -573,7 +573,10 @@ export function RummyTable({
   // three other seats while this viewer has no part in it — they
   // discarded the card, or cannot use it — and the bar must not appear
   // for a race they are not in.
-  const claiming = inClaimRace(state, seat);
+  //
+  // And still open where the game has got to: a bot's claim is made before
+  // it animates, and the bar stayed up through its flight (`live.latest`).
+  const claiming = inClaimRace(state, seat) && inClaimRace(live.latest, seat);
   // `isHeroTurn` compares against `currentSeat`, which during a claim
   // names only the seat the PACING waits on. Being entitled to claim is
   // its own answer and has to be ORed in, or a viewer further down the

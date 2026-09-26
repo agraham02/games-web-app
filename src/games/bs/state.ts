@@ -82,9 +82,13 @@ export const REVEAL_HOLD_MS = 1400;
  * the first look is chance rather than seat order. The spread is wide on
  * purpose: a narrow one would mean the fastest seat is effectively always
  * whoever happens to be earliest, and a person would never get in first.
+ *
+ * One to three seconds, at the user's request (2026-09-25). The floor was
+ * 220ms, and a bot calling BS a fifth of a second after a play is faster
+ * than a person can take in what was just played.
  */
-export const REACTION_MIN = 220;
-export const REACTION_MAX = 1800;
+export const REACTION_MIN = 1000;
+export const REACTION_MAX = 3000;
 
 /**
  * Plays without the total cards held reaching a new low before a round is

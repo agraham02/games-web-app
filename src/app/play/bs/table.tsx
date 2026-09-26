@@ -20,9 +20,10 @@
  *    never goes in a modal.
  *  - **the rank badge.** The one thing that is always true and always needed:
  *    what the next play has to claim. Rung 1, inline, never blocks.
- *  - **the pile rail.** Every claim so far as who / how many / what rank,
- *    which is public because it was announced out loud. Rung 4, because it
- *    is reference consulted WHILE playing.
+ *
+ * There is no pile rail. BS had Rummy's bottom sheet listing every claim so
+ * far, and the user removed it (2026-09-25): the game does not need it,
+ * and it took height from a table that has little to spare.
  *
  * What is deliberately absent, and must stay absent: nothing says how many
  * of your selected cards actually match the rank, nothing marks a claim you
@@ -31,7 +32,7 @@
  * reveal is fine; a hint before the call is not.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { motion } from "motion/react";
 import type { PieceId, SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
@@ -44,12 +45,12 @@ import {
   pileSize,
 } from "@/games/bs/state";
 import type { BsAction, BsState } from "@/games/bs/types";
-import { HandZone, handHeaderHeight } from "@/table/HandZone";
+import { HandZone } from "@/table/HandZone";
 import type { SeatView } from "@/table/SeatRing";
-import { useGeometry, useTableStore } from "@/table/store";
+import { useTableStore } from "@/table/store";
+import { useHeldMarks } from "@/table/useHeldMarks";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
-import { PeekRail } from "@/ui/disclosure/PeekRail";
 import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 
@@ -91,42 +92,38 @@ function isSeated(view: BsView, state: BsState): boolean {
  * May the viewer put cards down right now?
  *
  * Deliberately not `live.isHeroTurn`, which compares against `currentSeat` —
- * and during a challenge window `currentSeat` names only the seat the PACING
- * waits on. The seat on turn may play straight over the top of a window
- * (that is what stops a generous window holding up the table), so asking the
- * turn directly is the only thing that gets it right.
+ * and during a challenge window `currentSeat` names the first seat still to
+ * answer it. It is also what makes the hand live (`handActive`), so it has
+ * to be false through a whole window: nobody plays into one.
  */
 export function canPlay(view: BsView, live: Live): boolean {
   const state = live.state;
   if (live.isOver || state.result !== null || !state.dealt) return false;
   if (state.pendingTake !== null) return false;
+  if (state.window !== null || live.latest.window !== null) return false;
   if (live.animating) return false;
   return state.turn === view.viewerSeat;
 }
 
 /** Is the viewer still entitled to doubt the play on the table? */
 export function canCall(view: BsView, live: Live): boolean {
-  return entitledToCall(live.state, view.viewerSeat);
+  // Both: the window is shown AND not already answered. A bot's call is
+  // made before it animates, and the buttons stayed up through its whole
+  // reveal (reported 2026-09-25) — see `GameRuntime.latest`.
+  return (
+    entitledToCall(live.state, view.viewerSeat) && entitledToCall(live.latest, view.viewerSeat)
+  );
 }
 
 /**
  * Which of the two the action band shows - for both screens, and testable
  * without mounting a table.
  *
- * A window is the louder of the two and wins the row, because it is the one
- * that expires. But it cannot win OUTRIGHT, and that was the bug: a window
- * enrols every seat but the claimer, so the seat on turn is ALWAYS entitled
- * to call as well, and preferring `calling` unconditionally meant the player
- * on turn was never shown a Play button at all. That deletes the interrupt
- * the rules go out of their way to grant (see `canPlay`, and `legalActions`):
- * a person playing straight over an open window is the most natural thing
- * that ends one, and it is the only defence a generous window has. Worse,
- * taps were still accepted, so the player lifted cards out of their hand and
- * then had nothing to press - until they pressed "Let it go" and forfeited
- * the very challenge the band was protecting.
- *
- * Lifting a card is the signal. Until then the window owns the row; once
- * cards are up the player has plainly chosen to play, so the claim owns it.
+ * While a window is open it is the only one: nobody may play into an open
+ * window (the user's rule, 2026-09-25), so `canPlay` is false for everyone
+ * until it closes, the seat on turn included. That seat used to be offered
+ * Play over the top of a window, and the band had to decide between the
+ * two by whether cards were already lifted.
  */
 export function barMode(
   view: BsView,
@@ -144,32 +141,30 @@ export function barMode(
    ============================================================ */
 
 /**
- * What picking a card up MEANS — for both screens.
- *
- * `selected` rather than `highlighted`, because these cards are literally
- * being lifted out of the hand to be put down, and `layoutPiece` gives a
- * selected piece a real lift above everything else. Spades' exchange uses
- * `highlighted` for the opposite reason: there the cards are being MARKED
- * while staying where they are.
+ * What picking a card up MEANS — for both screens. Pure: the marks on the
+ * table follow from the list (`useHeldMarks`), never from inside a React
+ * state updater, where a store write is a write during render.
  */
 export function togglePlayCard(held: readonly PieceId[], id: PieceId): PieceId[] {
-  const store = useTableStore.getState();
-  if (held.includes(id)) {
-    store.patch(id, { selected: false });
-    return held.filter((x) => x !== id);
-  }
+  if (held.includes(id)) return held.filter((x) => x !== id);
   // A fifth tap is ignored until one is put back, rather than silently
   // dropping the oldest — the player chose those four.
   if (held.length >= PLAY_PICK_LIMIT) return [...held];
-  store.patch(id, { selected: true });
   return [...held, id];
 }
 
 /** Puts every held card down. The store patch is the half easily forgotten. */
 export function clearPlayCards(held: readonly PieceId[]): void {
-  const store = useTableStore.getState();
-  for (const id of held) store.patch(id, { selected: false });
+  useTableStore.getState().patchMany(held, HELD_OFF);
 }
+
+/**
+ * How a card picked to play is drawn: lifted AND ringed, the same as a
+ * card picked for a meld in Rummy. The lift alone (18px, with nothing
+ * else) was easy to miss.
+ */
+const HELD_MARKS = { selected: true, highlighted: true } as const;
+const HELD_OFF = { selected: false, highlighted: false } as const;
 
 export function onPieceTap(
   view: BsView,
@@ -182,28 +177,6 @@ export function onPieceTap(
   // tap on one has no meaning at all.
   if (!(live.state.hands[view.viewerSeat] ?? []).includes(id)) return;
   toggleHeld(id);
-}
-
-/**
- * Re-asserts the lift on held cards after every batch settles.
- *
- * `selected` is a STORE flag, and the store is replaced wholesale at the end
- * of each batch by `reset(definition.placements(...))` — so anything a game's
- * own `placements` does not re-derive is erased there. Offline that barely
- * showed, because nothing else moves while it is your turn. In a window it
- * does: you can be picking cards up for your own turn while an opponent is
- * still deciding whether to doubt the last play, and every one of their
- * answers is a batch that wiped the selection out from under you.
- */
-function useHeldLift(live: Live, held: readonly PieceId[]): void {
-  useEffect(() => {
-    if (held.length === 0) return;
-    const store = useTableStore.getState();
-    for (const id of held) {
-      if (store.placements[id]?.selected) continue;
-      store.patch(id, { selected: true });
-    }
-  }, [held, live.state]);
 }
 
 /**
@@ -246,7 +219,9 @@ export function BsTable({
   onClearHeld: () => void;
 }) {
   const state = live.state;
-  useHeldLift(live, held);
+  // Re-asserted after every batch: you can be picking cards for your own
+  // turn while opponents answer a window, and each answer resets the store.
+  useHeldMarks(held, HELD_MARKS, live.state);
   useChallengeCountdown(view, live);
 
   // One band, one owner, two modes - see `HandZone`'s `bar`, and
@@ -266,7 +241,6 @@ export function BsTable({
         left={<RankBadge state={state} />}
         center={<TurnIndicator label={turnLabel(view, state)} show={!bar} inline />}
       />
-      <PileRail view={view} state={state} />
     </>
   );
 }
@@ -396,98 +370,6 @@ function ClaimBar({
 }
 
 /* ============================================================
-   The pile rail
-   ============================================================ */
-
-/**
- * Every claim on the pile, newest first.
- *
- * Rung 4, a `PeekRail`, because this is reference consulted WHILE playing:
- * deciding whether to doubt a claim of three sevens means weighing it against
- * what has already gone down, and a modal would make exactly that comparison
- * impossible.
- *
- * All of it is public. Who played, how many, and what they called it were
- * announced out loud; a person at a physical table heard every word. What is
- * NOT here is what any of those cards actually were — including the ones you
- * put in yourself. The pile is face down to everybody, and `playerView`
- * enforces it with no exception for its own contributor.
- */
-function PileRail({ view, state }: { view: BsView; state: BsState }) {
-  const geometry = useGeometry();
-  const [snap, setSnap] = useState(0);
-  const plays = [...state.plays].reverse();
-  const mine = state.plays.reduce(
-    (n, play) => (play.seat === view.viewerSeat ? n + play.cards.length : n),
-    0,
-  );
-  const total = pileSize(state);
-  if (!geometry) return null;
-
-  // Both numbers come out of the same reserved terms, so the tallest snap
-  // cannot overshoot the edge and carry its own grab handle off with it. And
-  // the resting extent is what geometry GRANTED rather than what this page
-  // asked for: a short phone cannot always give up the whole band, and
-  // assuming it did is how a rail ends up sitting on the seat pods on exactly
-  // one device. See `TableGeometry.reserved`.
-  const headerH = handHeaderHeight(geometry.box.h);
-  const offsetBottom = geometry.zones.hand.h + headerH;
-  const available = Math.max(48, geometry.box.h - offsetBottom - 12);
-  const peek = Math.max(56, Math.min(available, geometry.reserved.bottom - headerH || 96));
-  // Two stops only: resting and open. A middle one would give a drag
-  // somewhere ambiguous to land and make every gesture need a second nudge.
-  const snapPoints = [peek, Math.max(peek, available)];
-
-  return (
-    <PeekRail
-      snapPoints={snapPoints}
-      snapIndex={snap}
-      onSnapChange={setSnap}
-      offsetBottom={offsetBottom}
-      header={
-        <div className="flex items-center justify-between">
-          <span className="eyebrow">
-            {total === 0
-              ? "Pile empty"
-              : `Pile · ${total} card${total === 1 ? "" : "s"}${mine > 0 ? ` · ${mine} yours` : ""}`}
-          </span>
-          <span className="text-[10px] text-bone-400">
-            {snap === 0 ? "drag up ↑" : "drag down ↓"}
-          </span>
-        </div>
-      }
-    >
-      {plays.length === 0 ? (
-        <p className="px-1 py-2 text-xs text-bone-400">
-          Nothing down yet. The first play claims {rankPlural(state.rank)}.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-1">
-          {plays.map((play, i) => {
-            const top = i === 0;
-            return (
-              <li
-                key={`${state.plays.length - i}-${play.seat}`}
-                className={`flex items-baseline justify-between gap-2 rounded-lg px-2 py-1.5 text-xs ${
-                  top ? "bg-brass-400/12 ring-1 ring-brass-400/25" : ""
-                }`}
-              >
-                <span className="min-w-0 truncate font-bold text-bone-200">
-                  {play.seat === view.viewerSeat ? "You" : view.nameFor(play.seat)}
-                </span>
-                <span className="shrink-0 text-bone-400">
-                  {claimWords(play.cards.length, play.claimed)}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </PeekRail>
-  );
-}
-
-/* ============================================================
    GameHost slots
    ============================================================ */
 
@@ -517,15 +399,21 @@ export function playerViews(view: BsView, state: BsState, live: Live): SeatView[
   // the same thing only while the viewer is seat 0, and online they are not:
   // a player at seat 1 got no pod at all for seat 0 and a redundant one for
   // themselves.
+  // While a play is open to challenge, the ring stays on whoever MADE it.
+  // It used to follow `seatCue`, which names the seat the window is waiting
+  // on — the first in its answer queue, anywhere at the table — so the
+  // ring jumped straight from the player to, say, the seat across from the
+  // viewer, who was neither the next nor the last to play (reported
+  // 2026-09-25). The play under challenge is the thing everyone is looking
+  // at; the ring says so until the window is over.
+  const challenged = state.window ? (state.plays[state.window.play]?.seat ?? null) : null;
   for (let i = 0; i < state.seats; i++) {
     const seat = i as SeatId;
     if (seat === view.viewerSeat) continue;
-    // "Who just moved" and "who are we waiting on" — two questions, and
-    // `seatCue` answers both. The second matters more here than in any other
-    // game: during a challenge window the table walks one seat at a time
-    // through everybody entitled to doubt the play, and watching that travel
-    // round the ring IS the tension.
-    const cue = seatCue(live, seat);
+    // Otherwise "who just moved" and "who are we waiting on", which
+    // `seatCue` answers both of.
+    const cue =
+      challenged !== null ? { active: seat === challenged, thinking: false } : seatCue(live, seat);
     out.push({
       seat,
       name: view.nameFor(seat),

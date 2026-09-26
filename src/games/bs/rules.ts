@@ -20,7 +20,7 @@
  *    a flicker rather than three seconds of blank table each.
  */
 
-import { hashString, type Rng } from "@/engine/rng";
+import type { Rng } from "@/engine/rng";
 import type {
   GameDefinition,
   GameEvent,
@@ -68,9 +68,6 @@ export const DEFAULT_RULES: BsRules = {
 
 /** The one placeholder `playerView` collapses a concealed card to. */
 const HIDDEN_CARD: PieceId = "??";
-
-/** How many of the pile's top cards rattle when somebody slams. */
-const SHAKE_DEPTH = 6;
 
 const ALL_IDS: PieceId[] = standardDeck().map((c) => c.id);
 
@@ -185,6 +182,8 @@ export function reduce(state: BsState, action: BsAction): ReduceResult<BsState> 
 }
 
 function reducePlay(state: BsState, cards: readonly PieceId[]): ReduceResult<BsState> {
+  // `validate` refuses a play into an open window; see `legalActions`.
+  if (state.window !== null) return { state, events: [{ t: "pause" }] };
   const seat = state.turn;
   const hand = state.hands[seat] ?? [];
   const held = new Set(hand);
@@ -202,8 +201,6 @@ function reducePlay(state: BsState, cards: readonly PieceId[]): ReduceResult<BsS
 
   const total = handTotalOf(hands, state.seats);
   const progressed = total < state.handTotalFloor;
-  const pileBefore = pileCardsOf(state.plays);
-  const goingOut = hands[seat]!.length === 0;
 
   const events: GameEvent[] = [
     {
@@ -215,26 +212,9 @@ function reducePlay(state: BsState, cards: readonly PieceId[]): ReduceResult<BsS
     },
   ];
 
-  // Slamming the cards down is BS's own gesture, so it gets the flourish —
-  // but not every time, or it stops being one. Hashed from the position
-  // rather than rolled, so a seed replays a match's slams as exactly as it
-  // replays its deals; and always on the play that empties a hand, because
-  // that one has earned the noise. Neither condition leaks anything: a
-  // card count and an empty hand are both already public.
-  const slams =
-    goingOut ||
-    hashString("bs-slam|" + state.round + "|" + plays.length + "|" + seat) % 100 < 38;
-  if (slams) {
-    events.push({
-      t: "slam",
-      piece: playing[0]!,
-      // Only the pile rattles. The list comes from the engine rather than
-      // the table because only the engine knows what was already down — a
-      // shake that reached into somebody's hand would be badly wrong.
-      shake: pileBefore.slice(-SHAKE_DEPTH),
-      final: goingOut,
-    });
-  }
+  // No slam on a play. It is Dominoes' flourish, and the user wants it to
+  // stay that game's alone (2026-09-25); BS keeps one, for a caught liar
+  // (see `reduceTake`).
 
   for (const id of playing) {
     // Face down: the whole game is that nobody may see what was put in.
@@ -327,8 +307,10 @@ function reduceDecline(state: BsState, seat: SeatId): ReduceResult<BsState> {
     // Deliberately no events. Letting a play go looks like nothing because
     // it IS nothing; the seat's pod lit as its turn came round and that is
     // the whole of what there is to show. Both drivers handle an empty
-    // batch, and a bot's own `think` rides in front of this anyway.
-    return { state: { ...state, window: { ...window, pending } }, events: [] };
+    // batch.
+    const answered = window.pending.find((p) => p.seat === seat)?.ms ?? 0;
+    const elapsed = Math.max(window.elapsed ?? 0, answered);
+    return { state: { ...state, window: { ...window, pending, elapsed } }, events: [] };
   }
   return closeWindow({ ...state, window: null });
 }
@@ -343,8 +325,9 @@ function reduceTake(state: BsState, seat: SeatId): ReduceResult<BsState> {
 
   const events: GameEvent[] = [];
   if (state.reveal && !state.reveal.truthful) {
-    // A caught liar gets the table's reaction. `final: false` keeps it
-    // short, because `collect` brings its own 900ms hold in right behind.
+    // A caught liar gets the table's reaction: the one slam BS keeps, by
+    // the user's choice (2026-09-25). `final: false` keeps it short,
+    // because `collect` brings its own 900ms hold in right behind.
     events.push({ t: "slam", piece: state.reveal.cards[0]!, shake: [], final: false });
   }
   events.push({ t: "collect", pieces: pile, to: seat });
@@ -477,11 +460,12 @@ export function legalActions(state: BsState, seat: SeatId): BsAction[] {
     out.push({ t: "callBs", seat }, { t: "declineBs", seat });
   }
 
-  // The seat on turn may play even while a window is still open, and that
-  // is deliberate: it is what lets the game move on over the top of a
-  // window nobody is using, which is the only thing keeping a generous
-  // window from holding up a table of real people.
-  if (seat === state.turn) {
+  // Nobody plays while a window is open. The user's rule (2026-09-25):
+  // while a play is open to challenge, the only things anyone may do are
+  // call BS or let it go. The seat on turn used to
+  // be allowed to play over the top of an open window, and in a playtest
+  // that read as somebody playing while the buttons were still up.
+  if (seat === state.turn && state.window === null) {
     const hand = state.hands[seat] ?? [];
     const most = Math.min(MAX_PER_PLAY, hand.length);
     // ONE representative per count, not every subset. See `validate`.
@@ -532,6 +516,7 @@ export function validate(state: BsState, seat: SeatId, action: BsAction): string
     case "play": {
       if (state.pendingTake !== null) return "the pile has not been picked up yet";
       if (seat !== state.turn) return "not this seat's turn to play";
+      if (state.window !== null) return "the last play can still be challenged";
       const cards: unknown = action.cards;
       if (!Array.isArray(cards)) return "cards must be an array";
       if (cards.length < 1 || cards.length > MAX_PER_PLAY) {
@@ -583,10 +568,24 @@ export function deadline(
   return null;
 }
 
-/** See `GameDefinition.turnHold`, and `WINDOW_BEAT_MS` for the numbers. */
-export function turnHold(state: BsState): number | undefined {
+/**
+ * See `GameDefinition.turnHold`, and `WINDOW_BEAT_MS` for the numbers.
+ *
+ * In a window, a bot waits out the rest of its reaction time here, BEFORE
+ * it answers. It used to answer after `WINDOW_BEAT_MS` and spend its
+ * reaction time as a `think` inside its own frame, which plays after the
+ * answer is made: a call was already in on the server while its pod still
+ * looked like it was deciding, and a person pressing BS in that gap lost.
+ * Rummy's claim race had the same flaw (online-games-debug.md).
+ */
+export function turnHold(state: BsState, seat?: SeatId): number | undefined {
   if (state.pendingTake !== null) return TAKE_BEAT_MS;
-  if (state.window !== null) return WINDOW_BEAT_MS;
+  if (state.window !== null) {
+    const mine = state.window.pending.find((p) => p.seat === seat);
+    if (!mine) return WINDOW_BEAT_MS;
+    // Never less than the beat, so each seat's pod still lights on its own.
+    return Math.max(WINDOW_BEAT_MS, mine.ms - (state.window.elapsed ?? 0));
+  }
   return undefined;
 }
 

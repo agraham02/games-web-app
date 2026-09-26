@@ -34,6 +34,7 @@ import {
   applyCommand,
   connectedCount,
   isSeatLive,
+  mayContinueRound,
   openSeats,
   orderedMembers,
   seatOf,
@@ -481,12 +482,12 @@ export class RoomRuntime {
 
   nextRound(session: SessionId): boolean {
     if (!this.session) return false;
-    // A seat, not merely presence: a spectator has no round to continue.
-    if (seatOf(this.room, session) === null) return false;
-    // Deliberately not leader-gated and deliberately not deduped —
-    // `GameSession.nextRound` already no-ops unless a round is genuinely
-    // over, so the second of two players pressing Continue together is
-    // harmless rather than a race to guard.
+    // The leader's call while they are at the table, and anyone seated's
+    // when they are not — see `mayContinueRound`. It used to be anyone
+    // seated, always, and the user wants the leader to continue.
+    // Deliberately not deduped: `GameSession.nextRound` already no-ops
+    // unless a round is genuinely over.
+    if (!mayContinueRound(this.room, session)) return false;
     this.session.nextRound();
     return true;
   }
@@ -558,6 +559,7 @@ export class RoomRuntime {
       gameRunning: game !== null,
       openSeats: openSeats(room),
       inGame: Boolean(game?.present.includes(session)),
+      youMayContinue: mayContinueRound(room, session),
     };
   }
 

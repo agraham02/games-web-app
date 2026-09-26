@@ -39,11 +39,11 @@ export interface PilePlay {
 /**
  * The play on the table that anyone may still call BS on.
  *
- * Open from the moment the cards land until either somebody calls, every
- * entitled seat has let it go, or the next player plays over the top of
- * it. That last one is why `legalActions` hands the seat on turn its plays
- * while this is set: a window must never be able to hold up the table, and
- * the most natural thing that ends one is the game simply moving on.
+ * Open from the moment the cards land until either somebody calls or every
+ * entitled seat has let it go. Nothing else may happen meanwhile: the next
+ * player used to be able to play over the top of it, and the user ruled
+ * that out (2026-09-25). A person who does neither is let go for by their
+ * deadline.
  */
 export interface ChallengeWindow {
   /** Index into `plays` of the challengeable play. */
@@ -55,8 +55,9 @@ export interface ChallengeWindow {
    *
    * This is the field that makes the challenge a RACE rather than a
    * queue, and it carries no opinion at all about who is sitting in any
-   * of these seats. A seat nobody is at is played by its bot and spends
-   * its reaction time as a `think`; a seat with a person in it is offered
+   * of these seats. A seat nobody is at is played by its bot, which waits
+   * out its reaction time BEFORE it answers (`turnHold`); a seat with a
+   * person in it is offered
    * the window and races the clock. `currentSeat` names the soonest,
    * which is who the PACING waits on, and `legalActions` entitles ALL of
    * them — so a person three deep in this list can still beat the bot at
@@ -75,6 +76,17 @@ export interface ChallengeWindow {
    * list, not by running out of a shortened clock.
    */
   pending: ReadonlyArray<{ seat: SeatId; ms: number }>;
+  /**
+   * The reaction time of the last seat to let the play go, in ms from the
+   * window opening. Absent until somebody has.
+   *
+   * The list runs in reaction order, so a bot's turn comes when the seat
+   * before it has answered, and it has already waited that long. It waits
+   * only for the rest of its own time. Without this every bot would wait
+   * its whole reaction time from the previous answer, and a window of
+   * three bots would take the sum of their times instead of the longest.
+   */
+  elapsed?: number;
 }
 
 /**

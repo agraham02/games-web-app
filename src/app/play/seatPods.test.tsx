@@ -51,6 +51,7 @@ function fakeLive(state: unknown): GameRuntime<unknown, unknown> {
   return {
     state,
     rawState: state,
+    latest: state,
     busy: false,
     lastAction: null,
     isHeroTurn: false,

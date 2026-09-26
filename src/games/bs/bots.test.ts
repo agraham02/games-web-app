@@ -148,7 +148,8 @@ function bluffPast(tier: BotDifficulty, seeds: number, bluffSize: number) {
       let action: BsAction;
       if (seat === 0) {
         if (state.pendingTake === 0) action = { t: "takePile", seat: 0 };
-        else if (state.window !== null && state.turn !== 0) action = { t: "declineBs", seat: 0 };
+        // Nobody plays into an open window, the seat on turn included.
+        else if (state.window !== null) action = { t: "declineBs", seat: 0 };
         else {
           const junk = state.hands[0]!.filter((id) => rankOf(id) !== state.rank);
           action = { t: "play", cards: (junk.length > 0 ? junk : state.hands[0]!).slice(0, bluffSize) };
@@ -239,14 +240,16 @@ describe("bs — bot mechanics", () => {
     return { game, state: game.reduce(base, { t: "play", cards: ["H2"] }).state };
   };
 
-  it("spends the reaction time the race drew, not a fresh one", () => {
-    // The list decides who gets the first look; the pause a player watches is
-    // what makes that legible. Two different numbers would mean a bot that
-    // visibly hesitates and then somehow beats the one that answered first.
+  it("spends the reaction time the race drew BEFORE it answers, not after", () => {
+    // The list decides who gets the first look, and the bot's wait is the
+    // game's hold, before its answer is made. A think inside the answer's
+    // own frame plays after the answer is in, so a person pressing BS
+    // while the pod still looked undecided lost.
     const { game, state } = windowed();
+    const first = state.window!.pending[0]!;
+    expect(game.turnHold!(state, first.seat)).toBe(Math.max(120, first.ms));
     for (const entry of state.window!.pending) {
-      const ms = game.bots.steady.thinkMs(state, entry.seat, createRng(5));
-      expect(ms, `seat ${entry.seat}`).toBe(entry.ms);
+      expect(game.bots.steady.thinkMs(state, entry.seat, createRng(5)), `seat ${entry.seat}`).toBe(0);
     }
   });
 
@@ -263,13 +266,12 @@ describe("bs — bot mechanics", () => {
     }
   });
 
-  it("never uses the seat-on-turn interrupt", () => {
-    // Seat 1 is both entitled to answer the window and next to play. Jumping
-    // its own queue gains a bot nothing; the interrupt is there for people,
-    // who are the only ones a generous window can hold up.
+  it("answers the window before it plays, even when it is next", () => {
+    // Seat 1 is both entitled to answer the window and next to play. Nobody
+    // may play into an open window (the user's rule), bots included.
     const { game, state } = windowed();
     expect(state.turn).toBe(1);
-    expect(game.legalActions(state, 1).some((a) => a.t === "play")).toBe(true);
+    expect(game.legalActions(state, 1).some((a) => a.t === "play")).toBe(false);
     for (const tier of TIERS) {
       const rng = createRng(9);
       for (let i = 0; i < 40; i++) {

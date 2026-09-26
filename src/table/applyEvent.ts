@@ -115,6 +115,8 @@ function moveTo(
     dimmed: false,
     fanned: false,
     hidden: false,
+    // `jump` is deliberately NOT cleared: it is the element's key (see
+    // `Placement.jump`), and changing it would remount instead of animate.
     // Ownership marks belong to the piece's PLACE, not the piece. A card
     // swept off a board meld back into the deck is nobody's any more,
     // and carrying its old owner chip through the shuffle is a visible
@@ -155,8 +157,14 @@ export function applyEventToTable(event: GameEvent): void {
     case "play":
       moveTo(map, event.piece, {
         zone: event.to,
-        // Kept so the trick can offset each card toward whoever played it.
-        seat: event.from,
+        // Kept for the trick alone, so it can offset each card toward
+        // whoever played it. Anywhere else a seat splits the pile: pieces
+        // are bucketed by zone AND seat, so a card played onto BS's pile
+        // became index 0 of a pile of its own, and flew in UNDER the
+        // pile's top card instead of landing on it (seen in Chrome,
+        // 2026-09-25). Only `trick`, `hand` and `collected` read a seat, and
+        // a play never goes to the last two.
+        seat: event.to === "trick" ? event.from : undefined,
         group: event.group,
         faceUp: event.faceUp,
       });

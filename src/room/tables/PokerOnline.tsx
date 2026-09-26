@@ -34,7 +34,12 @@ import {
   type PokerView,
 } from "@/app/play/poker/table";
 import { tintFor } from "../Roster";
-import { awayFrom, openingPosition, useOnlineRuntime } from "../useOnlineRuntime";
+import {
+  awayFrom,
+  continueWaitingFor,
+  openingPosition,
+  useOnlineRuntime,
+} from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function PokerOnline({ api, room, frame }: OnlineTableProps) {
@@ -87,6 +92,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         gameTitle={GAMES[room.gameId ?? "poker"].name}
         viewerSeat={frame.seat}
         serverDriven
+        continueWaiting={continueWaitingFor(room)}
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}

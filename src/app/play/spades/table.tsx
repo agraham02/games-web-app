@@ -35,6 +35,7 @@ import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { TRANSITIONS } from "@/motion/presets";
 import { HandZone } from "@/table/HandZone";
 import { useTableStore } from "@/table/store";
+import { useHeldMarks } from "@/table/useHeldMarks";
 import type { RoundNote } from "@/table/GameHost";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -75,6 +76,9 @@ export const OFFLINE_VIEW: SpadesView = {
 /** How many cards a blind-nil exchange passes. */
 export const EXCHANGE_PICK_LIMIT = 2;
 
+/** Exchange cards are MARKED while staying in the hand: a ring, no lift. */
+const EXCHANGE_MARKS = { highlighted: true } as const;
+
 /**
  * What picking a card up for the exchange MEANS — for both screens.
  *
@@ -89,15 +93,13 @@ export const EXCHANGE_PICK_LIMIT = 2;
  * "Give" with no way to see which cards were chosen.
  */
 export function toggleExchangeCard(held: readonly PieceId[], id: PieceId): PieceId[] {
-  const store = useTableStore.getState();
-  if (held.includes(id)) {
-    store.patch(id, { highlighted: false });
-    return held.filter((x) => x !== id);
-  }
+  // Pure: the ring follows from the list (`useHeldMarks` in `SpadesTable`).
+  // Patching the store in here was a store write inside a React state
+  // updater, which React may run during render.
+  if (held.includes(id)) return held.filter((x) => x !== id);
   // A third tap is ignored until one is put back, rather than silently
   // dropping the oldest — the player chose those two.
   if (held.length >= EXCHANGE_PICK_LIMIT) return [...held];
-  store.patch(id, { highlighted: true });
   return [...held, id];
 }
 
@@ -141,6 +143,7 @@ export function SpadesTable({
 }) {
   const state = live.state;
   const playable = live.isHeroTurn && state.phase === "play" && !state.exchange;
+  useHeldMarks(held, EXCHANGE_MARKS, live.state);
 
   return (
     <>

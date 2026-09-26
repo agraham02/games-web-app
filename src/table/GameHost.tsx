@@ -124,6 +124,21 @@ export interface GameHostProps<S, A> {
    * exist.
    */
   corner?: React.ReactNode;
+  /**
+   * Whether the viewer's own hand is live — full size, and answering taps.
+   * Defaults to `live.isHeroTurn`, which is the right answer wherever being
+   * asked to act means acting WITH the hand. BS is where it is not: in a
+   * challenge window the viewer can be the seat the table is waiting on
+   * with nothing to do but call or let it go, and their hand woke up for
+   * a turn that was not theirs.
+   */
+  handActive?: (live: GameRuntime<S, A>) => boolean;
+  /**
+   * When somebody ELSE deals the next round, what to say instead of the
+   * button — a room's non-leaders get "Waiting for Ada to continue". Absent
+   * offline, where the only person at the table always continues.
+   */
+  continueWaiting?: string;
   children: (live: GameRuntime<S, A>, settings: SettingValues) => React.ReactNode;
 }
 
@@ -191,6 +206,8 @@ export function GameHostView<S, A>({
   serverDriven,
   settings,
   corner,
+  handActive,
+  continueWaiting,
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
   const [settingValues, setSetting] = useGameSettings(definition.id, settings);
@@ -204,9 +221,10 @@ export function GameHostView<S, A>({
   // doc). An effect, not a render-time write, for the same tearing
   // reason every other store write in this app avoids doing it inline —
   // see useChoreographer's own comment on exactly this.
+  const handLive = handActive ? handActive(live) : live.isHeroTurn;
   useEffect(() => {
     const store = useTableStore.getState();
-    store.setHeroTurnActive(live.isHeroTurn);
+    store.setHeroTurnActive(handLive);
     // A hover/tap-preview is meaningless once the hero's turn ends — but
     // nothing else ever cleared it. `heroHoverIndex` is a HAND INDEX, not
     // a piece id, and playing a card doesn't fire a real mouseleave (the
@@ -216,8 +234,8 @@ export function GameHostView<S, A>({
     // lifted/spread until the player happened to hover something else.
     // Turn-end is the one moment that's true for every game sharing this
     // hook, not just Spades.
-    if (!live.isHeroTurn) store.setHeroHoverIndex(null);
-  }, [live.isHeroTurn]);
+    if (!handLive) store.setHeroHoverIndex(null);
+  }, [handLive]);
   // The match winner takes priority, but is only ever non-null right at
   // the very end; the far more common "someone just won" moment in a
   // multi-round game is a round winner — see `roundWinner`'s doc for why
@@ -297,6 +315,7 @@ export function GameHostView<S, A>({
         rows={card?.rows ?? []}
         note={card?.note}
         onContinue={live.nextRound}
+        waiting={continueWaiting}
       />
 
       <GameEndSummary

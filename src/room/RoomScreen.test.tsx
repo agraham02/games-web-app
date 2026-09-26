@@ -92,6 +92,7 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     gameRunning: false,
     openSeats: [],
     inGame: false,
+    youMayContinue: true,
     ...over,
   };
 }

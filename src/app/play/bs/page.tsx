@@ -29,6 +29,7 @@ import { SetupShell } from "@/ui/primitives/SetupShell";
 import {
   BsTable,
   OFFLINE_VIEW,
+  canPlay,
   clearPlayCards,
   onPieceTap as tapCard,
   pendingLabel,
@@ -94,6 +95,7 @@ export default function BsPlayPage() {
       roundSummary={(state) => roundSummary(view, state)}
       pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
       onPieceTap={onPieceTap}
+      handActive={(live) => canPlay(view, live)}
       onRematch={() => {
         clearHeld();
         setGameKey((k) => k + 1);

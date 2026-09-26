@@ -167,6 +167,29 @@ export interface Placement {
    */
   tappable?: boolean;
   /**
+   * Take this position without animating to it — once.
+   *
+   * Set by the online client when it adopts a settled board, on a face-down
+   * stand-in whose NAME now means a different card. An opponent's hand is
+   * named by slot ("#hand:2:-:3"), so after they play from the middle of
+   * it, the node that just flew to the pile is renamed a card in the hand,
+   * and animating it there flew it straight back out of the pile. Stand-ins
+   * are identical backs, so snapping them into the settled layout is
+   * invisible, and the flight that already played is the one that shows.
+   *
+   * A NUMBER, new for every adoption that jumps, because the piece layer
+   * keys the element on it: a jump REMOUNTS the piece where it belongs. An
+   * instant transition was not enough. The flight to the pile was often
+   * still running, and Motion let it carry on moving x/y/rotate after the
+   * jump, so a hand-sized card came back to sit on the pile (seen in
+   * Chrome, 2026-09-25).
+   *
+   * And it STAYS until the next jump replaces it, moves included: it is
+   * the element's key, so clearing it on the card's next play remounted
+   * the card straight onto the pile and that play never flew.
+   */
+  jump?: number;
+  /**
    * Opt out of the touch "first tap previews, second tap acts" gate, so
    * a single tap always acts immediately even with no hover available.
    *

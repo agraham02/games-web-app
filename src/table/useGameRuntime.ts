@@ -218,6 +218,18 @@ export interface GameRuntime<S, A> {
    * hero's redacted picture of it.
    */
   rawState: S;
+  /**
+   * Where the game has actually got to, which can be AHEAD of `state`.
+   *
+   * `state` is what the table has finished showing, and it deliberately
+   * lags the newest move by one animation. That lag is right for almost
+   * everything, and wrong for a button offering a chance that has already
+   * gone: a bot's BS call, or its Rummy claim, is made on the server
+   * before it is animated, and for the length of that animation the table
+   * still offered the window. Read this to take such a button down the
+   * moment the move is made. Redacted for the viewer, like `state`.
+   */
+  latest: S;
   /** DEV ONLY — see the implementation's own doc. */
   replaceState: (next: S) => void;
   /** Deals the next round and clears the scorecard. No-op unless a round
@@ -309,6 +321,8 @@ export function useGameRuntime<S, A>(
   const pieceMeta = session.pieceMeta();
 
   const [state, setState] = useState<S>(() => session.snapshot());
+  // See `GameRuntime.latest`: set as each frame ARRIVES, not as it settles.
+  const [latest, setLatest] = useState<S>(() => session.snapshot());
   const [lastAction, setLastAction] = useState<{ seat: SeatId; action: A } | null>(null);
   const [hasPending, setHasPending] = useState(false);
 
@@ -386,6 +400,7 @@ export function useGameRuntime<S, A>(
   /** One batch of things the session says happened. */
   const onFrame = (frame: SessionFrame<A>) => {
     setLastAction(frame.lastAction);
+    setLatest(session.snapshot());
     if (frame.dealtRound !== null) setDealingRound(frame.dealtRound);
     setHasPending(session.pendingReveal);
     if (frame.events.length > 0) {
@@ -512,6 +527,9 @@ export function useGameRuntime<S, A>(
    */
   const replaceState = (next: S) => {
     session.adoptState(next);
+    // `latest` too, or a scenario that opens a window (Rummy's claim) is
+    // drawn with no buttons: they need the window open in both.
+    setLatest(session.snapshot());
     onIdle();
   };
 
@@ -543,6 +561,7 @@ export function useGameRuntime<S, A>(
   return {
     state: definition.playerView(state, HERO),
     rawState: state,
+    latest: definition.playerView(latest, HERO),
     replaceState,
     isHeroTurn: !isOver && currentSeat === HERO && !choreographer.isPlaying,
     isOver,

@@ -33,8 +33,8 @@ import type {
 import { createRng, type Rng } from "@/engine/rng";
 import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
-import { tailMs } from "@/motion/choreographer";
-import type { FrameView } from "@/session/protocol";
+import { playbackMs, tailMs } from "@/motion/choreographer";
+import type { FrameView, RoomView } from "@/session/protocol";
 import { announce } from "@/ui/disclosure";
 import { composeAnnounce } from "@/session/announce";
 import { piecesNamed, redactPlacements, sentinelFor } from "@/session/redact";
@@ -54,6 +54,18 @@ import type { GameRuntime } from "@/table/useGameRuntime";
  * is the one thing that actually matters.
  */
 const CATCH_UP_FRAMES = 2;
+
+/**
+ * ...and only when they would take this long to WATCH, too.
+ *
+ * Counting frames alone skipped animations in ordinary play. BS answers
+ * every play with a burst of frames that show nothing (each "Let it go",
+ * each bot's decline), so three were routinely queued behind a play that
+ * was still waiting for its card to land, and the NEXT play was skipped —
+ * applied instantly, with no flight (found in Chrome, 2026-09-25). A queue
+ * that plays out in a moment is not history nobody is waiting for.
+ */
+const CATCH_UP_MS = 2500;
 
 /**
  * How long the table sits on screen, dealt-out and still, before the first
@@ -94,6 +106,51 @@ function surfaceEventFor(frame: FrameView) {
     }
     applyEventToTable(event);
   };
+}
+
+/** Every adoption that jumps gets a new one — see `Placement.jump`. */
+let jumpEpoch = 0;
+
+/**
+ * Adopts a frame's settled board, snapping renamed stand-ins into place.
+ *
+ * A face-down stand-in is named by where it sits ("#hand:2:-:3"), so the
+ * settled board can give a name to a different card than the one this
+ * table has been animating under it: the card that just flew from the
+ * middle of a hand to the pile is, by the settled board, a card still in
+ * that hand. Adopted plainly, that node flew back out of the pile (seen in
+ * Chrome, BS, 2026-09-25). Every stand-in whose settled place differs from
+ * where it is drawn therefore `jump`s there instead. They are identical
+ * backs, so the snap cannot be seen; the real faces this viewer holds are
+ * never stand-ins and always animate.
+ */
+function adopt(frame: FrameView): boolean {
+  const store = useTableStore.getState();
+  const epoch = jumpEpoch + 1;
+  const shown = store.placements;
+  let placements = frame.placements;
+  for (const [id, settled] of Object.entries(frame.placements)) {
+    if (!id.startsWith("#")) continue;
+    const was = shown[id];
+    if (!was) continue;
+    const moved =
+      was.zone !== settled.zone ||
+      was.seat !== settled.seat ||
+      was.group !== settled.group ||
+      was.index !== settled.index;
+    // Kept, too, while the piece stays put: the number is the element's key
+    // (see `Placement.jump`), and a settled board never carries it, so
+    // adopting one plainly would change the key and remount the piece.
+    if (!moved && was.jump === undefined) continue;
+    if (placements === frame.placements) placements = { ...frame.placements };
+    // A fresh jump remounts; one carried forward keeps its number, or the
+    // piece would remount again every frame it stays put.
+    placements[id] = { ...settled, jump: moved ? epoch : was.jump };
+  }
+  store.reset(placements, frame.meta);
+  const jumped = placements !== frame.placements;
+  if (jumped) jumpEpoch = epoch;
+  return jumped;
 }
 
 export interface OnlineRuntimeOptions {
@@ -188,8 +245,6 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   /** The frame currently animating, and any newer one that arrived meanwhile. */
   const playing = useRef<FrameView | null>(null);
   const queued = useRef<FrameView[]>([]);
-  const endHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const roundHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A local generator, for the one thing it is still allowed to do: a
   // game's own UI that wants a cosmetic random. It decides NOTHING —
@@ -204,12 +259,29 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   const pendingReset = useRef<{ frame: FrameView; timer: ReturnType<typeof setTimeout> } | null>(
     null,
   );
+  /**
+   * Set from a board adoption that `jump`ed a piece until React has DRAWN
+   * it; the next batch waits. A jump remounts the piece where it belongs,
+   * and a play of that same piece landing in the same render remounted it
+   * straight onto the pile instead, so that play never flew. A fixed 60ms
+   * beat was tried first and lost the race whenever the page was busy (in
+   * Chrome, 4 of 67 plays), so the hold is released by an effect, which runs
+   * only once the jump has been committed.
+   */
+  const holding = useRef(false);
+  const [jumped, setJumped] = useState(0);
+  const adoptBoard = (board: FrameView) => {
+    if (!adopt(board)) return;
+    holding.current = true;
+    setJumped((n) => n + 1);
+  };
+
   const flushReset = () => {
     const pending = pendingReset.current;
     if (!pending) return;
     pendingReset.current = null;
     clearTimeout(pending.timer);
-    useTableStore.getState().reset(pending.frame.placements, pending.frame.meta);
+    adoptBoard(pending.frame);
   };
 
   const settle = () => {
@@ -231,27 +303,40 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // Stand-ins included: the settled board names them by where they land,
     // so one dealt under any other name — a masked pile's, say — is swapped
     // out at the settle just as a real card is.
-    const vanishing = piecesNamed(current.events, { standIns: true }).some(
-      (id) => !(id in current.placements),
-    );
+    //
+    // And a name that SURVIVES can still be a different card. An opponent's
+    // hand is named by slot ("#hand:2:-:3"), so after they play from the
+    // middle of it, that name belongs to the card that slid into the gap.
+    // Asking only whether the name was gone adopted the board the moment
+    // the play was applied, and the flying card was pulled straight back
+    // into the hand — in BS, every opponent's play but one from the last
+    // slot (seen in Chrome, 2026-09-25). So: any piece this batch left
+    // somewhere the settled board does not.
+    const onTable = useTableStore.getState().placements;
+    const vanishing = piecesNamed(current.events, { standIns: true }).some((id) => {
+      const settled = current.placements[id];
+      if (!settled) return true;
+      const now = onTable[id];
+      return now !== undefined && (now.zone !== settled.zone || now.seat !== settled.seat);
+    });
     const tail =
       vanishing && !prefersReducedMotion()
         ? tailMs(current.events, { dealStaggerMs: opts.dealStaggerMs }) /
           Math.max(0.05, opts.speed ?? 1)
         : 0;
     if (tail > 0) {
-      pendingReset.current = { frame: current, timer: setTimeout(flushReset, tail) };
+      // And the next batch waits for it (see `pump`), so start it here.
+      const timer = setTimeout(() => {
+        flushReset();
+        pump();
+      }, tail);
+      pendingReset.current = { frame: current, timer };
     } else {
-      useTableStore.getState().reset(current.placements, current.meta);
+      adoptBoard(current);
     }
 
-    if (current.isOver) {
-      const delay = prefersReducedMotion() ? 0 : DEFAULT_END_HOLD_MS;
-      endHoldTimer.current = setTimeout(() => setGameEndRevealed(true), delay);
-    } else if (current.isRoundOver) {
-      const delay = prefersReducedMotion() ? 0 : DEFAULT_ROUND_HOLD_MS;
-      roundHoldTimer.current = setTimeout(() => setRoundEndRevealed(true), delay);
-    }
+    // The summaries are revealed by an effect on `applied` below, not by a
+    // timer armed here.
 
     playing.current = null;
     pump();
@@ -285,14 +370,29 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // Trimming waits for this player's table too: nothing is playing yet,
     // so there is nothing to skip, and doing it first would throw away the
     // very deal the player has not seen.
-    if (readyRef.current && backlog.length > CATCH_UP_FRAMES) {
+    const behindMs = backlog.reduce((ms, f) => ms + playbackMs(f.events), 0);
+    if (readyRef.current && backlog.length > CATCH_UP_FRAMES && behindMs > CATCH_UP_MS) {
       // Everything but the newest is history nobody is waiting to watch.
       // Its placements are superseded by the frame we are about to apply,
       // which is a whole snapshot — so dropping them loses position, not
       // truth.
       backlog.splice(0, backlog.length - 1);
       choreographer.skip();
+      flushReset();
     }
+
+    // A piece just jumped (perhaps by the flush above); let it be drawn
+    // there before anything moves it. The effect that releases the hold
+    // pumps again.
+    if (holding.current) return;
+
+    // Pieces from the last batch are still in flight to where the settled
+    // board renames them, and adopting that board now would swap them out
+    // mid-air. It used to be adopted here at once, so the flight survived
+    // only when nothing was queued behind it — and BS answers every play
+    // with a quick frame, so cards "sometimes" never left the hand. The
+    // pending reset's own timer starts the next batch instead.
+    if (pendingReset.current) return;
 
     // A batch waits for the table; a bare position does not.
     if (!readyRef.current && backlog[0]!.events.length > 0) return;
@@ -446,11 +546,40 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     return () => clearTimeout(t);
   }, [dealingRound]);
 
+  /**
+   * Reveals the round's or the match's summary a beat after the frame that
+   * ended it has settled.
+   *
+   * An effect keyed on the settled frame, not a timer armed inside
+   * `settle`: a reload during the break settles that frame while
+   * StrictMode is mounting, its simulated unmount cancelled the timer, and
+   * the remount skips a frame it has already received. The summary, and
+   * with it the only way to continue, never appeared (seen in Chrome).
+   * An effect is simply run again.
+   */
+  useEffect(() => {
+    if (!applied || (!applied.isOver && !applied.isRoundOver)) return;
+    const matchOver = applied.isOver;
+    const delay = prefersReducedMotion()
+      ? 0
+      : matchOver
+        ? DEFAULT_END_HOLD_MS
+        : DEFAULT_ROUND_HOLD_MS;
+    const t = setTimeout(() => (matchOver ? setGameEndRevealed(true) : setRoundEndRevealed(true)), delay);
+    return () => clearTimeout(t);
+  }, [applied]);
+
+  // Releases the hold once a jump has been committed. See `holding`.
+  useEffect(() => {
+    if (!holding.current) return;
+    holding.current = false;
+    pump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumped]);
+
   useEffect(() => {
     return () => {
-      if (endHoldTimer.current !== null) clearTimeout(endHoldTimer.current);
       if (pendingReset.current !== null) clearTimeout(pendingReset.current.timer);
-      if (roundHoldTimer.current !== null) clearTimeout(roundHoldTimer.current);
     };
   }, []);
 
@@ -475,6 +604,8 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // for exactly this reason — there is nothing here it could edit that
     // the server would honour.
     rawState: shown.state as S,
+    // The newest frame, still animating or not — see `GameRuntime.latest`.
+    latest: (frame ?? shown).state as S,
     replaceState: () => {
       /* Server-authoritative. Nothing a client wrote here would survive. */
     },
@@ -533,4 +664,14 @@ export function viewerSeatOf(frame: FrameView | null): SeatId | null {
 export function awayFrom(frame: FrameView): (seat: SeatId) => boolean {
   const bots = new Set(frame.botSeats);
   return (seat) => bots.has(seat) && frame.seatNames[seat] != null;
+}
+
+/**
+ * What a round's end says to somebody who is not the one to continue it —
+ * or nothing, for the person who is. See `mayContinueRound`.
+ */
+export function continueWaitingFor(room: RoomView): string | undefined {
+  if (room.youMayContinue) return undefined;
+  const leader = room.members.find((m) => m.isLeader)?.name;
+  return leader ? `Waiting for ${leader} to continue` : "Waiting for the party leader to continue";
 }

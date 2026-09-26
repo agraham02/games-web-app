@@ -180,17 +180,14 @@ describe("bs — the challenge window", () => {
     expect([...times]).toEqual([...times].sort((a, b) => a - b));
   });
 
-  it("lets the seat on turn play over the top of a window still open", () => {
-    // The interrupt. Without it a generous window can hold up a table of
-    // real people, because the only thing that ends one is a person acting.
+  it("lets nobody play while a window is open, the seat on turn included", () => {
+    // The user's rule: only BS or Let it go while a play can be challenged.
+    // The seat on turn used to be able to play over the top of the window.
     const state = raced();
     expect(state.turn).toBe(1);
-    expect(def.validate!(state, 1, { t: "play", cards: ["D3"] })).toBeNull();
-    const { state: next } = reduce(state, { t: "play", cards: ["D3"] });
-    expect(next.plays).toHaveLength(2);
-    // The old window is gone: that play can never be doubted now.
-    expect(next.window!.play).toBe(1);
-    expect(next.window!.pending.some((p) => p.seat === 1)).toBe(false);
+    expect(def.legalActions(state, 1).map((a) => a.t).sort()).toEqual(["callBs", "declineBs"]);
+    expect(def.validate!(state, 1, { t: "play", cards: ["D3"] })).not.toBeNull();
+    expect(reduce(state, { t: "play", cards: ["D3"] }).state.plays).toHaveLength(1);
   });
 });
 
@@ -450,9 +447,16 @@ describe("bs — deadline and turnHold", () => {
     expect(def.deadline!(state, 0)).toEqual({ ms: 1400, action: { t: "takePile", seat: 0 } });
   });
 
-  it("hurries the beats inside a window and leaves every other one alone", () => {
+  it("waits each bot's own reaction time inside a window, and leaves every other beat alone", () => {
     const state = windowed();
-    expect(def.turnHold!(state, def.currentSeat(state)!)).toBe(120);
+    const [a, b] = state.window!.pending;
+    // The first seat waits its whole reaction time...
+    expect(def.turnHold!(state, a!.seat)).toBe(Math.max(120, a!.ms));
+    // ...and the next only the rest of its own once the first let it go,
+    // so a window costs its longest reaction time, not the sum of them.
+    const after = reduce(state, { t: "declineBs", seat: a!.seat }).state;
+    expect(after.window!.elapsed).toBe(a!.ms);
+    expect(def.turnHold!(after, b!.seat)).toBe(Math.max(120, b!.ms - a!.ms));
     const settled = fixture({ hands: { 0: ["SA"], 1: ["H2"], 2: ["D3"], 3: ["C4"] } });
     expect(def.turnHold!(settled, 0)).toBeUndefined();
   });

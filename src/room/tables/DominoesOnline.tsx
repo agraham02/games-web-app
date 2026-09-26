@@ -36,7 +36,12 @@ import {
   type DomView,
 } from "@/app/play/dominoes/table";
 import { tintFor } from "../Roster";
-import { awayFrom, openingPosition, useOnlineRuntime } from "../useOnlineRuntime";
+import {
+  awayFrom,
+  continueWaitingFor,
+  openingPosition,
+  useOnlineRuntime,
+} from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function DominoesOnline({
@@ -113,6 +118,7 @@ export function DominoesOnline({
         gameTitle={GAMES[room.gameId ?? "dominoes"].name}
         viewerSeat={frame.seat}
         serverDriven
+        continueWaiting={continueWaitingFor(room)}
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}

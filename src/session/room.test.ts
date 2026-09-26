@@ -20,6 +20,7 @@ import {
   createRoom,
   isSeatLive,
   makeCode,
+  mayContinueRound,
   openSeats,
   MAX_ROOM_MEMBERS,
   MIN_ROOM_PLAYERS,
@@ -650,5 +651,41 @@ describe("teamIndex", () => {
       expect(index).toBeGreaterThanOrEqual(0);
       expect(index).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("who deals the next round", () => {
+  /**
+   * The user's rule (2026-09-25): the party leader continues, and everyone
+   * else waits. But a table must never be left with nobody able to move it
+   * on, so while the leader is away from it a seated player may.
+   */
+  function running(): Room {
+    let r = spades(withMembers(["Bo"]));
+    r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+    return r;
+  }
+
+  it("is the leader's call, not the other players'", () => {
+    const r = running();
+    expect(mayContinueRound(r, LEADER)).toBe(true);
+    expect(mayContinueRound(r, "s-0")).toBe(false);
+  });
+
+  it("falls to a seated player while the leader has stepped away to the lobby", () => {
+    const r = ok(running(), { t: "exitGame" }, { actor: LEADER });
+    expect(mayContinueRound(r, LEADER)).toBe(false);
+    expect(mayContinueRound(r, "s-0")).toBe(true);
+  });
+
+  it("follows the leadership when the leader drops", () => {
+    // Leadership moves to a connected member, and the call moves with it.
+    const r = ok(running(), { t: "setConnected", connected: false }, { actor: LEADER });
+    expect(r.leader).toBe("s-0");
+    expect(mayContinueRound(r, "s-0")).toBe(true);
+  });
+
+  it("belongs to nobody when no game is running", () => {
+    expect(mayContinueRound(withMembers(["Bo"]), LEADER)).toBe(false);
   });
 });

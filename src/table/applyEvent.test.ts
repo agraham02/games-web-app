@@ -447,3 +447,42 @@ describe("applyEventToTable — unmask", () => {
     expect(map["S-A"]).toMatchObject({ zone: "hand", seat: 3, index: 1, count: 2 });
   });
 });
+
+describe("applyEventToTable — a play lands on top of its pile", () => {
+  it("joins the pile already there rather than starting one under it", () => {
+    // Seen in Chrome in BS: a played card kept the player's seat, so it
+    // was bucketed apart from the pile's own cards, became index 0 of a
+    // pile of one, and flew in under the top card.
+    const pile = (index: number) => ({ zone: "pile" as const, index, count: 3, faceUp: false });
+    const map: PlacementMap = {
+      "#pile:-:-:0": pile(0),
+      "#pile:-:-:1": pile(1),
+      "#pile:-:-:2": pile(2),
+      "#hand:2:-:4": { zone: "hand", seat: 2, index: 4, count: 9, faceUp: false },
+    };
+    const meta: Record<string, PieceMeta> = Object.fromEntries(
+      Object.keys(map).map((id) => [id, { kind: "card", face: "" }]),
+    );
+    useTableStore.getState().reset(map, meta);
+    applyEventToTable({ t: "play", piece: "#hand:2:-:4", from: 2, to: "pile", faceUp: false });
+    const played = useTableStore.getState().placements["#hand:2:-:4"]!;
+    expect(played.zone).toBe("pile");
+    expect(played.index).toBe(3);
+    expect(played.count).toBe(4);
+  });
+});
+
+describe("applyEventToTable — a jumped piece still flies on its next move", () => {
+  it("keeps `jump` through a play, because it is the element's key", () => {
+    // Clearing it on the play changed the key, which remounted the card
+    // straight onto the pile, and that play never flew (seen in Chrome).
+    const map: PlacementMap = {
+      "#hand:1:-:0": { zone: "hand", seat: 1, index: 0, count: 5, faceUp: false, jump: 7 },
+    };
+    useTableStore.getState().reset(map, { "#hand:1:-:0": { kind: "card", face: "" } });
+    applyEventToTable({ t: "play", piece: "#hand:1:-:0", from: 1, to: "pile", faceUp: false });
+    const played = useTableStore.getState().placements["#hand:1:-:0"]!;
+    expect(played.zone).toBe("pile");
+    expect(played.jump).toBe(7);
+  });
+});

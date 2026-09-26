@@ -79,7 +79,8 @@ const definition = createSpades();
  * Every frame Ada is sent over the first few tricks of a two-human table,
  * with both humans playing whatever their own frame says is legal.
  */
-function playedFrames(): FrameView[] {
+function playedFrames(gameId: "spades" | "bs" = "spades", turns = 30): FrameView[] {
+  const rules = GAMES[gameId].create({});
   const clock = new TestClock();
   const registry = new RoomRegistry({ clock, seed: 4242 });
   const router = new Router(registry, () => clock.now());
@@ -93,7 +94,7 @@ function playedFrames(): FrameView[] {
   const code = (adaConn.sent.find((m) => m.t === "room") as Extract<ServerMessage, { t: "room" }>).room.code;
   say(bo, { t: "hello", token: "bo", protocol: PROTOCOL_VERSION });
   say(bo, { t: "joinRoom", code, name: "Bo" });
-  say(ada, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+  say(ada, { t: "selectGame", gameId, settings: {}, seats: 4, difficulty: "steady" });
   say(ada, { t: "startGame" });
 
   const lastFrame = (conn: Recorder) =>
@@ -102,13 +103,21 @@ function playedFrames(): FrameView[] {
     { peer: ada, conn: adaConn },
     { peer: bo, conn: boConn },
   ];
-  for (let turn = 0; turn < 30; turn++) {
+  for (let turn = 0; turn < turns; turn++) {
     clock.drain();
     const on = (registry.get(code)!.debugDump().table as { currentSeat: number | null }).currentSeat;
     const who = players.find((p) => lastFrame(p.conn)?.seat === on);
     if (on === null || !who) break;
-    const legal = definition.legalActions(lastFrame(who.conn)!.state as SpadesState, on);
-    const action = legal.find((a) => a.t === "bid" && !a.nil) ?? legal[0];
+    const legal = rules.legalActions(lastFrame(who.conn)!.state as never, on) as Array<{
+      t: string;
+      nil?: boolean;
+    }>;
+    // Spades: an ordinary bid. BS: play when able, and let every window go.
+    const action =
+      legal.find((a) => a.t === "bid" && !a.nil) ??
+      legal.find((a) => a.t === "play") ??
+      legal.find((a) => a.t === "declineBs") ??
+      legal[0];
     if (!action) break;
     say(who.peer, { t: "action", action });
   }
@@ -236,6 +245,41 @@ describe("the opening deal, online", () => {
 
     tick(20_000);
     expect(Object.values(handCounts())).toEqual([13, 13, 13, 13]);
+  });
+
+  it("shows the round's summary to somebody who reloads during the break", () => {
+    // Seen in Chrome: after a reload while a round was over, the table
+    // showed the finished position but no summary and no way to continue.
+    // StrictMode mounts, cleans up and mounts again; the reveal timer was
+    // armed inside the first mount's settle, the cleanup cancelled it, and
+    // the second mount skips a frame it has already received.
+    const over: FrameView = { ...realDealFrame(), events: [], isRoundOver: true, dealtRound: null };
+    const { result } = renderHook(
+      () =>
+        useOnlineRuntime<SpadesState, SpadesAction>({
+          frame: over,
+          submit: () => {},
+          nextRound: () => {},
+        }),
+      { wrapper: StrictMode },
+    );
+    for (let i = 0; i < 10; i++) tick(500);
+    expect(result.current?.showRoundSummary).toBe(true);
+  });
+
+  it("shows the match's summary to somebody who reloads after it ends", () => {
+    const over: FrameView = { ...realDealFrame(), events: [], isOver: true, dealtRound: null };
+    const { result } = renderHook(
+      () =>
+        useOnlineRuntime<SpadesState, SpadesAction>({
+          frame: over,
+          submit: () => {},
+          nextRound: () => {},
+        }),
+      { wrapper: StrictMode },
+    );
+    for (let i = 0; i < 10; i++) tick(500);
+    expect(result.current?.showSummary).toBe(true);
   });
 
   it("deals once under StrictMode, not twice", () => {
@@ -469,4 +513,175 @@ describe("a trick, online", () => {
     // DURATION.collect is 0.42s before the per-card stagger.
     for (const ms of lifetimes) expect(ms).toBeGreaterThanOrEqual(400);
   });
+
+  it("still lets them finish when the next frame is already waiting", () => {
+    // Reported in BS: cards sometimes did not fly from a hand to the pile.
+    // The board is adopted late only while nothing else is queued — the
+    // next batch used to adopt it at once, and BS answers every play with
+    // a quick frame (a "Let it go"), so the cards were swapped out mid-air.
+    const frames = playedFrames();
+    let current = frames[0]!;
+    const { rerender } = renderHook(() =>
+      useOnlineRuntime<SpadesState, SpadesAction>({
+        frame: current,
+        submit: () => {},
+        nextRound: () => {},
+        initial: () => openingPosition(definition, 4, current.seat),
+      }),
+    );
+    for (let i = 0; i < 40; i++) tick(500);
+
+    const lifetimes: number[] = [];
+    const rest = frames.slice(1);
+    for (let i = 0; i < rest.length - 1; i++) {
+      const frame = rest[i]!;
+      const collect = frame.events.find((e) => e.t === "collect");
+      current = frame;
+      rerender();
+      if (!collect) {
+        tick(8000);
+        continue;
+      }
+      // The next frame lands while this one is still playing.
+      tick(20);
+      current = rest[i + 1]!;
+      rerender();
+      let landed = -1;
+      for (let t = 0; t < 8000; t += 20) {
+        tick(20);
+        const map = useTableStore.getState().placements;
+        const inPile = collect.pieces.some((id) => map[id]?.zone === "collected");
+        if (landed < 0 && inPile) landed = t;
+        if (landed >= 0 && !inPile) {
+          lifetimes.push(t - landed);
+          break;
+        }
+      }
+      i++;
+      tick(8000);
+    }
+    expect(lifetimes.length, "the table should have finished some tricks").toBeGreaterThan(0);
+    for (const ms of lifetimes) expect(ms).toBeGreaterThanOrEqual(400);
+  });
 });
+
+describe("a face-down play, online", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    useTableStore.getState().reset({}, {});
+    visibility("visible");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("lets another player's card fly to the pile before the board is adopted", () => {
+    // Reported in BS, seen in Chrome: the viewer's own plays flew and nobody
+    // else's did. An opponent's card is a stand-in named by its SLOT in the
+    // hand ("#hand:2:-:3"), and after the play that name still exists, for
+    // the card that slid into the gap. So nothing looked like it was
+    // vanishing, the board was adopted the moment the play was applied,
+    // and the flying card was pulled straight back into the hand. Only a
+    // card from the last slot, whose name did go, ever flew.
+    const frames = playedFrames("bs", 60);
+    let current = frames[0]!;
+    const { rerender } = renderHook(() =>
+      useOnlineRuntime({
+        frame: current,
+        submit: () => {},
+        nextRound: () => {},
+        initial: () => openingPosition(GAMES.bs.create({}), 4, current.seat),
+      }),
+    );
+    for (let i = 0; i < 40; i++) tick(500);
+
+    // Every change to the store is seen, not sampled: the bug put the card
+    // on the pile and back in the hand inside one timer callback, which a
+    // sampling loop never observes.
+    const flights: Array<{ piece: string; ms: number; jumped: boolean }> = [];
+    let watching: string | null = null;
+    let landedAt = -1;
+    const stop = useTableStore.subscribe((st) => {
+      if (!watching) return;
+      const onPile = st.placements[watching]?.zone === "pile";
+      if (landedAt < 0 && onPile) landedAt = Date.now();
+      if (landedAt >= 0 && !onPile) {
+        // Where the settled board sends it next is the name's NEW card, so
+        // it must jump there rather than fly back out of the pile.
+        const next = st.placements[watching];
+        flights.push({ piece: watching, ms: Date.now() - landedAt, jumped: !next || next.jump !== undefined });
+        watching = null;
+      }
+    });
+    for (const frame of frames.slice(1)) {
+      const theirs = frame.events.find(
+        (e): e is Extract<typeof e, { t: "play" }> =>
+          e.t === "play" && e.from !== frame.seat && e.piece.startsWith("#hand:"),
+      );
+      watching = theirs ? theirs.piece : null;
+      landedAt = -1;
+      current = frame;
+      rerender();
+      for (let t = 0; t < 12000; t += 20) tick(20);
+    }
+    stop();
+    expect(flights.length, "no opponent played from the middle of a hand").toBeGreaterThan(2);
+    // DURATION.play is 0.3s.
+    for (const f of flights) expect(f.ms, f.piece).toBeGreaterThanOrEqual(280);
+    for (const f of flights) expect(f.jumped, `${f.piece} flew back out of the pile`).toBe(true);
+  });
+
+  it("does not skip a play queued behind a burst of empty frames", () => {
+    // BS answers every play with frames that show nothing (each "Let it
+    // go"), and counting frames alone called three of them "behind" and
+    // skipped the next play outright. Catching up is for real history.
+    const frames = playedFrames("bs", 60);
+    let current = frames[0]!;
+    const { rerender } = renderHook(() =>
+      useOnlineRuntime({
+        frame: current,
+        submit: () => {},
+        nextRound: () => {},
+        initial: () => openingPosition(GAMES.bs.create({}), 4, current.seat),
+      }),
+    );
+    for (let i = 0; i < 40; i++) tick(500);
+
+    const plays = frames
+      .map((f, i) => ({ f, i }))
+      .filter(({ f, i }) => i > 0 && f.events.some((e) => e.t === "play" && e.from !== f.seat));
+    const { f: play } = plays[1]!;
+    const piece = play.events.find((e) => e.t === "play")! as Extract<(typeof play.events)[number], { t: "play" }>;
+    // How long it spends on the pile: a skipped play passes through it in
+    // the same instant, an animated one stays for its flight.
+    let landedAt = -1;
+    let onPileMs = -1;
+    const stop = useTableStore.subscribe((st) => {
+      const onPile = st.placements[piece.piece]?.zone === "pile";
+      if (landedAt < 0 && onPile) landedAt = Date.now();
+      if (landedAt >= 0 && onPileMs < 0 && !onPile) onPileMs = Date.now() - landedAt;
+    });
+    // Three empty frames arrive right behind the play, before it has played.
+    const empty = (n: number): FrameView => ({ ...play, seq: play.seq + n, events: [], lastAction: null });
+    for (const f of [play, empty(1), empty(2), empty(3)]) {
+      current = f;
+      rerender();
+    }
+    for (let i = 0; i < 40; i++) tick(100);
+    stop();
+    expect(landedAt, "the play never reached the pile").toBeGreaterThanOrEqual(0);
+    expect(onPileMs, "the play was skipped instead of animated").toBeGreaterThanOrEqual(280);
+  });
+});
+
