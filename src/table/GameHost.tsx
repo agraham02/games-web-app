@@ -25,7 +25,14 @@ import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
 import { useTableStore } from "./store";
 import { GameToaster } from "@/ui/disclosure";
 import { Button } from "@/ui/primitives/Button";
-import { SettingsSheet, useGameSettings, type GameSetting, type SettingValues } from "./gameSettings";
+import {
+  SettingsSheet,
+  TABLE_SETTINGS,
+  useGameSettings,
+  type GameSetting,
+  type SettingValues,
+} from "./gameSettings";
+import { useSlamFeedback } from "./slamFeedback";
 import {
   GameEndSummary,
   RoundEndScorecard,
@@ -111,17 +118,23 @@ export interface GameHostProps<S, A> {
    */
   serverDriven?: boolean;
   /**
-   * The game's in-game settings — the player's own preferences, changeable
-   * mid-game from a Settings button (see `gameSettings.tsx`). A game with
-   * none gets no button.
+   * The game's own in-game settings — the player's preferences, changeable
+   * mid-game from the Settings button (see `gameSettings.tsx`). Every table
+   * also gets `TABLE_SETTINGS` (Sound, Vibration), so the button is always
+   * there.
    */
   settings?: readonly GameSetting[];
   /**
-   * Controls for the top-right corner, beside the Settings button: an
-   * online table's "Step away" and "End game". One row laid out here,
-   * rather than each table positioning its own box in the same corner —
-   * two absolutely positioned boxes in one corner overlap the moment both
-   * exist.
+   * Buttons at the foot of the Settings sheet: an online table's "Step
+   * away" and the leader's "End game" (the user's call, 2026-09-26 — they
+   * used to sit on the table itself, in the corner).
+   */
+  menuActions?: React.ReactNode;
+  /**
+   * Controls for the top-right corner, beside the Settings button. One row
+   * laid out here, rather than each table positioning its own box in the
+   * same corner — two absolutely positioned boxes in one corner overlap
+   * the moment both exist.
    */
   corner?: React.ReactNode;
   /**
@@ -205,14 +218,25 @@ export function GameHostView<S, A>({
   viewerSeat,
   serverDriven,
   settings,
+  menuActions,
   corner,
   handActive,
   continueWaiting,
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
-  const [settingValues, setSetting] = useGameSettings(definition.id, settings);
+  const allSettings = useMemo(() => [...(settings ?? []), ...TABLE_SETTINGS], [settings]);
+  const [settingValues, setSetting] = useGameSettings(definition.id, allSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const hasSettings = (settings?.length ?? 0) > 0;
+  useSlamFeedback({
+    sound: settingValues.sound ?? true,
+    vibration: settingValues.vibration ?? true,
+  });
+  // Hints off draws no game's `dimmed` marks — see `TableState.hintsShown`.
+  // A game without a Hints setting keeps them, as it always has.
+  const hintsShown = settingValues.hints ?? true;
+  useEffect(() => {
+    useTableStore.getState().setHintsShown(hintsShown);
+  }, [hintsShown]);
   // Synced into the shared table store, not read as a prop threaded
   // through PieceLayer — the piece that actually needs this (a hero-hand
   // card, in any game) lives several components below here, and a
@@ -350,25 +374,20 @@ export function GameHostView<S, A>({
 
       {children(live, settingValues)}
 
-      {hasSettings || corner ? (
-        <div className="absolute top-2 right-2 z-1900 flex gap-2">
-          {corner}
-          {hasSettings ? (
-            <Button size="sm" onClick={() => setSettingsOpen(true)}>
-              <span aria-hidden>⚙</span> Settings
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-      {hasSettings ? (
-        <SettingsSheet
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          settings={settings!}
-          values={settingValues}
-          onChange={setSetting}
-        />
-      ) : null}
+      <div className="absolute top-2 right-2 z-1900 flex gap-2">
+        {corner}
+        <Button size="sm" onClick={() => setSettingsOpen(true)}>
+          <span aria-hidden>⚙</span> Settings
+        </Button>
+      </div>
+      <SettingsSheet
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        settings={allSettings}
+        values={settingValues}
+        onChange={setSetting}
+        actions={menuActions}
+      />
     </TableSurface>
   );
 }

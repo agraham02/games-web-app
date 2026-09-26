@@ -24,12 +24,13 @@ import { partnerOf, teamOf, teammates } from "@/games/_shared/partnership";
 import {
   blindVoteOpen,
   isHiddenFromSelf,
-  legalPlays,
   minLegalBid,
   mustBidBlind,
 } from "@/games/spades/rules";
+import { whyNotPlayable } from "@/games/spades/state";
 import type { Bid, SpadesAction, SpadesState } from "@/games/spades/types";
-import { BlockingDialog } from "@/ui/disclosure";
+import { BlockingDialog, announce } from "@/ui/disclosure";
+import { hintsSetting, type GameSetting } from "@/table/gameSettings";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { TRANSITIONS } from "@/motion/presets";
@@ -121,10 +122,20 @@ export function onPieceTap(
     toggleHeld(id);
     return;
   }
-  if (state.phase === "play" && legalPlays(state, view.viewerSeat).includes(id)) {
-    live.submitAction({ t: "play", card: id });
+  if (state.phase !== "play") return;
+  const refused = whyNotPlayable(state, view.viewerSeat, id);
+  if (refused) {
+    // Reached only with Hints off; see `whyNotPlayable`.
+    announce(refused, "bad");
+    return;
   }
+  live.submitAction({ t: "play", card: id });
 }
+
+/** Spades' Hints: the dimming of cards that cannot be played. */
+export const SPADES_SETTINGS: readonly GameSetting[] = [
+  hintsSetting("Dim the cards you cannot play. Off, every card looks playable."),
+];
 
 /* ============================================================
    Table overlays

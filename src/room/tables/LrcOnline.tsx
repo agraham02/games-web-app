@@ -42,6 +42,7 @@ import {
   useOnlineRuntime,
 } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { TableMenu } from "./TableMenu";
 
 export function LrcOnline({ api, room, frame }: OnlineTableProps) {
   const definition = useMemo(() => {
@@ -94,6 +95,14 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        menuActions={
+          <TableMenu
+            spectator={frame.seat === null}
+            leader={room.youAreLeader}
+            onStepAway={api.exitGame}
+            onEndGame={api.endGame}
+          />
+        }
         handZone={LRC_HAND_ZONE}
         live={live}
         players={(state, l) => playerViews(view, state, l)}
@@ -106,23 +115,6 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
         {(l) => <LrcControls live={l} />}
       </GameHostView>
 
-      {/*
-        The only exit from a game is back to the lobby — leaving the room
-        outright is a lobby action, per the spec. Deliberately a small
-        corner control rather than anything in the hand band: that band has
-        one owner (`HandZone`), and a second claimant on it is how the
-        layout starts fighting itself.
-      */}
-      <div className="absolute top-2 right-2 z-1900 flex gap-2">
-        {room.youAreLeader ? (
-          <Button size="sm" tone="danger" onClick={api.endGame}>
-            End game
-          </Button>
-        ) : null}
-        <Button size="sm" onClick={api.exitGame}>
-          {frame.seat === null ? "Stop watching" : "Step away"}
-        </Button>
-      </div>
     </div>
   );
 }

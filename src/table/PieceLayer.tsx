@@ -38,6 +38,7 @@ import {
   useHandScroll,
   useHeroHoverIndex,
   useHeroTurnActive,
+  useHintsShown,
   usePieceIds,
   usePlacement,
   usePieceMeta,
@@ -297,6 +298,9 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   // is false on a genuine touch device, so this fully excludes it there.
   const mouseHoverEligible = hoverEligible && supportsHover();
   const heroTurnActive = useHeroTurnActive(isHeroHand);
+  // The game's dimming, unless the player has Hints off — see
+  // `TableState.hintsShown`.
+  const dimmed = useHintsShown(Boolean(placement?.dimmed)) && Boolean(placement?.dimmed);
   const hoverIndex = useHeroHoverIndex(hoverEligible);
   const setHeroHoverIndex = useSetHeroHoverIndex();
   // Three more enabled-gated slices, each reaching exactly the pieces
@@ -362,7 +366,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
     // clickable-but-ignored is what a dead button feels like, and this
     // is the one flag the piece layer can check without knowing why a
     // game dimmed it.
-    !placement.dimmed &&
+    !dimmed &&
     // Nothing responds to a tap while it isn't the hero's turn at all —
     // keeps the pointer honest about the same dim+shrink the piece is
     // showing below, rather than leaving a clickable-looking dead spot.
@@ -462,7 +466,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // hand at rest, just visually receded. This matters most during
         // bidding, where every seat's hand dims while waiting its turn
         // and nothing has actually been ruled illegal yet.
-        filter: placement.dimmed
+        filter: dimmed
           ? "grayscale(0.85) brightness(0.78)"
           : isHeroHand && !heroTurnActive
             ? "brightness(0.86)"

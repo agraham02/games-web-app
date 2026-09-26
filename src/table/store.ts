@@ -73,6 +73,14 @@ interface TableState {
    */
   heroTurnActive: boolean;
   /**
+   * Whether a game's `dimmed` marks are drawn — the player's Hints
+   * setting, synced in by GameHost. Off, a card that cannot be played
+   * looks and taps like any other, and the game says why after the tap
+   * instead of before it. Defaults true: dimming is the long-standing
+   * behaviour, and a table with no Hints setting keeps it.
+   */
+  hintsShown: boolean;
+  /**
    * Pan offset, in px, of the discard pile's own fan — how far it has
    * been dragged past what fits. See geometry.ts's compress-then-pan
    * note: a fan compresses only down to a floor, and everything past
@@ -144,6 +152,7 @@ interface TableState {
   clearFlags(): void;
   setHeroHoverIndex(index: number | null): void;
   setHeroTurnActive(active: boolean): void;
+  setHintsShown(shown: boolean): void;
   setDiscardScroll(px: number | null): void;
   setHandScroll(px: number | null): void;
   setHandOrder(order: Record<PieceId, number> | null): void;
@@ -208,6 +217,7 @@ export const useTableStore = create<TableState>((set) => {
     ghosts: [],
     heroHoverIndex: null,
     heroTurnActive: true,
+    hintsShown: true,
     discardScroll: null,
     discardCount: 0,
     handScroll: null,
@@ -309,6 +319,9 @@ export const useTableStore = create<TableState>((set) => {
     setHeroTurnActive: (active) =>
       set((s) => (s.heroTurnActive === active ? s : { heroTurnActive: active })),
 
+    setHintsShown: (shown) =>
+      set((s) => (s.hintsShown === shown ? s : { hintsShown: shown })),
+
     setDiscardScroll: (px) =>
       set((s) => (s.discardScroll === px ? s : { discardScroll: px })),
 
@@ -367,6 +380,13 @@ export const useSetHeroHoverIndex = () => useTableStore((s) => s.setHeroHoverInd
  */
 export const useHeroTurnActive = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.heroTurnActive : true));
+
+/**
+ * See `TableState.hintsShown`. Enabled only for a piece the game has
+ * dimmed, so no other piece re-renders when the setting changes.
+ */
+export const useHintsShown = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.hintsShown : true));
 
 /**
  * Pan/count slices, all on the same enabled-gated pattern as the two

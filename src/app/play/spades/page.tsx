@@ -48,6 +48,7 @@ import {
   roundSummary,
   standings,
   statsFor,
+  SPADES_SETTINGS,
 } from "./table";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { Toggle } from "@/ui/primitives/Toggle";
@@ -112,6 +113,7 @@ export default function SpadesPlayPage() {
       roundSummary={(state) => roundSummary(view, state)}
       pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
       onPieceTap={onPieceTap}
+      settings={SPADES_SETTINGS}
       onRematch={() => {
         clearHeld();
         setGameKey((k) => k + 1);

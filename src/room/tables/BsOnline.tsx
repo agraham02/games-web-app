@@ -48,6 +48,7 @@ import {
   useOnlineRuntime,
 } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { TableMenu } from "./TableMenu";
 
 export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: OnlineTableProps) {
   // Through the shared rule, not a bare toggle. `RoomScreen` owns WHERE the
@@ -104,6 +105,14 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        menuActions={
+          <TableMenu
+            spectator={frame.seat === null}
+            leader={room.youAreLeader}
+            onStepAway={api.exitGame}
+            onEndGame={api.endGame}
+          />
+        }
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}
@@ -122,22 +131,6 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         {(l) => <BsTable view={view} live={l} held={held} onClearHeld={putDown} />}
       </GameHostView>
 
-      {/*
-        The only exit from a game is back to the lobby — leaving the room
-        outright is a lobby action. Deliberately a small corner control rather
-        than anything in the hand band: that band has one owner (`HandZone`),
-        and a second claimant on it is how a layout starts fighting itself.
-      */}
-      <div className="absolute top-2 right-2 z-1900 flex gap-2">
-        {room.youAreLeader ? (
-          <Button size="sm" tone="danger" onClick={api.endGame}>
-            End game
-          </Button>
-        ) : null}
-        <Button size="sm" onClick={api.exitGame}>
-          {frame.seat === null ? "Stop watching" : "Step away"}
-        </Button>
-      </div>
     </div>
   );
 }

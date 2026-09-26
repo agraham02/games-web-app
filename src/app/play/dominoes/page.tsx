@@ -39,6 +39,7 @@ import {
   roundSummary,
   standings,
   tapTile,
+  DOMINO_SETTINGS,
 } from "./table";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { useTableStore } from "@/table/store";
@@ -170,6 +171,7 @@ export default function DominoesPlayPage() {
       pendingLabel={(state, seat) => pendingLabel(OFFLINE_VIEW, state, seat)}
       scenarios={dominoScenarios}
       onPieceTap={onPieceTap}
+      settings={DOMINO_SETTINGS}
       onRematch={() => {
         release();
         setGameKey((k) => k + 1);

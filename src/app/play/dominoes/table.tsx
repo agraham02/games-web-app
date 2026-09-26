@@ -34,6 +34,8 @@ import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import { useBoardView, useGeometry, useTableStore } from "@/table/store";
 import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { announce } from "@/ui/disclosure";
+import { hintsSetting, type GameSetting } from "@/table/gameSettings";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
 type Live = GameRuntime<DomState, DomAction>;
@@ -88,7 +90,12 @@ export function tapTile(
 ): void {
   if (!live.isHeroTurn) return;
   const ends = playableEnds(live.state, id);
-  if (ends.length === 0) return;
+  if (ends.length === 0) {
+    // Reached only with Hints off: with them on, the tile is dimmed and
+    // cannot be tapped. Said after the tap, never before it.
+    announce("That tile does not match either end", "bad");
+    return;
+  }
   // Tapping the held tile again puts it back down.
   if (held === id) {
     on.release();
@@ -103,6 +110,11 @@ export function tapTile(
   }
   on.select(id);
 }
+
+/** Dominoes' Hints: the dimming of tiles that cannot be played. */
+export const DOMINO_SETTINGS: readonly GameSetting[] = [
+  hintsSetting("Dim the tiles you cannot play. Off, every tile looks playable."),
+];
 
 /* ============================================================
    Table overlays

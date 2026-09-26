@@ -50,6 +50,7 @@ import {
   useOnlineRuntime,
 } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { TableMenu } from "./TableMenu";
 
 export function RummyOnline({ api, room, frame }: OnlineTableProps) {
   const definition = useMemo(() => {
@@ -110,6 +111,20 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        menuActions={
+          <TableMenu
+            spectator={frame.seat === null}
+            leader={room.youAreLeader}
+            onStepAway={() => {
+              // Not kept, unlike Spades' exchange: a bot plays this seat
+              // meanwhile, so a staged pickup would be a depth into a pile
+              // that is no longer the same pile.
+              clearSelection();
+              api.exitGame();
+            }}
+            onEndGame={api.endGame}
+          />
+        }
         live={live}
         bottomZone={handHeaderHeight(vh) + SHEET_PEEK_H}
         players={playerViews(view, room.seats)}
@@ -140,29 +155,6 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
           else's game too. */}
       {short ? <RotateNotice touch={touch} /> : null}
 
-      <div className="absolute top-2 right-2 z-1900 flex gap-2">
-        {room.youAreLeader ? (
-          <Button size="sm" tone="danger" onClick={api.endGame}>
-            End game
-          </Button>
-        ) : null}
-        <Button
-          size="sm"
-          onClick={() => {
-            // Cleared on the way out, like the summary screen's own exit
-            // already does. Not KEPT, deliberately, unlike Spades'
-            // exchange: stepping away hands this seat to a bot, which
-            // draws and discards, so a staged pickup restored on return
-            // would be a depth into a pile that is no longer the same
-            // pile. The selection is only meaningful for the turn it was
-            // made in.
-            clearSelection();
-            api.exitGame();
-          }}
-        >
-          {frame.seat === null ? "Stop watching" : "Step away"}
-        </Button>
-      </div>
     </div>
   );
 }

@@ -41,6 +41,7 @@ import {
   useOnlineRuntime,
 } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { TableMenu } from "./TableMenu";
 
 export function PokerOnline({ api, room, frame }: OnlineTableProps) {
   const definition = useMemo(() => {
@@ -104,22 +105,13 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
         onLobby={api.exitGame}
         settings={POKER_SETTINGS}
-        // The only exit from a game is back to the lobby — leaving the room
-        // outright is a lobby action, per the spec. Deliberately a small
-        // corner control rather than anything in the hand band: that band
-        // has one owner (`HandZone`). Handed to the host rather than
-        // positioned here, so it shares one row with the Settings button.
-        corner={
-          <>
-            {room.youAreLeader ? (
-              <Button size="sm" tone="danger" onClick={api.endGame}>
-                End game
-              </Button>
-            ) : null}
-            <Button size="sm" onClick={api.exitGame}>
-              {frame.seat === null ? "Stop watching" : "Step away"}
-            </Button>
-          </>
+        menuActions={
+          <TableMenu
+            spectator={frame.seat === null}
+            leader={room.youAreLeader}
+            onStepAway={api.exitGame}
+            onEndGame={api.endGame}
+          />
         }
       >
         {(l, prefs) => <PokerControls view={view} live={l} hints={prefs.hints ?? true} />}

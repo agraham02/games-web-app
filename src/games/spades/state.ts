@@ -138,3 +138,18 @@ export function legalPlays(state: SpadesState, seat: SeatId): PieceId[] {
 
   return legalFollows(cards, state.ledSuit).map((c) => c.id);
 }
+
+const SUIT_WORDS = { S: "spades", H: "hearts", D: "diamonds", C: "clubs" } as const;
+
+/**
+ * Why `seat` may not play `id`, in the player's own words — or null when
+ * they may. Said AFTER a tap on it, which only happens with Hints off: with
+ * them on, the card is dimmed and cannot be tapped.
+ */
+export function whyNotPlayable(state: SpadesState, seat: SeatId, id: PieceId): string | null {
+  if (legalPlays(state, seat).includes(id)) return null;
+  if (state.trick.length === 0 || state.ledSuit === null) {
+    return "Spades have not been broken yet";
+  }
+  return `You have to follow suit: ${SUIT_WORDS[state.ledSuit]} were led`;
+}
