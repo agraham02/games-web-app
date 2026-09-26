@@ -63,42 +63,24 @@ export function Lobby({ api }: { api: RoomApi }) {
           members={room.members}
           you={room.you}
           youAreLeader={leader}
+          plan={room.gameRunning ? null : room.seatPlan}
+          seatCount={room.seats}
           teamsEnabled={teamsEnabled}
-          teamsLocked={room.gameRunning}
           onPromote={api.promote}
           onKick={api.kick}
-          onAssignTeam={api.assignTeam}
-          onMoveSeat={api.moveSeat}
-          seatsLocked={room.gameRunning}
+          onArrange={api.arrangeSeats}
         />
-        {leader && room.members.length > 1 && !room.gameRunning ? (
-          <p className="text-[11px] text-bone-500">
-            Seats are dealt in this order, round the table. Use the arrows to change it.
+        {room.gameRunning ? null : (
+          <p className="text-[11px] leading-relaxed text-bone-500">
+            Seat 1 is dealt first, and the seats go clockwise from there — each one sits to
+            the left of the seat above it.
+            {teamsEnabled ? " Partners sit across, so the seat decides the team." : ""}
+            {leader ? " Drag a row by its grip to move a person or a bot." : ""}
           </p>
-        ) : null}
-        {leader && room.members.length > 1 ? (
-          <Button
-            size="sm"
-            disabled={room.gameRunning}
-            title={room.gameRunning ? "Finish the game first" : undefined}
-            onClick={api.shuffleSeats}
-            className="self-start"
-          >
+        )}
+        {leader && !room.gameRunning ? (
+          <Button size="sm" onClick={api.shuffleSeats} className="self-start">
             <Shuffle size={12} /> Shuffle seats
-          </Button>
-        ) : null}
-        {teamsEnabled && leader ? (
-          <Button
-            size="sm"
-            // Same rule as the A/B buttons beside each name: partnerships
-            // are read once, at `startGame`, so shuffling them mid-match
-            // moved the roster and nothing else.
-            disabled={room.gameRunning}
-            title={room.gameRunning ? "Finish the game first" : undefined}
-            onClick={api.randomizeTeams}
-            className="self-start"
-          >
-            <Shuffle size={12} /> Shuffle teams
           </Button>
         ) : null}
       </section>

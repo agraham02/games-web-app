@@ -439,12 +439,20 @@ scorecard says who they are waiting on. It can never strand a table:
 while the leader is not at it, any seated player there may continue, and
 a leader who disconnects has already handed leadership on.
 
-**The seats are dealt in the roster's order** (`seatingOrder`): the
-leader's `seatOrder`, then anyone it does not mention in join order, so a
-join needs no bookkeeping. The leader moves people with the lobby's arrows
-or shuffles them (`moveSeat` / `shuffleSeats`), locked while a game runs
-like teams. Leadership is still inherited in JOIN order (`orderedMembers`),
-whatever the seats.
+**The lobby's list is the seating plan** (`seatingPlan`): one row per
+seat, seat 1 first and clockwise from there, `null` for a seat a bot
+plays, then anybody past the last seat, who will watch. The leader drags
+rows by a grip (Motion's `Reorder`; the grip alone, so a finger on a phone
+still scrolls the list) or moves them with the arrow keys, bots included,
+and `arrangeSeats` sends the whole plan; `shuffleSeats` mixes people and
+bots. `seatingPlan` squares the stored plan with the room — a departure
+leaves a bot seat, a newcomer takes the first bot seat, the plan follows
+the game's seat count, and nobody watches while a bot sits — so none of
+that needs bookkeeping. Locked while a game runs. **In a partnership game
+the seat IS the team** (`teamOfSeat`: partners across, seats 0/2 against
+1/3), so there is no team setting to keep in step with it; the A/B
+buttons, `assignTeam` and `randomizeTeams` are gone. Leadership is still
+inherited in JOIN order (`orderedMembers`), whatever the seats.
 
 **Making or joining is one press on the home page.** The home form takes
 the name too, and leaves an intent in `sessionStorage` ([entry.ts](src/room/entry.ts))
@@ -567,7 +575,7 @@ where everything sits`. No React, no DOM, so
 9 seat counts without a browser.
 
 - The hero is **always** seat 0, pinned bottom-centre.
-- Seat 1 is the hero's left; numbering runs anticlockwise, matching the
+- Seat 1 is the hero's left; numbering runs clockwise on screen, matching the
   direction turn order passes.
 - Seats walk the perimeter of a rounded rectangle, **not an ellipse** —
   on a 9:19.5 phone an ellipse wastes the horizontal band, which is the

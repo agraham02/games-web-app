@@ -260,10 +260,11 @@ const DENSITY: Record<Density, DensitySpec> = {
    Edge allocation
 
    [left, top, right] for a given opponent count. Seat order runs
-   anticlockwise from the hero: hero's left edge bottom-to-top,
-   across the top left-to-right, then down the right edge — so
-   seat 1 is the player to the hero's left, matching the direction
-   turn order passes in every game here.
+   CLOCKWISE on screen from the hero: hero's left edge bottom-to-top,
+   across the top left-to-right, then down the right edge — so seat 1
+   is the player to the hero's left, matching the direction turn order
+   passes in every game here, and what the lobby's seating plan says.
+   (These comments used to call it anticlockwise.)
    ============================================================ */
 
 type EdgeAlloc = readonly [left: number, top: number, right: number];
@@ -486,7 +487,7 @@ export interface ResolveOptions {
    * Seats are laid out by POSITION and then labelled, so pinning a
    * different viewer bottom-centre is a relabelling rather than a second
    * layout: position 0 is always "the person looking at this screen", and
-   * the seat ids walk anticlockwise from there. Everything downstream
+   * the seat ids walk clockwise (on screen) from there. Everything downstream
    * still speaks in real seat ids, which is what keeps a game's own state
    * — hands, bids, scores, all keyed by seat — from needing to be rewritten
    * per viewer.

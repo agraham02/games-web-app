@@ -1024,47 +1024,32 @@ describe("the server, in process", () => {
 
   describe("input nobody sane would send", () => {
     /**
-     * Each value gets its own room, and that matters: assigning a team
-     * overwrites the last one, so a loop that assigned all of them to one
-     * player would only ever start a game with whichever came last — and
-     * `-0 % 2` is `-0`, which is a perfectly good array index. The first
-     * version of this test did exactly that and passed against the bug.
+     * Each plan gets its own room, so every one of them is the plan a game
+     * actually starts from. (The team-index version of this test once sent
+     * every value to one room, where only the last could ever be dealt, and
+     * passed against the bug it was written for.)
      */
-    // NaN and Infinity are absent on purpose: `JSON.stringify` turns both
-    // into `null`, so the parser rejects the message and they can never
-    // arrive this way. They are covered directly on `teamIndex` instead.
-    it.each([-1, 0.5, 1e21, -0, Number.MIN_SAFE_INTEGER])(
-      "does not die on a team index of %p",
-      (team) => {
-        // `team % 2` is `-1` for `-1` and `0.5` for `0.5`, and
-        // `seatMembers` indexed its queue array with the result —
-        // `undefined.shift()`. That threw all the way out through the ws
-        // message listener and took every live room in the process with
-        // it, on a message a leader is perfectly entitled to send.
-        const token = `host-${String(team)}`;
-        const { peer, code } = host(token);
-        const guestToken = `guest-${String(team)}`;
-        const { peer: guest } = peerFor(guestToken);
-        send(guest, { t: "joinRoom", code, name: `Bo${String(team)}` });
-        send(peer, {
-          t: "selectGame",
-          gameId: "spades",
-          settings: {},
-          seats: 4,
-          difficulty: "steady",
-        });
+    it.each([
+      [["?"]],
+      [[null, null, null, null, null, null, null, null, null]],
+      [[1, 2, 3]],
+      [Array.from({ length: 70 }, () => null)],
+    ])("does not die on a seating plan of %j", (plan) => {
+      // A leader may send `arrangeSeats`, so whatever arrives in it has to
+      // be refused or squared with the room — never thrown on. Somebody's
+      // seat must not be lost to it either.
+      const { peer, code } = host(`host-${JSON.stringify(plan).length}`);
+      const { peer: guest } = peerFor(`guest-${JSON.stringify(plan).length}`);
+      send(guest, { t: "joinRoom", code, name: "Bo" });
+      send(peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
 
-        send(peer, { t: "assignTeam", session: registry.sessionFor(guestToken), team });
-        send(peer, { t: "startGame" });
+      send(peer, { t: "arrangeSeats", plan } as never);
+      send(peer, { t: "startGame" });
 
-        const runtime = registry.get(code)!;
-        expect(runtime.hasGame).toBe(true);
-        // Both of them got a seat — a bad index must not cost anybody one.
-        expect(runtime.room.game!.seatOwner.filter(Boolean)).toHaveLength(2);
-        // And what was stored is a real team, not whatever arrived.
-        expect(runtime.room.teams![registry.sessionFor(guestToken)]).toBeOneOf([0, 1]);
-      },
-    );
+      const runtime = registry.get(code)!;
+      expect(runtime.hasGame).toBe(true);
+      expect(runtime.room.game!.seatOwner.filter(Boolean)).toHaveLength(2);
+    });
 
     it("answers a handler that throws instead of taking the process down", () => {
       // The boundary itself, tested by making a command throw on purpose.

@@ -64,9 +64,8 @@ export type ClientMessage =
       seats: number;
       difficulty: BotDifficulty;
     } & Addressed)
-  | ({ t: "assignTeam"; session: SessionId; team: number } & Addressed)
-  | ({ t: "randomizeTeams" } & Addressed)
-  | ({ t: "moveSeat"; session: SessionId; to: number } & Addressed)
+  /** Leader only: the whole seating plan, `null` for a bot's seat. */
+  | ({ t: "arrangeSeats"; plan: (SessionId | null)[] } & Addressed)
   | ({ t: "shuffleSeats" } & Addressed)
   | ({ t: "startGame" } & Addressed)
   | ({ t: "enterGame"; as?: "player" | "spectator" } & Addressed)
@@ -90,6 +89,10 @@ export interface MemberView {
   seat: SeatId | null;
   /** In the game and not seated. */
   spectating: boolean;
+  /**
+   * The side they play for in a partnership game, 0 or 1 — decided by the
+   * seat (partners sit across) — or null where there are no teams or no seat.
+   */
   team: number | null;
   isLeader: boolean;
 }
@@ -101,6 +104,13 @@ export interface RoomView {
   you: SessionId;
   youAreLeader: boolean;
   members: MemberView[];
+  /**
+   * Who sits in each seat when the next game is dealt, seat 0 first and
+   * clockwise from there; `null` is a seat a bot plays. Entries past
+   * `seats` are people who will watch because the table is full. See
+   * `seatingPlan`.
+   */
+  seatPlan: (SessionId | null)[];
   /**
    * Only ever populated for the leader. Everyone else gets an empty list:
    * a pending request carries a name the room has not agreed to admit, and
@@ -241,6 +251,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "not-in-game": "you are not at the table",
   "cannot-target-self": "that one only works on somebody else",
   "bad-seat-count": "that seat count does not fit this game",
+  "bad-seat-plan": "that seating plan does not match who is here",
   "room-full": "this room is full",
   "no-room": "you are not in a room",
   "bad-message": "that request could not be handled",
@@ -401,16 +412,11 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       };
     }
 
-    case "assignTeam": {
-      const session = str("session");
-      if (session === null || typeof data.team !== "number") return null;
-      return { t: "assignTeam", session, team: data.team, reqId };
-    }
-
-    case "moveSeat": {
-      const session = str("session");
-      if (session === null || typeof data.to !== "number") return null;
-      return { t: "moveSeat", session, to: data.to, reqId };
+    case "arrangeSeats": {
+      const plan = data.plan;
+      if (!Array.isArray(plan) || plan.length > 64) return null;
+      if (!plan.every((s) => s === null || typeof s === "string")) return null;
+      return { t: "arrangeSeats", plan: plan as (SessionId | null)[], reqId };
     }
 
     case "action":
@@ -428,7 +434,6 @@ export function parseClientMessage(raw: string): ClientMessage | null {
 
     case "leaveRoom":
     case "withdraw":
-    case "randomizeTeams":
     case "shuffleSeats":
     case "startGame":
     case "exitGame":

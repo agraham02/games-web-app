@@ -60,10 +60,8 @@ export interface RoomApi {
     seats: number,
     difficulty: BotDifficulty,
   ) => void;
-  assignTeam: (session: string, team: number) => void;
-  randomizeTeams: () => void;
-  /** Leader only: move somebody to position `to` in the seating order. */
-  moveSeat: (session: string, to: number) => void;
+  /** Leader only: the whole seating plan, `null` for a bot's seat. */
+  arrangeSeats: (plan: (string | null)[]) => void;
   shuffleSeats: () => void;
   startGame: () => void;
   enterGame: (as?: "player" | "spectator") => void;
@@ -80,6 +78,13 @@ export function useRoom(): RoomApi {
   const [frame, setFrame] = useState<FrameView | null>(null);
   const [error, setError] = useState<{ code: ServerErrorCode; message: string } | null>(null);
   const [greeted, setGreeted] = useState(false);
+  /**
+   * The server said this identity is still in a room, and the room itself
+   * has not arrived yet. It follows `hello` a moment later, and in that gap
+   * the page drew the join form ("You have been invited…") on every reload
+   * of a room (seen in Chrome, 2026-09-26).
+   */
+  const [awaitingRoom, setAwaitingRoom] = useState(false);
 
   // The newest frame wins, always. An older one arriving late (or a
   // re-render racing a burst) must never roll the table backwards, and
@@ -93,6 +98,7 @@ export function useRoom(): RoomApi {
         switch (message.t) {
           case "hello":
             setGreeted(true);
+            setAwaitingRoom(message.inRoom);
             // The server has just said whether this identity is still in a
             // room, and a reconnect is the only time it can say no while we
             // are showing one. `connection` already drops its replay cache
@@ -115,6 +121,7 @@ export function useRoom(): RoomApi {
             break;
 
           case "room":
+            setAwaitingRoom(false);
             setRoom(message.room);
             setPendingCode(null);
             // Whatever was last refused, it is moot: we are in a room and
@@ -142,11 +149,13 @@ export function useRoom(): RoomApi {
             break;
 
           case "pending":
+            setAwaitingRoom(false);
             setPendingCode(message.code);
             setRoom(null);
             break;
 
           case "left":
+            setAwaitingRoom(false);
             setRoom(null);
             setFrame(null);
             setPendingCode(null);
@@ -189,6 +198,7 @@ export function useRoom(): RoomApi {
               announce(message.message || "that move is no longer available", "bad");
               break;
             }
+            setAwaitingRoom(false);
             setError({ code: message.code, message: message.message });
             break;
 
@@ -215,7 +225,7 @@ export function useRoom(): RoomApi {
         ? "in-room"
         : pendingCode
           ? "pending"
-          : greeted && status === "open"
+          : greeted && status === "open" && !awaitingRoom
             ? "idle"
             : "connecting";
 
@@ -242,9 +252,7 @@ export function useRoom(): RoomApi {
       deny: (session) => send({ t: "deny", session }),
       selectGame: (gameId, settings, seats, difficulty) =>
         send({ t: "selectGame", gameId, settings, seats, difficulty }),
-      assignTeam: (session, team) => send({ t: "assignTeam", session, team }),
-      randomizeTeams: () => send({ t: "randomizeTeams" }),
-      moveSeat: (session, to) => send({ t: "moveSeat", session, to }),
+      arrangeSeats: (plan) => send({ t: "arrangeSeats", plan }),
       shuffleSeats: () => send({ t: "shuffleSeats" }),
       startGame: () => send({ t: "startGame" }),
       enterGame: (as) => send({ t: "enterGame", as }),

@@ -32,11 +32,8 @@ Ideas for the pass, none built:
   own card, the roster and the game picker as two panels side by side on
   wide screens, a thumbnail per game (the home page's `THUMBS`).
 - Show the seating as a small table diagram — who sits where, round the
-  table — beside or instead of the plain numbered list. The leader already
-  reorders it (arrows and Shuffle seats); a picture would make "round the
-  table" legible.
-- The lobby's "Shuffle seats" and "Shuffle teams" buttons stack one above
-  the other under the roster; put them in one row.
+  table — beside the draggable list. The list already says "clockwise" in
+  words, with seat numbers and team chips; a picture would show it.
 - The in-between screens (Connecting, Making your room, Joining ABCD,
   Waiting to be let in) could reuse the table's felt and a piece or two
   rather than a lone line of text.

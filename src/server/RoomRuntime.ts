@@ -38,6 +38,8 @@ import {
   openSeats,
   seatOf,
   seatingOrder,
+  seatingPlan,
+  teamOfSeat,
   type Room,
   type RoomCommand,
   type RoomEffect,
@@ -533,16 +535,22 @@ export class RoomRuntime {
     const isLeader = room.leader === session;
     const game = room.game;
 
-    // In seating order: the roster IS the seating plan (`seatingOrder`).
-    const members: MemberView[] = seatingOrder(room).map((m) => ({
-      session: m.session,
-      name: m.name,
-      connected: m.connected,
-      seat: seatOf(room, m.session),
-      spectating: Boolean(game?.present.includes(m.session)) && seatOf(room, m.session) === null,
-      team: room.teams?.[m.session] ?? null,
-      isLeader: room.leader === m.session,
-    }));
+    // In seating order: the roster IS the seating plan (`seatingPlan`).
+    const plan = seatingPlan(room);
+    const members: MemberView[] = seatingOrder(room).map((m) => {
+      const seat = seatOf(room, m.session);
+      return {
+        session: m.session,
+        name: m.name,
+        connected: m.connected,
+        seat,
+        spectating: Boolean(game?.present.includes(m.session)) && seat === null,
+        // The seat decides the side: the one they hold in a running game,
+        // or the one the plan gives them for the next.
+        team: teamOfSeat(room, game ? (seat ?? -1) : plan.indexOf(m.session)),
+        isLeader: room.leader === m.session,
+      };
+    });
 
     return {
       code: room.code,
@@ -550,6 +558,7 @@ export class RoomRuntime {
       you: session,
       youAreLeader: isLeader,
       members,
+      seatPlan: plan,
       pending: isLeader
         ? Object.values(room.pending).map((p) => ({ session: p.session, name: p.name }))
         : [],
@@ -596,7 +605,7 @@ export class RoomRuntime {
       gameId: this.room.gameId,
       settings: this.room.settings,
       seats: this.room.seats,
-      teams: this.room.teams,
+      seatPlan: seatingPlan(this.room),
       game: this.room.game,
       attached: [...this.connections.keys()],
       sessionRunning: this.session !== null,

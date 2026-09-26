@@ -78,7 +78,8 @@ test.describe("a room, in real browsers", () => {
     for (const page of [ada, bo]) {
       // Scoped to the roster: a sonner toast is also an <li>, so "Bo"
       // matches both the row and the "Bo joined" notice otherwise.
-      const roster = page.getByRole("list", { name: "Room members" });
+      // Between games the roster is the seating plan (one row per seat).
+      const roster = page.getByRole("list", { name: "Seating plan" });
       await expect(roster.getByRole("listitem").filter({ hasText: "Ada" })).toBeVisible();
       await expect(roster.getByRole("listitem").filter({ hasText: "Bo" })).toBeVisible();
     }

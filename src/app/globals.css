@@ -45,6 +45,9 @@
   --color-win: #4e9e6a;
   --color-warn: #d89b3c;
   --color-loss: #b4453a;
+  /* A partnership game's two sides, in the lobby's seating plan. */
+  --color-team-a: #e3c68f;
+  --color-team-b: #8fb8e0;
 
   /* -- type ----------------------------------------------- */
   --font-display: var(--font-cinzel), Georgia, serif;

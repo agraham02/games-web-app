@@ -85,6 +85,7 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
       { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true },
       { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false },
     ],
+    seatPlan: ["me", "bo", null, null],
     pending: [],
     gameId: null,
     settings: {},
@@ -134,6 +135,17 @@ describe("the room client", () => {
     socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: false });
     await screen.findByText("Rooms");
   }
+
+  it("does not flash the join form while a returning member's room is on its way", async () => {
+    // `hello` says "you are still in a room" a moment before the room
+    // itself; the gap used to render the join form on every reload.
+    render(<RoomScreen code="ABCD" />);
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+    socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    expect(screen.queryByLabelText(/your name/i)).toBeNull();
+    socket().deliver({ t: "room", room: roomView() });
+    expect(await screen.findByText("ABCD")).toBeInTheDocument();
+  });
 
   it("says hello with the stored token before anything else", async () => {
     await open();
@@ -214,6 +226,28 @@ describe("the room client", () => {
       expect(screen.getByText("ABCD")).toBeInTheDocument();
       expect(screen.getByText("Ada")).toBeInTheDocument();
       expect(screen.getByText("Bo")).toBeInTheDocument();
+    });
+
+    it("lists every seat, bots included, with the team each seat plays for", async () => {
+      await enterLobby({ gameId: "spades", seats: 4, seatPlan: ["me", "bo", null, null] });
+      const plan = screen.getByRole("list", { name: "Seating plan" });
+      expect(plan.querySelectorAll("li")).toHaveLength(4);
+      expect(screen.getAllByText("Bot")).toHaveLength(2);
+      // Partners sit across: seats 1 and 3 against 2 and 4.
+      expect(screen.getAllByText("Team A")).toHaveLength(2);
+      expect(screen.getAllByText("Team B")).toHaveLength(2);
+      expect(screen.getByText(/clockwise/)).toBeInTheDocument();
+    });
+
+    it("lets the leader move somebody with the keyboard, and sends the plan", async () => {
+      await enterLobby({ seatPlan: ["me", "bo", null, null] });
+      fireEvent.keyDown(screen.getByRole("button", { name: /move ada/i }), { key: "ArrowDown" });
+      expect(socket().lastSent("arrangeSeats")).toMatchObject({ plan: ["bo", "me", null, null] });
+    });
+
+    it("gives nobody but the leader a grip", async () => {
+      await enterLobby({ youAreLeader: false, seatPlan: ["me", "bo", null, null] });
+      expect(screen.queryByRole("button", { name: /move /i })).toBeNull();
     });
 
     it("puts the code in the address bar so it can be shared", async () => {
