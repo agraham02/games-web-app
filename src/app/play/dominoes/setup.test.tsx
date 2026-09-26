@@ -9,11 +9,10 @@ import DominoesPlayPage from "./page";
  *
  * Worth its own file because neither of the other two checks can see
  * this: `tsc` proves the props typecheck, and the production build
- * prerenders the page in its DEFAULT state — which is classic, so the
- * entire Caribbean subtree (the stepper, the three rule toggles, the
- * fixed-seats notice) had never actually been rendered by anything. A
- * crash or a bad prop in there would first appear to a player clicking
- * the toggle.
+ * prerenders the page in its DEFAULT state only. That used to be classic,
+ * so the entire Caribbean subtree had never been rendered by anything; it
+ * is Caribbean now (the user's default, 2026-09-26), so it is the classic
+ * branch the build no longer reaches. Both are rendered here.
  *
  * Deliberately stops at the setup screen: pressing "Deal in" mounts the
  * whole table, which wants layout and animation frames jsdom does not
@@ -23,11 +22,22 @@ import DominoesPlayPage from "./page";
 
 const setup = () => render(<DominoesPlayPage />);
 const clickCaribbean = () => fireEvent.click(screen.getByRole("button", { name: "Caribbean" }));
+const clickClassic = () => fireEvent.click(screen.getByRole("button", { name: "Block & Draw" }));
+
+describe("dominoes setup — default", () => {
+  it("opens on Caribbean, listed first", () => {
+    setup();
+    const [first] = screen.getAllByRole("button", { name: /^(Caribbean|Block & Draw)$/ });
+    expect(first!.textContent).toBe("Caribbean");
+    expect(screen.getByText("Games to win")).toBeTruthy();
+    expect(screen.queryByText("Play to")).toBeNull();
+  });
+});
 
 describe("dominoes setup — classic", () => {
-  it("opens on Block & Draw with its own controls", () => {
+  it("switches to Block & Draw with its own controls", () => {
     setup();
-    expect(screen.getByRole("button", { name: "Block & Draw" })).toBeTruthy();
+    clickClassic();
     // The classic-only target row and seat slider.
     expect(screen.getByText("Play to")).toBeTruthy();
     expect(screen.getByText(/^Players/)).toBeTruthy();
@@ -92,6 +102,7 @@ describe("dominoes setup — caribbean", () => {
     // Classic's target is points; Caribbean's is games won. Sharing one
     // number meant flipping across and back left a match playing to 10
     // points or to 100 games.
+    clickClassic();
     fireEvent.click(screen.getByRole("button", { name: "150" }));
     clickCaribbean();
     expect(screen.getByText("10")).toBeTruthy();

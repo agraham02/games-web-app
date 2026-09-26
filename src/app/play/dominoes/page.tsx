@@ -52,7 +52,8 @@ type Live = GameRuntime<DomState, DomAction>;
 const TARGETS = [61, 100, 150];
 
 export default function DominoesPlayPage() {
-  const [mode, setMode] = useState<DomMode>("classic");
+  // Caribbean first: the user's choice of default (2026-09-26).
+  const [mode, setMode] = useState<DomMode>("caribbean");
   const [seats, setSeats] = useState(3);
   /**
    * Two targets, not one, because they are not the same UNIT — classic
@@ -315,7 +316,7 @@ function SetupScreen({
           unnamed, and "off" is not what classic Block & Draw is. */}
       <SetupField label="Rules">
         <div className="flex gap-2">
-          {(["classic", "caribbean"] as const).map((m) => (
+          {(["caribbean", "classic"] as const).map((m) => (
             <button
               key={m}
               type="button"

@@ -17,6 +17,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { Button } from "@/ui/primitives/Button";
 import { CodeInput, TextField } from "@/ui/primitives/TextField";
 import { CODE_LENGTH } from "@/session/room";
@@ -114,20 +115,34 @@ function RejoinCard() {
 
   if (!room) return null;
   const what = room.running
-    ? `${room.game ?? "A game"} in progress`
+    ? `${room.game ?? "Game"} in progress`
     : room.game
-      ? `${room.game}, in the lobby`
-      : "In the lobby";
+      ? `${room.game} lobby`
+      : "Lobby";
 
+  // The whole card is the button (the user's design, 2026-09-26).
   return (
-    <div className="flex items-center gap-3 rounded-xl bg-brass-400/10 px-4 py-3 ring-1 ring-brass-500/40">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="eyebrow">You are still in room {room.code}</span>
-        <span className="truncate text-sm font-semibold text-bone-100">{what}</span>
-      </div>
-      <Button size="sm" tone="primary" onClick={() => router.push(`/room/${room.code}`)}>
-        Rejoin
-      </Button>
-    </div>
+    <button
+      type="button"
+      onClick={() => router.push(`/room/${room.code}`)}
+      className="group flex w-full items-center gap-3 rounded-xl bg-brass-400/10 px-4 py-3 text-left ring-1 ring-brass-500/40 transition-colors hover:bg-brass-400/16 hover:ring-brass-400/70"
+    >
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-sm font-semibold text-bone-100">
+          Last room: <span className="tracking-wider text-brass-300">{room.code}</span>
+          <span className="text-bone-500"> · </span>
+          {what}
+        </span>
+        <span className="text-xs text-bone-400">
+          <span className="hidden pointer-fine:inline">Click</span>
+          <span className="pointer-fine:hidden">Tap</span> to rejoin
+        </span>
+      </span>
+      <ArrowRight
+        size={16}
+        aria-hidden
+        className="shrink-0 text-brass-300 transition-transform group-hover:translate-x-0.5"
+      />
+    </button>
   );
 }

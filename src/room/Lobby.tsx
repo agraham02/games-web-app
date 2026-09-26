@@ -276,7 +276,7 @@ function GamePicker({ api }: { api: RoomApi }) {
             type="button"
             disabled={locked}
             title={lockedWhy}
-            onClick={() => update(g.id, {}, g.defaultSeats)}
+            onClick={() => update(g.id, g.defaultSettings ?? {}, g.defaultSeats)}
             className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               room.gameId === g.id
                 ? "bg-brass-400 text-felt-950"
@@ -337,7 +337,7 @@ function GamePicker({ api }: { api: RoomApi }) {
           {entry.id === "dominoes" ? (
             <>
               <div className="flex flex-wrap gap-2">
-                {(["classic", "caribbean"] as const).map((mode) => (
+                {(["caribbean", "classic"] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"

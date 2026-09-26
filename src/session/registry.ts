@@ -46,6 +46,13 @@ export interface GameEntry {
   maxSeats: number;
   defaultSeats: number;
   /**
+   * The settings a lobby starts this game on when it is picked. Absent
+   * means `{}`, i.e. `parse`'s own fallbacks — which stay put even where
+   * this differs, because older settings, the tests and the harness all
+   * mean the parser's defaults by "nothing said".
+   */
+  defaultSettings?: RawSettings;
+  /**
    * Whether this game is playable in a ROOM.
    *
    * `src/room/tables.test.tsx` holds this list and the room's table
@@ -118,6 +125,8 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 4,
     defaultSeats: 4,
+    // Caribbean first, the user's choice (2026-09-26); four seats, as it needs.
+    defaultSettings: { mode: "caribbean" },
     online: true,
     teams: (s) => s.mode === "caribbean" && s.teams === true,
     parse: (raw) => {
