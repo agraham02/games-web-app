@@ -27,8 +27,12 @@ export function GameToaster() {
       toastOptions={{
         unstyled: true,
         classNames: {
-          toast:
-            "flex items-center gap-2 rounded-full bg-felt-950/85 px-3.5 py-2 text-[12px] font-semibold text-bone-50 ring-1 ring-brass-400/30 backdrop-blur-md shadow-e2",
+          // The row is a plain centring box; the pill is `announce`'s own.
+          // Sonner gives every toast row one fixed width, so the pill used
+          // to sit at its left edge, and two toasts of different lengths
+          // lined up on the left instead of each being centred (and the
+          // pill classes were on BOTH, drawing a wide pill behind it).
+          toast: "flex w-full justify-center",
         },
       }}
     />
