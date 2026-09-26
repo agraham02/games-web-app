@@ -21,6 +21,26 @@ table**, instead of waiting for a screenshot.
 
 ## Open
 
+### The room pages look plain next to the home page
+Reported 2026-09-26. The home page has a hero, the piece strip, a
+panelled "Play together" card and the game grid. The room's own screens —
+the lobby at `/room/[code]`, the entry form a shared link lands on, and
+"Connecting…" / "Waiting to be let in" — are a single narrow column of
+controls on bare felt (`SetupShell` / `Centred` in `RoomScreen.tsx`).
+Ideas for the pass, none built:
+- Give the lobby the home page's panel treatment: the code as a hero in its
+  own card, the roster and the game picker as two panels side by side on
+  wide screens, a thumbnail per game (the home page's `THUMBS`).
+- Show the seating as a small table diagram — who sits where, round the
+  table — beside or instead of the plain numbered list. The leader already
+  reorders it (arrows and Shuffle seats); a picture would make "round the
+  table" legible.
+- The lobby's "Shuffle seats" and "Shuffle teams" buttons stack one above
+  the other under the roster; put them in one row.
+- The in-between screens (Connecting, Making your room, Joining ABCD,
+  Waiting to be let in) could reuse the table's felt and a piece or two
+  rather than a lone line of text.
+
 ### The table's centre runs into the seats — fix it ONCE, centrally
 The user has reported this in nearly every game: Spades' trick, Poker's
 board and betting panel, and now Rummy's piles. Each got its own fix,
@@ -145,13 +165,6 @@ from the hand zone with no reserved space.
   now names the winning hand in words, which helps, but the cards are the
   real answer.) POLICY.md: reference information should not be modal.
 
-### Online corner controls are positioned per table
-- Every `*Online.tsx` renders its own absolutely positioned top-right box
-  (End game / Step away). Anything else wanting that corner collides with it.
-  Poker's in-game Settings button is the first; see "Chrome is laid out, not
-  positioned" in CLAUDE.md. The other five tables should move into the same
-  shared row when they gain settings.
-
 ### Pod text that can outgrow a pod
 - Poker's "$4837 · bet $362" was cut off (fixed by splitting it into two
   lines). Other games still build a single `meta` string that can outgrow a
@@ -177,6 +190,13 @@ from the hand zone with no reserved space.
   in development.
 
 ## Already fixed (for reference)
+- Toasts lined up on their LEFT edge when two of different lengths showed:
+  the pill classes were on sonner's fixed-width row as well as the pill,
+  so each pill sat at the row's left. The row is now a plain centring box
+  (2026-09-26).
+- Online corner controls were a box per table (End game / Step away). They
+  are in the Settings sheet now (`TableMenu`), and every table has a
+  Settings button, so the corner is one shared row in `GameHost`.
 - Settings and Poker's Hands rose from the bottom over the hero's cards —
   now drawers from the right, where their buttons are, dimming the rest of
   the screen; tap outside, the X or Esc closes (`InfoSheet`'s `side`).

@@ -23,6 +23,18 @@ these notes refer to.
   one identity (see CLAUDE.md, "A seat belongs to a person").
 - **Check it is not a rule.** A Spades hand dealt face down to one player
   only is blind-bid eligibility (team trails by 100+), not a bug.
+- **A page that reloads by itself, with the game unharmed, is probably
+  Chrome.** Reported 2026-09-26 with two windows: one player's page
+  reloaded mid-game "out of nowhere", the other's did not, and the game
+  carried on as if nothing had happened. Next's hot reload was ruled out
+  in Chrome: editing the BS table, the online runtime, the rules and
+  `GameHost` mid-game reloaded neither window (all were hot-swapped). What
+  fits is Memory Saver: a window hidden behind another counts as hidden, a
+  hidden tab can be discarded, and a discarded tab reloads when it is next
+  looked at. Seat, hand and score live on the server, so nothing is lost.
+  In dev the room screen now says "Chrome discarded this tab…" when that
+  is what happened (`document.wasDiscarded`); if it reloads WITHOUT that
+  notice, it is something else, and worth chasing.
 
 ## Spades
 

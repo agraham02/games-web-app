@@ -439,6 +439,27 @@ scorecard says who they are waiting on. It can never strand a table:
 while the leader is not at it, any seated player there may continue, and
 a leader who disconnects has already handed leadership on.
 
+**The seats are dealt in the roster's order** (`seatingOrder`): the
+leader's `seatOrder`, then anyone it does not mention in join order, so a
+join needs no bookkeeping. The leader moves people with the lobby's arrows
+or shuffles them (`moveSeat` / `shuffleSeats`), locked while a game runs
+like teams. Leadership is still inherited in JOIN order (`orderedMembers`),
+whatever the seats.
+
+**Making or joining is one press on the home page.** The home form takes
+the name too, and leaves an intent in `sessionStorage` ([entry.ts](src/room/entry.ts))
+that `RoomScreen` carries out once the server is listening. Read the
+intent in an EFFECT, never in a state updater: React runs updaters twice in
+StrictMode, and the first run consumed it (found in Chrome; the tests now
+render in StrictMode). A shared `/room/CODE` link lands on a form that is
+about joining that room.
+
+**Rejoining asks the server over HTTP** (`GET /api/rejoin`, the token in a
+header — [server/rejoin.ts](src/server/rejoin.ts)), not over the socket: a
+socket's `hello` ATTACHES, which would hand the seat back from the bot
+while the player is still on the home page. `peekSession` looks the token
+up without minting an identity, so asking creates nothing.
+
 ### Presence is table state, so it needs a frame
 
 `SeatView.away` marks a seat whose OWNER is not in it — read from
@@ -710,13 +731,30 @@ app/room/     the lobby and the online table
 app/lab/      seats · motion · tokens · phases · rummy · redact
 ```
 
-**In-game settings are shared.** A game's player preferences (Poker's
-Hints, first) are a `GameSetting[]` passed to `GameHost` as `settings`;
-the host shows one Settings button and sheet, keeps the values per device
+**In-game settings are shared.** A game's player preferences are a
+`GameSetting[]` passed to `GameHost` as `settings`; the host appends
+`TABLE_SETTINGS` (Sound, Vibration) to every table's list, shows one
+Settings button and sheet, keeps the values per device
 ([gameSettings.tsx](src/table/gameSettings.tsx)), and passes them to the
-table content as `children(live, settings)`. Online corner controls go
-through the host's `corner` slot so they share that one row. Add a
-setting to a game by adding an entry to its list, never a per-game sheet.
+table content as `children(live, settings)`. A `shared` setting (Sound,
+Vibration) is kept once for the whole app, not per game. Add a setting to
+a game by adding an entry to its list, never a per-game sheet.
+
+- **Hints** (`hintsSetting`) is per game and means what the game says:
+  Poker spells out its labels; Spades and Dominoes dim what cannot be
+  played. The host syncs it into the store as `hintsShown`, and with it off
+  `PieceLayer` ignores `dimmed` — the piece looks and taps like any other,
+  and the game's tap handler says why it was refused (`whyNotPlayable` in
+  Spades). Feedback AFTER a tap, never a hint before one.
+- **An online table's room buttons** — Return to the lobby, and the
+  leader's End game — are `menuActions` at the foot of the sheet
+  (`TableMenu`), not on the table (the user's call, 2026-09-26).
+- **The slam's sound and buzz** are `useSlamFeedback`
+  ([slamFeedback.ts](src/table/slamFeedback.ts)), mounted by the host and
+  gated by those two settings: a synthesised Web Audio thud (no file) and
+  `navigator.vibrate`, both at IMPACT (`SLAM_LAND_MS`), not the wind-up.
+  The audio context is resumed on the first tap or key, because browsers
+  allow no sound before one; a slam before that is silent.
 
 The dev panel also takes `scenarios` — labelled one-shot callbacks a game
 supplies for states only reachable by waiting (Rummy's claim window opens
