@@ -167,6 +167,29 @@ export interface Placement {
    */
   tappable?: boolean;
   /**
+   * Take this position without animating to it — once.
+   *
+   * Set by the online client when it adopts a settled board, on a face-down
+   * stand-in whose NAME now means a different card. An opponent's hand is
+   * named by slot ("#hand:2:-:3"), so after they play from the middle of
+   * it, the node that just flew to the pile is renamed a card in the hand,
+   * and animating it there flew it straight back out of the pile. Stand-ins
+   * are identical backs, so snapping them into the settled layout is
+   * invisible, and the flight that already played is the one that shows.
+   *
+   * A NUMBER, new for every adoption that jumps, because the piece layer
+   * keys the element on it: a jump REMOUNTS the piece where it belongs. An
+   * instant transition was not enough. The flight to the pile was often
+   * still running, and Motion let it carry on moving x/y/rotate after the
+   * jump, so a hand-sized card came back to sit on the pile (seen in
+   * Chrome, 2026-09-25).
+   *
+   * And it STAYS until the next jump replaces it, moves included: it is
+   * the element's key, so clearing it on the card's next play remounted
+   * the card straight onto the pile and that play never flew.
+   */
+  jump?: number;
+  /**
    * Opt out of the touch "first tap previews, second tap acts" gate, so
    * a single tap always acts immediately even with no hover available.
    *
@@ -287,8 +310,14 @@ export type GameEvent =
   | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean }
   /** Taking a piece from a shared pile into a hand. */
   | { t: "draw"; piece: PieceId; from: ZoneId; to: SeatId; faceUp: boolean }
-  /** Hand -> table. */
-  | { t: "play"; piece: PieceId; from: SeatId; to: ZoneId; group?: number }
+  /**
+   * Hand -> table. `faceUp` is required, not defaulted, because it decides
+   * more than the picture: a piece played face up has been SHOWN to the
+   * table, and the redaction layer names it to every viewer on that basis
+   * (see `projectEvents`). BS plays face down, and a default of "up" would
+   * have been a leak waiting for the next game that forgot to say so.
+   */
+  | { t: "play"; piece: PieceId; from: SeatId; to: ZoneId; faceUp: boolean; group?: number }
   /** Arbitrary relocation when nothing more specific fits. */
   | { t: "move"; piece: PieceId; to: Placement }
   | { t: "flip"; piece: PieceId; faceUp: boolean }
@@ -353,7 +382,32 @@ export type GameEvent =
    * uses to ride in front of its own `move`, and for the same reason: two
    * events, one gesture.
    */
-  | { t: "unmask"; piece: PieceId; at: Placement }
+  | {
+      t: "unmask";
+      piece: PieceId;
+      at: Placement;
+      /**
+       * The stand-in the viewer was holding in that slot, which the real
+       * piece now takes the place of. Named by the redaction layer so the
+       * table can drop it without knowing redaction exists. Leaving it for
+       * the batch's reconcile was invisible only while the batch ended
+       * soon after: the last card of a trick is followed by a hold and a
+       * collect, and the leftover back sat in the hand for seconds.
+       */
+      replaces?: PieceId;
+    }
+  /**
+   * `unmask`'s opposite, and like it emitted only by the redaction layer: a
+   * pile the viewer could read turns anonymous because it is about to be
+   * shuffled. Rides immediately in front of the `shuffle`.
+   *
+   * Deliberately two UNPAIRED lists. The viewer watched `drop` go into the
+   * pile, so naming them tells them nothing; what they must not learn is
+   * which stand-in each became, because the deal that follows says where
+   * every stand-in goes. `add` puts that many anonymous pieces where the
+   * dropped ones were, and which is which exists only on the server.
+   */
+  | { t: "mask"; drop: PieceId[]; add: Array<{ piece: PieceId; at: Placement }> }
   /**
    * A deliberate beat with nothing to place. Some legal actions
    * genuinely move no piece — LRC's roll landing entirely on dots is
@@ -372,6 +426,16 @@ export type GameEvent =
    * whatever the emitting game happened to guess.
    */
   | { t: "pause" }
+  /**
+   * Dice are thrown — LRC's roll, shown before anything it decided moves.
+   * A cosmetic flourish, like `slam`, and an event for the same reason: it
+   * goes through the queue, so the chips behind it wait until the dice
+   * have tumbled and been read, and it obeys skip and reduced motion for
+   * free. It used to be a bare `pause` with the dice drawn on their own
+   * clock off `lastAction`, and the two drifted: the chips flew while the
+   * dice were still appearing. `faces` are the real, already-decided dice.
+   */
+  | { t: "dice"; seat: SeatId; faces: string[] }
   /**
    * Bot deliberation. A first-class event, not a setTimeout in the UI:
    * it is what makes an opponent feel like a person rather than a
@@ -518,8 +582,12 @@ export interface GameDefinition<S, A> {
    * it is what draws the ring — but it is now a nicety rather than the
    * mechanism, and the two are deliberately not tuned to fire together
    * (see Rummy's `CLAIM_GRACE_MS`).
+   *
+   * `isLive` says which seats have a person in them, which only the
+   * driver knows. Rummy needs it: a person's deadline is when the soonest
+   * BOT arrives, and another person's reaction time is not a deadline.
    */
-  deadline?(state: S, seat: SeatId): {
+  deadline?(state: S, seat: SeatId, isLive?: (seat: SeatId) => boolean): {
     ms: number;
     action: A;
     /**
@@ -564,6 +632,17 @@ export interface GameDefinition<S, A> {
    * The same seam as `deadline?()`, which already lets a game state a
    * duration in ms for a rules-driven wait; this is its counterpart for a
    * rules-driven hurry.
+   *
+   * Rummy uses it the other way round, for a rules-driven WAIT: a bot in
+   * the claim race waits out its reaction time here, before it claims.
+   * Spent as a `think` inside the frame instead, it played after the
+   * server had already given the bot the card, so a person pressing
+   * inside their ring lost a race that looked open. A beat that decides
+   * who wins has to happen before `reduce`, not after it.
+   *
+   * Offline, the browser still scales this by its speed setting and drops
+   * it under reduced motion, like any other hold. For Rummy's race that
+   * means a bot arrives sooner than the ring says at any speed but 1x.
    */
   turnHold?(state: S, seat: SeatId): number | undefined;
 

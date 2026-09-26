@@ -7,15 +7,17 @@
 // server, where it is far more expensive to find.
 
 import { describe, expect, it } from "vitest";
-import { createSpades } from "@/games/spades/rules";
-import type { SpadesAction } from "@/games/spades/types";
+import { blindVoteOpen, createSpades } from "@/games/spades/rules";
+import type { SpadesAction, SpadesState } from "@/games/spades/types";
 import { createLrc } from "@/games/lrc/rules";
 import { createPoker, DEFAULT_BIG_BLIND, DEFAULT_STARTING_STACK } from "@/games/poker/rules";
 import { betRange } from "@/games/poker/state";
 import { createRummy } from "@/games/rummy/rules";
 import { createBs } from "@/games/bs/rules";
+import { REACTION_MAX as BS_REACTION_MAX } from "@/games/bs/state";
 import type { BsAction, BsState } from "@/games/bs/types";
-import { claimReactions } from "@/games/rummy/state";
+import { CLAIM_GRACE_MS, claimReactions } from "@/games/rummy/state";
+import type { RummyAction, RummyState } from "@/games/rummy/types";
 import type { GameDefinition, SeatId } from "@/engine/types";
 import { GAMES, GAME_IDS, type GameId } from "./registry";
 import { GameSession, type SessionFrame } from "./GameSession";
@@ -40,6 +42,10 @@ function harness<S, A>(opts: {
     seed: opts.seed,
     clock,
     isSeatLive: opts.isSeatLive,
+    // The game's own beat where it asks for one, as both real drivers
+    // give it — a race's timing is decided here, so a flat hold would test
+    // a race nobody plays.
+    turnHoldMs: (state, seat) => opts.definition.turnHold?.(state, seat) ?? 900,
     emit: (frame) => {
       frames.push(frame);
       session.settled();
@@ -388,9 +394,9 @@ describe("legalActions as the submit gate", () => {
    * Two games widen it, both for the same reason: a race. Rummy's claim
    * window entitles every seat still in the race to grab the same discard,
    * and BS's challenge window entitles every seat but the claimer to doubt a
-   * play — plus the seat on turn, who may play straight over the top of an
-   * open window. In both, `currentSeat` names only the seat the PACING waits
-   * on.
+   * play, and nobody to play (the seat on turn used to be able to play over
+   * the top of an open window). In both, `currentSeat` names only the seat
+   * the PACING waits on.
    *
    * Those two are ASSERTED here rather than skipped, which is the difference
    * that matters. The first version of this returned early whenever a window
@@ -426,10 +432,13 @@ describe("legalActions as the submit gate", () => {
     }
     if (gameId === "bs" && s.window) {
       const seats = new Set(s.window.pending.map((p) => p.seat));
-      // The interrupt: the seat on turn may play over an open window, which
-      // is the only thing stopping a generous window holding up a table.
-      if (typeof s.turn === "number") seats.add(s.turn);
-      return { seats, why: "everyone still able to doubt the play, plus the seat on turn" };
+      return { seats, why: "everyone still able to doubt the play, and nobody else" };
+    }
+    if (gameId === "spades") {
+      // The blind vote: both partners of a trailing team, at once.
+      const sp = state as SpadesState;
+      const seats = ([0, 1, 2, 3] as SeatId[]).filter((x) => blindVoteOpen(sp, x) && !sp.blindVotes[x]);
+      if (seats.length > 0) return { seats: new Set(seats), why: "both partners on a blind vote who have not voted" };
     }
     return null;
   }
@@ -643,6 +652,116 @@ describe("a live seat that never answers", () => {
 });
 
 /**
+ * Rummy's claim race is decided when the ring says it is.
+ *
+ * Found online with two people and two bots: a player pressed "Rummy!"
+ * with time left on the ring and a bot got the card. The bot claimed after
+ * the table's flat 900ms beat and spent its reaction time as a `think`
+ * AFTER the claim — so the card was gone on the server while the ring
+ * still ran. These drive the session the way both drivers do, with the
+ * game's own `turnHold`.
+ */
+describe("the claim race", () => {
+  function race(
+    pending: Array<{ seat: number; ms: number }>,
+    live: (seat: number) => boolean,
+  ) {
+    const clock = new TestClock();
+    const rummy = createRummy({ target: 200 });
+    const session = new GameSession({
+      definition: rummy,
+      seats: 4,
+      seed: 4242,
+      clock,
+      isSeatLive: live,
+      turnHoldMs: (state, seat) => rummy.turnHold?.(state, seat) ?? 900,
+    });
+    const base = session.snapshot();
+    session.adoptState({
+      ...base,
+      dealt: true,
+      dealSizePending: null,
+      phase: "draw" as const,
+      turn: 2,
+      melds: [{ id: 1, owner: 1, cards: ["S5", "S6", "S7"], hitBy: {} }],
+      nextMeldId: 2,
+      discard: ["S8"],
+      claimWindow: { discard: "S8", discarder: 1, meldId: 1, pending },
+    });
+    session.settled();
+    return { clock, rummy, session };
+  }
+  const claimedBy = (session: GameSession<RummyState, RummyAction>) =>
+    session.snapshot().melds[0]!.hitBy["S8"];
+
+  it("lets a person win with a press just inside the fastest bot's time", () => {
+    const { clock, session } = race(
+      [
+        { seat: 3, ms: 2000 },
+        { seat: 0, ms: 3000 },
+        { seat: 2, ms: 4000 },
+      ],
+      (s) => s === 0,
+    );
+    clock.advance(1950);
+    expect(session.snapshot().claimWindow, "the bot claimed before its time").not.toBeNull();
+    expect(session.submit(0, { t: "claim", seat: 0 }).ok).toBe(true);
+    expect(claimedBy(session)).toBe(0);
+  });
+
+  it("gives the card to the bot when its time comes", () => {
+    const { clock, session } = race(
+      [
+        { seat: 3, ms: 2000 },
+        { seat: 0, ms: 3000 },
+        { seat: 2, ms: 4000 },
+      ],
+      (s) => s === 0,
+    );
+    clock.advance(2001);
+    expect(claimedBy(session)).toBe(3);
+  });
+
+  it("does not start a bot's clock again after a person lets the card go", () => {
+    // The person is first in the list, so the table waits on them. Their
+    // ring runs out at the bot's time; the bot has already waited that long.
+    const { clock, rummy, session } = race(
+      [
+        { seat: 0, ms: 1200 },
+        { seat: 3, ms: 2000 },
+        { seat: 2, ms: 4000 },
+      ],
+      (s) => s === 0,
+    );
+    expect(rummy.deadline!(session.snapshot(), 0, (s) => s === 0)!.ms).toBe(2000 + CLAIM_GRACE_MS);
+    clock.advance(2000);
+    // What the person's own ring submits when it runs out.
+    expect(session.submit(0, { t: "passClaim", seat: 0 }).ok).toBe(true);
+    session.settled();
+    clock.advance(1);
+    expect(claimedBy(session)).toBe(3);
+  });
+
+  it("races two people against the bot, not against each other", () => {
+    // Seat 0's reaction time used to be seat 2's deadline — 1.2s — though
+    // nobody was ever going to claim at that moment.
+    const { clock, rummy, session } = race(
+      [
+        { seat: 0, ms: 1200 },
+        { seat: 2, ms: 1500 },
+        { seat: 3, ms: 3000 },
+      ],
+      (s) => s === 0 || s === 2,
+    );
+    const live = (s: number) => s === 0 || s === 2;
+    expect(rummy.deadline!(session.snapshot(), 2, live)!.ms).toBe(3000 + CLAIM_GRACE_MS);
+    clock.advance(2500);
+    expect(session.submit(2, { t: "claim", seat: 2 }).ok).toBe(true);
+    expect(claimedBy(session)).toBe(2);
+  });
+});
+
+/**
  * BS runs a challenge race after EVERY play, which makes it by far the
  * heaviest user of the three things Rummy's claim window grew: several seats
  * entitled at once, `deadline` as the only thing that can unblock them, and
@@ -732,14 +851,44 @@ describe("GameSession — BS's challenge window", () => {
     expect(clock.pending, "the loop is parked, not still ticking").toBe(0);
   });
 
-  it("hurries the beats inside a window and leaves the rest alone", () => {
-    // Without this every seat that lets a play go costs the driver's full
-    // 900ms, so three opponents meant nearly three seconds of blank table
-    // after every single play.
+  it("spends a window's reaction times once, not the flat beat per seat", () => {
+    // Without `turnHold` every seat that lets a play go cost the driver's
+    // full 900ms, so three opponents meant nearly three seconds of blank
+    // table after every single play. Each bot now waits the rest of its own
+    // reaction time, so a whole window costs about the longest one.
     const { state } = untilWindow(1);
-    expect(bsDef.turnHold!(state, bsDef.currentSeat(state)!)).toBeLessThan(300);
+    const seat = bsDef.currentSeat(state)!;
+    const mine = state.window!.pending.find((p) => p.seat === seat)!;
+    expect(bsDef.turnHold!(state, seat)).toBeLessThanOrEqual(Math.max(120, mine.ms));
+    expect(bsDef.turnHold!(state, seat)).toBeLessThanOrEqual(BS_REACTION_MAX);
     const quiet = { ...state, window: null, pendingTake: null };
     expect(bsDef.turnHold!(quiet, 0)).toBeUndefined();
+  });
+
+  it("lets a person beat a bot ahead of them while that bot is still reacting", () => {
+    // The Rummy bug, BS-shaped: the bot's answer used to be made after the
+    // 120ms beat, with its reaction time played on screen afterwards.
+    const { clock, session, state } = untilWindow(2);
+    // A bot ahead of the person, slow enough to race. Built rather than
+    // found, so the race is the same on every run.
+    const bot = state.window!.pending.find((p) => p.seat !== 2)!.seat;
+    session.adoptState({
+      ...state,
+      window: {
+        ...state.window!,
+        pending: [
+          { seat: bot, ms: 1500 },
+          { seat: 2, ms: 1700 },
+        ],
+      },
+    });
+    session.settled();
+    clock.advance(1350);
+    // The bot has not answered yet: its pod is still reacting on screen,
+    // and on the server too.
+    expect(session.snapshot().window?.pending.some((p) => p.seat === bot)).toBe(true);
+    expect(session.submit(2, { t: "callBs", seat: 2 }).ok).toBe(true);
+    expect(session.snapshot().reveal?.caller).toBe(2);
   });
 });
 
@@ -753,10 +902,11 @@ describe("GameSession — a timer belongs to the position that armed it", () => 
 
 
   /**
-   * Seeds and live-seat sets chosen because each one actually reaches the
-   * position: a bot's turn waiting out its hold while a person plays over
-   * the top of an open window. That interrupt is a designed mechanic, so
-   * this is ordinary play, not a contrivance.
+   * Seeds and live-seat sets that reach the position: a bot's turn waiting
+   * out its hold while a person acts first. It was reached by a person
+   * playing over the top of an open window until that was ruled out
+   * (2026-09-25); now it is a person answering a window while a bot ahead
+   * of them in it is still reacting, which is ordinary play.
    */
   const INTERRUPTED: [number, SeatId[]][] = [
     [1, [0, 1]],
@@ -789,6 +939,16 @@ describe("GameSession — a timer belongs to the position that armed it", () => 
         isSeatLive: (seat) => liveSeats.includes(seat),
         emit: () => {
           const now = session.snapshot();
+          // An answer undone: the same window, with a seat back in it.
+          if (
+            prev !== null &&
+            prev.window !== null &&
+            now.window !== null &&
+            now.window.play === prev.window.play &&
+            now.window.pending.some((p) => !prev!.window!.pending.some((q) => q.seat === p.seat))
+          ) {
+            violations.push(`seed ${seed}: a window answer was rolled back`);
+          }
           if (prev !== null && now.plays.length < prev.plays.length) {
             // The pile legitimately empties two ways: somebody swallows it
             // after a challenge, or the round ends. Anything else that
@@ -814,8 +974,16 @@ describe("GameSession — a timer belongs to the position that armed it", () => 
           session.nextRound();
           continue;
         }
-        // The person on turn plays over whatever is open, which is exactly
-        // the interrupt the rules grant them.
+        // A person lets a window go the moment it reaches them, even while
+        // a bot ahead of them is still reacting — and plays as soon as they
+        // may.
+        const answering = liveSeats.find(
+          (seat) => state.window?.pending.some((p) => p.seat === seat) ?? false,
+        );
+        if (answering !== undefined) {
+          session.submit(answering, { t: "declineBs", seat: answering });
+          continue;
+        }
         if (liveSeats.includes(state.turn)) {
           const plays = bsDef.legalActions(state, state.turn).filter((a) => a.t === "play");
           if (plays.length > 0) {

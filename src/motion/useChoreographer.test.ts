@@ -74,7 +74,7 @@ describe("useChoreographer — playback timing", () => {
     // A `collect` carries a real HOLD.trick offset (900ms) so the player
     // can read who won before the sweep starts.
     const events: GameEvent[] = [
-      { t: "play", piece: "SA", from: 0, to: "trick" },
+      { t: "play", piece: "SA", from: 0, to: "trick", faceUp: true },
       { t: "collect", pieces: ["SA"], to: 0 },
     ];
     act(() => result.current.push(events));
@@ -122,7 +122,7 @@ describe("useChoreographer — playback timing", () => {
     const events: GameEvent[] = [
       { t: "think", seat: 1, ms: 700 },
       { t: "draw", piece: "SA", from: "discard", to: 1, faceUp: false },
-      { t: "play", piece: "SA", from: 1, to: "board", group: 1 },
+      { t: "play", piece: "SA", from: 1, to: "board", faceUp: true, group: 1 },
     ];
     act(() => result.current.push(events));
 

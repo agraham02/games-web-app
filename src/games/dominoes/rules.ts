@@ -81,6 +81,7 @@ import {
   handSize,
   isKeyTile,
   nextSeat,
+  openEnds,
   openingSeat,
   playableEnds,
   playableTiles,
@@ -143,6 +144,7 @@ export function makeSetup(rules: DomRules, target?: number) {
       arms: initialArms(),
       turn: HERO,
       passes: 0,
+      passedEnds: {},
       opener: HERO,
       lastRoundWinner: null,
       result: null,
@@ -236,6 +238,7 @@ export function startRound(state: DomState, rng: Rng): ReduceResult<DomState> {
       arms: initialArms(),
       turn: opener,
       passes: 0,
+      passedEnds: {},
       opener,
       result: null,
       dealt: true,
@@ -284,6 +287,14 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
 
   if (action.t === "pass") {
     const passes = state.passes + 1;
+    // A pass is a permanent, public statement about this seat's hand:
+    // it holds neither open end. Recorded for the rest of the round
+    // (never cleared by a later play, unlike `passes` itself) because
+    // that is exactly how long the fact stays true.
+    const ends = openEnds(state);
+    const shown = new Set(state.passedEnds[seat] ?? []);
+    for (const n of [ends.left, ends.right]) if (n !== null) shown.add(n);
+    const passedEnds = { ...state.passedEnds, [seat]: [...shown].sort((a, b) => a - b) };
     events.push({
       t: "announce",
       seat,
@@ -295,10 +306,10 @@ export function reduce(state: DomState, action: DomAction): ReduceResult<DomStat
     });
     // Everyone in succession — nobody can move, so the round is blocked.
     if (passes >= state.seats) {
-      return endRound({ ...state, passes }, "blocked", null, events);
+      return endRound({ ...state, passes, passedEnds }, "blocked", null, events);
     }
     return {
-      state: { ...state, passes, turn: nextSeat(state, seat) },
+      state: { ...state, passes, passedEnds, turn: nextSeat(state, seat) },
       events,
     };
   }

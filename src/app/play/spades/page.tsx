@@ -5,11 +5,12 @@
  *
  * The genuinely game-specific parts:
  *
- *  - **the bid pad.** `BlindChoiceDialog` (a blind-eligible seat's
- *    look-or-go-blind choice) is a rung-6 `BlockingDialog` — nothing to
- *    compare against yet, since the hand is still hidden at that exact
- *    decision. An ORDINARY bid is different: deciding how much to bid
- *    means looking at your own hand, so `NumericBidPanel` is a
+ *  - **the bid pad.** `BlindVoteDialog` (a trailing team's vote on going
+ *    blind) and `BlindChoiceDialog` (the blind bid that follows) are
+ *    rung-6 `BlockingDialog`s — nothing to compare against yet, since the
+ *    hand is still hidden at those exact decisions. An ORDINARY bid is
+ *    different: deciding how much to bid means looking at your own
+ *    hand, so `NumericBidPanel` is a
  *    non-modal floating panel instead (POLICY.md: "never put reference
  *    information in a modal").
  *  - **the exchange bar.** The Blind Nil card exchange is DIFFERENT: it
@@ -133,8 +134,8 @@ export default function SpadesPlayPage() {
  * bots.ts. */
 const SPADES_BLURBS = {
   casual: "Bids near the floor and plays low — never really counts its hand.",
-  steady: "Bids off a real hand-strength read, and wins tricks as cheaply as it can.",
-  sharp: "Protects its own nil, and won't spend a winner overtaking a partner who already has it.",
+  steady: "Bids off a real hand read, cashes its winners, and wins tricks as cheaply as it can.",
+  sharp: "Counts the cards played, remembers who is void, works a nil from either seat, and watches its bags.",
 };
 
 function SetupScreen({
@@ -166,7 +167,7 @@ function SetupScreen({
         </p>
       </div>
 
-      <div className="flex w-full max-w-xs flex-col gap-3">
+      <div className="flex w-full flex-col gap-5">
         <Toggle
           label="Jokers"
           hint="Adds the Big and Little Joker, ranked above every spade."

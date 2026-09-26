@@ -87,6 +87,18 @@ export interface SpadesState {
   /** Frozen at deal time from the PRE-round scores — whether this seat's
    * team trails by >= 100 and so may bid blind this round. */
   blindEligible: Record<SeatId, boolean>;
+  /**
+   * How each eligible seat voted on going blind, cast by both partners at
+   * once when the team's first bid comes up. Public: partners are meant
+   * to agree, and at a real table they would say it out loud.
+   */
+  blindVotes: Record<SeatId, BlindVote | null>;
+  /**
+   * The team's decision once both votes are in — `true` blind, `false`
+   * looked — mirrored onto both partners. `null` while undecided, and for
+   * a seat that was never eligible.
+   */
+  blindCall: Record<SeatId, boolean | null>;
   bids: Record<SeatId, Bid | null>;
   exchange: Exchange | null;
   /** The trick currently on the table, in play order. Empty between
@@ -94,6 +106,18 @@ export interface SpadesState {
   trick: TrickCardPlay[];
   ledSuit: Suit | null;
   trumpBroken: boolean;
+  /**
+   * Suits a seat has demonstrably run out of — recorded the moment it
+   * fails to follow a led suit. Public information: everyone at the
+   * table watched it happen, so `playerView` leaves it alone.
+   *
+   * On the state rather than re-derived by the bots because a bot is
+   * handed only the CURRENT trick and `won` (a flat, unordered pile per
+   * seat). Neither records which seat played which card in a finished
+   * trick, so "who is void in hearts" is genuinely not recoverable
+   * after the fact — it has to be captured as it happens.
+   */
+  voids: Record<SeatId, Suit[]>;
   /** Who leads the next trick — the round's opening leader, or the
    * winner of the last trick. */
   leader: SeatId;
@@ -128,8 +152,24 @@ export interface SpadesState {
   dealt: boolean;
 }
 
+/**
+ * One partner's vote on going blind. `defer` marks a vote cast by a bot,
+ * which yields to any vote a person cast: with a bot for a partner the
+ * person decides alone, which is also what happens when somebody drops
+ * mid-game and a bot takes over their chair.
+ */
+export interface BlindVote {
+  blind: boolean;
+  defer: boolean;
+}
+
 export type SpadesAction =
-  | { t: "look" }
+  /**
+   * Names its seat, unlike every other action here, because the vote is
+   * open to both partners at once — the same reason Rummy's claim does.
+   * Never trusted from a client: `completeAction` overwrites it.
+   */
+  | { t: "blindVote"; seat: SeatId; blind: boolean; defer: boolean }
   | { t: "bid"; tricks: number; nil: boolean }
   | { t: "blindNil" }
   | { t: "blindBid"; tricks: number }

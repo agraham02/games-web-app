@@ -15,7 +15,7 @@
 
 import type { BotDifficulty, BotStrategy, PieceId, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { canExtend, cardValue, findCompletion, rankOf, suitOf } from "./cards";
+import { canExtend, cardValue, findCompletion, laidCards, rankOf, rummyDeck, suitOf } from "./cards";
 import {
   layableMelds,
   layoffs,
@@ -72,14 +72,67 @@ function rankIndex(card: PieceId): number {
   return order.indexOf(rankOf(card));
 }
 
+/**
+ * How many cards that could still pair up with this one are unaccounted
+ * for — its outs.
+ *
+ * `usefulness` above scores a card purely on the company it keeps in
+ * hand, which means it values a pair of fours exactly the same whether
+ * the other two fours are still in the stock or already sitting in
+ * somebody's laid set. They are not the same card at all: the second is
+ * deadwood that can never become anything.
+ *
+ * `laidCards` and `isDeadMeld` have been in `cards.ts` the whole time
+ * and no bot ever called either of them. This is the cheap half of that
+ * — the board and the discard pile are both fully public, so nothing
+ * here needs to see another hand.
+ */
+function liveOuts(card: PieceId, hand: readonly PieceId[], gone: ReadonlySet<PieceId>): number {
+  const rank = rankOf(card);
+  const suit = suitOf(card);
+  const index = rankIndex(card);
+  const mine = new Set(hand);
+  let outs = 0;
+  for (const id of rummyDeck()) {
+    if (id === card || gone.has(id) || mine.has(id)) continue;
+    if (rankOf(id) === rank) outs++;
+    else if (suitOf(id) === suit && Math.abs(rankIndex(id) - index) <= 2) outs++;
+  }
+  return outs;
+}
+
+/** Cards nobody can draw any more: laid into melds, or buried in the
+ * discard pile below the legal reach. Both are public. */
+function outOfPlay(state: RummyState): Set<PieceId> {
+  const gone = laidCards(state.melds);
+  for (const id of state.discard) gone.add(id);
+  return gone;
+}
+
 /* ============================================================
    Decisions
    ============================================================ */
 
-function chooseDealSize(state: RummyState, rng: Rng): RummyAction {
+/**
+ * Deal size, which used to take no `tier` argument at all — every tier
+ * picked from the same 35%-75% band.
+ *
+ * A bigger deal means more material to build with and a longer round; a
+ * smaller one means fewer cards to be caught holding. Sharp takes the
+ * bigger hand because it is better at converting one, casual keeps it
+ * small and simple.
+ */
+const DEAL_BAND: Record<Tier, [number, number]> = {
+  casual: [0.2, 0.55],
+  steady: [0.35, 0.75],
+  sharp: [0.55, 0.9],
+};
+
+function chooseDealSize(state: RummyState, rng: Rng, tier: Tier): RummyAction {
   const sizes = validDealSizes(state.seats);
-  const lo = Math.floor(sizes.length * 0.35);
-  const hi = Math.max(lo, Math.floor(sizes.length * 0.75));
+  const [loFrac, hiFrac] = DEAL_BAND[tier];
+  const lo = Math.floor(sizes.length * loFrac);
+  const hi = Math.max(lo, Math.floor(sizes.length * hiFrac));
   const band = sizes.slice(lo, hi + 1);
   return { t: "chooseDealSize", size: band.length ? rng.pick(band) : sizes[sizes.length - 1]! };
 }
@@ -163,7 +216,7 @@ function chooseMeld(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): Rumm
   // and `mandatoryMelds` is the same list `legalActions` builds, so the
   // two can never disagree about what is available.
   if (state.mandatory) {
-    const candidates = mandatoryMelds(hand, state.mandatory.card);
+    const candidates = mandatoryMelds(hand, state.mandatory.card, state.mandatory.pool);
     const pick = bestOf(candidates, (m) => m.reduce((n, id) => n + cardValue(id), 0), rng);
     if (pick) return { t: "layNewMeld", cards: pick };
     // Only reachable via the same livelock guard `legalActions`
@@ -204,9 +257,30 @@ function chooseDiscard(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): R
     return { t: "discard", card: card ?? hand[0]! };
   }
 
-  // Steady/sharp: least likely to complete anything, breaking ties
-  // toward the higher-value card so a bad round costs less.
-  const card = bestOf(hand, (c) => -usefulness(c, hand) * 4 + cardValue(c) * 0.5, rng);
+  // As the stock runs down, being caught holding is the real risk — a
+  // round can end on anyone's turn and every point left in hand is a
+  // point scored against you. The weight on raw card value therefore
+  // climbs as the deck empties, rather than sitting at a flat 0.5 for
+  // the whole round the way it used to. Nothing read `state.stock` at
+  // all before: a bot three cards from the end played exactly like one
+  // on the first turn.
+  const left = state.stock.length;
+  const pressure = left <= 6 ? 2.6 : left <= 14 ? 1.3 : 0.5;
+
+  // Sharp also knows which of its cards are already dead — a pair whose
+  // other two ranks are on the board is not a draw, it is deadwood.
+  const gone = tier === "sharp" ? outOfPlay(state) : null;
+  const score = (c: PieceId) => {
+    let use = usefulness(c, hand);
+    if (gone) {
+      const outs = liveOuts(c, hand, gone);
+      if (outs === 0) use = 0;
+      else if (outs <= 2) use *= 0.5;
+    }
+    return -use * 4 + cardValue(c) * pressure;
+  };
+
+  const card = bestOf(hand, score, rng);
 
   if (tier === "sharp" && card) {
     // Don't hand the table a card that instantly extends a live meld if
@@ -214,7 +288,7 @@ function chooseDiscard(state: RummyState, seat: SeatId, rng: Rng, tier: Tier): R
     const feeds = state.melds.some((m) => canExtend(m.cards, card));
     if (feeds) {
       const safe = hand.filter((c) => !state.melds.some((m) => canExtend(m.cards, c)));
-      const alt = bestOf(safe, (c) => -usefulness(c, hand) * 4 + cardValue(c) * 0.5, rng);
+      const alt = bestOf(safe, score, rng);
       if (alt) return { t: "discard", card: alt };
     }
   }
@@ -263,18 +337,17 @@ function makeBot(
       // seizes the turn regardless of `phase`, so reading `phase` here
       // would answer a question nobody asked.
       if (state.claimWindow !== null) return chooseClaim(state, seat);
-      if (state.dealSizePending !== null) return chooseDealSize(state, rng);
+      if (state.dealSizePending !== null) return chooseDealSize(state, rng, tier);
       if (state.phase === "draw") return chooseDraw(state, seat, rng, tier);
       return chooseMeld(state, seat, rng, tier);
     },
     thinkMs(state, seat, rng) {
-      // A claim's beat is not this bot's pace — it is the reaction time
-      // drawn for this seat when the window opened, which is the number
-      // the race is actually run on. Spending anything else here would
-      // let a bot arrive at a different moment than the one every other
-      // seat is racing against.
-      const claiming = state.claimWindow?.pending.find((p) => p.seat === seat);
-      if (claiming) return claiming.ms;
+      // Nothing for a claim. Its reaction time is spent BEFORE the claim
+      // is made, as the session's hold (`turnHold`), because that is when
+      // it decides the race. Spent here, as a `think` inside the frame, it
+      // played out after the card was already gone — and a person pressing
+      // inside their ring lost to a claim that had not visibly happened.
+      if (state.claimWindow?.pending.some((p) => p.seat === seat)) return 0;
 
       const beat = pace(rng);
       // Drawing with no pile option, or melding under an obligation, is

@@ -226,6 +226,35 @@ describe("useGameRuntime — every game still runs through the extracted session
      *
      * Found by running the app, which is the only place StrictMode is on.
      */
+    it("spades: deals once, not twice", () => {
+      // The online table dealt twice under StrictMode (its frame effect
+      // queued the opening frame on both mounts). Offline shares no code
+      // with that path, so it is checked on its own terms: once the hero's
+      // hand is full, it must never be emptied back into the deck.
+      const spades = GAMES[GAME_IDS.indexOf("spades")]!;
+      const counts: number[] = [];
+      const hand = () =>
+        Object.values(useTableStore.getState().placements).filter(
+          (p) => p.zone === "hand" && p.seat === HERO,
+        ).length;
+      const unsubscribe = useTableStore.subscribe(() => counts.push(hand()));
+      renderHook(() => useGameRuntime(spades.definition, { seats: spades.seats, seed: 4242 }), {
+        wrapper: StrictMode,
+      });
+      for (let i = 0; i < 60; i++) {
+        act(() => {
+          vi.advanceTimersByTime(500);
+        });
+      }
+      unsubscribe();
+
+      const full = counts.indexOf(13);
+      expect(full, "the hero was never dealt a full hand").toBeGreaterThanOrEqual(0);
+      expect(counts.slice(full).every((n) => n === 13), "the hand emptied and was dealt again").toBe(
+        true,
+      );
+    });
+
     for (const { name, definition, seats } of GAMES) {
       it(`${name}: still runs its first bot turn after a double mount`, () => {
         const { result, rerender } = renderHook(

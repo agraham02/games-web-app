@@ -22,6 +22,7 @@ import type { PokerAction, PokerState } from "@/games/poker/types";
 import { GameHost } from "@/table/GameHost";
 import {
   OFFLINE_VIEW,
+  POKER_SETTINGS,
   PokerControls,
   pendingLabel,
   playerViews,
@@ -30,6 +31,7 @@ import {
 } from "./table";
 import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { SeatsSlider, SetupField } from "@/ui/primitives/SetupField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 
 
@@ -64,6 +66,7 @@ export default function PokerPlayPage() {
 
   return (
     <GameHost<PokerState, PokerAction>
+      settings={POKER_SETTINGS}
       key={gameKey}
       definition={definition}
       runtime={{ seats, difficulty: botTable(seats, difficulty) }}
@@ -79,7 +82,7 @@ export default function PokerPlayPage() {
       onRematch={() => setGameKey((k) => k + 1)}
       onLobby={() => setStarted(false)}
     >
-      {(live) => <PokerControls view={OFFLINE_VIEW} live={live} />}
+      {(live, prefs) => <PokerControls view={OFFLINE_VIEW} live={live} hints={prefs.hints ?? true} />}
     </GameHost>
   );
 }
@@ -88,12 +91,14 @@ export default function PokerPlayPage() {
    Setup
    ============================================================ */
 
-/** What each tier actually does — see `bots.ts`'s `PREFLOP_FLOOR`/
- * `USES_POT_ODDS`/`BLUFF_CHANCE` tables. */
+/** What each tier actually does — grounded in `bots.ts`'s own tables
+ * (`CALL_MARGIN`, `RAISE_EDGE`, `LIMPS_PREFLOP`, `BLUFF_CHANCE`), not
+ * generic copy. `blurbs` is a required prop precisely so this stays
+ * true of the code underneath it. */
 const POKER_BLURBS = {
-  casual: "Plays face value and rarely folds a made pair — no eye for the pot.",
-  steady: "Weighs pot odds before calling, and tightens up before the flop.",
-  sharp: "Reads draws and pot odds, varies its bet sizing, and bluffs just enough to keep you honest.",
+  casual: "Limps into most pots and calls too wide — it pays you off, but it never folds either.",
+  steady: "Raises or folds before the flop, and weighs the pot odds on every call.",
+  sharp: "Plays position, values its draws properly, varies its sizing, and bluffs just enough.",
 };
 
 function SetupScreen({
@@ -118,10 +123,10 @@ function SetupScreen({
   onStart: () => void;
 }) {
   return (
-    <SetupShell>
+    <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">New match</span>
-        <h1 className="font-display text-4xl font-extrabold text-bone-50">Poker</h1>
+        <h1 className="font-display text-4xl tracking-wider text-brass-300">Poker</h1>
         <p className="max-w-sm text-xs leading-relaxed text-bone-400">
           No-limit Texas Hold&apos;em. Fixed blinds, real side pots — a
           short stack going all-in only ever risks what they have left.
@@ -129,25 +134,12 @@ function SetupScreen({
         </p>
       </div>
 
-      <div className="flex w-full max-w-sm flex-col gap-5">
-        <label className="flex flex-col gap-2">
-          <span className="flex items-center justify-between text-xs font-bold text-bone-200">
-            Players <span className="tnum text-brass-300">{seats}</span>
-          </span>
-          <input
-            type="range"
-            min={MIN_SEATS}
-            max={MAX_SEATS}
-            value={seats}
-            onChange={(e) => onSeats(Number(e.target.value))}
-            className="w-full accent-brass-400"
-          />
-        </label>
+      <div className="flex w-full flex-col gap-5">
+        <SeatsSlider value={seats} min={MIN_SEATS} max={MAX_SEATS} onChange={onSeats} />
 
         <DifficultyPicker value={difficulty} onChange={onDifficulty} blurbs={POKER_BLURBS} />
 
-        <div className="flex flex-col items-center gap-2">
-          <span className="text-xs font-bold text-bone-200">Starting stack</span>
+        <SetupField label="Starting stack">
           <NumberStepper
             value={startingStack}
             min={MIN_STARTING_STACK}
@@ -156,10 +148,12 @@ function SetupScreen({
             label="chips"
             onChange={onStartingStack}
           />
-        </div>
+        </SetupField>
 
-        <div className="flex flex-col items-center gap-2">
-          <span className="text-xs font-bold text-bone-200">Big blind</span>
+        <SetupField
+          label="Big blind"
+          hint={`Small blind is always half — ${Math.max(1, Math.round(bigBlind / 2))} chips.`}
+        >
           <NumberStepper
             value={bigBlind}
             min={MIN_BIG_BLIND}
@@ -168,10 +162,7 @@ function SetupScreen({
             label="chips"
             onChange={onBigBlind}
           />
-          <span className="text-center text-[11px] text-bone-500">
-            Small blind is always half — {Math.max(1, Math.round(bigBlind / 2))} chips.
-          </span>
-        </div>
+        </SetupField>
       </div>
 
       <button

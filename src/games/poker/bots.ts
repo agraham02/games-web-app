@@ -1,159 +1,268 @@
 /**
  * Poker bots.
  *
- * Not claimed optimal — the same spirit as Spades' `estimateTricks` and
- * Rummy's `LAYOFF_ATTENTION`: specific, tunable heuristic thresholds
- * good enough to make a decision feel considered rather than random,
- * built on `hand.ts`'s real evaluator rather than guessing at strength.
+ * Built on real showdown equity (`./equity`) rather than an invented
+ * strength scale. That is the whole difference between this version and
+ * the one before it, and it is worth stating plainly because the same
+ * bug was reported twice.
+ *
+ * The old version scored a hand 0..1 on a made-up scale — a Chen-ish
+ * formula preflop, `value.category / 8` postflop — and then compared
+ * that number against pot odds. Pot odds are a probability and those
+ * scores were not, so the comparison was between two different units.
+ * The two scales also disagreed with each other: pocket aces preflop
+ * scored 0.95 while a made full house scored 0.75, which is exactly
+ * backwards and exactly why bots jammed before the flop and would not
+ * bet a real hand after it. Retuning those constants was the first
+ * attempted fix; it did not hold, because the units were the problem.
+ *
+ * Three rules now govern every betting decision, in order:
+ *
+ *   1. CONTINUE on `equity` vs `potOdds` — a real, like-for-like
+ *      comparison, so "is this call profitable" is an actual question.
+ *   2. RAISE on `edge` — equity above an even share of the pot
+ *      (`1 / (opponents + 1)`). Normalising by field size is what lets
+ *      one threshold work heads-up and six-handed, since raw equity
+ *      falls as opponents are added while the hand has not got worse.
+ *   3. SIZE without shoving unless a shove is genuinely correct.
+ *
+ * Rule 2 is also where the reported bug is actually fixed: the required
+ * edge RISES with `state.raisesThisStreet`, and each tier caps how many
+ * raises it will make in one street. Before, the raise test did not
+ * depend on the action at all — and since preflop strength is a pure
+ * function of two cards, it never changed within a street. Two bots
+ * that both liked their hands therefore re-raised each other forever,
+ * until `betRange`'s no-room-to-size branch turned it into an all-in.
+ * That, not the opening raise, was the all-in engine.
  *
  * Deliberately does NOT import from `./rules` — `rules.ts` imports
  * `pokerBots` from here, so the reverse would cycle. Every "how many
- * legal choices are there" question a bot needs is answered from
- * `./state` directly (`betRange`, `amountToCall`), the same way Spades'
- * bots read `legalPlays` from its own `state.ts` rather than from
- * `rules.ts`.
+ * legal choices are there" question is answered from `./state`
+ * directly, the same way Spades' bots read `legalPlays` from its own
+ * `state.ts`.
  */
 
 import type { BotDifficulty, BotStrategy, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { parseCard, type Card } from "@/games/_shared/cards";
-import { bestOfSeven, pokerRank } from "./hand";
-import { amountToCall, betRange, potTotal, seatHoleCards } from "./state";
+import { personality, stableRoll, type BotPersonality } from "@/games/_shared/botPersonality";
+import { equityFor, MAX_MODELLED_OPPONENTS } from "./equity";
+import { amountToCall, betRange, contestingSeats, potTotal, seatHoleCards } from "./state";
 import type { PokerAction, PokerState } from "./types";
 
 /* ============================================================
-   Hand-strength reads
+   Reading the spot
+   ============================================================ */
+
+interface Spot {
+  equity: number;
+  /** Equity above an even share of the pot. Field-size normalised, so
+   * one threshold means the same thing heads-up and six-handed. */
+  edge: number;
+  toCall: number;
+  pot: number;
+  potOdds: number;
+  opponents: number;
+  stack: number;
+  /** This seat's chips in the pot for the whole hand so far. */
+  committed: number;
+  highest: number;
+  already: number;
+  preflop: boolean;
+}
+
+/**
+ * How much of its raw all-in equity a tier expects to actually realise.
+ *
+ * Monte Carlo runs every board to the river with no further betting,
+ * which is exactly right for an all-in and optimistic everywhere else —
+ * a draw that has to pay two more bets, and may fold to one of them,
+ * does not collect its full share. Casual believes the raw number,
+ * which is a real and characteristic mistake; the sharper tiers
+ * discount it.
+ */
+const REALISATION: Record<BotDifficulty, number> = { casual: 1, steady: 0.95, sharp: 0.93 };
+
+function readSpot(state: PokerState, seat: SeatId, tier: BotDifficulty): Spot {
+  const hole = seatHoleCards(state, seat);
+  const opponents = Math.max(1, contestingSeats(state).filter((s) => s !== seat).length);
+  const modelled = Math.min(MAX_MODELLED_OPPONENTS, opponents);
+
+  const raw = equityFor(hole, state.communityOrder, opponents);
+  const complete = state.communityOrder.length === 5;
+  const equity = complete ? raw : raw * REALISATION[tier];
+
+  const toCall = amountToCall(state, seat);
+  const pot = potTotal(state);
+  const already = state.streetCommitted[seat] ?? 0;
+
+  return {
+    equity,
+    edge: equity - 1 / (modelled + 1),
+    toCall,
+    pot,
+    potOdds: toCall > 0 ? toCall / (pot + toCall) : 0,
+    opponents,
+    stack: state.stacks[seat] ?? 0,
+    committed: state.totalCommitted[seat] ?? 0,
+    highest: Math.max(0, ...Object.values(state.streetCommitted)),
+    already,
+    preflop: state.communityOrder.length === 0,
+  };
+}
+
+/* ============================================================
+   Tier tables
    ============================================================ */
 
 /**
- * A compact starting-hand strength score, 0..1 — pair rank,
- * suited/connected, high-card strength. Not a lookup table of all 169
- * starting combos; a simplified Chen-formula-style heuristic in the
- * same spirit as `estimateTricks`.
- *
- * The first version of this scored `(hi + lo) / 28` as its baseline —
- * a live playtest caught the real bug that comes from that: the term
- * alone puts almost every non-trash hand (K9o scores 0.79 on that term
- * ALONE) within a hair of `RAISE_THRESHOLD`/the `sizeBet` shove cutoff,
- * so bots raised and re-raised nearly every hand and went all-in
- * preflop constantly — "rarely see the flop" was the exact symptom
- * reported. This version weights the TOP card far more than the
- * second (unpaired hand strength is mostly about the high card) and
- * scales pairs on their own curve, so AA lands near 0.95, a bare
- * offsuit gap hand like 72o lands near 0.15-0.2, and the broad middle
- * of real starting hands actually sits in the middle of the range
- * instead of bunched near the top.
+ * Edge over break-even pot odds a tier insists on before calling.
+ * Negative is a losing call made anyway — which is what a casual player
+ * does, and the honest way to express "rarely folds a made pair"
+ * without hard-coding a hand category.
  */
-function preflopStrength(hole: readonly Card[]): number {
-  const [a, b] = hole;
-  if (!a || !b) return 0;
-  const hi = Math.max(pokerRank(a.rank), pokerRank(b.rank));
-  const lo = Math.min(pokerRank(a.rank), pokerRank(b.rank));
-  const paired = a.rank === b.rank;
-  const suited = a.suit === b.suit;
-  const gap = hi - lo;
+const CALL_MARGIN: Record<BotDifficulty, number> = { casual: -0.1, steady: -0.01, sharp: 0.015 };
 
-  if (paired) {
-    // 22 (weak but playable) to AA (~0.95), roughly linear.
-    return 0.3 + ((hi - 2) / 12) * 0.65;
-  }
+/**
+ * Edge required to open the betting. Tuned so `steady` opens roughly a
+ * fifth of starting hands at a six-handed table — an ordinary opening
+ * range, which the tests measure directly rather than trusting.
+ *
+ * Casual's is the HIGHEST because casual is a calling station, not a
+ * maniac: it puts money in by calling, rarely by raising.
+ */
+const RAISE_EDGE: Record<BotDifficulty, number> = { casual: 0.16, steady: 0.1, sharp: 0.085 };
 
-  // Unpaired: the top card carries most of the weight (2..14 -> 0..0.55),
-  // the second card a little (2..14 -> 0..0.15).
-  let score = ((hi - 2) / 12) * 0.55 + ((lo - 2) / 12) * 0.15;
-  if (suited) score += 0.08;
-  // Connectivity: real straight/flush potential falls off fast past a
-  // 1-2 gap, and a big unconnected gap is a genuine weakness, not a
-  // neutral, hence the rare negative term.
-  if (gap === 1) score += 0.1;
-  else if (gap === 2) score += 0.06;
-  else if (gap === 3) score += 0.03;
-  else if (gap >= 4) score -= 0.05;
+/**
+ * Added to `RAISE_EDGE` for every raise already made this street. This
+ * is the fix for the reported all-in bug: re-raising has to require a
+ * genuinely better hand than opening did, or two bots with static reads
+ * ratchet each other to all-in every single time they both like their
+ * cards.
+ */
+const AGGRESSION_STEP: Record<BotDifficulty, number> = { casual: 0.12, steady: 0.11, sharp: 0.09 };
 
-  return Math.max(0, Math.min(1, score));
-}
+/** A hard ceiling on raises per street, on top of the rising edge — a
+ * belt-and-braces guarantee that the ladder terminates. */
+const MAX_RAISES: Record<BotDifficulty, number> = { casual: 2, steady: 3, sharp: 4 };
 
-/** A cheap draw-outs bonus: an evident 4-to-a-flush or 4-to-a-straight
- * is worth accounting for even before the MADE-hand category shows it —
- * `sharp` alone weighs this (see `USES_DRAW_OUTS`). */
-function drawBonus(all: readonly Card[]): number {
-  const bySuit = new Map<string, number>();
-  for (const c of all) bySuit.set(c.suit, (bySuit.get(c.suit) ?? 0) + 1);
-  const flushDraw = [...bySuit.values()].some((n) => n === 4) ? 0.5 : 0;
+/** Rare, deliberately small bluff rates — this app's own
+ * `LAYOFF_ATTENTION` doc makes the same case for keeping an oversight
+ * rate small: a bluff is meant to be a moment, not a habit. */
+const BLUFF_CHANCE: Record<BotDifficulty, number> = { casual: 0.02, steady: 0.05, sharp: 0.08 };
 
-  const ranks = [...new Set(all.map((c) => pokerRank(c.rank)))].sort((x, y) => x - y);
-  let straightDraw = 0;
-  for (let i = 0; i + 3 < ranks.length; i++) {
-    if (ranks[i + 3]! - ranks[i]! === 3) straightDraw = 0.4;
-  }
-  return Math.min(1, flushDraw + straightDraw);
-}
+/**
+ * At or below this many big blinds, raising anything but all-in leaves
+ * a stub too small to fold, so a shove is simply correct. This is the
+ * ONLY routine path to an all-in now — the old `strength >= 0.92`
+ * branch made every tier auto-jam pocket aces preflop, every time.
+ */
+const SHOVE_BB: Record<BotDifficulty, number> = { casual: 10, steady: 12, sharp: 14 };
 
-const USES_DRAW_OUTS: Record<BotDifficulty, boolean> = {
-  casual: false,
+/**
+ * Equity at which a bot will commit its whole stack voluntarily.
+ * Below it, a single raise may not exceed `MAX_RAISE_STACK_FRACTION` of
+ * the stack, which is what stops one pot from busting a player who is
+ * merely ahead rather than crushing.
+ *
+ * This is also the answer to a SECOND, independent route to the same
+ * all-in symptom, found by a separate fuzz sweep: `sizeBet` targets a
+ * fraction of the pot, the pot roughly doubles with every raise, and
+ * `Math.min(range.max, target)` then silently turns "bet a healthy
+ * fraction of the pot" into "jam my whole stack" the moment that
+ * fraction first crosses the remaining stack — with nothing asking
+ * whether the hand justified going that far. The tell was that
+ * `avgRaisesBeforeShove` and `avgPotInBBsAtShove` both scaled with
+ * starting depth (2.4 raises / 16 BB pot at 10 BB deep, 6.5 raises /
+ * 672 BB pot at 400 BB deep) while the preflop all-in RATE stayed flat
+ * at ~7-8% regardless — proof the shove was coming from the arithmetic
+ * rather than from hand strength.
+ *
+ * Capping the raise is preferred here over downgrading it to a call:
+ * the hand is still worth betting, just not worth the stack, and a bot
+ * that goes passive every time its sizing overshoots stops applying
+ * pressure at all.
+ */
+const COMMIT_EQUITY: Record<BotDifficulty, number> = { casual: 0.78, steady: 0.75, sharp: 0.7 };
+const MAX_RAISE_STACK_FRACTION = 0.5;
+
+/**
+ * Whether a tier will call an unopened preflop pot — "limping".
+ *
+ * Calling for exactly one big blind when nobody has raised is dominated
+ * play: the hand is either good enough to raise or not good enough to
+ * play, and limping forfeits the chance to win the blinds outright.
+ * Leaving it in produced a table where essentially every hand crawled
+ * to a flop five-handed, which is not what real poker looks like.
+ *
+ * Casual limps on purpose — it is the most recognisable beginner habit
+ * there is, and casual's whole character is putting money in by calling.
+ * Completing the small blind is not limping and is always allowed: that
+ * seat is getting a genuinely different price.
+ */
+const LIMPS_PREFLOP: Record<BotDifficulty, boolean> = {
+  casual: true,
   steady: false,
-  sharp: true,
+  sharp: false,
 };
 
-function handStrength(state: PokerState, seat: SeatId, tier: BotDifficulty): number {
-  const hole = seatHoleCards(state, seat).map(parseCard);
-  const community = state.communityOrder.map(parseCard);
-  if (community.length === 0) return preflopStrength(hole);
+/**
+ * Edge required to complete the small blind into an unraised pot.
+ *
+ * Completing is not limping — half the bet is already posted, so the
+ * price is genuinely different and a flat raise-or-fold rule would be
+ * wrong. But it is not a free call either, and treating it as one is
+ * what made almost every hand crawl to a flop blind-versus-blind: on
+ * raw pot odds, completing heads-up is nearly always correct, so the
+ * bots always did it.
+ *
+ * What the raw number cannot see is that the seat which completes then
+ * plays every remaining street out of position. This threshold is that
+ * missing cost, expressed as "bring a hand that is actually better than
+ * a random one" (edge >= 0), which is the honest shape of it.
+ *
+ * Except on the button, where the cost does not exist — and heads-up
+ * the small blind IS the button, so it acts LAST on every later street
+ * rather than first. Charging it a positional penalty there is not a
+ * small inaccuracy: it inverted the whole difficulty slider, because
+ * the sharpest tier had the strictest bar and therefore folded the best
+ * seat at the table most often. `sharp` lost heads-up matches to
+ * `casual` until this branch existed.
+ */
+const COMPLETE_EDGE: Record<BotDifficulty, number> = { casual: -1, steady: 0, sharp: 0.02 };
+const COMPLETE_EDGE_ON_BUTTON: Record<BotDifficulty, number> = {
+  casual: -1,
+  steady: -0.08,
+  sharp: -0.1,
+};
 
-  const value = bestOfSeven([...hole, ...community]);
-  let score = value.category / 8;
-  if (USES_DRAW_OUTS[tier] && community.length < 5) {
-    score += drawBonus([...hole, ...community]) * 0.15;
-  }
-  return Math.max(0, Math.min(1, score));
-}
+/** Casual essentially never shows a loser; steady/sharp show often
+ * enough for table-image flavour to be reachable in ordinary bot-vs-bot
+ * play, not just on the rare hand the hero personally loses. */
+const SHOW_CHANCE: Record<BotDifficulty, number> = { casual: 0.02, steady: 0.1, sharp: 0.15 };
+
+const PACE: Record<BotDifficulty, (rng: Rng) => number> = {
+  casual: (rng) => 350 + rng.int(300),
+  steady: (rng) => 600 + rng.int(400),
+  sharp: (rng) => 800 + rng.int(500),
+};
 
 /* ============================================================
    Betting decision
    ============================================================ */
 
 /**
- * How much made-hand strength each tier needs to voluntarily continue
- * facing a bet, before pot odds (if the tier even weighs them). Casual's
- * floor is deliberately low — it "rarely folds a made pair" — and
- * doesn't move for preflop vs. postflop; steady/sharp tighten preflop
- * specifically, matching real ranges being narrower before the flop
- * than a made postflop hand needs to be.
+ * A bluff is decided per STREET, not per decision. The old version
+ * rolled `rng.next() < BLUFF_CHANCE` on every call into `choose`, so a
+ * bot could bluff-raise the flop and then fold the same hand to the
+ * min-raise back — incoherent, and unreadable as a bluff. Keying the
+ * roll to the position makes it a line the bot commits to, and makes it
+ * replay identically from a seed.
  */
-const PREFLOP_FLOOR: Record<BotDifficulty, number> = { casual: 0.16, steady: 0.34, sharp: 0.4 };
-const POSTFLOP_FLOOR: Record<BotDifficulty, number> = { casual: 0.1, steady: 0.18, sharp: 0.18 };
-const USES_POT_ODDS: Record<BotDifficulty, boolean> = { casual: false, steady: true, sharp: true };
-/** Rare, deliberately small bluff/semi-bluff rates — this app's own
- * `LAYOFF_ATTENTION` doc makes the same case for keeping an oversight
- * rate small: a bluff is meant to be a moment, not a habit. */
-const BLUFF_CHANCE: Record<BotDifficulty, number> = { casual: 0.02, steady: 0.05, sharp: 0.15 };
-const RAISE_THRESHOLD: Record<BotDifficulty, number> = { casual: 0.8, steady: 0.62, sharp: 0.55 };
+function isBluffing(state: PokerState, seat: SeatId, tier: BotDifficulty, p: BotPersonality): boolean {
+  const key = `bluff|${state.hand}|${state.communityOrder.length}|${seat}|${seatHoleCards(state, seat).join("")}`;
+  return stableRoll(key) < BLUFF_CHANCE[tier] * p.bluff;
+}
 
-/**
- * How strong a hand needs to be before a tier is willing to let a raise
- * turn into shoving its ENTIRE remaining stack — separate from, and much
- * higher than, `RAISE_THRESHOLD` (which only gates making SOME raise).
- * Without this, a fuzz sim at fixed 6-max/steady turned up the exact
- * "no strategy" complaint reported: `avgRaisesBeforeShove` and
- * `avgPotInBBsAtShove` both scaled up with starting depth (2.4 raises
- * / 16 BB pot at 10 BB deep vs. 6.5 raises / 672 BB pot at 400 BB deep)
- * while the overall preflop-all-in RATE stayed flat at ~7-8% regardless
- * of depth — proof the shove wasn't coming from hand strength at all.
- * `sizeBet`'s target is a fraction of `potTotal`, which roughly doubles
- * with every raise; `Math.min(range.max, target)` then silently
- * converts "I wanted to bet a healthy fraction of the pot" into "I just
- * jammed my whole stack" the moment that fraction first crosses the
- * remaining stack — with nothing ever asking whether the hand
- * justified going that far. A real player tightens up and starts just
- * calling once a raise would commit their whole deep stack on a merely
- * decent hand; see `SHORT_STACK_BB` for the one case that's correctly
- * exempt.
- */
-const SHOVE_THRESHOLD: Record<BotDifficulty, number> = { casual: 0.7, steady: 0.8, sharp: 0.85 };
-/** Below this effective-stack depth, shoving a merely-decent hand is
- * standard push/fold strategy, not a leak — real ranges widen sharply
- * as stack-to-blind ratio shrinks, so `SHOVE_THRESHOLD` doesn't apply. */
-const SHORT_STACK_BB = 15;
 
 function chooseBettingAction(
   state: PokerState,
@@ -161,36 +270,48 @@ function chooseBettingAction(
   rng: Rng,
   tier: BotDifficulty,
 ): PokerAction {
-  const toCall = amountToCall(state, seat);
-  const strength = handStrength(state, seat, tier);
-  const bluffing = rng.next() < BLUFF_CHANCE[tier];
-  // A bluff plays its cards as though they were strong for the purposes
-  // of THIS decision only — hand.ts's real evaluation is never touched.
-  const effective = bluffing ? Math.max(strength, 0.75) : strength;
-
-  const floor = (state.communityOrder.length === 0 ? PREFLOP_FLOOR : POSTFLOP_FLOOR)[tier];
-  if (toCall > 0) {
-    const pot = potTotal(state);
-    const potOdds = toCall / (pot + toCall);
-    const required = USES_POT_ODDS[tier] ? Math.max(floor, potOdds) : floor;
-    if (effective < required) return { t: "fold" };
-  }
+  const p = personality("poker", seat);
+  const spot = readSpot(state, seat, tier);
 
   const range = betRange(state, seat);
-  const canRaise = !state.raiseCapped && range.max > (state.streetCommitted[seat] ?? 0);
-  if (canRaise && (effective >= RAISE_THRESHOLD[tier] || bluffing)) {
-    const to = sizeBet(state, seat, range, tier, rng, effective);
-    const stackInBBs = (state.stacks[seat] ?? 0) / state.bigBlind;
-    const shoveJustified =
-      effective >= SHOVE_THRESHOLD[tier] || stackInBBs <= SHORT_STACK_BB || bluffing;
-    // The sizing worked out to an all-in shove, but nothing about THIS
-    // hand actually earns one — build the pot with a check/call instead
-    // of jamming a deep stack on a merely-decent hand (see
-    // `SHOVE_THRESHOLD`'s doc). Same `toCall === 0` case as the big
-    // blind's free option below: still a real decision (this seat was
-    // about to raise a bet already on the table), just not one that
-    // owes a call.
-    if (to >= range.max && !shoveJustified) return toCall === 0 ? { t: "check" } : { t: "call" };
+  const canRaise = !state.raiseCapped && range.max > spot.already;
+  const raisesLeft = state.raisesThisStreet < MAX_RAISES[tier];
+
+  // A bluff needs somebody to fold. Against three or more opponents
+  // somebody almost always has a hand, so the bluff is just a donation.
+  //
+  // It also has to be a bluff the bot can actually MAKE: requiring
+  // `canRaise` here matters, because a bluff skips the fold check
+  // below, and a bot that skipped it and then could not raise would
+  // quietly call a bet with the worst hand at the table.
+  const bluffing =
+    canRaise &&
+    raisesLeft &&
+    isBluffing(state, seat, tier, p) &&
+    spot.opponents <= 2 &&
+    spot.toCall <= spot.pot * 0.6;
+
+  /* ---- 1. Continue, or fold? ---------------------------------- */
+  if (spot.toCall > 0 && !bluffing) {
+    let required = spot.potOdds + CALL_MARGIN[tier] + p.tight;
+
+    // Already deep in this pot with a real hand: the chips behind are
+    // what is being decided, and folding a hand that is still ahead of
+    // its price to protect an investment already made is the classic
+    // beginner's fold in reverse. A modest discount, not a blank cheque.
+    const share = spot.committed / Math.max(1, spot.committed + spot.stack);
+    if (share > 0.35 && spot.edge > 0) required -= 0.05;
+
+    if (spot.equity < required) return { t: "fold" };
+  }
+
+  /* ---- 2. Raise? ---------------------------------------------- */
+  const required =
+    RAISE_EDGE[tier] + AGGRESSION_STEP[tier] * state.raisesThisStreet - p.aggro + p.tight;
+  const wantsRaise = raisesLeft && (spot.edge >= required || bluffing);
+
+  if (canRaise && wantsRaise) {
+    const to = sizeBet(state, seat, range, tier, rng, spot, bluffing);
     // "bet" vs "raise" is decided by whether ANYONE has bet this street
     // yet — not by whether THIS seat owes a call. Those disagree exactly
     // once: the big blind's own free preflop option, where `toCall` is 0
@@ -199,35 +320,86 @@ function chooseBettingAction(
     // `legalActions` (rules.ts) uses the identical highest-committed
     // check — this has to match it exactly or a bot can emit an action
     // type `legalActions` never offered.
-    const highest = Math.max(0, ...Object.values(state.streetCommitted));
-    return highest === 0 ? { t: "bet", to } : { t: "raise", to };
+    return spot.highest === 0 ? { t: "bet", to } : { t: "raise", to };
   }
 
-  return toCall === 0 ? { t: "check" } : { t: "call" };
+  /* ---- 3. Raise or fold, rather than limp --------------------- */
+  // Reached only when the bot declined to raise. Preflop with the pot
+  // unopened, a hand not worth raising is not worth one big blind
+  // either (see `LIMPS_PREFLOP`). Completing the small blind is exempt.
+  if (spot.preflop && !LIMPS_PREFLOP[tier] && state.raisesThisStreet === 0 && spot.toCall > 0) {
+    const completingBlind = spot.toCall <= state.smallBlind;
+    const bar =
+      state.button === seat ? COMPLETE_EDGE_ON_BUTTON[tier] : COMPLETE_EDGE[tier];
+    if (!completingBlind || spot.edge < bar) return { t: "fold" };
+  }
+
+  return spot.toCall === 0 ? { t: "check" } : { t: "call" };
 }
 
+/**
+ * How much to bet or raise TO.
+ *
+ * The old version opened with `if (strength >= 0.92 ... ) return
+ * range.max` — and `preflopStrength(AA)` is 0.95, so every tier shoved
+ * pocket aces preflop every time it was dealt them. There is no
+ * equivalent branch here: a shove has to be earned by the stack being
+ * short, by the raise ceiling landing there anyway, or by `betRange`
+ * genuinely offering no room.
+ */
 function sizeBet(
   state: PokerState,
   seat: SeatId,
   range: { min: number; max: number },
   tier: BotDifficulty,
   rng: Rng,
-  strength: number,
+  spot: Spot,
+  bluffing: boolean,
 ): number {
-  // Shove with the nuts, or when there's no real room to size finely.
-  if (strength >= 0.92 || range.max - range.min < state.bigBlind) return range.max;
+  // `betRange` clamps `min` down to `max` for a seat too short to make
+  // a full raise: its only bet-shaped action is to shove for less.
+  if (range.max <= range.min) return range.max;
 
-  const already = state.streetCommitted[seat] ?? 0;
+  // A real short stack. Raising to anything less leaves a stub nobody
+  // can fold, so the shove is correct play rather than recklessness.
+  if (spot.stack <= SHOVE_BB[tier] * state.bigBlind) return range.max;
+
   let target: number;
-  if (tier === "casual") {
-    target = range.min + rng.int(Math.max(1, range.max - range.min));
+  if (spot.preflop) {
+    // Preflop is sized in blinds, the way real play does it — a 2-3x
+    // open, a ~2.5x re-raise. Sizing preflop off the pot instead is
+    // what produced the old min-raise ladder, since a pot fraction of a
+    // 1.5bb pot is always below the minimum raise and clamps up to it.
+    target =
+      spot.highest === 0
+        ? Math.round(state.bigBlind * (2.2 + rng.next() * 1.1))
+        : Math.round(spot.highest * (2.2 + rng.next() * 0.9));
   } else {
-    // A standard fraction of the pot — sharp varies the fraction widely
-    // so a value bet and a bluff aren't distinguishable by size alone;
-    // steady keeps a tighter, more "textbook" band.
-    const frac = tier === "sharp" ? 0.5 + rng.next() * 0.5 : 0.5 + rng.next() * 0.25;
-    target = already + Math.round(potTotal(state) * frac);
+    // A pot-sized raise is the call plus a fraction of the pot the call
+    // would create. Sharp varies the fraction widely so a value bet and
+    // a bluff are not distinguishable by size alone; steady keeps a
+    // tighter, textbook band; casual is simply erratic.
+    const frac =
+      tier === "sharp"
+        ? 0.45 + rng.next() * 0.5
+        : tier === "steady"
+          ? 0.5 + rng.next() * 0.2
+          : 0.35 + rng.next() * 0.55;
+    target = spot.highest + Math.round((spot.pot + spot.toCall) * frac);
   }
+
+  // Unless the hand is worth the whole stack, no single raise may put
+  // more than half of it in. This is what keeps an ordinary good hand
+  // from turning into a bust-out, which is the other half of "players
+  // go out too soon".
+  const committing = !bluffing && spot.equity >= COMMIT_EQUITY[tier];
+  if (!committing) {
+    target = Math.min(target, spot.already + Math.round(spot.stack * MAX_RAISE_STACK_FRACTION));
+  }
+
+  // Leaving less than a big blind behind helps nobody — take the shove.
+  if (target >= range.max - state.bigBlind) target = range.max;
+
   return Math.max(range.min, Math.min(range.max, target));
 }
 
@@ -235,26 +407,13 @@ function sizeBet(
    Show or muck
    ============================================================ */
 
-/** Casual essentially never shows a loser; steady/sharp show often
- * enough for table-image flavor to actually be reachable in ordinary
- * bot-vs-bot play, not just on the rare hand the hero personally loses
- * a showdown — the same "instrument reachability" lesson this app's own
- * claim-window bug taught (see `rules.test.ts`). */
-const SHOW_CHANCE: Record<BotDifficulty, number> = { casual: 0.02, steady: 0.1, sharp: 0.15 };
-
 function chooseShowOrMuck(rng: Rng, tier: BotDifficulty): PokerAction {
   return rng.next() < SHOW_CHANCE[tier] ? { t: "show" } : { t: "muck" };
 }
 
 /* ============================================================
-   Pacing and assembly
+   Assembly
    ============================================================ */
-
-const PACE: Record<BotDifficulty, (rng: Rng) => number> = {
-  casual: (rng) => 350 + rng.int(300),
-  steady: (rng) => 600 + rng.int(400),
-  sharp: (rng) => 800 + rng.int(500),
-};
 
 function makeBot(tier: BotDifficulty): BotStrategy<PokerState, PokerAction> {
   return {

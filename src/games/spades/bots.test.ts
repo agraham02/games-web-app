@@ -26,11 +26,14 @@ function baseState(overrides: Partial<SpadesState> = {}): SpadesState {
     hands: arr(),
     handRevealed: bool(true),
     blindEligible: bool(false),
+    blindVotes: { 0: null, 1: null, 2: null, 3: null },
+    blindCall: { 0: null, 1: null, 2: null, 3: null },
     bids: { 0: null, 1: null, 2: null, 3: null },
     exchange: null,
     trick: [],
     ledSuit: null,
     trumpBroken: false,
+    voids: { 0: [], 1: [], 2: [], 3: [] },
     leader: 0,
     tricksWon: num(),
     won: arr(),
@@ -116,22 +119,24 @@ describe("spades bots — blind bidding honesty", () => {
     });
   }
 
-  it("never lets a casual bot go blind, however eligible", () => {
+  it("never lets a casual bot vote to go blind, however eligible", () => {
     const state = eligibleHiddenState(hand13);
     for (let seed = 0; seed < 30; seed++) {
       const action = spadesBots.casual.choose(state, 0, createRng(seed));
-      expect(action).toEqual({ t: "look" });
+      expect(action).toEqual({ t: "blindVote", seat: 0, blind: false, defer: true });
     }
   });
 
-  it("steady/sharp sometimes go blind when eligible", () => {
+  it("steady/sharp sometimes vote blind when eligible, and always defer", () => {
+    // Deferring is what lets a person on the team overrule them.
     const state = eligibleHiddenState(hand13);
     for (const tier of ["steady", "sharp"] as const) {
-      const actions = Array.from({ length: 60 }, (_, seed) =>
-        spadesBots[tier].choose(state, 0, createRng(seed)).t,
+      const votes = Array.from({ length: 60 }, (_, seed) =>
+        spadesBots[tier].choose(state, 0, createRng(seed)),
       );
-      expect(actions).toContain("look");
-      expect(actions.some((t) => t === "blindNil" || t === "blindBid")).toBe(true);
+      expect(votes.every((v) => v.t === "blindVote" && v.defer)).toBe(true);
+      expect(votes.some((v) => v.t === "blindVote" && v.blind)).toBe(true);
+      expect(votes.some((v) => v.t === "blindVote" && !v.blind)).toBe(true);
     }
   });
 
@@ -242,4 +247,154 @@ describe("spades bots — the blind-nil exchange", () => {
       expect(action.cards.sort()).toEqual([cardId("C", "2"), cardId("H", "3")].sort());
     }
   });
+});
+
+/* ============================================================
+   Play quality — the tiers are ordered, and the reads are real
+   ============================================================ */
+
+/**
+ * Nothing in this file used to assert that a sharper Spades bot plays
+ * any BETTER — only that every tier plays legally and that the blind
+ * decision is honest. That gap hid three real defects at once: steady
+ * and sharp shared every line of the bidding path (so their bids were
+ * literally identical), `state.bags` was never read at all outside the
+ * blind-bid deficit, and a partner's Nil was invisible — only a bot's
+ * own nil was ever checked, so a bot would duck and hand its partner
+ * the trick that broke the bid.
+ */
+
+interface TeamStats {
+  matches: number;
+  teamWins: number;
+  bagsPerRound: number;
+  nilsAttempted: number;
+  nilsMade: number;
+}
+
+/** Plays whole matches with team 0 (seats 0/2) on `a` and team 1 on
+ * `b`, and reports how team 0 did. */
+function teamMatch(a: BotDifficulty, b: BotDifficulty, seeds: number): TeamStats {
+  const def = createSpades(STANDARD);
+  const tiers: BotDifficulty[] = [a, b, a, b];
+  const out: TeamStats = { matches: 0, teamWins: 0, bagsPerRound: 0, nilsAttempted: 0, nilsMade: 0 };
+  let bags = 0;
+  let rounds = 0;
+
+  for (let seed = 0; seed < seeds; seed++) {
+    const rng = createRng(seed);
+    let state: SpadesState = createStartedMatch(def, rng, tiers);
+    for (let i = 0; i < 40000 && !def.isOver(state); i++) {
+      if (def.isRoundOver!(state)) {
+        bags += state.result?.bagsAdded[0] ?? 0;
+        rounds++;
+        ({ state } = startRound(state, rng));
+        continue;
+      }
+      const seat = def.currentSeat(state)!;
+      const action = def.bots[tiers[seat]!]!.choose(def.playerView(state, seat), seat, rng);
+      ({ state } = def.reduce(state, action));
+    }
+    out.matches++;
+    if (state.winningSeats?.includes(0)) out.teamWins++;
+    out.nilsAttempted += state.nilsAttempted[0] ?? 0;
+    out.nilsMade += state.nilsMade[0] ?? 0;
+  }
+  out.bagsPerRound = rounds === 0 ? 0 : bags / rounds;
+  return out;
+}
+
+function createStartedMatch(
+  def: ReturnType<typeof createSpades>,
+  rng: ReturnType<typeof createRng>,
+  tiers: readonly BotDifficulty[],
+): SpadesState {
+  const { state } = startRound(def.setup({ seats: 4, rng, difficulty: [...tiers] }), rng);
+  return state;
+}
+
+describe("spades difficulty is a real gradient", () => {
+  /**
+   * Deterministic (fixed seeds), so these are exact rather than flaky.
+   * Measured: sharp 24/24 over casual, steady 24/24 over casual, sharp
+   * 17/24 over steady.
+   *
+   * The sharp-over-steady leg is the one that earns its keep. It failed
+   * at 10/24 when first written — sharp ducked tricks to dodge bags
+   * even while the opponents were still short of their own contract,
+   * which politely helped them make it. Only a tier-versus-tier match
+   * can see a mistake of that shape.
+   */
+  it("orders sharp above steady above casual, as teams", () => {
+    expect(teamMatch("sharp", "casual", 24).teamWins).toBeGreaterThan(12);
+    expect(teamMatch("steady", "casual", 24).teamWins).toBeGreaterThan(12);
+    expect(teamMatch("sharp", "steady", 24).teamWins).toBeGreaterThan(12);
+  }, 180_000);
+
+  /**
+   * `estimateTricks` counted only premium winners, which underbids
+   * systematically: four seats share thirteen tricks, so a seat wins
+   * about 3.25 on average while the raw sum averaged about 2. Whole
+   * matches left every team around 3.4 bags a round. Measured after
+   * calibration: 2.2.
+   */
+  it("bids close enough to the tricks it actually wins to avoid piles of bags", () => {
+    expect(teamMatch("steady", "steady", 16).bagsPerRound).toBeLessThan(3);
+  }, 120_000);
+
+  it("gives sharp a better bidding read than steady, not the same code", () => {
+    // Sharp counts short-suit trump control; steady does not. On hands
+    // with a void or singleton and real spade length the two must be
+    // able to disagree, or `sharp`'s setup copy is a lie.
+    const def = createSpades(STANDARD);
+    let differed = 0;
+    for (let seed = 0; seed < 200; seed++) {
+      const rng = createRng(seed);
+      const state: SpadesState = createStartedMatch(def, rng, ["steady", "steady", "steady", "steady"]);
+      if (state.phase !== "bid") continue;
+      const seat = def.currentSeat(state)!;
+      const view = def.playerView(state, seat);
+      const steady = def.bots.steady.choose(view, seat, createRng(seed));
+      const sharp = def.bots.sharp.choose(view, seat, createRng(seed));
+      if (JSON.stringify(steady) !== JSON.stringify(sharp)) differed++;
+    }
+    expect(differed).toBeGreaterThan(0);
+  });
+});
+
+describe("spades bots read the board", () => {
+  it("makes sharp collect fewer bags per round than steady", () => {
+    // Bag discipline is sharp's alone (see `bagCareful` in bots.ts):
+    // once the contract is made and the ten-bag penalty is close, it
+    // stops taking tricks it does not need.
+    const sharp = teamMatch("sharp", "steady", 16).bagsPerRound;
+    const steady = teamMatch("steady", "sharp", 16).bagsPerRound;
+    expect(sharp).toBeLessThan(steady);
+  }, 120_000);
+
+  /**
+   * Nil used to be gated on `estimateTricks(hand) === 0`, a proxy that
+   * almost no hand satisfies — across twenty whole matches seat 0
+   * attempted exactly ONE Nil. A signature Spades bid was shipped
+   * effectively unreachable, the same way Rummy's claim window once
+   * was. It is now decided by `nilDanger`, which asks the question the
+   * bid actually poses: can this hand avoid being forced to win.
+   */
+  it("bids nil often enough to ever be seen, and makes more than it fails", () => {
+    const stats = teamMatch("sharp", "sharp", 10);
+    expect(stats.nilsAttempted).toBeGreaterThan(3);
+    expect(stats.nilsMade / stats.nilsAttempted).toBeGreaterThan(0.45);
+  }, 120_000);
+
+  it("covers a partner's nil rather than ducking into it", () => {
+    const sharp = teamMatch("sharp", "casual", 20);
+    const steady = teamMatch("steady", "casual", 20);
+    // Only meaningful if nils actually get bid at all.
+    expect(sharp.nilsAttempted + steady.nilsAttempted).toBeGreaterThan(0);
+    if (sharp.nilsAttempted > 0 && steady.nilsAttempted > 0) {
+      expect(sharp.nilsMade / sharp.nilsAttempted).toBeGreaterThanOrEqual(
+        steady.nilsMade / steady.nilsAttempted,
+      );
+    }
+  }, 120_000);
 });

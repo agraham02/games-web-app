@@ -29,6 +29,7 @@ import { GameHostView } from "@/table/GameHost";
 import { Button } from "@/ui/primitives/Button";
 import {
   BsTable,
+  canPlay,
   clearPlayCards,
   onPieceTap as tapCard,
   pendingLabel,
@@ -40,7 +41,12 @@ import {
   type BsView,
 } from "@/app/play/bs/table";
 import { tintFor } from "../Roster";
-import { awayFrom, openingPosition, useOnlineRuntime } from "../useOnlineRuntime";
+import {
+  awayFrom,
+  continueWaitingFor,
+  openingPosition,
+  useOnlineRuntime,
+} from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: OnlineTableProps) {
@@ -97,6 +103,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         gameTitle={GAMES[room.gameId ?? "bs"].name}
         viewerSeat={frame.seat}
         serverDriven
+        continueWaiting={continueWaitingFor(room)}
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}
@@ -104,6 +111,9 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         roundSummary={(state) => roundSummary(view, state)}
         pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
         onPieceTap={(id, l) => tapCard(view, id, l, pickUp)}
+        // Your hand is live only when you may PLAY — not merely when the
+        // table is waiting on your answer to a window.
+        handActive={(l) => canPlay(view, l)}
         onLobby={() => {
           putDown();
           api.exitGame();

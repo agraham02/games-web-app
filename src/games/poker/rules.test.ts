@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { BotDifficulty } from "@/engine/types";
+import type { BotDifficulty, GameEvent } from "@/engine/types";
+import { gapAfter } from "@/motion/choreographer";
+import { DURATION } from "@/motion/presets";
 import { createRng } from "@/engine/rng";
 import { createPoker } from "./rules";
 import type { PokerAction, PokerState } from "./types";
@@ -394,3 +396,85 @@ describe("bot-vs-bot fuzz sweep", () => {
 function definitionIsOver(state: PokerState): boolean {
   return state.winner !== null;
 }
+
+describe("dealing the board", () => {
+  /**
+   * Reported: the burn card was barely visible before the next card came,
+   * and the flop's three cards were dealt at once. Measured on the clock
+   * the table actually plays by — `gapAfter`, the rule `drain()` uses —
+   * rather than by counting events, because it is the waits between them
+   * that were missing.
+   */
+  it("burns, then deals the flop one card at a time", () => {
+    const d = createPoker();
+    const rng = createRng(12);
+    let state: PokerState = d.startRound!(d.setup({ seats: 4, rng }), rng).state;
+    let flop: GameEvent[] = [];
+    for (let i = 0; i < 20 && flop.length === 0; i++) {
+      const seat = d.currentSeat(state)!;
+      const legal = d.legalActions(state, seat);
+      const action = legal.find((a) => a.t === "check") ?? legal.find((a) => a.t === "call")!;
+      const { state: next, events } = d.reduce(state, action);
+      if (events.some((e) => e.t === "move" && e.to.zone === "community")) flop = events;
+      state = next;
+    }
+    expect(flop.length).toBeGreaterThan(0);
+
+    // When each event starts, on the table's own clock.
+    const starts: number[] = [0];
+    for (let i = 1; i < flop.length; i++) starts.push(starts[i - 1]! + gapAfter(flop[i - 1]!, flop[i]!));
+    const at = (pred: (e: GameEvent) => boolean) =>
+      flop.flatMap((e, i) => (pred(e) ? [starts[i]!] : []));
+
+    const burn = at((e) => e.t === "move" && e.to.zone === "burnt");
+    const cards = at((e) => e.t === "move" && e.to.zone === "community");
+    const flips = at((e) => e.t === "flip");
+    expect(cards).toHaveLength(3);
+    // The burn has landed before the first card leaves...
+    expect(cards[0]! - burn[0]!).toBeGreaterThanOrEqual(DURATION.play * 1000);
+    for (let i = 0; i < 3; i++) {
+      // ...each card has landed before it turns over...
+      expect(flips[i]! - cards[i]!).toBeGreaterThanOrEqual(DURATION.play * 1000);
+      // ...and has turned over before the next one leaves.
+      if (i < 2) expect(cards[i + 1]! - flips[i]!).toBeGreaterThanOrEqual(DURATION.flip * 1000);
+    }
+  });
+});
+
+describe("announcements", () => {
+  /**
+   * Reported offline as "You checks" and "You takes the pot"; online it
+   * was worse. Poker baked names into its text — "You" for seat 0 and a
+   * bot's name for everyone else — so every player in a room saw seat 0's
+   * moves as their own, and the people at the table were called by bot
+   * names. An `actor` lets each viewer's screen name the mover itself.
+   */
+  it("names every mover through `actor`, never in the text", () => {
+    const d = createPoker();
+    const rng = createRng(21);
+    let state: PokerState = d.startRound!(d.setup({ seats: 5, rng }), rng).state;
+    const announced: GameEvent[] = [];
+    for (let i = 0; i < 2000 && !d.isOver(state); i++) {
+      if (d.isRoundOver!(state)) {
+        const { state: next, events } = d.startRound!(state, rng);
+        announced.push(...events.filter((e) => e.t === "announce"));
+        state = next;
+        continue;
+      }
+      const seat = d.currentSeat(state)!;
+      const action = d.bots.steady.choose(d.playerView(state, seat), seat, rng);
+      const { state: next, events } = d.reduce(state, action);
+      announced.push(...events.filter((e) => e.t === "announce"));
+      state = next;
+    }
+    expect(announced.length).toBeGreaterThan(50);
+    // A hand kept hidden at the showdown is announced, not silent.
+    expect(announced.some((e) => e.t === "announce" && e.text.startsWith("doesn't show"))).toBe(true);
+    for (const e of announced) {
+      if (e.t !== "announce" || e.text === "The pot is split") continue;
+      expect(e.actor, e.text).toBeDefined();
+      expect(e.selfText, e.text).toBeDefined();
+      expect(e.text).not.toMatch(/You/);
+    }
+  });
+});

@@ -183,7 +183,7 @@ export function toActForStreet(state: PokerState, street: PokerStreet): SeatId[]
    Betting amounts
    ============================================================ */
 
-function highestStreetCommitted(state: PokerState): number {
+export function highestStreetCommitted(state: PokerState): number {
   return Math.max(0, ...Object.values(state.streetCommitted));
 }
 

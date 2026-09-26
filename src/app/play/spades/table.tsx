@@ -22,6 +22,7 @@ import type { PieceId, SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { partnerOf, teamOf, teammates } from "@/games/_shared/partnership";
 import {
+  blindVoteOpen,
   isHiddenFromSelf,
   legalPlays,
   minLegalBid,
@@ -34,6 +35,7 @@ import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { TRANSITIONS } from "@/motion/presets";
 import { HandZone } from "@/table/HandZone";
 import { useTableStore } from "@/table/store";
+import { useHeldMarks } from "@/table/useHeldMarks";
 import type { RoundNote } from "@/table/GameHost";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -74,6 +76,9 @@ export const OFFLINE_VIEW: SpadesView = {
 /** How many cards a blind-nil exchange passes. */
 export const EXCHANGE_PICK_LIMIT = 2;
 
+/** Exchange cards are MARKED while staying in the hand: a ring, no lift. */
+const EXCHANGE_MARKS = { highlighted: true } as const;
+
 /**
  * What picking a card up for the exchange MEANS — for both screens.
  *
@@ -88,15 +93,13 @@ export const EXCHANGE_PICK_LIMIT = 2;
  * "Give" with no way to see which cards were chosen.
  */
 export function toggleExchangeCard(held: readonly PieceId[], id: PieceId): PieceId[] {
-  const store = useTableStore.getState();
-  if (held.includes(id)) {
-    store.patch(id, { highlighted: false });
-    return held.filter((x) => x !== id);
-  }
+  // Pure: the ring follows from the list (`useHeldMarks` in `SpadesTable`).
+  // Patching the store in here was a store write inside a React state
+  // updater, which React may run during render.
+  if (held.includes(id)) return held.filter((x) => x !== id);
   // A third tap is ignored until one is put back, rather than silently
   // dropping the oldest — the player chose those two.
   if (held.length >= EXCHANGE_PICK_LIMIT) return [...held];
-  store.patch(id, { highlighted: true });
   return [...held, id];
 }
 
@@ -140,6 +143,7 @@ export function SpadesTable({
 }) {
   const state = live.state;
   const playable = live.isHeroTurn && state.phase === "play" && !state.exchange;
+  useHeldMarks(held, EXCHANGE_MARKS, live.state);
 
   return (
     <>
@@ -187,7 +191,18 @@ function BidPad({
   onClearHeld: () => void;
 }) {
   const state = live.state;
-  if (!live.isHeroTurn || state.phase !== "bid") return null;
+  if (state.phase !== "bid") return null;
+
+  // Checked before whose turn it is: the vote is open to both partners at
+  // once, so it is often not "your turn" while you still have a vote.
+  if (blindVoteOpen(state, view.viewerSeat) && !live.animating) {
+    return state.blindVotes[view.viewerSeat] ? (
+      <BlindVoteWaiting view={view} state={state} />
+    ) : (
+      <BlindVoteDialog view={view} live={live} />
+    );
+  }
+  if (!live.isHeroTurn) return null;
 
   if (state.exchange) {
     return <ExchangeBar live={live} isGiver={state.exchange.stage === "give"} held={held} onClearHeld={onClearHeld} />;
@@ -344,40 +359,91 @@ function NumericBidPanel({ view, live }: { view: SpadesView; live: Live }) {
   );
 }
 
-/** Rung 6 `BlockingDialog` — same reasoning as `NumericBidPanel`'s doc
- * gives for why it ISN'T one: nothing here needs the table (the hand is
- * still hidden at this exact decision — the whole point of "blind"), so
- * a real modal costs nothing. */
+/**
+ * The team's vote on going blind, cast by both partners at once when the
+ * team's first bid comes up. Rung 6 `BlockingDialog` — nothing here needs
+ * the table, since the hand is still hidden at this exact decision.
+ *
+ * With a bot for a partner, this vote IS the decision: a bot's vote always
+ * defers to a person's (see `reduceBlindVote`).
+ */
+function BlindVoteDialog({ view, live }: { view: SpadesView; live: Live }) {
+  const state = live.state;
+  const me = view.viewerSeat;
+  const partner = partnerOf(me);
+  const deficit = (state.scores[((me + 1) % 4) as SeatId] ?? 0) - (state.scores[me] ?? 0);
+  const theirs = state.blindVotes[partner];
+  const vote = (blind: boolean) => live.submitAction({ t: "blindVote", seat: me, blind, defer: false });
+
+  return (
+    <BlockingDialog open title="Your team trails — go blind?">
+      <div className="flex flex-col gap-4">
+        <p className="text-[12px] text-bone-400">
+          Your team trails by {deficit}, so you may bid without looking at your hands. You and
+          your partner both vote; if you disagree, a coin decides.
+        </p>
+        {theirs && !theirs.defer ? (
+          <p className="text-center text-[12px] font-semibold text-brass-300">
+            {view.nameFor(partner)} voted {theirs.blind ? "blind" : "to look"}.
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => vote(true)}
+          className="rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-3 text-sm font-extrabold text-felt-950 shadow-e2"
+        >
+          Go blind — doubles on success
+        </button>
+        <button
+          type="button"
+          onClick={() => vote(false)}
+          className="rounded-lg bg-bone-50/6 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-bone-50/10"
+        >
+          Look at our hands
+        </button>
+      </div>
+    </BlockingDialog>
+  );
+}
+
+/** Non-modal: once you have voted there is nothing left to decide. */
+function BlindVoteWaiting({ view, state }: { view: SpadesView; state: SpadesState }) {
+  const mine = state.blindVotes[view.viewerSeat];
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 z-1800 flex justify-center px-4"
+      style={{ bottom: "calc(var(--hand-zone, 150px) + 12px)" }}
+    >
+      <p className="rounded-full border border-brass-400/25 bg-felt-900/90 px-4 py-2 text-[12px] text-bone-300 shadow-e2">
+        You voted {mine?.blind ? "blind" : "to look"} — waiting for{" "}
+        {view.nameFor(partnerOf(view.viewerSeat))}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The blind bid itself, once the team has voted to go blind. Rung 6
+ * `BlockingDialog` for the same reason as the vote: the hand is still
+ * hidden, so there is nothing on the table to compare against.
+ */
 function BlindChoiceDialog({ view, live }: { view: SpadesView; live: Live }) {
   const state = live.state;
-  const deficit = (state.scores[((view.viewerSeat + 1) % 4) as SeatId] ?? 0) - (state.scores[view.viewerSeat] ?? 0);
   const canBlindNil = minLegalBid(state, view.viewerSeat) === 0;
-  // Synchronized team decision (pagat.com: "a partnership... may choose
-  // not to look... after agreeing on a blind bid, the partners pick up
-  // their cards" — a joint choice, not two independent ones). If the
-  // partner already bid blind, "look" is off the table entirely.
+  // The partner already bid blind (a Blind Nil, say), so this seat bids
+  // its own blind number rather than the team's.
   const locked = mustBidBlind(state, view.viewerSeat);
   const [blindValue, setBlindValue] = useState(6);
   const submit = (action: SpadesAction) => live.submitAction(action);
 
   return (
-    <BlockingDialog open title="Your team trails — bid blind?">
+    <BlockingDialog open title="Your team is going blind">
       <div className="flex flex-col gap-4">
         <p className="text-[12px] text-bone-400">
           {locked
-            ? "Your partner already bid blind — your team is committed. Pick your own blind bid."
-            : `Your team trails by ${deficit} — you may bid without looking at your hand.`}
+            ? "Your partner already bid blind. Pick your own blind bid."
+            : "Your team voted to go blind — bid without looking at your hand."}
         </p>
-
-        {locked ? null : (
-          <button
-            type="button"
-            onClick={() => submit({ t: "look" })}
-            className="rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-3 text-sm font-extrabold text-felt-950 shadow-e2"
-          >
-            Look at my hand
-          </button>
-        )}
 
         {canBlindNil ? (
           <button
@@ -405,7 +471,7 @@ function BlindChoiceDialog({ view, live }: { view: SpadesView; live: Live }) {
           <button
             type="button"
             onClick={() => submit({ t: "blindBid", tricks: blindValue })}
-            className="w-full rounded-lg bg-bone-50/6 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300"
+            className="w-full rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-2.5 text-sm font-extrabold text-felt-950 shadow-e2"
           >
             {locked ? `Blind bid ${blindValue}` : `Bid ${blindValue} for your team`}
           </button>

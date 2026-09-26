@@ -29,11 +29,12 @@ import type { Rng } from "@/engine/rng";
 import { DEFAULT_TURN_HOLD_MS, GameSession, type SessionFrame } from "@/session/GameSession";
 import { playbackMs } from "@/motion/choreographer";
 import { gameEntry, type GameId, type RawSettings } from "@/session/registry";
-import { projectEvents, redactPlacements } from "@/session/redact";
+import { piecesNamed, projectEvents, redactPlacements } from "@/session/redact";
 import {
   applyCommand,
   connectedCount,
   isSeatLive,
+  mayContinueRound,
   openSeats,
   orderedMembers,
   seatOf,
@@ -401,9 +402,22 @@ export class RoomRuntime {
     // It leaks nothing: these are exactly the pieces the redaction has
     // already decided this seat may identify, and a card they can name is
     // a card whose face they are entitled to.
+    const events = projectEvents(frame.events, truthBefore, truthAfter);
     const meta: Record<PieceId, PieceMeta> = { ...standInMeta };
-    for (const id of Object.keys(placements)) {
+    // ...and for anything the batch names on the way, which the settled
+    // board may no longer hold: the last card of a trick is played face up
+    // and collected face down in one reduce. See `piecesNamed`.
+    for (const id of [...Object.keys(placements), ...piecesNamed(events)]) {
       if (!meta[id] && allMeta[id]) meta[id] = allMeta[id];
+    }
+    // ...and for the stand-ins a `mask` puts on the table mid-batch, which
+    // the settled board names differently. Shaped like what they replace —
+    // a hidden domino is still domino-shaped — and faceless, like every
+    // stand-in.
+    for (const event of events) {
+      if (event.t !== "mask") continue;
+      const kind = allMeta[event.drop[0]!]?.kind ?? "card";
+      for (const { piece } of event.add) meta[piece] ??= { kind, face: "" };
     }
 
     const game = this.room.game;
@@ -416,7 +430,7 @@ export class RoomRuntime {
 
     return {
       seq: frame.seq,
-      events: projectEvents(frame.events, truthBefore, truthAfter),
+      events,
       state: definition.playerView(after, asSeat),
       placements,
       meta,
@@ -468,12 +482,12 @@ export class RoomRuntime {
 
   nextRound(session: SessionId): boolean {
     if (!this.session) return false;
-    // A seat, not merely presence: a spectator has no round to continue.
-    if (seatOf(this.room, session) === null) return false;
-    // Deliberately not leader-gated and deliberately not deduped —
-    // `GameSession.nextRound` already no-ops unless a round is genuinely
-    // over, so the second of two players pressing Continue together is
-    // harmless rather than a race to guard.
+    // The leader's call while they are at the table, and anyone seated's
+    // when they are not — see `mayContinueRound`. It used to be anyone
+    // seated, always, and the user wants the leader to continue.
+    // Deliberately not deduped: `GameSession.nextRound` already no-ops
+    // unless a round is genuinely over.
+    if (!mayContinueRound(this.room, session)) return false;
     this.session.nextRound();
     return true;
   }
@@ -545,6 +559,7 @@ export class RoomRuntime {
       gameRunning: game !== null,
       openSeats: openSeats(room),
       inGame: Boolean(game?.present.includes(session)),
+      youMayContinue: mayContinueRound(room, session),
     };
   }
 

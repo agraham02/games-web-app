@@ -254,6 +254,25 @@ export function isSeatLive(room: Room, seat: SeatId): boolean {
   return Boolean(member?.connected) && game.present.includes(owner);
 }
 
+/**
+ * Who may deal the next round: the party leader, while they are at the
+ * table (the user's rule, 2026-09-25). Everyone else sees "waiting for the
+ * leader".
+ *
+ * But never a table that nobody can move on. A leader who drops has their
+ * leadership handed on already (see `reassignLeader`), but one who steps
+ * away to the lobby keeps it and cannot see the round's end, so while the
+ * leader is not at the table any seated player who is may continue.
+ */
+export function mayContinueRound(room: Room, session: SessionId): boolean {
+  const game = room.game;
+  if (!game) return false;
+  const here = (s: SessionId) => Boolean(room.members[s]?.connected) && game.present.includes(s);
+  if (session === room.leader) return here(session);
+  if (here(room.leader)) return false;
+  return seatOf(room, session) !== null && here(session);
+}
+
 export function seatOf(room: Room, session: SessionId): SeatId | null {
   const idx = room.game?.seatOwner.indexOf(session) ?? -1;
   return idx === -1 ? null : idx;

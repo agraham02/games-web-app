@@ -34,8 +34,20 @@ export interface PokerHandResult {
    * ever compared, nothing was revealed. */
   showdown: boolean;
   winningSeats: SeatId[];
-  /** Net stack change this hand, per seat — for the round scorecard. */
+  /**
+   * What each seat was PAID from the pot(s) — only winners appear. Not a
+   * net change: a winner's own contribution is inside it, and a loser is
+   * simply absent. It was documented as "net", and the scorecard showed it
+   * as net: +50 for a winner who had put in 20, +0 for a player $20 down.
+   */
   deltas: Record<SeatId, number>;
+  /** Net stack change this hand, for every seat dealt in — payout minus
+   * what the seat put in. What the scorecard shows. */
+  net: Record<SeatId, number>;
+  /** Seats still in at a showdown, including any who then mucked — so a
+   * losing hand that was not shown reads as lost, not folded. Empty when
+   * the hand ended without one. */
+  showdownSeats: SeatId[];
 }
 
 /**
@@ -56,6 +68,8 @@ export interface PendingShowdown {
   order: SeatId[];
   /** Computed once, at showdown-start; applied once `order` empties. */
   pendingDeltas: Record<SeatId, number>;
+  /** Everyone still in when the showdown began — see `showdownSeats`. */
+  contested: SeatId[];
 }
 
 export interface PokerState {
@@ -105,6 +119,25 @@ export interface PokerState {
   /** The size of the last FULL bet/raise this street — the increment a
    * new raise must at least match to reopen the action. */
   lastRaiseSize: number;
+  /**
+   * How many full bets/raises have landed THIS street, reset to 0 when
+   * a street closes. Public information — everyone at the table can
+   * count the raises — so `playerView` leaves it alone.
+   *
+   * Carried on the state rather than inferred by the bots because a
+   * bot re-deriving a fact `rules.ts` already knows is how this game
+   * shipped its one pre-release bug (bots read "bet vs raise" off
+   * `amountToCall` while `legalActions` read it off
+   * `highestStreetCommitted`). `lastRaiseSize` cannot answer this:
+   * several different raise sequences produce the same increment.
+   *
+   * What reads it: `bots.ts` raises its required equity for each raise
+   * already faced. Without that, a bot's preflop strength never changes
+   * within a street, so two bots that both liked their hands re-raised
+   * each other until one was all-in — the reported "bots go all-in way
+   * too much" bug.
+   */
+  raisesThisStreet: number;
   /**
    * Set once an incomplete (under-minraise) all-in raise happens this
    * street. Deliberate scope cut from exact casino rules: rather than

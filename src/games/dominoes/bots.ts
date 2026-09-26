@@ -18,6 +18,7 @@ import {
   canPlay,
   drawableTiles,
   endsAfter,
+  isKeyTile,
   nextSeat,
   playableTiles,
   sameSide,
@@ -62,33 +63,106 @@ function bestOf(
 }
 
 /**
- * How good a move looks with only public information:
+ * Seats that have shown they cannot play a given number, by passing
+ * while it was an open end. Opponents only — blocking a partner is
+ * helping the other side.
+ */
+function opponentsVoidIn(state: DomState, seat: SeatId, pip: number): number {
+  let n = 0;
+  for (let s = 0; s < state.seats; s++) {
+    const other = s as SeatId;
+    if (other === seat || sameSide(state, other, seat)) continue;
+    if ((state.passedEnds[other] ?? []).includes(pip)) n++;
+  }
+  return n;
+}
+
+/** The fewest tiles any opponent is holding — how close the other side
+ * is to going out. Redacted hands keep their length, so this is
+ * readable from the bot's own view. */
+function closestOpponent(state: DomState, seat: SeatId): number {
+  let fewest = Infinity;
+  for (let s = 0; s < state.seats; s++) {
+    const other = s as SeatId;
+    if (other === seat || sameSide(state, other, seat)) continue;
+    fewest = Math.min(fewest, (state.hands[other] ?? []).length);
+  }
+  return Number.isFinite(fewest) ? fewest : 7;
+}
+
+/**
+ * How good a move looks with only public information.
  *
- *  - shedding pips is the whole game, so weight matters most;
+ * The weights matter as much as the terms. The first version summed
+ * `tilePips + cover * 1.5 + squeeze`, and `tilePips` runs 0-12 while
+ * everything else moved the score by at most 3 — so whenever the
+ * heaviest legal tile was four pips clear of the next, sharp and steady
+ * chose the identical tile and the two tiers were the same bot. Weight
+ * is now scaled down to roughly the range of the positional terms, so
+ * control can actually outrank a heavy tile instead of only breaking
+ * ties between equally heavy ones.
+ *
+ * The terms:
+ *
+ *  - shedding pips still matters — it is how the round is scored;
  *  - a move that leaves ends your own hand still covers keeps you off
- *    the boneyard next turn, which is worth roughly a pip apiece;
+ *    the boneyard next turn;
  *  - making BOTH ends the same number narrows what anyone else can
- *    answer with — the standard blocking squeeze.
+ *    answer with — the standard blocking squeeze;
+ *  - leaving an end an opponent has ALREADY passed on is the real prize
+ *    (`state.passedEnds`): that seat is provably stuck on it, and the
+ *    closer they are to going out the more it is worth;
+ *  - in Caribbean, going out on the one tile that fits nowhere else is
+ *    worth a whole extra game (`isKeyTile`), which no bot used to check
+ *    even while the rule was enabled.
  *
  * The squeeze is the one term that has to know about partners. It is
- * worth playing because it strangles WHOEVER GOES NEXT, and in Caribbean
- * team mode that seat is your own partner half the time — turn order
+ * worth playing because it strangles WHOEVER GOES NEXT, and in team
+ * mode that seat is your own partner half the time — turn order
  * alternates opponent/partner/opponent around the table. Rewarding it
  * unconditionally had a sharp bot cheerfully blocking its own side, so
  * it is scored against the seat it actually lands on: a bonus when that
- * is an opponent, a penalty of the same weight when it is your partner.
+ * is an opponent, a penalty of the same weight when it is a partner.
  */
 function judge(state: DomState, seat: SeatId, play: Play): number {
   const after = endsAfter(state, play.tile, play.end);
+  const hand = state.hands[seat] ?? [];
+
   let cover = 0;
-  for (const id of state.hands[seat] ?? []) {
+  for (const id of hand) {
     if (id === play.tile) continue;
     if (tileHas(id, after.left) || tileHas(id, after.right)) cover++;
   }
+
   const squeezes = after.left === after.right;
   const hitsPartner = sameSide(state, nextSeat(state, seat), seat);
   const squeeze = squeezes ? (hitsPartner ? -3 : 3) : 0;
-  return tilePips(play.tile) + cover * 1.5 + squeeze;
+
+  // Pressure: how many opponents are provably stuck on the ends this
+  // move leaves. Counting both ends means a squeeze onto a number the
+  // table has already passed on scores twice, which is exactly right —
+  // that is the move that ends a round.
+  let pressure = 0;
+  for (const end of [after.left, after.right]) {
+    pressure += opponentsVoidIn(state, seat, end) * 2.5;
+  }
+  // Worth more when somebody is about to go out and be scored on.
+  if (closestOpponent(state, seat) <= 2) pressure *= 1.6;
+
+  // Going out on the key tile takes an extra game in Caribbean. Only
+  // counts when this play actually empties the hand.
+  const goingOut = hand.length === 1;
+  const keyTile = goingOut && state.rules.keyTileBonus && isKeyTile(state, play.tile) ? 6 : 0;
+
+  // With the boneyard gone and the table already passing, the round is
+  // heading for a block — and a blocked round is scored on pips left in
+  // hand, so dumping weight goes back to being the whole game. Nothing
+  // used to notice this: `pipsInHand`/`lightestTile` exist in state.ts
+  // for exactly this tiebreak and no bot ever called them.
+  const blockLikely = drawableTiles(state) === 0 && state.passes > 0;
+  const weight = blockLikely ? 1.2 : 0.35;
+
+  return tilePips(play.tile) * weight + cover * 1.5 + squeeze + pressure + keyTile;
 }
 
 function makeBot(

@@ -80,7 +80,7 @@ export default function MotionLab() {
     const heroCard = pieces("hand", HERO)[0];
     if (!heroCard) return;
 
-    events.push({ t: "play", piece: heroCard, from: HERO, to: "trick" });
+    events.push({ t: "play", piece: heroCard, from: HERO, to: "trick", faceUp: true });
     const played: PieceId[] = [heroCard];
 
     for (let seat = 1; seat < seats; seat++) {
@@ -88,7 +88,7 @@ export default function MotionLab() {
       if (!card) continue;
       events.push({ t: "think", seat, ms: 500 + seat * 260 });
       events.push({ t: "flip", piece: card, faceUp: true });
-      events.push({ t: "play", piece: card, from: seat, to: "trick" });
+      events.push({ t: "play", piece: card, from: seat, to: "trick", faceUp: true });
       played.push(card);
     }
 

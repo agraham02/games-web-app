@@ -44,6 +44,16 @@ const MS = 1000;
  */
 const UNMASK_SETTLE = 50;
 
+/**
+ * How long a `mask` holds the queue before the shuffle and the deal behind
+ * it may run. It swaps real pieces for stand-ins, and the pieces it drops
+ * are the ones the sweep in front of it is still carrying into the pile —
+ * dropping them sooner would pull them out of the air. A little over a
+ * full sweep (`DURATION.sweep` plus ten pieces of `STAGGER.sweep`), which
+ * also reads as the shuffle it stands in front of.
+ */
+const MASK_SETTLE = 300;
+
 export interface ChoreographOptions {
   /**
    * Overrides `STAGGER.deal` (ms between one deal event starting and the
@@ -144,6 +154,14 @@ export function choreograph(
         steps.push({ event, offset: 0, duration: UNMASK_SETTLE });
         break;
 
+      case "mask":
+        steps.push({ event, offset: 0, duration: MASK_SETTLE });
+        break;
+
+      case "dice":
+        steps.push({ event, offset: 0, duration: (DURATION.diceTumble + DURATION.diceRead) * MS });
+        break;
+
       case "pause":
         // Same weight as a single ordinary `move` — DURATION.play, not
         // a fresh constant — because the whole point is that a turn
@@ -235,6 +253,10 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  *    be deciding, so its whole `ms` has to run out.
  *  - `unmask` renders a piece that has never been on this screen, and the
  *    move that follows must not land in the same paint.
+ *  - `mask` swaps the pieces a sweep is still carrying into a pile for
+ *    stand-ins, so the shuffle and deal behind it wait for them to land.
+ *  - `dice` has to be SEEN: the chips a roll decides wait until the dice
+ *    have tumbled and been read.
  *  - `pause` is a beat by definition. LRC emits one ahead of a roll's
  *    chip moves so the dice can be READ before the chips they decided
  *    start flying, and the draining loop used to honour only the first
@@ -243,7 +265,9 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  */
 function blockingMs(event: GameEvent, step: TimedStep | undefined): number {
   if (event.t === "think") return event.ms;
-  if (event.t === "unmask" || event.t === "pause") return step?.duration ?? 0;
+  if (event.t === "unmask" || event.t === "mask" || event.t === "pause" || event.t === "dice") {
+    return step?.duration ?? 0;
+  }
   return 0;
 }
 
@@ -299,4 +323,29 @@ export function playbackMs(events: readonly GameEvent[], opts: ChoreographOption
     total += gapAfter(events[i]!, events[i + 1]!, opts);
   }
   return total;
+}
+
+/**
+ * Milliseconds from a batch going idle to its last animation finishing —
+ * the part of a batch that `playbackMs` deliberately does not count.
+ *
+ * Playback goes idle when the last event is APPLIED, with its animation
+ * still running underneath. That is right for pacing, and harmless offline,
+ * where the reconcile that follows keeps every piece's id. Online it does
+ * not: the settled position names a card that has just gone face down by a
+ * stand-in, and swapping ids mid-flight unmounts the card that was flying.
+ * A trick's `collect` is exactly that, and it vanished the instant it began.
+ */
+export function tailMs(events: readonly GameEvent[], opts: ChoreographOptions = {}): number {
+  let start = 0;
+  let end = 0;
+  for (let i = 0; i < events.length; i++) {
+    if (i > 0) start += gapAfter(events[i - 1]!, events[i]!, opts);
+    const [step] = choreograph([events[i]!], opts);
+    // `think` is a wait, not an animation, and it always blocks the queue
+    // until it is over — so it can never still be running at the end.
+    if (events[i]!.t === "think") continue;
+    end = Math.max(end, start + (step?.duration ?? 0));
+  }
+  return Math.max(0, end - start);
 }

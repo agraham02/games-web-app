@@ -155,3 +155,53 @@ function* fiveCardCombinations<T>(cards: readonly T[]): Generator<T[]> {
     for (let j = i + 1; j < k; j++) indices[j] = indices[j - 1]! + 1;
   }
 }
+
+/* ============================================================
+   Naming a hand, for people
+   ============================================================ */
+
+const RANK_NAME: Record<number, string> = { 14: "Ace", 13: "King", 12: "Queen", 11: "Jack" };
+const rankName = (r: number) => RANK_NAME[r] ?? String(r);
+const rankPlural = (r: number) => (RANK_NAME[r] ? `${RANK_NAME[r]}s` : `${r}s`);
+
+/**
+ * A hand in words a newcomer can read: "Pair of 10s", "Two pair, Kings
+ * and 10s", "Ace high". The category alone ("Pair") does not say which
+ * pair, and which pair is what decides most showdowns.
+ */
+export function describeHand(value: HandValue): string {
+  const [a = 0, b = 0] = value.ranks;
+  switch (value.category) {
+    case 8:
+      return a === 14 ? "Royal flush" : `Straight flush, ${rankName(a)} high`;
+    case 7:
+      return `Four ${rankPlural(a)}`;
+    case 6:
+      return `Full house, ${rankPlural(a)} and ${rankPlural(b)}`;
+    case 5:
+      return `Flush, ${rankName(a)} high`;
+    case 4:
+      return `Straight, ${rankName(a)} high`;
+    case 3:
+      return `Three ${rankPlural(a)}`;
+    case 2:
+      return `Two pair, ${rankPlural(a)} and ${rankPlural(b)}`;
+    case 1:
+      return `Pair of ${rankPlural(a)}`;
+    default:
+      return `${rankName(a)} high`;
+  }
+}
+
+/**
+ * The best hand in any number of cards, named — including fewer than
+ * five, which is every player's position before the flop: two hole cards
+ * are a pair or they are high-card.
+ */
+export function describeBest(cards: readonly Card[]): string {
+  if (cards.length >= 5) return describeHand(bestOfSeven(cards));
+  const ranks = cards.map((c) => pokerRank(c.rank)).sort((x, y) => y - x);
+  if (ranks.length === 0) return "";
+  if (ranks.length >= 2 && ranks[0] === ranks[1]) return `Pair of ${rankPlural(ranks[0]!)}`;
+  return `${rankName(ranks[0]!)} high`;
+}

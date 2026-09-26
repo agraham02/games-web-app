@@ -411,6 +411,10 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
 
   return (
     <motion.div
+      // A `jump` remounts the piece at its new place (`initial={false}`
+      // puts it there with no animation), which also drops whatever
+      // animation was still carrying it — see `Placement.jump`.
+      key={placement.jump ?? 0}
       initial={false}
       onMouseEnter={mouseHoverEligible ? () => setHeroHoverIndex(handIndex) : undefined}
       onMouseLeave={

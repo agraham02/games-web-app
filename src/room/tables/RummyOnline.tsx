@@ -43,7 +43,12 @@ import {
   type RummyView,
 } from "@/app/play/rummy/table";
 import { tintFor } from "../Roster";
-import { awayFrom, openingPosition, useOnlineRuntime } from "../useOnlineRuntime";
+import {
+  awayFrom,
+  continueWaitingFor,
+  openingPosition,
+  useOnlineRuntime,
+} from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 
 export function RummyOnline({ api, room, frame }: OnlineTableProps) {
@@ -83,6 +88,8 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
       },
       // A seat somebody owns but is not currently in — see `awayFrom`.
       awayFor: awayFrom(frame),
+      // Whoever is not live, owned or not: that is who the claim races.
+      isBot: (seat: SeatId) => frame.botSeats.includes(seat),
     }),
     [frame, room.members],
   );
@@ -102,6 +109,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
         gameTitle={GAMES[room.gameId ?? "rummy"].name}
         viewerSeat={frame.seat}
         serverDriven
+        continueWaiting={continueWaitingFor(room)}
         live={live}
         bottomZone={handHeaderHeight(vh) + SHEET_PEEK_H}
         players={playerViews(view, room.seats)}

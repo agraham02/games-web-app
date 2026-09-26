@@ -16,8 +16,15 @@ holding in their head.
 | 2 | Ambient badge | Opponent meld strips, chip counts, bag counts | never | none |
 | 3 | `EventToast` (sonner) | Bot actions — "Sam knocked", "Mia bid 3" | no | a glance |
 | 4 | `PeekRail` | Reference consulted *while* playing — board melds, full scoreboard, discard history | no | a drag |
-| 5 | `InfoSheet` | On-demand detail — rules, scoring breakdown, hand history | no | a tap, dismissible |
+| 5 | `InfoSheet` | On-demand detail — rules, scoring breakdown, hand history, settings | no — dims the table while open | a tap; tap outside, the X or Esc closes |
 | 6 | `BlockingDialog` | Real stakes only — confirm knock, place bid, fold/call/raise | **yes** | full stop |
+
+**An `InfoSheet` is a drawer from its button's edge.** Settings and
+Poker's Hands both sit on the right, so both slide in from the right
+(`side`). While one is open the rest of the screen dims, and tapping that
+dimmed area, the X or Esc puts it away — the user's call (2026-09-25): an
+undimmed drawer read as another layer of table rather than something
+opened. It still asks nothing, which is what keeps it off rung 6.
 
 ## Hard rules
 

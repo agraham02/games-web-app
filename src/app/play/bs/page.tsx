@@ -25,10 +25,12 @@ import { GameHost } from "@/table/GameHost";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { SeatsSlider, SetupField } from "@/ui/primitives/SetupField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import {
   BsTable,
   OFFLINE_VIEW,
+  canPlay,
   clearPlayCards,
   onPieceTap as tapCard,
   pendingLabel,
@@ -94,6 +96,7 @@ export default function BsPlayPage() {
       roundSummary={(state) => roundSummary(view, state)}
       pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
       onPieceTap={onPieceTap}
+      handActive={(live) => canPlay(view, live)}
       onRematch={() => {
         clearHeld();
         setGameKey((k) => k + 1);
@@ -157,21 +160,17 @@ function SetupScreen({
         </p>
       </div>
 
-      <div className="flex w-full max-w-xs flex-col gap-3">
-        <NumberStepper
-          value={seats}
-          min={MIN_SEATS}
-          max={MAX_SEATS}
-          label="players"
-          onChange={onSeatsChange}
-        />
-        <NumberStepper
-          value={target}
-          min={1}
-          max={9}
-          label="rounds to win"
-          onChange={onTargetChange}
-        />
+      <div className="flex w-full flex-col gap-5">
+        <SeatsSlider value={seats} min={MIN_SEATS} max={MAX_SEATS} onChange={onSeatsChange} />
+        <SetupField label="Rounds to win">
+          <NumberStepper
+            value={target}
+            min={1}
+            max={9}
+            label="rounds to win"
+            onChange={onTargetChange}
+          />
+        </SetupField>
         <DifficultyPicker
           value={difficulty}
           onChange={onDifficultyChange}

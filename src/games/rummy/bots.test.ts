@@ -202,3 +202,54 @@ describe("rummy bots — honesty", () => {
     }
   });
 });
+
+/* ============================================================
+   The tiers are ordered by skill
+   ============================================================ */
+
+/**
+ * Rummy's suite proved the tiers behave DIFFERENTLY (lay-off rates,
+ * pile digs, the sharp feed guard) but never that a sharper one wins
+ * more. Before this, steady and sharp differed in only two places —
+ * `LAYOFF_ATTENTION` 0.95 vs 1.0, and the sharp-only feed guard — the
+ * closest pair of tier constants anywhere in the codebase. Sharp now
+ * also reads which of its cards are already dead, feels the stock
+ * running out, and takes a bigger deal.
+ *
+ * Deterministic (fixed seeds). Measured out of 40: sharp 36 over
+ * casual, steady 28 over casual, sharp 28 over steady.
+ */
+function headToHead(a: BotDifficulty, b: BotDifficulty, seeds: number): number {
+  let aWins = 0;
+  for (let seed = 1; seed <= seeds; seed++) {
+    const game = createRummy({ target: 200 });
+    const rng = createRng(seed);
+    // Alternate seats so dealing first cannot decide it.
+    const swap = seed % 2 === 1;
+    const tiers: BotDifficulty[] = swap ? [b, a] : [a, b];
+    let state = game.setup({ seats: 2, rng, difficulty: [...tiers] });
+    ({ state } = game.startRound!(state, rng));
+    for (let n = 0; n < 20000 && !game.isOver(state); n++) {
+      if (game.isRoundOver!(state)) {
+        ({ state } = game.startRound!(state, rng));
+        continue;
+      }
+      // A claim window is an ordinary bot turn now, so it goes through
+      // `choose` like everything else and this loop ignores it.
+      const seat = game.currentSeat(state)!;
+      const action = game.bots[tiers[seat]!]!.choose(game.playerView(state, seat), seat, rng);
+      ({ state } = game.reduce(state, action));
+    }
+    const aSeat = swap ? 1 : 0;
+    if ((state.scores[aSeat] ?? 0) > (state.scores[1 - aSeat] ?? 0)) aWins++;
+  }
+  return aWins;
+}
+
+describe("rummy difficulty is a real gradient", () => {
+  it("orders sharp above steady above casual, head to head", () => {
+    expect(headToHead("sharp", "casual", 40)).toBeGreaterThan(20);
+    expect(headToHead("steady", "casual", 40)).toBeGreaterThan(20);
+    expect(headToHead("sharp", "steady", 40)).toBeGreaterThan(20);
+  }, 180_000);
+});

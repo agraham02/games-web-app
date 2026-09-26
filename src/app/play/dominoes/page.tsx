@@ -27,6 +27,7 @@ import Link from "next/link";
 import { HERO, type BotDifficulty, type PieceId } from "@/engine/types";
 import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { SeatsSlider, SetupField } from "@/ui/primitives/SetupField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { Toggle } from "@/ui/primitives/Toggle";
 import { GameHost } from "@/table/GameHost";
@@ -252,7 +253,7 @@ function dominoScenarios(live: Live) {
 const DOMINO_BLURBS = {
   casual: "Plays whatever's in hand, no plan behind it.",
   steady: "Sheds its heaviest tiles first — enough to punish a careless hand.",
-  sharp: "Keeps its own options open, and squeezes a block when one's going cheap.",
+  sharp: "Remembers what you passed on and plays to it, and squeezes a block when one's going cheap.",
 };
 
 function SetupScreen({
@@ -310,8 +311,7 @@ function SetupScreen({
       {/* Two named rulesets, so a segmented row rather than a switch —
           a toggle labelled "Caribbean" would leave the other option
           unnamed, and "off" is not what classic Block & Draw is. */}
-      <div className="flex w-full max-w-xs flex-col gap-2">
-        <span className="eyebrow text-center">Rules</span>
+      <SetupField label="Rules">
         <div className="flex gap-2">
           {(["classic", "caribbean"] as const).map((m) => (
             <button
@@ -328,32 +328,27 @@ function SetupScreen({
             </button>
           ))}
         </div>
-      </div>
+      </SetupField>
 
       {caribbean ? (
-        <div className="flex w-full max-w-xs flex-col items-center gap-1 rounded-lg bg-bone-50/4 px-3.5 py-2.5 ring-1 ring-bone-50/8">
-          <span className="text-sm font-bold text-bone-200">Four players</span>
-          <span className="text-center text-[11px] text-bone-500">
-            No more, no less — seven tiles each is the whole set.
-          </span>
-        </div>
+        <SetupField
+          label="Players"
+          value={4}
+          hint="No more, no less — seven tiles each is the whole set."
+        />
       ) : (
-        <div className="flex w-full max-w-xs flex-col gap-2">
-          <span className="eyebrow text-center">Players — {seats}</span>
-          <input
-            type="range"
-            min={MIN_SEATS}
-            max={MAX_SEATS}
-            value={seats}
-            onChange={(e) => onSeatsChange(Number(e.target.value))}
-            className="w-full accent-brass-400"
-          />
-        </div>
+        <SeatsSlider value={seats} min={MIN_SEATS} max={MAX_SEATS} onChange={onSeatsChange} />
       )}
 
       {caribbean ? (
-        <div className="flex w-full max-w-xs flex-col gap-2">
-          <span className="eyebrow text-center">Games to win</span>
+        <SetupField
+          label="Games to win"
+          hint={
+            sixLove && teams
+              ? "Six love resets you, so these have to be won in a row — six runs about an hour."
+              : "One game per round won. Two if you finish on the key tile."
+          }
+        >
           <NumberStepper
             value={games}
             min={CARIBBEAN_TARGET_MIN}
@@ -361,15 +356,12 @@ function SetupScreen({
             onChange={onGamesChange}
             label={games === 1 ? "game" : "games"}
           />
-          <span className="text-center text-[11px] text-bone-500">
-            {sixLove && teams
-              ? "Six love resets you, so these have to be won in a row — six runs about an hour."
-              : "One game per round won. Two if you finish on the key tile."}
-          </span>
-        </div>
+        </SetupField>
       ) : (
-        <div className="flex w-full max-w-xs flex-col gap-2">
-          <span className="eyebrow text-center">Play to</span>
+        <SetupField
+          label="Play to"
+          hint="61 is the usual target at three or four players, 100 heads-up."
+        >
           <div className="flex gap-2">
             {TARGETS.map((t) => (
               <button
@@ -386,15 +378,11 @@ function SetupScreen({
               </button>
             ))}
           </div>
-          <span className="text-center text-[11px] text-bone-500">
-            61 is the usual target at three or four players, 100 heads-up.
-          </span>
-        </div>
+        </SetupField>
       )}
 
       {caribbean ? (
-        <div className="flex w-full max-w-xs flex-col gap-2">
-          <span className="eyebrow text-center">Optional rules</span>
+        <SetupField label="Optional rules">
           <Toggle
             label="Partners"
             hint="Two against two, partners across the table. You play with the seat opposite you."
@@ -418,12 +406,10 @@ function SetupScreen({
             disabled={!teams}
             onChange={onSixLoveChange}
           />
-        </div>
+        </SetupField>
       ) : null}
 
-      <div className="flex w-full max-w-xs">
-        <DifficultyPicker value={difficulty} onChange={onDifficultyChange} blurbs={DOMINO_BLURBS} />
-      </div>
+      <DifficultyPicker value={difficulty} onChange={onDifficultyChange} blurbs={DOMINO_BLURBS} />
 
       <button
         type="button"

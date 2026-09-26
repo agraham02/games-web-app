@@ -115,6 +115,11 @@ export interface RoomView {
   openSeats: SeatId[];
   /** Whether the recipient is currently at the table. */
   inGame: boolean;
+  /**
+   * Whether the recipient may deal the next round: the leader at the table,
+   * or anyone seated while the leader is not. See `mayContinueRound`.
+   */
+  youMayContinue: boolean;
 }
 
 /**

@@ -165,14 +165,20 @@ describe("projectEvents", () => {
       "S-A": { zone: "trick", index: 0, count: 1, faceUp: true },
       "S-K": hand(3, 0, 2, false),
     };
-    const events: GameEvent[] = [{ t: "play", piece: "S-A", from: 3, to: "trick" }];
+    const events: GameEvent[] = [{ t: "play", piece: "S-A", from: 3, to: "trick", faceUp: true }];
 
     const out = projectEvents(events, before, after);
     expect(out).toHaveLength(2);
-    expect(out[0]).toEqual({ t: "unmask", piece: "S-A", at: hand(3, 1, 3, false) });
+    expect(out[0]).toEqual({
+      t: "unmask",
+      piece: "S-A",
+      at: hand(3, 1, 3, false),
+      // The stand-in the viewer is holding in that slot, which it replaces.
+      replaces: "#hand:3:-:1",
+    });
     // The play must name the REAL card, because the unmask just put that
     // exact id on the board for it to fly out of.
-    expect(out[1]).toEqual({ t: "play", piece: "S-A", from: 3, to: "trick" });
+    expect(out[1]).toEqual({ t: "play", piece: "S-A", from: 3, to: "trick", faceUp: true });
     // The card still in hand stays anonymous.
     expect(JSON.stringify(out)).not.toContain("S-K");
   });
@@ -182,7 +188,7 @@ describe("projectEvents", () => {
     // then animate nowhere — the fly-out is the entire point.
     const before: PlacementMap = { "D6-3": hand(2, 4, 7, false) };
     const after: PlacementMap = { "D6-3": { zone: "line", index: 0, count: 1, faceUp: true } };
-    const out = projectEvents([{ t: "play", piece: "D6-3", from: 2, to: "line" }], before, after);
+    const out = projectEvents([{ t: "play", piece: "D6-3", from: 2, to: "line", faceUp: true }], before, after);
 
     expect(out[0]).toMatchObject({ t: "unmask", at: { zone: "hand", seat: 2, index: 4 } });
   });
@@ -230,9 +236,10 @@ describe("projectEvents", () => {
   });
 
   it("conceals a whole poker deal from every seat but the one it belongs to", () => {
-    // End to end against the game that exposed the bug. Poker places no
-    // cards at all before dealing, which is what made its pre-batch
-    // placements empty and took the unsafe branch.
+    // End to end against the game that exposed the bug. Poker used to
+    // place no cards at all before dealing, which is what made its
+    // pre-batch placements empty and took the unsafe branch; it parks the
+    // deck in the stub now, and this still has to hold.
     const poker = createPoker();
     const rng = createRng(31337);
     const base = poker.setup({ seats: 4, rng });
@@ -250,6 +257,36 @@ describe("projectEvents", () => {
         expect(wire).not.toContain(`"${id}"`);
       }
     }
+  });
+
+  it("makes a shuffled pile anonymous without saying which stand-in is which", () => {
+    // Two tiles the viewer watched on the line, swept, shuffled and dealt
+    // to opponents. The viewer holds them under their real ids, so the deal
+    // needs stand-ins the table has — but a stand-in paired with a real id
+    // would say whose hand that tile went to. Dealing them in either order
+    // must look exactly the same to the viewer.
+    const line = (index: number) => ({ zone: "line" as const, index, count: 2, faceUp: true });
+    const before: PlacementMap = { "6-6": line(0), "6-5": line(1) };
+    const after: PlacementMap = { "6-6": hand(1, 0, 1, false), "6-5": hand(2, 0, 1, false) };
+    const deal = (first: PieceId, second: PieceId): GameEvent[] => [
+      { t: "sweep", pieces: ["6-6", "6-5"], to: "boneyard" },
+      { t: "shuffle", seed: 1 },
+      { t: "deal", piece: first, to: first === "6-6" ? 1 : 2, faceUp: false },
+      { t: "deal", piece: second, to: second === "6-6" ? 1 : 2, faceUp: false },
+    ];
+    const one = projectEvents(deal("6-6", "6-5"), before, after);
+    const other = projectEvents(deal("6-5", "6-6"), before, after);
+
+    const mask = one.find((e) => e.t === "mask");
+    expect(mask).toBeDefined();
+    // Every deal aims at a stand-in the mask put on the table.
+    const added = new Set(mask!.t === "mask" ? mask!.add.map((a) => a.piece) : []);
+    for (const e of one) if (e.t === "deal") expect(added.has(e.piece)).toBe(true);
+    // And nothing after the sweep can tell the two orders apart, except
+    // the seats — which the deal says anyway.
+    const blind = (events: GameEvent[]) =>
+      events.slice(1).map((e) => (e.t === "deal" ? { ...e, to: 0 } : e));
+    expect(blind(other)).toEqual(blind(one));
   });
 
   it("never emits a real id for a piece the viewer cannot see, across a real deal", () => {
@@ -487,6 +524,42 @@ function withoutPublicHistory(state: unknown, gameId: GameId): unknown {
   return copy;
 }
 
+/** Every piece id in a game's `PUBLIC_ONCE_SEEN` part of its state. */
+function publicHistory(state: unknown, gameId: GameId): string[] {
+  const rule = PUBLIC_ONCE_SEEN[gameId];
+  if (!rule || typeof state !== "object" || state === null) return [];
+  const record = state as Record<string, unknown>;
+  const keys = typeof rule === "function" ? rule(record) : rule;
+  const out: string[] = [];
+  const walk = (value: unknown) => {
+    if (typeof value === "string") out.push(value);
+    else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  for (const key of keys) walk(record[key]);
+  return out;
+}
+
+/** The piece ids an event names, in order. */
+function namesOf(event: GameEvent): PieceId[] {
+  switch (event.t) {
+    case "deal":
+    case "draw":
+    case "play":
+    case "move":
+    case "flip":
+    case "highlight":
+      return [event.piece];
+    case "collect":
+    case "sweep":
+      return event.pieces;
+    case "slam":
+      return [event.piece, ...event.shake];
+    default:
+      return [];
+  }
+}
+
 describe("facing, from a seat that is not zero", () => {
   /**
    * Every game writes `faceUp: seat === HERO` when it deals, because
@@ -558,63 +631,170 @@ describe("the whole frame, every game, every turn", () => {
     bs: true,
   };
 
+  /**
+   * Plays a whole bot match and hands every frame to `visit`, once per
+   * viewer: an opponent's seat and a spectator.
+   */
+  function everyFrame(
+    gameId: GameId,
+    visit: (frame: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      definition: GameDefinition<any, any>;
+      viewer: number;
+      events: readonly GameEvent[];
+      truthBefore: PlacementMap;
+      truthAfter: PlacementMap;
+      after: unknown;
+      meta: ReturnType<GameSession<unknown, unknown>["pieceMeta"]>;
+    }) => void,
+  ) {
+    const entry = GAMES[gameId];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
+    const clock = new TestClock();
+    const session = new GameSession({
+      definition,
+      seats: SEATS[gameId],
+      seed: 99,
+      clock,
+      // Every seat a bot, so the clock alone plays the match out.
+      isSeatLive: () => false,
+      turnHoldMs: () => 0,
+    });
+
+    let previous: unknown = session.snapshot();
+    session.setEmit((frame) => {
+      const after = session.snapshot();
+      // -1 is `SPECTATOR_SEAT`: a viewer number matching no seat, which
+      // is how a spectator gets a table with every hand face down.
+      for (const viewer of [-1, 1]) {
+        visit({
+          definition,
+          viewer,
+          events: frame.events,
+          truthBefore: definition.placements(previous, viewer),
+          truthAfter: definition.placements(after, viewer),
+          after,
+          meta: session.pieceMeta(),
+        });
+      }
+      previous = after;
+    });
+
+    session.start();
+    for (let turn = 0; turn < 300 && !definition.isOver(session.snapshot()); turn++) {
+      session.settled();
+      clock.advance(10);
+      if (definition.isRoundOver?.(session.snapshot())) session.nextRound();
+    }
+  }
+
   for (const gameId of GAME_IDS) {
     it(`${gameId}: names nothing an opponent or a spectator may not identify`, () => {
-      const entry = GAMES[gameId];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
-      const clock = new TestClock();
-      const session = new GameSession({
-        definition,
-        seats: SEATS[gameId],
-        seed: 99,
-        clock,
-        // Every seat a bot, so the clock alone plays the match out.
-        isSeatLive: () => false,
-        turnHoldMs: () => 0,
-      });
-
       const leaks: string[] = [];
       let checked = 0;
-      let previous: unknown = session.snapshot();
 
-      session.setEmit((frame) => {
-        const after = session.snapshot();
-        // -1 is `SPECTATOR_SEAT`: a viewer number matching no seat, which
-        // is how a spectator gets a table with every hand face down.
-        for (const viewer of [-1, 1]) {
-          const truthBefore = definition.placements(previous, viewer);
-          const truthAfter = definition.placements(after, viewer);
-          const forbidden = Object.entries(truthAfter)
-            .filter(([, placement]) => !placement.faceUp)
-            .map(([id]) => id);
-          if (forbidden.length === 0) continue;
-          checked++;
+      everyFrame(gameId, ({ definition, viewer, events, truthBefore, truthAfter, after, meta }) => {
+        const forbidden = Object.entries(truthAfter)
+          .filter(([, placement]) => !placement.faceUp)
+          .map(([id]) => id);
+        if (forbidden.length === 0) return;
+        checked++;
 
-          const payload = {
-            state: withoutPublicHistory(definition.playerView(after, viewer), gameId),
-            placements: redactPlacements(truthAfter, session.pieceMeta()).placements,
-            events: projectEvents(frame.events, truthBefore, truthAfter),
-          };
+        const projected = projectEvents(events, truthBefore, truthAfter);
+        // What a batch may still name on its way to hiding it: a piece
+        // the viewer could already read, or one the table has on public
+        // record (a won trick, whose every card was played face up). Only
+        // until a shuffle — after one, naming a card says whose hand it
+        // went to. Judged from the board and the game's own public state,
+        // NOT from the events' claims, or a game that played face up by
+        // mistake would be excused by its own mistake.
+        const cut = projected.findIndex((e) => e.t === "shuffle");
+        const early = cut < 0 ? projected : projected.slice(0, cut);
+        const late = cut < 0 ? [] : projected.slice(cut);
+        const view = definition.playerView(after, viewer);
+        const seen = new Set([
+          ...Object.entries(truthBefore).filter(([, p]) => p.faceUp).map(([id]) => id),
+          ...publicHistory(view, gameId),
+        ]);
 
-          for (const id of forbidden) {
-            if (frameNames(payload, id)) leaks.push(`viewer ${viewer} was sent ${id}`);
-          }
+        const payload = {
+          state: withoutPublicHistory(view, gameId),
+          placements: redactPlacements(truthAfter, meta).placements,
+          events: late,
+        };
+        for (const id of forbidden) {
+          const named =
+            frameNames(payload, id) ||
+            (!seen.has(id) && JSON.stringify(early).includes(`"${id}"`));
+          if (named) leaks.push(`viewer ${viewer} was sent ${id}`);
         }
-        previous = after;
       });
-
-      session.start();
-      for (let turn = 0; turn < 300 && !definition.isOver(session.snapshot()); turn++) {
-        session.settled();
-        clock.advance(10);
-        if (definition.isRoundOver?.(session.snapshot())) session.nextRound();
-      }
 
       // Guards the guard: a game that dealt nothing would pass vacuously.
       if (CONCEALS[gameId]) expect(checked).toBeGreaterThan(20);
       else expect(checked).toBe(0);
       expect(leaks.slice(0, 5)).toEqual([]);
+    });
+
+    it(`${gameId}: every event aims at a piece the viewer's table is holding`, () => {
+      /**
+       * `moveTo` does nothing to a piece the store is not tracking, so an
+       * event renamed to a stand-in the viewer never had is a silent
+       * no-op: the piece does not move, and the reconcile teleports it.
+       * That is what hid the last card of every Spades trick from the
+       * player who led it, and sent every collected trick nowhere.
+       *
+       * Scoped to pieces that were ON the table before the batch. Poker
+       * places nothing before its first deal, so that deal has no pile to
+       * fly from at all — a known gap, and not this one.
+       *
+       * A piece the viewer could read before a shuffle — a tile off the
+       * Dominoes line, a revealed BS card — has to go anonymous at it, and
+       * the stand-in it is dealt as must be one the `mask` put on the table.
+       */
+      const misses: string[] = [];
+      const blanks: string[] = [];
+      let masks = 0;
+
+      everyFrame(gameId, ({ viewer, events, truthBefore, truthAfter }) => {
+        const projected = projectEvents(events, truthBefore, truthAfter);
+        const held = new Set(Object.keys(redactPlacements(truthBefore, {}).placements));
+        const aligned = projected.filter((e) => e.t !== "unmask" && e.t !== "mask");
+        expect(aligned).toHaveLength(events.length);
+
+        let at = 0;
+        for (const event of projected) {
+          if (event.t === "mask") {
+            masks++;
+            for (const id of event.drop) held.delete(id);
+            for (const { piece } of event.add) held.add(piece);
+            continue;
+          }
+          if (event.t === "unmask") {
+            // Dropped, not kept: anything addressing the replaced stand-in
+            // later in the batch would be a no-op on a real table too.
+            if (event.replaces) held.delete(event.replaces);
+            held.add(event.piece);
+            continue;
+          }
+          const raw = events[at++]!;
+          const names = namesOf(event);
+          namesOf(raw).forEach((real, i) => {
+            if (!truthBefore[real]) return;
+            if (!held.has(names[i]!)) misses.push(`viewer ${viewer}: ${raw.t} ${real} as ${names[i]}`);
+          });
+          // A stand-in has no face; drawn face up it is a blank card.
+          if (event.t === "play" && event.faceUp && isSentinel(event.piece)) {
+            blanks.push(`viewer ${viewer}: ${event.piece}`);
+          }
+        }
+      });
+
+      expect(misses.slice(0, 5)).toEqual([]);
+      expect(blanks.slice(0, 5)).toEqual([]);
+      // Guards the guard: these two re-deal pieces the viewer could read.
+      if (gameId === "dominoes" || gameId === "bs") expect(masks).toBeGreaterThan(0);
     });
   }
 });

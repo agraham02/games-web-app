@@ -66,9 +66,10 @@ export interface ClaimWindow {
    * "the hero" was a synonym for "the one human".
    *
    * Now the list is simply every eligible seat, with no opinion about who
-   * is sitting in any of them. A seat nobody is at is played by its bot
-   * and spends its reaction time as a `think`; a seat with a person in it
-   * is offered the window and races the clock. `currentSeat` names the
+   * is sitting in any of them. A seat nobody is at is played by its bot,
+   * which waits out its reaction time BEFORE it claims (`turnHold`); a
+   * seat with a person in it is offered the window and races the clock.
+   * `currentSeat` names the
    * soonest, which is who the PACING waits on, and `legalActions` entitles
    * all of them — so a human three deep in this list can still beat the
    * bot at the front of it by being quick, which is the whole point.
@@ -78,6 +79,19 @@ export interface ClaimWindow {
    * (see `claimReactions`).
    */
   pending: ReadonlyArray<{ seat: SeatId; ms: number }>;
+  /**
+   * How far into the race a pass shows it has got, in ms from the window
+   * opening. Absent until somebody passes.
+   *
+   * The engine has no clock, but a pass tells it the time: a person only
+   * passes when their ring runs out, and a ring runs out when a rival
+   * could first arrive (`claimDeadlineMs`). A bot at the front of the list
+   * after that has already had that long, so it waits only for the rest
+   * of its own reaction time. Without this it started its whole reaction
+   * time again from the pass, and a table parked on a person who let the
+   * card go sat still for a second time.
+   */
+  elapsed?: number;
 }
 
 export interface RoundResult {

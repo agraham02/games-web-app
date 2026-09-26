@@ -206,7 +206,7 @@ describe("applyEventToTable — collect/sweep stagger (motionDelayMs)", () => {
     // play clears it.
     seed(map);
     applyEventToTable({ t: "collect", pieces: ["A", "B"], to: 2 });
-    applyEventToTable({ t: "play", piece: "B", from: 0, to: "trick" });
+    applyEventToTable({ t: "play", piece: "B", from: 0, to: "trick", faceUp: true });
     expect(useTableStore.getState().placements.B!.motionDelayMs).toBeUndefined();
 
     // flip clears it.
@@ -261,6 +261,31 @@ describe("applyEventToTable — collected pile does not creep across a round", (
       expect(placements[id]!.index, id).toBeLessThan(4);
       expect(placements[id]!.count, id).toBe(4);
     }
+  });
+});
+
+describe("applyEventToTable — the trick is one pile", () => {
+  it("puts the card just played on top, whichever seat it came from", () => {
+    // Trick cards used to be bucketed by SEAT, so each was index 0 of its
+    // own bucket and all four shared one z-index — leaving the stacking to
+    // DOM order. Cards 1-3 were put right by the reconcile after their
+    // own play; the 4th is collected in the same batch, gets no such
+    // reconcile, and sat UNDER the three before it.
+    useTableStore.getState().reset(
+      {
+        A: { zone: "trick", seat: 1, index: 0, count: 3, faceUp: true },
+        B: { zone: "trick", seat: 2, index: 1, count: 3, faceUp: true },
+        C: { zone: "trick", seat: 3, index: 2, count: 3, faceUp: true },
+        D: { zone: "hand", seat: 0, index: 0, count: 1, faceUp: true },
+      },
+      {},
+    );
+    applyEventToTable({ t: "play", piece: "D", from: 0, to: "trick", faceUp: true });
+
+    const map = useTableStore.getState().placements;
+    expect(map.D).toMatchObject({ seat: 0, index: 3, count: 4 });
+    // The cards already down keep their order, and so their rotation.
+    expect([map.A!.index, map.B!.index, map.C!.index]).toEqual([0, 1, 2]);
   });
 });
 
@@ -392,14 +417,16 @@ describe("applyEventToTable — unmask", () => {
     });
     expect(useTableStore.getState().placements["S-A"]!.zone).toBe("hand");
 
-    applyEventToTable({ t: "play", piece: "S-A", from: 3, to: "trick" });
+    applyEventToTable({ t: "play", piece: "S-A", from: 3, to: "trick", faceUp: true });
     expect(useTableStore.getState().placements["S-A"]!.zone).toBe("trick");
   });
 
-  it("leaves the anonymous stand-ins beside it alone", () => {
-    // They are dropped a moment later by the batch's own reconcile, not
-    // by this event — which is what keeps `applyEvent` a pure placement
-    // reducer with no idea that redaction exists.
+  it("takes the place of the stand-in it names, and leaves the rest alone", () => {
+    // It used to leave every stand-in for the batch's reconcile to drop.
+    // That spread the fan for one card too many and left a spare back in
+    // the hand — invisible while the batch ended soon after, but the last
+    // card of a trick is followed by a hold and a collect, and the back
+    // sat there for seconds after the card had flown.
     useTableStore.getState().reset(
       {
         "#hand:3:-:0": { zone: "hand", seat: 3, index: 0, count: 2, faceUp: false },
@@ -411,17 +438,51 @@ describe("applyEventToTable — unmask", () => {
       t: "unmask",
       piece: "S-A",
       at: { zone: "hand", seat: 3, index: 1, count: 2, faceUp: false },
+      replaces: "#hand:3:-:1",
     });
 
     const map = useTableStore.getState().placements;
     expect(map["#hand:3:-:0"]).toBeDefined();
-    expect(map["#hand:3:-:1"]).toBeDefined();
-    expect(map["S-A"]).toBeDefined();
+    expect(map["#hand:3:-:1"]).toBeUndefined();
+    expect(map["S-A"]).toMatchObject({ zone: "hand", seat: 3, index: 1, count: 2 });
+  });
+});
 
-    // All three now share the bucket, so the fan briefly spreads for
-    // three. That momentary extra back is the spare the reconcile drops,
-    // and it sits exactly on top of the card flying out — which is why it
-    // is invisible rather than a flicker.
-    expect(map["S-A"]!.count).toBe(3);
+describe("applyEventToTable — a play lands on top of its pile", () => {
+  it("joins the pile already there rather than starting one under it", () => {
+    // Seen in Chrome in BS: a played card kept the player's seat, so it
+    // was bucketed apart from the pile's own cards, became index 0 of a
+    // pile of one, and flew in under the top card.
+    const pile = (index: number) => ({ zone: "pile" as const, index, count: 3, faceUp: false });
+    const map: PlacementMap = {
+      "#pile:-:-:0": pile(0),
+      "#pile:-:-:1": pile(1),
+      "#pile:-:-:2": pile(2),
+      "#hand:2:-:4": { zone: "hand", seat: 2, index: 4, count: 9, faceUp: false },
+    };
+    const meta: Record<string, PieceMeta> = Object.fromEntries(
+      Object.keys(map).map((id) => [id, { kind: "card", face: "" }]),
+    );
+    useTableStore.getState().reset(map, meta);
+    applyEventToTable({ t: "play", piece: "#hand:2:-:4", from: 2, to: "pile", faceUp: false });
+    const played = useTableStore.getState().placements["#hand:2:-:4"]!;
+    expect(played.zone).toBe("pile");
+    expect(played.index).toBe(3);
+    expect(played.count).toBe(4);
+  });
+});
+
+describe("applyEventToTable — a jumped piece still flies on its next move", () => {
+  it("keeps `jump` through a play, because it is the element's key", () => {
+    // Clearing it on the play changed the key, which remounted the card
+    // straight onto the pile, and that play never flew (seen in Chrome).
+    const map: PlacementMap = {
+      "#hand:1:-:0": { zone: "hand", seat: 1, index: 0, count: 5, faceUp: false, jump: 7 },
+    };
+    useTableStore.getState().reset(map, { "#hand:1:-:0": { kind: "card", face: "" } });
+    applyEventToTable({ t: "play", piece: "#hand:1:-:0", from: 1, to: "pile", faceUp: false });
+    const played = useTableStore.getState().placements["#hand:1:-:0"]!;
+    expect(played.zone).toBe("pile");
+    expect(played.jump).toBe(7);
   });
 });

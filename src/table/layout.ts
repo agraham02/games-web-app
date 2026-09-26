@@ -421,9 +421,17 @@ export function layoutPiece(
       const dy = seat.y - cy;
       const len = Math.hypot(dx, dy) || 1;
       const radius = Math.min(trick.w, trick.h) * 0.26;
+      // ...but never so far that the card leaves the trick box. On a short
+      // screen the box is squeezed between the top seat's hand and the
+      // hero's, and a full offset would carry a card back out into one of
+      // them; the cards overlapping each other a little more is the
+      // better trade.
+      const reachX = Math.max(0, trick.w / 2 - (art.w * tableScale) / 2);
+      const reachY = Math.max(0, trick.h / 2 - (art.h * tableScale) / 2);
+      const clamp = (v: number, reach: number) => Math.max(-reach, Math.min(reach, v));
       const { x, y } = centred(
-        cx + (dx / len) * radius,
-        cy + (dy / len) * radius,
+        cx + clamp((dx / len) * radius, reachX),
+        cy + clamp((dy / len) * radius, reachY),
         g,
       );
       return {
@@ -876,20 +884,24 @@ export function layoutPiece(
       // `resolveTable` already sized to fit the play area.
       const zone = g.zones.community;
       const gap = g.card.w * 0.15;
-      const totalW = g.card.w * 5 + gap * 4;
-      // On the rare viewport where `resolveTable`'s own clamp engaged
-      // (the box came back narrower than 5 full cards), compress the
-      // GAP first rather than the cards themselves — the same
-      // "compress before you shrink" instinct compress-then-pan's hand
-      // fan already follows.
-      const fit = Math.min(1, zone.w / totalW);
-      const effGap = gap * fit;
-      const rowW = g.card.w * 5 + effGap * 4;
-      const originX = zone.x + zone.w / 2 - rowW / 2 + g.card.w / 2;
-      const ccx = originX + p.index * (g.card.w + effGap);
+      const minGap = g.card.w * 0.04;
+      // When the box is narrower than 5 cards and their gaps — it is
+      // bounded by the space between the seats' hands, which a phone or a
+      // laptop can make tight — compress the GAP first, and only then
+      // shrink the cards. Five cards that do not fit spill into a hand.
+      let cardW = g.card.w;
+      let effGap = Math.max(minGap, Math.min(gap, (zone.w - cardW * 5) / 4));
+      if (cardW * 5 + effGap * 4 > zone.w) {
+        cardW = Math.max(0, (zone.w - minGap * 4) / 5);
+        effGap = minGap;
+      }
+      const shrink = cardW / g.card.w;
+      const rowW = cardW * 5 + effGap * 4;
+      const originX = zone.x + zone.w / 2 - rowW / 2 + cardW / 2;
+      const ccx = originX + p.index * (cardW + effGap);
       const ccy = zone.y + zone.h / 2;
       const { x, y } = centred(ccx, ccy, g);
-      return { x, y, rotate: 0, scale: tableScale, z, opacity };
+      return { x, y, rotate: 0, scale: tableScale * shrink, z, opacity };
     }
 
     /* --------------------------------------------------- pot */

@@ -656,75 +656,10 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const cx = play.x + play.w / 2;
   const cy = play.y + play.h / 2;
 
-  // Trick: a square-ish cluster at the centre, sized to hold a fanned
-  // pile of table cards without touching the seat pods.
+  // Trick: a square-ish cluster, sized to hold a fanned pile of table
+  // cards. Placed and bounded by `pileRegion` further down, not by `play`.
   const trickW = Math.min(play.w * 0.72, spec.card.w * 3.4);
   const trickH = Math.min(play.h * 0.62, spec.card.h * 2.6);
-
-  // Community: a fixed row of 5 slots — poker's flop/turn/river. Unlike
-  // `trick`'s fanned cluster, these never overlap, so the row wants its
-  // full 5-card width; clamped to the play area so it still fits on a
-  // narrow phone (layout.ts's own scale math shrinks the cards to match
-  // if this clamp ever engages). Sits ABOVE centre, deliberately, leaving
-  // room below for the `pot` zone computed right after it.
-  const communityGap = spec.card.w * 0.15;
-  const communityW = Math.min(play.w * 0.94, spec.card.w * 5 + communityGap * 4);
-  const communityH = spec.card.h;
-  // The desired gap between the row's own centre-line and `cy`, clamped
-  // so it can never push the row above `play.y` — on a short landscape
-  // phone `play.h` can be thin enough that the "ideal" offset would put
-  // the row over a top-row pod. Matches `pileRegion`'s own precedent of
-  // giving ground on the tightest viewport rather than asserting the
-  // impossible.
-  const communityOffset = Math.min(
-    spec.card.h * 0.65,
-    Math.max(0, play.h / 2 - communityH / 2),
-  );
-  const communityBottom = cy - communityOffset - communityH / 2 + communityH;
-
-  // Pot: box for the pot-total badge, sized off `miniCard` (see
-  // `ZoneName`'s doc) — originally to hold a small fanned chip pile,
-  // kept as the box's footprint now that the pile has been replaced by
-  // a plain "$" readout (see `engine/types.ts`'s `ZoneId` doc), since a
-  // single-line badge fits it with room to spare and the anchoring below
-  // is the part that actually matters. Anchored to `community`'s own
-  // actual bottom edge plus a real gap — not to a fraction of `cy` the
-  // way an earlier version assumed — so the two zones cannot overlap
-  // regardless of how little vertical room a viewport leaves: if there
-  // isn't enough room below the community row for the box's wanted
-  // height, the BOX shrinks to what's actually there rather than
-  // reaching down past `play`'s own bottom edge, the same "give ground
-  // on the tightest viewport" trade `pileRegion` already makes.
-  const potGap = spec.miniCard.h * 0.3;
-  const potRows = 3;
-  const potHWanted = spec.miniCard.w * (1 + 0.85 * (potRows - 1));
-  const potRoom = Math.max(0, play.y + play.h - (communityBottom + potGap));
-  // At least one row tall even on the rare viewport where `potRoom`
-  // undershoots that — same "being drawable beats being perfectly
-  // contained" trade `pileRegion`'s own floor makes — but never more
-  // than what community + gap actually left below it.
-  const potH = Math.max(spec.miniCard.w, Math.min(potHWanted, potRoom));
-  const potW = Math.max(spec.miniCard.w, Math.min(play.w * 0.9, spec.miniCard.w * 5));
-  const potY = communityBottom + potGap;
-
-  // Stub + burnt: poker's own low-emphasis face-down piles — the
-  // remaining deck and the burn-card pile — continuing the SAME vertical
-  // stack `pot` started below `community`, rather than reusing Rummy's
-  // `deck`/`discard` zones, which are anchored to `cy` for a table that
-  // has nothing else there. A poker table does, now (`community`/`pot`
-  // both claim it), so those two zones would collide with them on every
-  // single hand — this is the fix for exactly that, not a guess at one.
-  // Side by side, small, tucked below the pot pile; shrinks (never
-  // reaches back up into `pot`) on a viewport too short to fit its
-  // wanted size, the same floor-then-shrink trade every zone below
-  // `community` already makes.
-  const stubGap = spec.miniCard.h * 0.3;
-  const stubHWanted = spec.miniCard.h * 1.3;
-  const stubRoom = Math.max(0, play.y + play.h - (potY + potH + stubGap));
-  const stubH = Math.max(spec.miniCard.h * 0.6, Math.min(stubHWanted, stubRoom));
-  const stubY = potY + potH + stubGap;
-  const stubCardW = spec.miniCard.w * 1.3;
-  const stubPairGap = spec.miniCard.w * 0.3;
 
   // BS: one central face-down pile with the face-up `reveal` row directly
   // above it. Laid out as a PAIR centred on `cy` rather than as two
@@ -878,9 +813,94 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     h: floorH,
   };
 
+  // Community: a fixed row of 5 slots — poker's flop/turn/river. Unlike
+  // `trick`'s fanned cluster, these never overlap, so the row wants its
+  // full 5-card width; clamped to the play area so it still fits on a
+  // narrow phone (layout.ts's own scale math shrinks the cards to match
+  // if this clamp ever engages). Sits ABOVE centre, deliberately, leaving
+  // room below for the `pot` zone computed right after it.
+  const communityGap = spec.card.w * 0.15;
+  // Bounded by `pileRegion`, not `play`, in both directions: `play` clears
+  // the pods but not the cards fanned out of them, so on a laptop the row
+  // sat inside the top seats' hole cards, and on a phone its ends reached
+  // the side seats'. The layout shrinks the cards to a narrower box.
+  const communityW = Math.min(pileRegion.w, spec.card.w * 5 + communityGap * 4);
+  const communityH = spec.card.h;
+  // The desired gap between the row's own centre-line and `cy`, clamped
+  // so it can never push the row above `play.y` — on a short landscape
+  // phone `play.h` can be thin enough that the "ideal" offset would put
+  // the row over a top-row pod. Matches `pileRegion`'s own precedent of
+  // giving ground on the tightest viewport rather than asserting the
+  // impossible.
+  const communityOffset = Math.min(
+    spec.card.h * 0.65,
+    Math.max(0, play.h / 2 - communityH / 2),
+  );
+  const communityTop = Math.max(pileRegion.y, cy - communityOffset - communityH / 2);
+  const communityBottom = communityTop + communityH;
+
+  // Pot: box for the pot-total badge, sized off `miniCard` (see
+  // `ZoneName`'s doc) — originally to hold a small fanned chip pile,
+  // kept as the box's footprint now that the pile has been replaced by
+  // a plain "$" readout (see `engine/types.ts`'s `ZoneId` doc), since a
+  // single-line badge fits it with room to spare and the anchoring below
+  // is the part that actually matters. Anchored to `community`'s own
+  // actual bottom edge plus a real gap — not to a fraction of `cy` the
+  // way an earlier version assumed — so the two zones cannot overlap
+  // regardless of how little vertical room a viewport leaves: if there
+  // isn't enough room below the community row for the box's wanted
+  // height, the BOX shrinks to what's actually there rather than
+  // reaching down past `play`'s own bottom edge, the same "give ground
+  // on the tightest viewport" trade `pileRegion` already makes.
+  const potGap = spec.miniCard.h * 0.3;
+  const potRows = 3;
+  const potHWanted = spec.miniCard.w * (1 + 0.85 * (potRows - 1));
+  const potRoom = Math.max(0, play.y + play.h - (communityBottom + potGap));
+  // At least one row tall even on the rare viewport where `potRoom`
+  // undershoots that — same "being drawable beats being perfectly
+  // contained" trade `pileRegion`'s own floor makes — but never more
+  // than what community + gap actually left below it.
+  const potH = Math.max(spec.miniCard.w, Math.min(potHWanted, potRoom));
+  const potW = Math.max(spec.miniCard.w, Math.min(play.w * 0.9, spec.miniCard.w * 5));
+  const potY = communityBottom + potGap;
+
+  // Stub + burnt: poker's own low-emphasis face-down piles — the
+  // remaining deck and the burn-card pile — continuing the SAME vertical
+  // stack `pot` started below `community`, rather than reusing Rummy's
+  // `deck`/`discard` zones, which are anchored to `cy` for a table that
+  // has nothing else there. A poker table does, now (`community`/`pot`
+  // both claim it), so those two zones would collide with them on every
+  // single hand — this is the fix for exactly that, not a guess at one.
+  // Side by side, small, tucked below the pot pile; shrinks (never
+  // reaches back up into `pot`) on a viewport too short to fit its
+  // wanted size, the same floor-then-shrink trade every zone below
+  // `community` already makes.
+  const stubGap = spec.miniCard.h * 0.3;
+  const stubHWanted = spec.miniCard.h * 1.3;
+  const stubRoom = Math.max(0, play.y + play.h - (potY + potH + stubGap));
+  const stubH = Math.max(spec.miniCard.h * 0.6, Math.min(stubHWanted, stubRoom));
+  const stubY = potY + potH + stubGap;
+  const stubCardW = spec.miniCard.w * 1.3;
+  const stubPairGap = spec.miniCard.w * 0.3;
+
+  // Centred on `pileRegion` rather than on `play`, and never larger than
+  // it. `play` clears the top pod but not the cards fanned below it, so a
+  // trick centred there looked right on a tall desktop and pushed the
+  // partner's card up into the top seat's hand on a laptop. `pileRegion`
+  // is already cleared of both — the same "a zone is cheaper than a
+  // collision" answer poker's centre needed.
+  const trickBoxW = Math.min(trickW, pileRegion.w);
+  const trickBoxH = Math.min(trickH, pileRegion.h);
+  const trick: Box = {
+    x: pileRegion.x + (pileRegion.w - trickBoxW) / 2,
+    y: pileRegion.y + (pileRegion.h - trickBoxH) / 2,
+    w: trickBoxW,
+    h: trickBoxH,
+  };
+
   const zones: Record<ZoneName, Box> = {
     play,
-    trick: { x: cx - trickW / 2, y: cy - trickH / 2, w: trickW, h: trickH },
+    trick,
     deck: { x: deckX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
     discard: { x: discardX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
     board: play,
@@ -888,8 +908,8 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     boneyard: bone,
     hand,
     community: {
-      x: cx - communityW / 2,
-      y: cy - communityH / 2 - communityOffset,
+      x: pileRegion.x + pileRegion.w / 2 - communityW / 2,
+      y: communityTop,
       w: communityW,
       h: communityH,
     },

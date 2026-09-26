@@ -123,6 +123,22 @@ Three things have gone wrong here already, all worth knowing:
   nothing for the viewer's own face-up cards. Every unit test passed and
   the table was empty. Only a real browser caught it.
 
+- **Both ends of a batch are not the whole batch.** The last card of a
+  Spades trick goes from a hidden hand to a face-down won pile in one
+  reduce, so judged by its ends it was a secret: everybody else saw a
+  blank card land, and the player who led it saw nothing move, because
+  its stand-in was one their table never held (`moveTo` skips those
+  silently). The three cards already on the trick went the same way.
+  `projectEvents` now tracks what the viewer can identify DURING the
+  batch — seen before, or played face up in it, forgotten at a
+  `shuffle` — which is why `play` carries a required `faceUp`: it says
+  what was shown, and BS plays face down. What the viewer knew going into
+  a shuffle is swapped for stand-ins by a `mask`: two UNPAIRED lists
+  (real ids out, stand-ins in), handed out in the order the deal names
+  them, because a pairing would say whose hand each piece went to. The
+  redaction test asserts every event aims at a piece the viewer's table
+  holds, across whole matches of every game.
+
 The pattern: each was found by doing the NEXT thing (a second game, a
 real browser), not by more tests on the last one.
 
@@ -160,6 +176,15 @@ froze the game for everybody. The client still draws its ring, but it is
 a nicety now rather than the mechanism, and the two clocks are
 deliberately not tuned to fire together (`CLAIM_GRACE_MS`).
 
+**A bot waits out its reaction time BEFORE it claims** — as the session's
+hold, through `turnHold?()` — never as a `think` inside the claim's own
+frame. A frame's think plays after the move it rides with has already
+happened, so the card was gone on the server while a person's ring still
+ran, and presses inside the ring lost (found online, 2026-09). A beat
+that decides who wins belongs before `reduce`. A person's ring is the
+soonest BOT's time, never another person's: people beat each other by
+pressing first, so `deadline?()` is handed `isLive` for this.
+
 **The ws harness found the stall**, which is the layer that should have:
 it drives real sockets with no browser behind them, so a table that only
 moves because a page is running stops dead.
@@ -181,22 +206,26 @@ meant nearly three seconds of blank table after each play. So
 The division holds: the driver still decides WHEN. It keeps its own
 measurement of how long the last frame takes to WATCH (`playbackMs` on
 the server) and its own speed multiplier and reduced-motion rule; the
-game only replaces the constant beat that follows. What BS asks for is
-~120ms while a window is open, which turns those turns into a flicker of
-eyes travelling round the ring — each declining seat's pod lights on its
-own through `seatCue`, for free.
+game only replaces the constant beat that follows. What BS asks for while
+a window is open is the rest of that bot's reaction time (at least
+120ms), spent BEFORE it answers, as in Rummy's claim race. A whole window
+therefore costs about its longest reaction time, and it reads as a
+flicker of eyes travelling round the ring, each declining seat's pod
+lighting on its own through `seatCue`, for free.
 
-**A generous window must not be able to hold up the table.** Online a
-person gets ten seconds, which is only tolerable because `legalActions`
-also hands the seat ON TURN its plays while a window is open. The most
-natural thing that ends a window is the game moving on over the top of
-it. A bot never uses that interrupt — jumping its own queue gains it
-nothing, and the interrupt exists for people, who are the only ones a
-generous window can hold up.
+**While a window is open, the only moves are BS and Let it go** — for
+everyone, the seat on turn included (the user's rule, 2026-09-25). The
+seat on turn used to be allowed to play over the top of an open window,
+so a generous one could not hold up the table. In a playtest that read
+as somebody playing while the buttons were still up. The cost is
+accepted: a person who answers nothing holds the table until their
+deadline (ten seconds online). While the window is open the seat ring
+stays on the player who made the challengeable play, not on whoever the
+window is waiting on.
 
 **A person's own deadline is NOT capped by the fastest rival**, which is
 where this deliberately parts company with Rummy. There, a seat gets at
-most until the quickest rival reacts, and that is right for a race
+most until the quickest bot rival reacts, and that is right for a race
 happening once a round. Here it would hand a player 250ms to answer a
 window that opens after every play. The seats ahead of you in the list
 have already had their turn by the time you get yours, so being beaten to
@@ -248,13 +277,16 @@ So `GameDefinition.validate?(state, seat, action)`, shaped after
 `validateByEnumeration` ([_shared/validate.ts](src/games/_shared/validate.ts)),
 which tests membership of the game's own `legalActions` — the same
 function the action bar is built from, so the button and the gate cannot
-disagree. **Two games cannot use it**, for the same reason in different
-clothes — the legal set is too big to enumerate, so `legalActions`
-publishes representatives and membership would refuse everything else.
-Poker returns `{t:"bet", to: range.min}` as one point on a continuous
-range; BS publishes one play per COUNT, because a play is any 1-to-4 card
-subset of a hand and there are 1,092 of those for thirteen cards. Both
-check the shape of a legal action by hand instead.
+disagree. **Three games cannot use it** (or not for every action), for
+the same reason in different clothes — the legal set is too big to
+enumerate, so `legalActions` publishes representatives and membership
+would refuse everything else. Poker returns `{t:"bet", to: range.min}` as
+one point on a continuous range; BS publishes one play per COUNT, because
+a play is any 1-to-4 card subset of a hand and there are 1,092 of those
+for thirteen cards; Rummy lists one meld per starting card, and a meld is
+any valid set or run — so four aces was refused, found in a playtest. All
+three check the shape of a legal action by hand instead (Rummy for
+`layNewMeld` only; its other actions are fully listed).
 
 ### An animation needs a table to play on, and a pile to fly from
 
@@ -292,11 +324,31 @@ Three rules keep it honest:
 - **Only the opening deal is seeded** (`dealtRound === 1`). Anything else
   a client first sees is a position, and the settle that follows adopts it.
 
-Poker is the known gap, and it is not an online one: it places nothing
-before its first deal, so that deal has no pile to fly from offline
-either. BS deliberately does not repeat it — `setup` returns an undealt
-state with all 52 cards parked on the pile, which is also where the pile
-lives once play starts.
+Poker used to be the gap: it placed nothing before its first deal, so
+that deal had no pile to fly from, offline or online. Its `setup` now
+parks the whole deck in the stub, as BS's parks all 52 cards on the pile —
+a game with a deal must place what it deals before dealing it.
+
+**A stand-in's name is a slot, not a card.** An opponent's hidden card is
+named by where it sits (`#hand:2:-:3`), so after they play from the middle
+of a hand that name belongs to the card that slid into the gap. Two things
+follow, both found in BS in Chrome after every unit test had passed:
+
+- Whether a piece is still in flight is asked by POSITION, not by name:
+  the settled board is adopted late while any piece the batch moved sits
+  somewhere the board does not put it. Asked by name, every opponent's
+  play except from the last slot was pulled back into the hand the instant
+  it was applied.
+- Adopting the board snaps renamed stand-ins into place (`Placement.jump`,
+  set by `adopt()`) instead of animating them, or the card that just
+  landed flies back out of the pile. They are identical backs, so the snap
+  cannot be seen. A jump is a REMOUNT (the number is the element's key),
+  not an instant transition: Motion kept the interrupted flight's x/y
+  running after a zero-length transition, leaving a hand-sized card on
+  the pile.
+
+A test of this has to SUBSCRIBE to the store; a loop sampling it every
+20ms never sees a move and its undoing that happen in one timer callback.
 
 ### The server paces bot turns by what the last one takes to WATCH
 
@@ -381,6 +433,12 @@ Counted over CONNECTED members, deliberately: somebody whose phone is
 asleep gets a bot seat the moment the deal happens, so counting them
 would admit exactly the game the rule exists to prevent.
 
+**The next round is the leader's to deal** (`mayContinueRound`, which gates
+the server and becomes `RoomView.youMayContinue`); everyone else's
+scorecard says who they are waiting on. It can never strand a table:
+while the leader is not at it, any seated player there may continue, and
+a leader who disconnects has already handed leadership on.
+
 ### Presence is table state, so it needs a frame
 
 `SeatView.away` marks a seat whose OWNER is not in it — read from
@@ -425,6 +483,21 @@ first mover lit for the rest of the game.
 
 `GameRuntime` gained `currentSeat` and `animating` for this. `busy` folds
 both together and cannot be un-folded by a caller.
+
+A third question has its own field: **is this chance still open?**
+`state` lags the newest move by one animation, which is right for
+drawing the table and wrong for a button offering something already
+taken. A bot's BS call or Rummy claim is made first and animated after,
+and the buttons stayed up through the animation. `GameRuntime.latest` is
+where the game has actually got to; a window's buttons need the window
+open in both. Anything that sets `state` without a frame (offline
+`replaceState`, behind the dev panel's scenarios) has to set `latest` too.
+
+**Selection marks are synced, never written from a state updater.** A
+held card's `selected`/`highlighted` flags live in the table store, and
+a toggle that patched the store inside `setHeld(prev => ...)` wrote to it
+during render. Keep the toggle pure and let `useHeldMarks` sync the
+store, which also re-applies the marks after each batch resets it.
 
 ### `HERO` is a default, not a fact
 
@@ -637,6 +710,14 @@ app/room/     the lobby and the online table
 app/lab/      seats · motion · tokens · phases · rummy · redact
 ```
 
+**In-game settings are shared.** A game's player preferences (Poker's
+Hints, first) are a `GameSetting[]` passed to `GameHost` as `settings`;
+the host shows one Settings button and sheet, keeps the values per device
+([gameSettings.tsx](src/table/gameSettings.tsx)), and passes them to the
+table content as `children(live, settings)`. Online corner controls go
+through the host's `corner` slot so they share that one row. Add a
+setting to a game by adding an entry to its list, never a per-game sheet.
+
 The dev panel also takes `scenarios` — labelled one-shot callbacks a game
 supplies for states only reachable by waiting (Rummy's claim window opens
 roughly once every twelve rounds). The panel knows nothing about what they
@@ -666,6 +747,77 @@ only legal action and the dice are random, so its tiers differ only in
 pacing — a slider that changes nothing but reaction speed would promise
 a difference the game doesn't have.
 
+### A tier test has to be a match, not a diff
+
+Proving the tiers *behave* differently proves nothing about which one
+plays *better*, and the difference is not academic: measured for the
+first time, poker's `sharp` won only 40% of heads-up matches against
+`casual`, and Spades' `sharp` lost team matches to `steady` 10-24. Both
+were real strategy bugs that no behavioural-difference test could see —
+poker's `sharp` charged itself a positional penalty for completing the
+small blind, which heads-up is the BUTTON; Spades' `sharp` ducked to
+dodge bags even while the opponents were still short of their own
+contract, politely helping them make it.
+
+So all five games with a picker now own a head-to-head test asserting
+`sharp > steady > casual` over whole matches, alternating seats so the
+button/dealer advantage cannot decide it. Because every bot runs on a
+seeded `Rng`, these are **exact, not statistical** — a win-rate
+assertion on fixed seeds cannot flake. Re-run it after touching any
+tier constant: several tunings that looked obviously right moved the
+gradient the wrong way.
+
+BS came through that audit clean and needed no fix, which is worth
+recording rather than assuming — it was already the only game with a
+quantitative gradient (`bluffPast`, measuring how often each tier
+catches a pure liar). Note that a rate ordering on one behaviour and
+"the sharper bot wins more" are different claims, and BS now asserts
+both.
+
+### Seats are not clones
+
+`botTable(seats, tier)` hands every seat the same tier, so a table used
+to be one strategy running five times — obviously artificial, and in
+poker actively harmful, since identical thresholds on correlated reads
+had two bots re-raising each other in lockstep.
+[`_shared/botPersonality.ts`](src/games/_shared/botPersonality.ts)
+gives each seat a small, stable offset *inside* its tier, derived from
+`hashString` (the slam precedent) rather than an `Rng` — so a seed
+replays personalities exactly, and nothing had to be threaded through
+`BotStrategy.choose`'s fixed signature, which already receives `seat`.
+
+### A bot read that isn't on the state isn't a read
+
+`choose(state, seat, rng)` gets no history, so anything a human tracks
+across a round has to be captured as it happens. Three public fields
+exist only for this, and each is information every player at the table
+already has (so `playerView` leaves all three alone):
+
+- `PokerState.raisesThisStreet` — the fix for the all-in bug. Several
+  raise sequences produce the same `lastRaiseSize`, so it cannot be
+  inferred.
+- `SpadesState.voids` — a seat failing to follow is permanent and
+  public, but `won` is a flat unordered pile per seat, so after the
+  trick it is genuinely unrecoverable.
+- `DomState.passedEnds` — `passes` is a bare counter with no record of
+  who passed on what, and a pass is the strongest read in dominoes.
+
+### Poker strength is a probability, or it is nothing
+
+Poker's bots scored hands on an invented 0..1 scale and compared it
+against pot odds, which *is* a probability — two different units, so
+the comparison could not work. The scales also disagreed with each
+other (pocket aces preflop 0.95, a made full house 0.75), which is why
+bots jammed preflop and would not bet a real hand later. Retuning those
+constants was tried first and did not hold.
+[`equity.ts`](src/games/poker/equity.ts) replaces them with real
+seeded Monte Carlo equity — one honest number meaning the same thing on
+every street. It carries its own fast 7-card evaluator for speed, kept
+honest by a test asserting it orders 4000 random hands identically to
+`hand.ts`'s canonical `compareHandValues`; preflop results memoise by
+canonical shape (169 per opponent count), which is what makes the hot
+path free.
+
 ## Conventions
 
 - **Never call `Math.random()`** in engine or bot code. Everything goes
@@ -693,4 +845,6 @@ a difference the game doesn't have.
    event's `faceUp` against it per viewer, so `faceUp: seat === HERO` in
    a deal stays correct offline and online both.
 4. Compose the existing phase shells; only the slot content is new.
-5. Add bots per `BotDifficulty`. `thinkMs` is part of the feel.
+5. Add bots per `BotDifficulty`. `thinkMs` is part of the feel, and a
+   head-to-head test that the tiers really are ordered is not optional —
+   see "A tier test has to be a match, not a diff" above.

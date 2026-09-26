@@ -258,6 +258,7 @@ export function RoundEndScorecard({
   note,
   onContinue,
   continueLabel = "Next round",
+  waiting,
 }: {
   show: boolean;
   eyebrow: string;
@@ -266,6 +267,11 @@ export function RoundEndScorecard({
   note?: { tone: "warn" | "info"; title: string; body: string };
   onContinue?: () => void;
   continueLabel?: string;
+  /**
+   * Shown INSTEAD of the continue button when somebody else continues —
+   * "Waiting for Ada to continue". A room's round is the leader's to deal.
+   */
+  waiting?: string;
 }) {
   return (
     <PhaseSheet show={show}>
@@ -300,7 +306,11 @@ export function RoundEndScorecard({
         </div>
       ) : null}
 
-      {onContinue ? (
+      {waiting ? (
+        <p className="mt-6 text-center text-sm font-semibold text-bone-300" role="status">
+          {waiting}
+        </p>
+      ) : onContinue ? (
         <PrimaryAction onClick={onContinue}>{continueLabel}</PrimaryAction>
       ) : null}
     </PhaseSheet>

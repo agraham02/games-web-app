@@ -298,20 +298,16 @@ function makeBot(id: string, tier: BotDifficulty): BotStrategy<BsState, BsAction
           ? { t: "callBs", seat }
           : { t: "declineBs", seat };
       }
-      // A bot never uses the seat-on-turn interrupt (playing over the top of
-      // a window it is also entitled to answer). Jumping its own queue would
-      // gain it nothing, and the interrupt exists for people, who are the
-      // only ones a generous window can hold up.
+      // No window is open here: nobody may play into one.
       return choosePlay(state, seat, tier, rng);
     },
     thinkMs(state, seat, rng) {
       if (state.pendingTake === seat) return 180 + rng.int(160);
-      // In a window the think IS the reaction time, read back off the race
-      // itself rather than drawn again here. The two have to be the same
-      // number: the list decides who gets the first look, and the pause the
-      // player watches is what makes that legible.
-      const racing = state.window?.pending.find((p) => p.seat === seat);
-      if (racing) return racing.ms;
+      // Nothing in a window. The reaction time is spent BEFORE the answer,
+      // as the session's hold (`turnHold`). Spent here, as a `think` inside
+      // the frame, it played after the answer was already made, and a
+      // person pressing BS while the pod still looked undecided lost.
+      if (state.window?.pending.some((p) => p.seat === seat)) return 0;
       const pace = PACE[tier];
       return pace.min + rng.int(pace.span);
     },

@@ -13,7 +13,7 @@
  * down without a bespoke context provider for one hook's output.
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { HERO, type GameDefinition, type PieceId, type SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
@@ -24,6 +24,8 @@ import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
 import { useTableStore } from "./store";
 import { GameToaster } from "@/ui/disclosure";
+import { Button } from "@/ui/primitives/Button";
+import { SettingsSheet, useGameSettings, type GameSetting, type SettingValues } from "./gameSettings";
 import {
   GameEndSummary,
   RoundEndScorecard,
@@ -108,7 +110,36 @@ export interface GameHostProps<S, A> {
    * the one somebody reaches for when an online table looks wrong.
    */
   serverDriven?: boolean;
-  children: (live: GameRuntime<S, A>) => React.ReactNode;
+  /**
+   * The game's in-game settings — the player's own preferences, changeable
+   * mid-game from a Settings button (see `gameSettings.tsx`). A game with
+   * none gets no button.
+   */
+  settings?: readonly GameSetting[];
+  /**
+   * Controls for the top-right corner, beside the Settings button: an
+   * online table's "Step away" and "End game". One row laid out here,
+   * rather than each table positioning its own box in the same corner —
+   * two absolutely positioned boxes in one corner overlap the moment both
+   * exist.
+   */
+  corner?: React.ReactNode;
+  /**
+   * Whether the viewer's own hand is live — full size, and answering taps.
+   * Defaults to `live.isHeroTurn`, which is the right answer wherever being
+   * asked to act means acting WITH the hand. BS is where it is not: in a
+   * challenge window the viewer can be the seat the table is waiting on
+   * with nothing to do but call or let it go, and their hand woke up for
+   * a turn that was not theirs.
+   */
+  handActive?: (live: GameRuntime<S, A>) => boolean;
+  /**
+   * When somebody ELSE deals the next round, what to say instead of the
+   * button — a room's non-leaders get "Waiting for Ada to continue". Absent
+   * offline, where the only person at the table always continues.
+   */
+  continueWaiting?: string;
+  children: (live: GameRuntime<S, A>, settings: SettingValues) => React.ReactNode;
 }
 
 /** Optional callout under a round's scores — "blocked", "nobody scored". */
@@ -173,8 +204,15 @@ export function GameHostView<S, A>({
   onLobby,
   viewerSeat,
   serverDriven,
+  settings,
+  corner,
+  handActive,
+  continueWaiting,
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
+  const [settingValues, setSetting] = useGameSettings(definition.id, settings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const hasSettings = (settings?.length ?? 0) > 0;
   // Synced into the shared table store, not read as a prop threaded
   // through PieceLayer — the piece that actually needs this (a hero-hand
   // card, in any game) lives several components below here, and a
@@ -183,9 +221,10 @@ export function GameHostView<S, A>({
   // doc). An effect, not a render-time write, for the same tearing
   // reason every other store write in this app avoids doing it inline —
   // see useChoreographer's own comment on exactly this.
+  const handLive = handActive ? handActive(live) : live.isHeroTurn;
   useEffect(() => {
     const store = useTableStore.getState();
-    store.setHeroTurnActive(live.isHeroTurn);
+    store.setHeroTurnActive(handLive);
     // A hover/tap-preview is meaningless once the hero's turn ends — but
     // nothing else ever cleared it. `heroHoverIndex` is a HAND INDEX, not
     // a piece id, and playing a card doesn't fire a real mouseleave (the
@@ -195,8 +234,8 @@ export function GameHostView<S, A>({
     // lifted/spread until the player happened to hover something else.
     // Turn-end is the one moment that's true for every game sharing this
     // hook, not just Spades.
-    if (!live.isHeroTurn) store.setHeroHoverIndex(null);
-  }, [live.isHeroTurn]);
+    if (!handLive) store.setHeroHoverIndex(null);
+  }, [handLive]);
   // The match winner takes priority, but is only ever non-null right at
   // the very end; the far more common "someone just won" moment in a
   // multi-round game is a round winner — see `roundWinner`'s doc for why
@@ -276,6 +315,7 @@ export function GameHostView<S, A>({
         rows={card?.rows ?? []}
         note={card?.note}
         onContinue={live.nextRound}
+        waiting={continueWaiting}
       />
 
       <GameEndSummary
@@ -308,7 +348,27 @@ export function GameHostView<S, A>({
       />
       )}
 
-      {children(live)}
+      {children(live, settingValues)}
+
+      {hasSettings || corner ? (
+        <div className="absolute top-2 right-2 z-1900 flex gap-2">
+          {corner}
+          {hasSettings ? (
+            <Button size="sm" onClick={() => setSettingsOpen(true)}>
+              <span aria-hidden>⚙</span> Settings
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {hasSettings ? (
+        <SettingsSheet
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          settings={settings!}
+          values={settingValues}
+          onChange={setSetting}
+        />
+      ) : null}
     </TableSurface>
   );
 }

@@ -20,7 +20,7 @@ import type {
   ZoneId,
 } from "@/engine/types";
 import { STAGGER } from "@/motion/presets";
-import { emitSlam } from "./fx";
+import { emitDice, emitSlam } from "./fx";
 import { useTableStore } from "./store";
 
 /**
@@ -40,6 +40,12 @@ import { useTableStore } from "./store";
  */
 function bucketKey(p: Placement, id: PieceId): string {
   if (p.hidden) return `hidden|${id}`;
+  // A trick is ONE pile in play order; its `seat` only says which way a
+  // card leans. Bucketed by seat, every trick card was index 0 of its own
+  // bucket, so all of them shared a z-index and the stacking fell to DOM
+  // order — which put the last card of a trick, collected before any
+  // reconcile could reorder it, underneath the three before it.
+  if (p.zone === "trick") return `trick|-|${p.group ?? "-"}`;
   return `${p.zone}|${p.seat ?? "-"}|${p.group ?? "-"}`;
 }
 
@@ -109,6 +115,8 @@ function moveTo(
     dimmed: false,
     fanned: false,
     hidden: false,
+    // `jump` is deliberately NOT cleared: it is the element's key (see
+    // `Placement.jump`), and changing it would remount instead of animate.
     // Ownership marks belong to the piece's PLACE, not the piece. A card
     // swept off a board meld back into the deck is nobody's any more,
     // and carrying its old owner chip through the shuffle is a visible
@@ -149,10 +157,16 @@ export function applyEventToTable(event: GameEvent): void {
     case "play":
       moveTo(map, event.piece, {
         zone: event.to,
-        // Kept so the trick can offset each card toward whoever played it.
-        seat: event.from,
+        // Kept for the trick alone, so it can offset each card toward
+        // whoever played it. Anywhere else a seat splits the pile: pieces
+        // are bucketed by zone AND seat, so a card played onto BS's pile
+        // became index 0 of a pile of its own, and flew in UNDER the
+        // pile's top card instead of landing on it (seen in Chrome,
+        // 2026-09-25). Only `trick`, `hand` and `collected` read a seat, and
+        // a play never goes to the last two.
+        seat: event.to === "trick" ? event.from : undefined,
         group: event.group,
-        faceUp: true,
+        faceUp: event.faceUp,
       });
       touched = true;
       break;
@@ -187,10 +201,20 @@ export function applyEventToTable(event: GameEvent): void {
     case "unmask":
       // Unconditional, unlike `move` just below: the whole premise is
       // that this piece is NOT in the map yet — the viewer was holding an
-      // anonymous stand-in for it. The stand-in is left alone and dropped
-      // by the batch's own reconcile a moment later; for the one frame
-      // they coexist they are identical backs in the same slot.
+      // anonymous stand-in for it. The real piece takes the stand-in's
+      // place in the same write, so the hand never holds one card too
+      // many: an identical back in an identical slot, swapped.
+      if (event.replaces) delete map[event.replaces];
       map[event.piece] = { ...event.at };
+      touched = true;
+      break;
+
+    case "mask":
+      // Unpaired on purpose — see the event's doc. The pile keeps its size
+      // and its look (the dropped pieces were face-down in it); only the
+      // names change, and not in any order the viewer can follow.
+      for (const id of event.drop) delete map[id];
+      for (const { piece, at } of event.add) map[piece] = { ...at };
       touched = true;
       break;
 
@@ -222,6 +246,11 @@ export function applyEventToTable(event: GameEvent): void {
         map[event.piece] = { ...map[event.piece]!, highlighted: event.on };
         touched = true;
       }
+      break;
+
+    case "dice":
+      // Like the slam: nothing moves, so nothing is touched here.
+      emitDice({ seat: event.seat, faces: event.faces });
       break;
 
     case "slam":
