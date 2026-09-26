@@ -12,9 +12,13 @@
  * with their seat still shown. Dropping them out would make the roster jump
  * every time somebody's phone sleeps, and — worse — would suggest their
  * seat was up for grabs when it is being held for them.
+ *
+ * The list is in SEATING order (`seatingOrder` on the server): the first
+ * person here is dealt in first, and the rest follow round the table. The
+ * leader moves people up and down with the arrows while no game is running.
  */
 
-import { UserMinus, Crown, Eye } from "lucide-react";
+import { ChevronDown, ChevronUp, UserMinus, Crown, Eye } from "lucide-react";
 import type { MemberView } from "@/session/protocol";
 import { Button } from "@/ui/primitives/Button";
 
@@ -84,6 +88,10 @@ export interface RosterProps {
   onPromote: (session: string) => void;
   onKick: (session: string) => void;
   onAssignTeam: (session: string, team: number) => void;
+  /** Leader only: move somebody to position `to`. Absent, no arrows. */
+  onMoveSeat?: (session: string, to: number) => void;
+  /** Seats are dealt into a game, like teams, so they lock while one runs. */
+  seatsLocked?: boolean;
 }
 
 export function Roster({
@@ -95,16 +103,41 @@ export function Roster({
   onPromote,
   onKick,
   onAssignTeam,
+  onMoveSeat,
+  seatsLocked = false,
 }: RosterProps) {
+  const reorder = youAreLeader && onMoveSeat && !seatsLocked && members.length > 1;
   return (
     <ul aria-label="Room members" className="flex w-full flex-col gap-1.5">
-      {members.map((m) => {
+      {members.map((m, i) => {
         const isYou = m.session === you;
         return (
           <li
             key={m.session}
             className="flex items-center gap-3 rounded-lg bg-bone-50/4 px-3 py-2.5 ring-1 ring-bone-50/8"
           >
+            {reorder ? (
+              <div className="flex shrink-0 flex-col" role="group" aria-label={`Move ${m.name}`}>
+                <button
+                  type="button"
+                  disabled={i === 0}
+                  onClick={() => onMoveSeat(m.session, i - 1)}
+                  aria-label={`Move ${m.name} up`}
+                  className="flex h-4 w-5 items-center justify-center rounded text-bone-400 hover:bg-bone-50/10 hover:text-bone-50 disabled:opacity-25 disabled:hover:bg-transparent"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  disabled={i === members.length - 1}
+                  onClick={() => onMoveSeat(m.session, i + 1)}
+                  aria-label={`Move ${m.name} down`}
+                  className="flex h-4 w-5 items-center justify-center rounded text-bone-400 hover:bg-bone-50/10 hover:text-bone-50 disabled:opacity-25 disabled:hover:bg-transparent"
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
+            ) : null}
             <Avatar name={m.name} colour={tintFor(m.session)} dim={!m.connected} />
 
             <div className="flex min-w-0 flex-1 flex-col">

@@ -36,8 +36,8 @@ import {
   isSeatLive,
   mayContinueRound,
   openSeats,
-  orderedMembers,
   seatOf,
+  seatingOrder,
   type Room,
   type RoomCommand,
   type RoomEffect,
@@ -533,7 +533,8 @@ export class RoomRuntime {
     const isLeader = room.leader === session;
     const game = room.game;
 
-    const members: MemberView[] = orderedMembers(room).map((m) => ({
+    // In seating order: the roster IS the seating plan (`seatingOrder`).
+    const members: MemberView[] = seatingOrder(room).map((m) => ({
       session: m.session,
       name: m.name,
       connected: m.connected,

@@ -62,6 +62,9 @@ export interface RoomApi {
   ) => void;
   assignTeam: (session: string, team: number) => void;
   randomizeTeams: () => void;
+  /** Leader only: move somebody to position `to` in the seating order. */
+  moveSeat: (session: string, to: number) => void;
+  shuffleSeats: () => void;
   startGame: () => void;
   enterGame: (as?: "player" | "spectator") => void;
   exitGame: () => void;
@@ -241,6 +244,8 @@ export function useRoom(): RoomApi {
         send({ t: "selectGame", gameId, settings, seats, difficulty }),
       assignTeam: (session, team) => send({ t: "assignTeam", session, team }),
       randomizeTeams: () => send({ t: "randomizeTeams" }),
+      moveSeat: (session, to) => send({ t: "moveSeat", session, to }),
+      shuffleSeats: () => send({ t: "shuffleSeats" }),
       startGame: () => send({ t: "startGame" }),
       enterGame: (as) => send({ t: "enterGame", as }),
       exitGame: () => send({ t: "exitGame" }),

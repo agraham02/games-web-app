@@ -68,7 +68,25 @@ export function Lobby({ api }: { api: RoomApi }) {
           onPromote={api.promote}
           onKick={api.kick}
           onAssignTeam={api.assignTeam}
+          onMoveSeat={api.moveSeat}
+          seatsLocked={room.gameRunning}
         />
+        {leader && room.members.length > 1 && !room.gameRunning ? (
+          <p className="text-[11px] text-bone-500">
+            Seats are dealt in this order, round the table. Use the arrows to change it.
+          </p>
+        ) : null}
+        {leader && room.members.length > 1 ? (
+          <Button
+            size="sm"
+            disabled={room.gameRunning}
+            title={room.gameRunning ? "Finish the game first" : undefined}
+            onClick={api.shuffleSeats}
+            className="self-start"
+          >
+            <Shuffle size={12} /> Shuffle seats
+          </Button>
+        ) : null}
         {teamsEnabled && leader ? (
           <Button
             size="sm"

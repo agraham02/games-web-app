@@ -16,7 +16,9 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 async function player(page: Page, name: string): Promise<void> {
-  await page.goto("/room");
+  // The home page, which is where people actually start: its own form
+  // makes or joins in one press (see HomeEntry).
+  await page.goto("/");
   await page.getByLabel(/your name/i).fill(name);
 }
 

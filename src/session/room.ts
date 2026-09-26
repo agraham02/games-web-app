@@ -116,6 +116,13 @@ export interface Room {
   /** session -> 0 | 1, for games that play in partnerships. */
   teams: Record<SessionId, number> | null;
   game: GameParticipation | null;
+  /**
+   * The seating order the leader chose, first to last (seat 0 is the first
+   * person dealt in). Absent until somebody reorders. Anyone not in it —
+   * joined since, say — follows in join order, so joins and departures
+   * need no bookkeeping here. See `seatingOrder`.
+   */
+  seatOrder?: SessionId[];
 }
 
 export type RoomError =
@@ -165,6 +172,9 @@ export type RoomCommand =
     }
   | { t: "assignTeam"; session: SessionId; team: number }
   | { t: "randomizeTeams" }
+  /** Move somebody to position `to` in the seating order. */
+  | { t: "moveSeat"; session: SessionId; to: number }
+  | { t: "shuffleSeats" }
   | { t: "startGame" }
   | {
       t: "enterGame";
@@ -185,7 +195,7 @@ export type RoomCommand =
 export interface RoomContext {
   actor: SessionId;
   now: number;
-  /** Only `randomizeTeams` needs one. Never `Math.random`. */
+  /** Only `randomizeTeams` and `shuffleSeats` need one. Never `Math.random`. */
   rng?: Rng;
 }
 
@@ -234,6 +244,23 @@ export function createRoom(opts: {
 
 export function orderedMembers(room: Room): Member[] {
   return Object.values(room.members).sort((a, b) => a.joinedAt - b.joinedAt);
+}
+
+/**
+ * Who sits where when a game is dealt, and the order the roster shows:
+ * the leader's `seatOrder`, then everyone it does not mention in join
+ * order. Join order alone used to decide the seats, with no way to change
+ * them (the user asked for one, 2026-09-26).
+ *
+ * Leadership is NOT inherited in this order; that stays `orderedMembers`,
+ * the longest-standing member, whatever the seats.
+ */
+export function seatingOrder(room: Room): Member[] {
+  const chosen = (room.seatOrder ?? [])
+    .map((session) => room.members[session])
+    .filter((m): m is Member => m !== undefined);
+  const placed = new Set(chosen.map((m) => m.session));
+  return [...chosen, ...orderedMembers(room).filter((m) => !placed.has(m.session))];
 }
 
 export function connectedCount(room: Room): number {
@@ -402,7 +429,7 @@ function seatMembers(
   seats: number,
 ): { seatOwner: (SessionId | null)[]; present: SessionId[] } {
   const seatOwner: (SessionId | null)[] = Array.from({ length: seats }, () => null);
-  const members = orderedMembers(room).filter((m) => m.connected);
+  const members = seatingOrder(room).filter((m) => m.connected);
   const present = members.map((m) => m.session);
 
   const usesTeams = room.teams !== null && gameEntry(room.gameId!).teams(room.settings);
@@ -722,6 +749,35 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
         ok: true,
         room: { ...room, teams },
         effects: [{ t: "notice", text: "Teams were shuffled" }],
+      };
+    }
+
+    case "moveSeat": {
+      const err = requireLeader();
+      if (err) return fail(err);
+      // Seats are dealt INTO a game, like teams: moving somebody mid-match
+      // would move the roster and not the table.
+      if (room.game) return fail("game-already-running");
+      if (!room.members[command.session]) return fail("not-a-member");
+      const order = seatingOrder(room).map((m) => m.session);
+      const from = order.indexOf(command.session);
+      const to = Math.max(0, Math.min(order.length - 1, Math.trunc(command.to) || 0));
+      if (from === to) return { ok: true, room, effects };
+      order.splice(from, 1);
+      order.splice(to, 0, command.session);
+      return { ok: true, room: { ...room, seatOrder: order }, effects };
+    }
+
+    case "shuffleSeats": {
+      const err = requireLeader();
+      if (err) return fail(err);
+      if (room.game) return fail("game-already-running");
+      const rng = ctx.rng;
+      if (!rng) return fail("no-game-selected");
+      return {
+        ok: true,
+        room: { ...room, seatOrder: rng.shuffle(seatingOrder(room).map((m) => m.session)) },
+        effects: [{ t: "notice", text: "Seats were shuffled" }],
       };
     }
 

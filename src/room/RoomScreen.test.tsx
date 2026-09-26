@@ -14,6 +14,7 @@
  * exactly this reason.
  */
 
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION, type RoomView, type ServerMessage } from "@/session/protocol";
@@ -119,6 +120,7 @@ describe("the room client", () => {
       dispatchEvent: () => false,
     }));
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -293,5 +295,76 @@ describe("the room client", () => {
       expect(await screen.findByText(/waiting to be let in/i)).toBeInTheDocument();
       expect(screen.getByText(/WXYZ is a private room/i)).toBeInTheDocument();
     });
+  });
+
+  /* ---------- arriving from the home page ---------- */
+
+  /**
+   * Renders past the handshake without waiting for any particular screen.
+   * In StrictMode, as the dev server runs it: reading the intent inside a
+   * state updater consumed it on the first of React's two runs, and the
+   * room was never made (found in Chrome).
+   */
+  async function arrive(code?: string) {
+    render(
+      <StrictMode>
+        <RoomScreen code={code} />
+      </StrictMode>,
+    );
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+    socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: false });
+  }
+
+  it("makes the room the home page asked for, without asking again", async () => {
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem("table-games.entry-intent", JSON.stringify({ t: "make" }));
+    await arrive();
+
+    await waitFor(() =>
+      expect(socket().lastSent("createRoom")).toMatchObject({ t: "createRoom", name: "Ada" }),
+    );
+    expect(screen.getByText("Making your room…")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/your name/i)).toBeNull();
+    // Consumed: a refresh must not make a second room.
+    expect(window.sessionStorage.getItem("table-games.entry-intent")).toBeNull();
+  });
+
+  it("joins the room the home page asked for", async () => {
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "join", code: "WXYZ" }),
+    );
+    await arrive("WXYZ");
+
+    await waitFor(() =>
+      expect(socket().lastSent("joinRoom")).toMatchObject({ code: "WXYZ", name: "Ada" }),
+    );
+    expect(screen.getByText("Joining WXYZ…")).toBeInTheDocument();
+  });
+
+  it("shows a refused join on the join form, with the reason", async () => {
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "join", code: "WXYZ" }),
+    );
+    await arrive("WXYZ");
+    await waitFor(() => expect(socket().lastSent("joinRoom")).toBeDefined());
+
+    socket().deliver({ t: "error", code: "no-such-room", message: "no such room" });
+
+    expect(await screen.findByText("No room with that code")).toBeInTheDocument();
+    expect(screen.getByLabelText(/your name/i)).toHaveValue("Ada");
+  });
+
+  it("asks somebody who followed a link to JOIN that room, not to make one", async () => {
+    await arrive("ABCD");
+
+    expect(await screen.findByRole("button", { name: "Join room ABCD" })).toBeInTheDocument();
+    // Making a room is still possible, but it is not the button beside the name.
+    expect(screen.queryByRole("button", { name: /^make a room$/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /make a room of your own/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/room code/i)).toBeNull();
   });
 });

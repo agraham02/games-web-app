@@ -66,6 +66,8 @@ export type ClientMessage =
     } & Addressed)
   | ({ t: "assignTeam"; session: SessionId; team: number } & Addressed)
   | ({ t: "randomizeTeams" } & Addressed)
+  | ({ t: "moveSeat"; session: SessionId; to: number } & Addressed)
+  | ({ t: "shuffleSeats" } & Addressed)
   | ({ t: "startGame" } & Addressed)
   | ({ t: "enterGame"; as?: "player" | "spectator" } & Addressed)
   | ({ t: "exitGame" } & Addressed)
@@ -405,6 +407,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return { t: "assignTeam", session, team: data.team, reqId };
     }
 
+    case "moveSeat": {
+      const session = str("session");
+      if (session === null || typeof data.to !== "number") return null;
+      return { t: "moveSeat", session, to: data.to, reqId };
+    }
+
     case "action":
       // The action itself is the game's business: `legalActions` and the
       // seat gate in `GameSession.submit` decide, and neither of them can
@@ -421,6 +429,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case "leaveRoom":
     case "withdraw":
     case "randomizeTeams":
+    case "shuffleSeats":
     case "startGame":
     case "exitGame":
     case "endGame":
@@ -430,4 +439,22 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     default:
       return null;
   }
+}
+
+/* ============================================================
+   The rejoin check — plain HTTP, not the socket (see server/rejoin.ts)
+   ============================================================ */
+
+/** `GET` it with the identity token in `TOKEN_HEADER`. */
+export const REJOIN_PATH = "/api/rejoin";
+export const TOKEN_HEADER = "x-table-games-token";
+
+export interface RejoinAnswer {
+  room: {
+    code: string;
+    /** The selected game's name, or null in a lobby with none picked. */
+    game: string | null;
+    /** Whether a game is being played right now. */
+    running: boolean;
+  } | null;
 }

@@ -25,6 +25,7 @@ import {
   MAX_ROOM_MEMBERS,
   MIN_ROOM_PLAYERS,
   seatOf,
+  seatingOrder,
   teamIndex,
   type Room,
   type RoomCommand,
@@ -420,6 +421,71 @@ describe("starting a game", () => {
       {},
     );
     expect(counts).toEqual({ 0: 2, 1: 2 });
+  });
+});
+
+describe("seating order", () => {
+  /** Poker: no partnerships, so seats follow the order exactly. */
+  function poker(r: Room): Room {
+    return ok(
+      r,
+      { t: "selectGame", gameId: "poker", settings: {}, seats: 6, difficulty: "steady" },
+      { actor: LEADER },
+    );
+  }
+
+  it("follows join order until the leader changes it", () => {
+    const r = withMembers(["Sam", "Kofi"]);
+    expect(seatingOrder(r).map((m) => m.name)).toEqual(["Ada", "Sam", "Kofi"]);
+  });
+
+  it("deals the seats in the order the leader chose", () => {
+    let r = poker(withMembers(["Sam", "Kofi"]));
+    r = ok(r, { t: "moveSeat", session: "s-1", to: 0 }, { actor: LEADER });
+    expect(seatingOrder(r).map((m) => m.name)).toEqual(["Kofi", "Ada", "Sam"]);
+
+    r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+    expect(r.game!.seatOwner.slice(0, 3)).toEqual(["s-1", LEADER, "s-0"]);
+  });
+
+  it("puts somebody who joins later after the chosen order", () => {
+    let r = withMembers(["Sam"]);
+    r = ok(r, { t: "moveSeat", session: LEADER, to: 1 }, { actor: LEADER });
+    r = ok(r, { t: "join", name: "Jo" }, { actor: "s-jo", now: 5 });
+    expect(seatingOrder(r).map((m) => m.name)).toEqual(["Sam", "Ada", "Jo"]);
+  });
+
+  it("is the leader's to change, and only between games", () => {
+    let r = poker(withMembers(["Sam"]));
+    expect(
+      applyCommand(r, { t: "moveSeat", session: LEADER, to: 1 }, { actor: "s-0", now: 2 }),
+    ).toEqual({ ok: false, error: "not-leader" });
+
+    r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+    expect(
+      applyCommand(r, { t: "moveSeat", session: "s-0", to: 0 }, { actor: LEADER, now: 11 }),
+    ).toEqual({ ok: false, error: "game-already-running" });
+    expect(
+      applyCommand(r, { t: "shuffleSeats" }, { actor: LEADER, now: 11, rng: createRng(1) }),
+    ).toEqual({ ok: false, error: "game-already-running" });
+  });
+
+  it("shuffles from the seed, keeping everybody", () => {
+    const r = withMembers(["Sam", "Kofi", "Jo"]);
+    const shuffle = (seed: number) =>
+      seatingOrder(ok(r, { t: "shuffleSeats" }, { actor: LEADER, rng: createRng(seed) })).map(
+        (m) => m.session,
+      );
+    expect(shuffle(3)).toEqual(shuffle(3));
+    expect([...shuffle(3)].sort()).toEqual([LEADER, "s-0", "s-1", "s-2"].sort());
+  });
+
+  it("clamps a position past either end", () => {
+    let r = withMembers(["Sam", "Kofi"]);
+    r = ok(r, { t: "moveSeat", session: LEADER, to: 99 }, { actor: LEADER });
+    expect(seatingOrder(r).at(-1)!.name).toBe("Ada");
+    r = ok(r, { t: "moveSeat", session: LEADER, to: -5 }, { actor: LEADER });
+    expect(seatingOrder(r)[0]!.name).toBe("Ada");
   });
 });
 

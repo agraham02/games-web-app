@@ -24,7 +24,7 @@
 import type { ClientMessage, ServerMessage } from "@/session/protocol";
 import { PROTOCOL_VERSION } from "@/session/protocol";
 
-const TOKEN_KEY = "table-games.session-token";
+export const TOKEN_KEY = "table-games.session-token";
 
 /**
  * Backoff between reconnection attempts. Short at first — the common case
