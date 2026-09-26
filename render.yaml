@@ -22,7 +22,13 @@ services:
     runtime: node
     plan: free
     # Free instances get 512MB; the build is the memory-hungry part.
-    buildCommand: npm ci && npm run build
+    #
+    # `--include=dev` is not optional. Render applies the NODE_ENV below to
+    # the BUILD too, and under NODE_ENV=production a bare `npm ci` silently
+    # skips devDependencies — where Tailwind's PostCSS plugin and TypeScript
+    # live — so `next build` dies with "Cannot find module
+    # '@tailwindcss/postcss'" after installing ~80 packages instead of ~500.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
     # Deploys are triggered by CI, not by a push. `commit` (Render's

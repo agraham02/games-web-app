@@ -113,8 +113,14 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm run build
+      # Render's exact build command, under Render's NODE_ENV. Render applies
+      # its env vars to the build as well as the runtime, and under
+      # NODE_ENV=production a bare `npm ci` skips devDependencies — the
+      # Tailwind toolchain with them. Without the env here, this job passed
+      # while every Render build failed.
+      - run: npm ci --include=dev && npm run build
+        env:
+          NODE_ENV: production
       # The check that earns this job its place. The server is TypeScript
       # that is never compiled, so `tsx` and `cross-env` are RUNTIME
       # dependencies — and moving either into devDependencies passes every
