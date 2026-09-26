@@ -20,6 +20,7 @@ import { GameHost } from "@/table/GameHost";
 import { handHeaderHeight } from "@/table/HandZone";
 import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { SeatsSlider, SetupField } from "@/ui/primitives/SetupField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { createRummy } from "@/games/rummy/rules";
 import { DEFAULT_TARGET, MAX_SEATS, MIN_SEATS } from "@/games/rummy/state";
@@ -138,35 +139,22 @@ function SetupScreen({
   onStart: () => void;
 }) {
   return (
-    <SetupShell>
+    <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">New match</span>
-        <h1 className="font-display text-4xl font-extrabold text-bone-50">Rummy 500</h1>
+        <h1 className="font-display text-4xl tracking-wider text-brass-300">Rummy 500</h1>
         <p className="max-w-sm text-xs leading-relaxed text-bone-400">
           Melds are sets and runs. Taking anything off the discard pile — even the
           top card — means melding it right away. First to the target wins.
         </p>
       </div>
 
-      <div className="flex w-full max-w-sm flex-col gap-5">
-        <label className="flex flex-col gap-2">
-          <span className="flex items-center justify-between text-xs font-bold text-bone-200">
-            Players <span className="tnum text-brass-300">{seats}</span>
-          </span>
-          <input
-            type="range"
-            min={MIN_SEATS}
-            max={MAX_SEATS}
-            value={seats}
-            onChange={(e) => onSeats(Number(e.target.value))}
-            className="w-full accent-brass-400"
-          />
-        </label>
+      <div className="flex w-full flex-col gap-5">
+        <SeatsSlider value={seats} min={MIN_SEATS} max={MAX_SEATS} onChange={onSeats} />
 
         <DifficultyPicker value={difficulty} onChange={onDifficulty} blurbs={RUMMY_BLURBS} />
 
-        <div className="flex flex-col items-center gap-2">
-          <span className="text-xs font-bold text-bone-200">Play to</span>
+        <SetupField label="Play to">
           <NumberStepper
             value={target}
             min={100}
@@ -175,7 +163,7 @@ function SetupScreen({
             label="points"
             onChange={onTarget}
           />
-        </div>
+        </SetupField>
       </div>
 
       <button

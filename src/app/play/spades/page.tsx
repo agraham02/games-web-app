@@ -167,7 +167,7 @@ function SetupScreen({
         </p>
       </div>
 
-      <div className="flex w-full max-w-xs flex-col gap-3">
+      <div className="flex w-full flex-col gap-5">
         <Toggle
           label="Jokers"
           hint="Adds the Big and Little Joker, ranked above every spade."

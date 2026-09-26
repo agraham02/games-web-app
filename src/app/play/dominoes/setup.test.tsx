@@ -40,11 +40,11 @@ describe("dominoes setup — caribbean", () => {
     setup();
     clickCaribbean();
 
-    expect(screen.getByText("Four players")).toBeTruthy();
+    expect(screen.getByText(/seven tiles each/)).toBeTruthy();
     expect(screen.getByText("Games to win")).toBeTruthy();
     expect(screen.getByText("Optional rules")).toBeTruthy();
     // The seat slider is gone — Caribbean is four-handed, no more, no less.
-    expect(screen.queryByText(/^Players —/)).toBeNull();
+    expect(screen.queryByLabelText("Players")).toBeNull();
     expect(screen.queryByText("Play to")).toBeNull();
   });
 

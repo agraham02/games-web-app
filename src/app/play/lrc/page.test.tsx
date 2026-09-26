@@ -182,7 +182,7 @@ describe("LRC play page — the game actually starts", () => {
       render(<LrcPlayPage />);
 
       fireEvent.change(screen.getByRole("slider"), { target: { value: "3" } });
-      expect(screen.getByText("Players — 3")).toBeTruthy();
+      expect((screen.getByLabelText("Players") as HTMLInputElement).value).toBe("3");
 
       const fewer = screen.getAllByRole("button", { name: /Fewer round/i })[0]!;
       fireEvent.click(fewer);

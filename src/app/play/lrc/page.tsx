@@ -13,6 +13,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { SeatsSlider, SetupField } from "@/ui/primitives/SetupField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameHost } from "@/table/GameHost";
 import {
@@ -101,30 +102,25 @@ function SetupScreen({
         </p>
       </div>
 
-      <div className="flex w-full max-w-xs flex-col gap-2">
-        <span className="eyebrow text-center">Players — {seats}</span>
-        <input
-          type="range"
+      <div className="flex w-full flex-col gap-5">
+        <SeatsSlider
+          value={seats}
           min={lrc.minSeats}
           max={lrc.maxSeats}
-          value={seats}
-          onChange={(e) => onSeatsChange(Number(e.target.value))}
-          className="w-full accent-brass-400"
+          onChange={onSeatsChange}
         />
-      </div>
-
-      <div className="flex w-full max-w-xs flex-col gap-2">
-        <span className="eyebrow text-center">Rounds to win</span>
-        <NumberStepper
-          value={target}
-          min={LRC_TARGET_MIN}
-          max={LRC_TARGET_MAX}
-          onChange={onTargetChange}
-          label={target === 1 ? "round" : "rounds"}
-        />
-        <span className="text-center text-[11px] text-bone-500">
-          Each pot won is worth one round. First to {target} takes the match.
-        </span>
+        <SetupField
+          label="Rounds to win"
+          hint={`Each pot won is worth one round. First to ${target} takes the match.`}
+        >
+          <NumberStepper
+            value={target}
+            min={LRC_TARGET_MIN}
+            max={LRC_TARGET_MAX}
+            onChange={onTargetChange}
+            label={target === 1 ? "round" : "rounds"}
+          />
+        </SetupField>
       </div>
 
       <button
