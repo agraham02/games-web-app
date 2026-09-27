@@ -80,6 +80,11 @@ export function Swap({
  * Opens and closes its own height — an error under a field, a group of
  * rules that only exist under one ruleset. The content below slides
  * instead of jumping.
+ *
+ * It clips only while it moves. Open and at rest, its content may draw past
+ * its edges: a ring (a tile's border) or a focus outline is drawn outside
+ * the element that owns it, and a box that always clipped cut the outer
+ * borders off the lobby's game tiles (2026-09-27).
  */
 export function Collapse({
   open,
@@ -96,10 +101,15 @@ export function Collapse({
         <motion.div
           key="collapse"
           className={className}
-          style={{ overflow: "hidden" }}
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: "auto", opacity: 1, transition: TRANSITIONS.uiEnter }}
-          exit={{ height: 0, opacity: 0, transition: TRANSITIONS.uiExit }}
+          initial={{ height: 0, opacity: 0, overflow: "hidden" }}
+          animate={{
+            height: "auto",
+            opacity: 1,
+            overflow: "hidden",
+            transition: TRANSITIONS.uiEnter,
+            transitionEnd: { overflow: "visible" },
+          }}
+          exit={{ height: 0, opacity: 0, overflow: "hidden", transition: TRANSITIONS.uiExit }}
         >
           {children}
         </motion.div>
