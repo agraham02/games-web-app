@@ -758,6 +758,67 @@ describe("the server, in process", () => {
       expect(runtime.hasGame).toBe(false);
       expect(Object.keys(runtime.room.members)).toHaveLength(2);
     });
+
+    /**
+     * The user's rule (2026-09-27): when the last real person leaves, the
+     * game is torn down, and "all bots should not be playing, not even for
+     * 1 second".
+     *
+     * Each way out is taken at the worst moment: the person has just moved,
+     * so a bot's turn is already armed and waiting out its hold. Then the
+     * clock is run dry. Not one more frame may reach anybody.
+     */
+    describe("the last real player out ends it, with no bot turn after", () => {
+      type Player = { peer: Peer; conn: FakeConnection };
+
+      /**
+       * `stays` is alone at the table and has just made a move; `other`
+       * stepped away earlier, so a bot plays their seat.
+       */
+      function aloneAtTheTable(who: "host" | "guest") {
+        const t = twoPlayerSpades();
+        const host: Player = { peer: t.peer, conn: t.conn };
+        const guest: Player = t.p2;
+        const stays = who === "host" ? host : guest;
+        const other = who === "host" ? guest : host;
+        send(other.peer, { t: "exitGame" });
+
+        // Bots play up to the person still sitting there, who then moves.
+        clock.drain();
+        const on = (registry.get(t.code)!.debugDump().table as { currentSeat: number }).currentSeat;
+        const frame = stays.conn.last("frame")!.frame;
+        expect(frame.seat, "the table should be waiting on the one still seated").toBe(on);
+        const legal = createSpades().legalActions(frame.state as SpadesState, on);
+        send(stays.peer, { t: "action", action: legal.find((a) => a.t === "bid" && !a.nil) ?? legal[0] });
+        expect(clock.pending, "a bot's turn should be armed").toBeGreaterThan(0);
+        return { code: t.code, stays, other };
+      }
+
+      const WAYS_OUT: Array<[string, "host" | "guest", (s: Player, o: Player) => void]> = [
+        ["walk back to the lobby", "host", (s) => send(s.peer, { t: "exitGame" })],
+        ["leave the room", "host", (s) => send(s.peer, { t: "leaveRoom" })],
+        // Closing the tab, losing signal, and now leaving the room's page.
+        ["drop their connection", "host", (s) => router.onClose(s.peer)],
+        ["are removed by the leader", "guest", (s, leader) => {
+          send(leader.peer, { t: "kick", session: registry.sessionFor("p2") });
+        }],
+      ];
+
+      for (const [how, who, leave] of WAYS_OUT) {
+        it(`when they ${how}`, () => {
+          const { code, stays, other } = aloneAtTheTable(who);
+          stays.conn.clear();
+          other.conn.clear();
+
+          leave(stays, other);
+          clock.drain();
+
+          expect(registry.get(code)?.hasGame ?? false, "the game should be over").toBe(false);
+          expect(stays.conn.all("frame"), "no frame to the one who left").toEqual([]);
+          expect(other.conn.all("frame"), "no frame to anybody else").toEqual([]);
+        });
+      }
+    });
   });
 
   /* ============================================================

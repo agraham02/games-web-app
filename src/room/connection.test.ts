@@ -284,3 +284,140 @@ describe("a room that is no longer there", () => {
     expect(sockets.length).toBe(opened);
   });
 });
+
+/**
+ * Leaving the room's page without closing the tab — the back gesture, a
+ * link home.
+ *
+ * The socket used to stay open, which told the server the player was still
+ * at the table: their seat stayed theirs, the bots played on to their turn,
+ * and a game nobody real was left in was never ended. Now the connection
+ * hangs up once no page is listening, which the server already treats as
+ * leaving.
+ */
+describe("a page that is no longer listening", () => {
+  beforeEach(() => {
+    sockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const quiet = () => ({ onMessage: () => {}, onStatus: () => {} });
+
+  function listening() {
+    const connection = new RoomConnection("token-abc");
+    const off = connection.subscribe(quiet());
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    return { connection, socket, off };
+  }
+
+  function deliver(socket: FakeSocket, message: unknown): void {
+    socket.onmessage?.({ data: JSON.stringify(message) });
+  }
+
+  it("hangs up once the last page has let go", () => {
+    const { connection, socket, off } = listening();
+    off();
+    expect(socket.readyState, "not in the same tick: a remount may be on its way").toBe(1);
+    vi.advanceTimersByTime(0);
+    expect(socket.readyState).toBe(3);
+    expect(connection.status).toBe("closed");
+    // Closed by us, so it stays closed.
+    vi.advanceTimersByTime(300_000);
+    expect(sockets).toHaveLength(1);
+  });
+
+  it("stays up through a remount", () => {
+    // StrictMode's unmount-and-remount, and `/room` giving way to
+    // `/room/ABCD`: both let go and take hold again in one commit.
+    const { connection, socket, off } = listening();
+    off();
+    connection.subscribe(quiet());
+    vi.advanceTimersByTime(1_000);
+    expect(socket.readyState).toBe(1);
+    expect(connection.status).toBe("open");
+  });
+
+  it("forgets what it heard, so the next page asks the server afresh", () => {
+    const { connection, socket, off } = listening();
+    deliver(socket, { t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    deliver(socket, { t: "room", room: { code: "ABCD", gameRunning: true } });
+    deliver(socket, { t: "frame", frame: { seq: 7 } });
+    off();
+    vi.advanceTimersByTime(0);
+
+    // A table that has moved on without them is not replayed, and neither
+    // is a `hello` — replaying one would say "not in a room" before the
+    // server could say otherwise, and flash the entry form.
+    const replayed: { t: string }[] = [];
+    connection.subscribe({ onMessage: (m) => replayed.push(m), onStatus: () => {} });
+    expect(replayed).toEqual([]);
+  });
+
+  it("does not let the old socket's late close take down the new one", () => {
+    // A real socket reports its close some time after `close()`, and a
+    // page that left and came straight back has a new socket by then. The
+    // old close used to null the new one, whose sends then queued forever;
+    // the old socket's last frames refilled the cache that was just emptied.
+    const { connection, socket, off } = listening();
+    socket.close = () => {
+      socket.readyState = 3;
+    };
+    off();
+    vi.advanceTimersByTime(0);
+
+    connection.subscribe(quiet());
+    connection.connect();
+    const fresh = sockets[1]!;
+    fresh.onopen?.();
+    deliver(socket, { t: "frame", frame: { seq: 9 } });
+    socket.onclose?.();
+
+    expect(connection.status).toBe("open");
+    expect(connection.lastFrame, "the old socket's frame is not the new page's").toBeNull();
+    connection.send({ t: "ping" });
+    expect(fresh.count("ping")).toBe(1);
+  });
+
+  it("says when the socket it let go of has finished closing", async () => {
+    // The home page waits on this before asking the server whether this
+    // browser is still in a room — asked sooner, it heard about the table
+    // as it was before the leaving.
+    const { connection, socket, off } = listening();
+    socket.close = () => {
+      socket.readyState = 3;
+    };
+    let closed = false;
+    off();
+    void connection.whenClosed().then(() => {
+      closed = true;
+    });
+    vi.advanceTimersByTime(0);
+    await Promise.resolve();
+    expect(closed, "not while the close is in flight").toBe(false);
+
+    socket.onclose?.();
+    await Promise.resolve();
+    expect(closed).toBe(true);
+    await expect(new RoomConnection("t").whenClosed(), "a tab with no socket").resolves.toBeUndefined();
+  });
+
+  it("dials again when a page comes back", () => {
+    const { connection, off } = listening();
+    off();
+    vi.advanceTimersByTime(0);
+
+    connection.subscribe(quiet());
+    connection.connect();
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.onopen?.();
+    expect(connection.status).toBe("open");
+    expect(sockets[1]!.sent[0]).toMatchObject({ t: "hello" });
+  });
+});
