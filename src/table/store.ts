@@ -134,6 +134,13 @@ interface TableState {
    * the reserved height does not move, so one measurement settles it.
    */
   bandHeight: number;
+  /**
+   * Who the table is waiting on, in words, when it is not the viewer —
+   * "Mia is thinking…", "Waiting for Ada". Written by `GameHostView`,
+   * shown by `TurnIndicator` whenever it is not the viewer's turn. Null
+   * when it is, or when nobody is on turn.
+   */
+  turnLine: string | null;
 
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
@@ -167,6 +174,7 @@ interface TableState {
   setHandScroll(px: number | null): void;
   setHandOrder(order: Record<PieceId, number> | null): void;
   setBandHeight(px: number): void;
+  setTurnLine(line: string | null): void;
 }
 
 function countInZone(placements: PlacementMap, zone: Placement["zone"]): number {
@@ -234,6 +242,7 @@ export const useTableStore = create<TableState>((set) => {
     handScroll: null,
     handOrder: null,
     bandHeight: 0,
+    turnLine: null,
 
     setGeometry: (geometry) => set({ geometry }),
 
@@ -342,6 +351,8 @@ export const useTableStore = create<TableState>((set) => {
     setHandOrder: (order) => set({ handOrder: order }),
 
     setBandHeight: (px) => set((s) => (s.bandHeight === px ? s : { bandHeight: px })),
+
+    setTurnLine: (line) => set((s) => (s.turnLine === line ? s : { turnLine: line })),
   };
 });
 

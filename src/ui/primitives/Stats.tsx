@@ -32,7 +32,10 @@ export function Stats({
   className?: string;
 }) {
   return lines.slice(0, Math.max(0, max)).map((line, i) => (
-    <div key={i} className={cn("max-w-full truncate leading-none", className)}>
+    // `leading-none` after the caller's classes: a Tailwind v4 font size
+    // sets a line height too, so `cn` drops a `leading-*` that comes first
+    // and a 9px line becomes 14px tall.
+    <div key={i} className={cn("max-w-full truncate", className, "leading-none")}>
       {line.map((stat, j) => (
         <Fragment key={stat.label}>
           {j > 0 ? <span className="text-bone-500"> · </span> : null}

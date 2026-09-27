@@ -107,10 +107,15 @@ function initialsOf(name: string): string {
  * substrings in source, and a lookup table keyed by a runtime value is
  * exactly that (unlike `w-${x}`, which it can't see).
  */
+//
+// Tight vertical spacing on the two phone tiers: a pod carries up to two
+// lines under its name (`POD_LINES`), and at compact density a top-edge
+// pod's centre is only 37px from the top of the screen — any taller and
+// its avatar goes off the top.
 const POD_STYLES: Record<Density, { pod: string; avatar: string; name: string; meta: string }> = {
-  compact: { pod: "w-16", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
-  regular: { pod: "w-16", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
-  wide: { pod: "w-24", avatar: "h-12 w-12 text-[15px]", name: "text-[15px]", meta: "text-[13px]" },
+  compact: { pod: "w-16 gap-0.5 py-1", avatar: "h-7 w-7 text-[10px]", name: "text-[11px]", meta: "text-[9px]" },
+  regular: { pod: "w-16 gap-0.5 py-1", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
+  wide: { pod: "w-24 gap-1 py-1.5", avatar: "h-12 w-12 text-[15px]", name: "text-[15px]", meta: "text-[13px]" },
 };
 
 export function SeatRing({ players }: { players: readonly SeatView[] }) {
@@ -156,7 +161,7 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
       initial={false}
       animate={{ scale: highlighted ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
-      className={`flex ${s.pod} flex-col items-center gap-1 rounded-xl px-1 py-1.5 backdrop-blur-md transition-colors ${
+      className={`flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
         highlighted
           ? "bg-felt-950/70 ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]"
           : "bg-felt-950/55 ring-1 ring-brass-400/20"

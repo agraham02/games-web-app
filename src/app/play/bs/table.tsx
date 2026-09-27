@@ -239,7 +239,7 @@ export function BsTable({
       <HandZone
         bar={bar}
         left={<RankBadge state={state} />}
-        center={<TurnIndicator label={turnLabel(view, state)} show={!bar} />}
+        center={<TurnIndicator label={turnLabel(view, state)} show={!bar && yourMove(view, state)} />}
       />
     </>
   );
@@ -258,6 +258,11 @@ function RankBadge({ state }: { state: BsState }) {
       detail={pile === 0 ? "pile empty" : `${pile} on the pile`}
     />
   );
+}
+
+/** The brass cue is the viewer's own; everybody else's turn is the quiet line. */
+function yourMove(view: BsView, state: BsState): boolean {
+  return state.pendingTake !== null ? state.pendingTake === view.viewerSeat : state.turn === view.viewerSeat;
 }
 
 function turnLabel(view: BsView, state: BsState): string {

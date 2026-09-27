@@ -19,7 +19,7 @@ import { onDice } from "@/table/fx";
 import { BandNote, HandZone } from "@/table/HandZone";
 import { Button } from "@/ui/primitives/Button";
 import { DiceFace } from "@/ui/primitives/DiceFace";
-import { HeroStatusBadge, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -220,6 +220,8 @@ export function LrcControls({ view, live }: { view: LrcView; live: Live }) {
             )
           ) : undefined
         }
+        // Rolling is the bar; everybody else's turn is this line.
+        center={<TurnIndicator label="" show={false} />}
       />
     </>
   );

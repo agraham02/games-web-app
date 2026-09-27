@@ -283,6 +283,28 @@ export function GameHostView<S, A>({
     ? standings(live.state, live, seatViews)
     : winLoseStandings(live.state, live, seatViews, viewerSeat);
 
+  // Who the table is waiting on, when it is not the viewer (a spectator is
+  // never on turn). It names who and never what they could do. A turn
+  // being played out right now is a bot's think beat; one the table is
+  // merely parked on is a person who has not moved yet.
+  const waitingOn =
+    live.currentSeat !== null && live.currentSeat !== (viewerSeat === undefined ? HERO : viewerSeat)
+      ? seatViews.find((v) => v.seat === live.currentSeat)
+      : undefined;
+  // Offline every other seat is a bot, so it is thinking from the moment
+  // its turn opens; reading the think beat there flickered "Waiting for
+  // Mia" before every bot move. Online the beat is what tells a bot (which
+  // has one) from a person (who does not).
+  const turnLine = waitingOn
+    ? waitingOn.thinking || !serverDriven
+      ? `${waitingOn.name} is thinking…`
+      : `Waiting for ${waitingOn.name}`
+    : null;
+  useEffect(() => {
+    useTableStore.getState().setTurnLine(turnLine);
+  }, [turnLine]);
+  useEffect(() => () => useTableStore.getState().setTurnLine(null), []);
+
   // `pieces` is contractually fixed once `setup` has run (see its own
   // doc — the runtime calls it once and caches it), so rebuilding a
   // 52-entry map on every render just to hand it to the dev panel would

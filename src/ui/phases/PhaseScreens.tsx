@@ -16,6 +16,7 @@ import type { SeatId } from "@/engine/types";
 import { AnimatedNumber } from "@/ui/primitives/AnimatedNumber";
 import { TRANSITIONS } from "@/motion/presets";
 import { Stats, type StatLines } from "@/ui/primitives/Stats";
+import { useTableStore } from "@/table/store";
 
 /* ============================================================
    Round intro — a brief title card over the deal.
@@ -95,10 +96,26 @@ export function RoundIntro({
  * is exactly what the band exists to replace.
  */
 export function TurnIndicator({ label, show }: { label: string; show: boolean }) {
+  // Everybody else's turn, said quietly in the same place: who the table is
+  // waiting on (see `TableState.turnLine`). Nothing on a table with no host.
+  const waiting = useTableStore((s) => s.turnLine);
   return (
-    <AnimatePresence>
+    <AnimatePresence mode="popLayout" initial={false}>
+      {!show && waiting ? (
+        <motion.div
+          key={`waiting:${waiting}`}
+          className="pointer-events-none min-w-0 truncate px-1 py-1 text-center text-[10px] font-bold tracking-widest text-bone-400 uppercase"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: TRANSITIONS.uiExit }}
+          transition={TRANSITIONS.uiEnter}
+        >
+          {waiting}
+        </motion.div>
+      ) : null}
       {show ? (
         <motion.div
+          key="your-turn"
           className="pointer-events-none min-w-0"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
