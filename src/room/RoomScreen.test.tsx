@@ -179,6 +179,34 @@ describe("the room client", () => {
     expect(window.localStorage.getItem("table-games.display-name")).toBe("Ada");
   });
 
+  it("presses the primary button on Enter: Make, until a whole code makes it Join", async () => {
+    await open();
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: "Ada" } });
+    const form = screen.getByLabelText(/your name/i).closest("form")!;
+
+    fireEvent.change(screen.getByLabelText(/room code/i), { target: { value: "wxyz" } });
+    fireEvent.submit(form);
+    expect(socket().lastSent("joinRoom")).toMatchObject({ code: "WXYZ", name: "Ada" });
+    expect(socket().lastSent("createRoom")).toBeUndefined();
+
+    fireEvent.change(screen.getByLabelText(/room code/i), { target: { value: "" } });
+    fireEvent.submit(form);
+    expect(socket().lastSent("createRoom")).toMatchObject({ name: "Ada" });
+  });
+
+  it("asks for the rest of a half-typed code on Enter, rather than making a room", async () => {
+    await open();
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: "Ada" } });
+    const code = screen.getByLabelText(/room code/i);
+    fireEvent.change(code, { target: { value: "wx" } });
+    fireEvent.keyDown(code, { key: "Enter" });
+
+    expect(socket().lastSent("createRoom")).toBeUndefined();
+    expect(socket().lastSent("joinRoom")).toBeUndefined();
+    expect(await screen.findByText("A room code is 4 letters")).toBeInTheDocument();
+    expect(code).toHaveFocus();
+  });
+
   it("uppercases a join code and refuses a short one", async () => {
     await open();
     fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: "Ada" } });
@@ -350,6 +378,25 @@ describe("the room client", () => {
       await enterLobby();
       socket().deliver({ t: "left", reason: "kicked" });
       expect(await screen.findByText("Rooms")).toBeInTheDocument();
+      // On the form, where it stays — not a toast that was gone in four
+      // seconds — and naming the room.
+      expect(screen.getByText("You were removed from room ABCD.")).toBeInTheDocument();
+      // Not offered back: the code field starts empty, so Join is not the
+      // button Enter would press.
+      expect(screen.getByLabelText(/room code/i)).toHaveValue("");
+      expect(screen.getByRole("button", { name: /^join room$/i })).toBeDisabled();
+    });
+
+    it("sends somebody who leaves home, not to the room's own invitation", async () => {
+      // It used to land on the entry form at /room/ABCD: "You have been
+      // invited to a room" — to the room they had just walked out of.
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: /leave room/i }));
+      expect(socket().lastSent("leaveRoom")).toBeDefined();
+
+      socket().deliver({ t: "left", reason: "left" });
+      expect(replace).toHaveBeenCalledWith("/");
+      expect(screen.queryByText(/you have been invited/i)).toBeNull();
     });
 
     it("waits visibly on a private room's leader", async () => {
@@ -419,6 +466,43 @@ describe("the room client", () => {
 
     expect(await screen.findByText("No room with that code")).toBeInTheDocument();
     expect(screen.getByLabelText(/your name/i)).toHaveValue("Ada");
+  });
+
+  it("keeps a turned-down knock on the form, with the room ready to ask again", async () => {
+    await arrive("WXYZ");
+    socket().deliver({ t: "pending", code: "WXYZ" });
+    socket().deliver({ t: "left", reason: "denied" });
+
+    expect(
+      await screen.findByText("The leader of room WXYZ didn't let you in. Ask again, or make your own room."),
+    ).toBeInTheDocument();
+    // Asking again is one press: the code is still there, and Join is the
+    // button Enter would press.
+    expect(screen.getByLabelText(/room code/i)).toHaveValue("WXYZ");
+    const join = screen.getByRole("button", { name: /^join room$/i });
+    expect(join).toBeEnabled();
+    expect(join).toHaveAttribute("type", "submit");
+  });
+
+  it("shows a name somebody already has under the name, and stays an invitation", async () => {
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "join", code: "WXYZ" }),
+    );
+    await arrive("WXYZ");
+    await waitFor(() => expect(socket().lastSent("joinRoom")).toBeDefined());
+
+    socket().deliver({
+      t: "error",
+      code: "name-taken",
+      message: "somebody in this room already goes by that name",
+    });
+
+    expect(
+      await screen.findByText("Somebody in this room already goes by that name"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Join room WXYZ" })).toBeInTheDocument();
   });
 
   it("asks somebody who followed a link to JOIN that room, not to make one", async () => {

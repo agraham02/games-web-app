@@ -4,6 +4,7 @@ import { GAMES, GAME_IDS, type GameId } from "@/session/registry";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { DiceFace } from "@/ui/primitives/DiceFace";
+import { PieceStrip } from "@/ui/primitives/PieceStrip";
 import { TileFace } from "@/ui/primitives/TileFace";
 import { HomeEntry } from "./HomeEntry";
 
@@ -59,44 +60,6 @@ function Hero() {
         with people in a room, or on your own against the house.
       </p>
     </header>
-  );
-}
-
-/**
- * One piece from most of the games, overlapping and slightly turned, the
- * way a set looks when somebody has just cleared the table.
- *
- * Purely decorative and hidden from assistive tech: everything it says is
- * said again in words directly below it.
- */
-function PieceStrip() {
-  return (
-    <div aria-hidden className="flex h-16 items-end pl-1 select-none">
-      <div className="rotate-[-10deg] drop-shadow-lg">
-        <TileFace tile="6-3" w={30} h={58} ariaHidden />
-      </div>
-      {/* Only the CARDS overlap each other much — a fanned hand is what
-          that reads as. The domino and the die want their own air or they
-          just look broken. */}
-      <div className="-ml-1 rotate-[6deg] drop-shadow-lg">
-        <CardFace card="SA" w={42} h={60} detail="index" ariaHidden />
-      </div>
-      <div className="-ml-3 rotate-[-3deg] drop-shadow-lg">
-        <CardFace card="HK" w={42} h={60} detail="index" ariaHidden />
-      </div>
-      {/* Face down, for BS — and it sits in the fan rather than beside it,
-          because a card nobody can see is only interesting next to ones
-          they can. */}
-      <div className="-ml-3 rotate-[4deg] drop-shadow-lg">
-        <CardBack w={42} h={60} ariaHidden />
-      </div>
-      <div className="-ml-1 mb-1 rotate-[9deg] drop-shadow-lg">
-        <DiceFace face="C" size={38} />
-      </div>
-      <div className="-ml-2 mb-0.5 drop-shadow-lg">
-        <ChipFace colour="ruby" size={34} />
-      </div>
-    </div>
   );
 }
 

@@ -12,21 +12,31 @@
  *
  * The URL still carries the code, because a code that cannot be sent to
  * somebody is not much of an invitation.
+ *
+ * Every screen that is not the lobby or a table is either the entry form
+ * (`RoomEntryForm`) or a `RoomStatusScreen`. A change of screen fades the
+ * new one in (`Reveal`, keyed by which screen it is); the old one goes at
+ * once, as a route does, so the next screen is never held back by the
+ * last one's exit.
  */
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { PieceId } from "@/engine/types";
+import { CODE_LENGTH } from "@/session/room";
 import { GameToaster, announce } from "@/ui/disclosure";
+import { Reveal } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
-import { CodeInput, TextField } from "@/ui/primitives/TextField";
 import { SetupShell } from "@/ui/primitives/SetupShell";
+import { cleanCode } from "@/ui/primitives/TextField";
 import { ConnectionNotice } from "./ConnectionNotice";
-import { readSavedName, saveName, takeEntryIntent, type EntryIntent } from "./entry";
+import { readSavedName, takeEntryIntent, type EntryIntent } from "./entry";
 import { Lobby } from "./Lobby";
+import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
+import { RoomStatusScreen } from "./RoomStatusScreen";
 import { tableFor } from "./tables";
-import { useRoom } from "./useRoom";
+import { useRoom, type RoomApi } from "./useRoom";
 
 export function RoomScreen({ code }: { code?: string }) {
   const api = useRoom();
@@ -112,6 +122,15 @@ export function RoomScreen({ code }: { code?: string }) {
     if (arrived || api.error || api.phase === "pending") setActing(null);
   }, [acting, api.room, api.error, api.phase]);
 
+  // A leave the player asked for goes home. It used to land on the entry
+  // form at the same URL — the invitation to the room just left, "You have
+  // been invited to a room", which is the one place they had chosen not to
+  // be. `replace`, so Back does not return to it either.
+  const leaving = api.phase === "idle" && api.farewell?.reason === "left";
+  useEffect(() => {
+    if (leaving) router.replace("/");
+  }, [leaving, router]);
+
   // Keep the address bar honest. A room reached by code, created fresh, or
   // rejoined automatically on reconnect should all end up with the code in
   // the URL so it can be copied out of it. Not while the home page's
@@ -133,73 +152,48 @@ export function RoomScreen({ code }: { code?: string }) {
     api.room && api.room.inGame && api.frame && tableFor(api.room.gameId),
   );
 
+  // Which screen is up — the key a new screen fades in on. Checked in this
+  // order because more than one can be true at once: a cached room while
+  // superseded, an intent in flight while idle.
+  const screen: Screen =
+    api.phase === "superseded"
+      ? "superseded"
+      : api.phase === "connecting"
+        ? "connecting"
+        : (intent || acting || intent === undefined) && api.phase !== "pending"
+          ? "acting"
+          : api.phase === "pending"
+            ? "pending"
+            : api.phase === "idle"
+              ? leaving
+                ? "leaving"
+                : "entry"
+              : tableShowing
+                ? "table"
+                : "lobby";
+
   return (
     <>
       {tableShowing ? null : <GameToaster />}
 
-      {/* Above every branch below, because losing the socket is worth
-          saying whichever screen you are on. */}
+      {/* Above every screen below, because losing the socket is worth
+          saying whichever one you are on. */}
       <ConnectionNotice status={api.status} />
 
-      {api.phase === "superseded" ? (
-        // Said plainly rather than retried. Two tabs for one identity used
-        // to trade the socket back and forth several times a second, each
-        // closing the other, and neither screen ever settled — which read
-        // as the game desyncing rather than as what it was.
-        <Centred>
-          <span className="eyebrow">Playing in another tab</span>
-          <p className="max-w-xs text-center text-sm text-bone-400">
-            You opened this room somewhere else. Your seat is still yours — carry on there, or
-            bring the game back here.
-          </p>
-          <Button size="sm" onClick={api.resume}>
-            Play here instead
-          </Button>
-        </Centred>
-      ) : api.phase === "connecting" ? (
-        <Centred>
-          <span className="eyebrow">
-            {api.status === "reconnecting" ? "Reconnecting…" : "Connecting…"}
-          </span>
-        </Centred>
-      ) : (intent || acting || intent === undefined) && api.phase !== "pending" ? (
-        <Centred>
-          <span className="eyebrow">{intentLabel(acting ?? intent ?? null)}</span>
-        </Centred>
-      ) : api.phase === "pending" ? (
-        <Centred>
-          <span className="eyebrow">Waiting to be let in</span>
-          <p className="max-w-xs text-center text-sm text-bone-400">
-            {api.pendingCode} is a private room. The party leader has to approve you.
-          </p>
-          <Button
-            size="sm"
-            onClick={() => {
-              // Actually withdraw, not just navigate. Leaving the request
-              // standing meant a later approval dragged the player into a
-              // room they had declined.
-              api.withdraw();
-              router.push("/room");
-            }}
-          >
-            Never mind
-          </Button>
-        </Centred>
-      ) : api.phase === "idle" ? (
-        <Entry api={api} initialCode={code} />
-      ) : api.room && api.room.inGame && api.frame && tableFor(api.room.gameId) ? (
+      {screen === "table" ? (
         // Looked up rather than hardcoded: the room may be running any
         // game, and a table that assumed one would render the wrong one.
         // `tableFor` returning null falls through to the lobby, which is
         // the honest answer for a game with no table yet — and a test
-        // stops the registry from ever offering one.
+        // stops the registry from ever offering one. Not faded in: the
+        // table has its own arrival, the deal.
         (() => {
-          const Table = tableFor(api.room.gameId)!;
+          const Table = tableFor(api.room!.gameId)!;
           return (
             <Table
               api={api}
-              room={api.room}
-              frame={api.frame}
+              room={api.room!}
+              frame={api.frame!}
               held={held}
               onToggleHeld={toggleHeld}
               onClearHeld={() => setHeld([])}
@@ -208,11 +202,71 @@ export function RoomScreen({ code }: { code?: string }) {
           );
         })()
       ) : (
-        <Lobby api={api} />
+        <Reveal key={screen}>
+          {screen === "superseded" ? (
+            // Said plainly rather than retried. Two tabs for one identity
+            // used to trade the socket back and forth several times a
+            // second, each closing the other, and neither screen ever
+            // settled — which read as the game desyncing rather than as
+            // what it was.
+            <RoomStatusScreen
+              title="Playing in another tab"
+              line="You opened this room somewhere else. Your seat is still yours — carry on there, or bring the game back here."
+              action={
+                <Button size="sm" onClick={api.resume}>
+                  Play here instead
+                </Button>
+              }
+            />
+          ) : screen === "connecting" ? (
+            <RoomStatusScreen
+              title={api.status === "reconnecting" ? "Reconnecting…" : "Connecting…"}
+              waiting
+            />
+          ) : screen === "acting" ? (
+            <RoomStatusScreen title={intentLabel(acting ?? intent ?? null)} waiting />
+          ) : screen === "pending" ? (
+            <RoomStatusScreen
+              title="Waiting to be let in"
+              line={`${api.pendingCode ?? "This"} is a private room. The party leader has to approve you.`}
+              waiting
+              // The action is the way home: a knock left standing would let
+              // a later approval drag the player into a room they declined.
+              home={false}
+              action={
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    api.withdraw();
+                    router.replace("/");
+                  }}
+                >
+                  Never mind
+                </Button>
+              }
+            />
+          ) : screen === "leaving" ? (
+            <RoomStatusScreen title="Leaving the room…" />
+          ) : screen === "entry" ? (
+            <EntryScreen api={api} urlCode={code} />
+          ) : (
+            <Lobby api={api} />
+          )}
+        </Reveal>
       )}
     </>
   );
 }
+
+type Screen =
+  | "superseded"
+  | "connecting"
+  | "acting"
+  | "pending"
+  | "leaving"
+  | "entry"
+  | "table"
+  | "lobby";
 
 /**
  * DEV ONLY: says so when Chrome discarded this tab and reloaded it.
@@ -246,142 +300,90 @@ function intentLabel(intent: EntryIntent | null): string {
   return "Connecting…";
 }
 
-/** Uppercase, letters only, at most the four a join code has. */
-function cleanCode(raw: string | undefined): string {
-  return (raw ?? "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+/**
+ * What the last way in ran into, sorted by where it belongs: under the
+ * name, under the code, or above the whole form.
+ *
+ * A refusal about a FIELD (a name already taken, a code with no room) goes
+ * under that field, where the fix is. Anything about the room itself —
+ * turned away, removed, full — is the form's `notice`, and it names the
+ * room, because by now the player may have seen three.
+ */
+function refusalOf(api: RoomApi): { notice?: string; name?: string; code?: string } {
+  const error = api.error;
+  if (error) {
+    const text = sentence(error.message);
+    if (error.code === "name-required" || error.code === "name-taken") return { name: text };
+    if (error.code === "no-such-room") return { code: "No room with that code" };
+    return { notice: text };
+  }
+  const farewell = api.farewell;
+  const room = farewell?.code ? `room ${farewell.code}` : "the room";
+  switch (farewell?.reason) {
+    case "denied":
+      return { notice: `The leader of ${room} didn't let you in. Ask again, or make your own room.` };
+    case "kicked":
+      return { notice: `You were removed from ${room}.` };
+    case "room-closed":
+      return { notice: `${sentence(room)} has closed.` };
+    default:
+      return {};
+  }
 }
 
-function Centred({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="felt felt-weave flex h-svh flex-col items-center justify-center gap-4">
-      {children}
-    </main>
-  );
+/** The wire's refusals are lower-case sentence fragments (`ERROR_TEXT`). */
+function sentence(text: string): string {
+  const s = text.trim();
+  return s ? s[0]!.toUpperCase() + s.slice(1) : s;
 }
 
 /**
- * Create a room, or join one — for whoever did not come through the home
- * page's own form: a shared link, a direct visit, or a refused attempt
- * (which shows its reason here).
+ * The entry screen: somebody who did not come through the home page's own
+ * form — a shared link, a direct visit — or whose way in did not work.
  *
- * A name is required for both, per the spec — there are no accounts, so a
- * name is the only thing that makes somebody addressable in a roster. It is
- * remembered locally so the second visit does not ask again.
- *
- * With a code in the URL the form is about JOINING that room: Join is the
- * primary button and making a room of your own is a quiet link. It used to
- * be the same form either way, with Make the louder button right beside
- * the name, so somebody who had followed a link to join was steered
- * towards making a room instead.
+ * A name is required either way, per the spec — there are no accounts, so
+ * a name is the only thing that makes somebody addressable in a roster. It
+ * is remembered locally so the second visit does not ask again.
  */
-function Entry({ api, initialCode }: { api: ReturnType<typeof useRoom>; initialCode?: string }) {
-  const [name, setName] = useState("");
-  // Sanitised exactly as `CodeInput` sanitises typing, which this used
-  // to skip. `/room/abcde` filled all four boxes and left Join disabled
-  // forever with no error; `/room/ab-1` is length 4, so Join was ENABLED
-  // and sent a code the server could only refuse.
-  const [code, setCode] = useState(cleanCode(initialCode));
-  const [touched, setTouched] = useState(false);
-  /** Arrived with a code: this form is for joining it. */
-  const joining = cleanCode(initialCode).length === 4;
-
-  useEffect(() => {
-    // Deliberately an effect, and deliberately a synchronous setState in
-    // one. A lazy `useState` initializer runs during render, where `window`
-    // does not exist during prerender and the build breaks; guarding that
-    // read instead produces prerendered HTML with an empty field and a
-    // filled one after hydration, a mismatch on a controlled input.
-    const saved = readSavedName();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved) setName(saved);
-  }, []);
-
-  const named = name.trim().length > 0;
-  const joinable = named && code.length === 4;
-
-  const make = () => {
-    setTouched(true);
-    if (!named) return;
-    saveName(name);
-    api.createRoom(name.trim());
-  };
-  const join = () => {
-    setTouched(true);
-    if (!joinable) return;
-    saveName(name);
-    api.joinRoom(code, name.trim());
-  };
-
-  const nameField = (
-    <TextField
-      label="Your name"
-      value={name}
-      onChange={setName}
-      placeholder="Ada"
-      maxLength={20}
-      error={touched && !named ? "A name is needed to join a room" : undefined}
-    />
-  );
-  const codeError = api.error?.code === "no-such-room" ? "No room with that code" : undefined;
+function EntryScreen({ api, urlCode }: { api: RoomApi; urlCode?: string }) {
+  const refusal = refusalOf(api);
+  const invited = cleanCode(urlCode);
+  const mode: RoomEntryMode =
+    refusal.notice || refusal.code ? "retry" : invited.length === CODE_LENGTH ? "invite" : "home";
+  // Worth asking again only where the answer could change: a knock that was
+  // turned down. Not a room you were removed from, or one that has closed.
+  const reason = api.farewell?.reason;
+  const initialCode =
+    reason === "denied"
+      ? (api.farewell?.code ?? "")
+      : reason === "kicked" || reason === "room-closed"
+        ? ""
+        : invited;
 
   return (
     <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">Play together</span>
         <h1 className="font-display text-4xl tracking-wider text-brass-300">
-          {joining ? `Room ${code}` : "Rooms"}
+          {mode === "invite" ? `Room ${invited}` : "Rooms"}
         </h1>
-        <p className="max-w-xs text-sm text-bone-400">
-          {joining
-            ? "You have been invited to a room. Pick the name everyone will see you by."
-            : "Make a room and share the code, or type one in. Bots fill any seat nobody is sitting in."}
-        </p>
+        {mode === "retry" ? null : (
+          <p className="max-w-xs text-sm text-bone-400">
+            {mode === "invite"
+              ? "You have been invited to a room. Pick the name everyone will see you by."
+              : "Make a room and share the code, or type one in. Bots fill any seat nobody is sitting in."}
+          </p>
+        )}
       </div>
 
-      {nameField}
-
-      {joining ? (
-        <>
-          {codeError ? (
-            <p className="text-xs font-semibold" style={{ color: "var(--color-loss)" }}>
-              {codeError}
-            </p>
-          ) : null}
-          <Button tone="primary" className="w-full" onClick={join}>
-            Join room {code}
-          </Button>
-          <button
-            type="button"
-            className="text-xs text-bone-400 underline-offset-4 hover:text-bone-200 hover:underline"
-            onClick={make}
-          >
-            or make a room of your own
-          </button>
-        </>
-      ) : (
-        <>
-          <Button tone="primary" className="w-full" onClick={make}>
-            Make a room
-          </Button>
-
-          <div className="flex w-full items-center gap-3">
-            <span className="h-px flex-1 bg-bone-50/12" />
-            <span className="eyebrow">or join one</span>
-            <span className="h-px flex-1 bg-bone-50/12" />
-          </div>
-
-          <CodeInput value={code} onChange={setCode} error={codeError} onSubmit={join} />
-          <Button className="w-full" disabled={!joinable} onClick={join}>
-            Join room
-          </Button>
-        </>
-      )}
-
-      {api.error && api.error.code !== "no-such-room" ? (
-        <p className="text-xs font-semibold" style={{ color: "var(--color-loss)" }}>
-          {api.error.message}
-        </p>
-      ) : null}
+      <RoomEntryForm
+        mode={mode}
+        initialCode={initialCode}
+        notice={refusal.notice}
+        errors={{ name: refusal.name, code: refusal.code }}
+        onMake={(name) => api.createRoom(name)}
+        onJoin={(code, name) => api.joinRoom(code, name)}
+      />
 
       <Link href="/" className="text-xs text-bone-400 underline-offset-4 hover:underline">
         ← Back

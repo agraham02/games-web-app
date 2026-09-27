@@ -18,72 +18,29 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
-import { Button } from "@/ui/primitives/Button";
-import { CodeInput, TextField } from "@/ui/primitives/TextField";
-import { CODE_LENGTH } from "@/session/room";
 import { REJOIN_PATH, TOKEN_HEADER, type RejoinAnswer } from "@/session/protocol";
-import { readSavedName, saveName, setEntryIntent, storedSessionToken } from "@/room/entry";
+import { setEntryIntent, storedSessionToken } from "@/room/entry";
+import { RoomEntryForm } from "@/room/RoomEntryForm";
 
 export function HomeEntry() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [touched, setTouched] = useState(false);
-  const named = name.trim().length > 0;
-  const complete = code.length === CODE_LENGTH;
-
-  useEffect(() => {
-    // After mount, not in a lazy initializer: the page is prerendered, and
-    // a filled field in the browser against an empty one in the HTML is a
-    // hydration mismatch on a controlled input.
-    const saved = readSavedName();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved) setName(saved);
-  }, []);
-
-  const make = () => {
-    setTouched(true);
-    if (!named) return;
-    saveName(name);
-    setEntryIntent({ t: "make" });
-    router.push("/room");
-  };
-
-  const join = () => {
-    setTouched(true);
-    if (!named || !complete) return;
-    saveName(name);
-    setEntryIntent({ t: "join", code });
-    router.push(`/room/${code}`);
-  };
 
   return (
     <div className="flex w-full flex-col gap-4">
       <RejoinCard />
-
-      <TextField
-        label="Your name"
-        value={name}
-        onChange={setName}
-        placeholder="Ada"
-        maxLength={20}
-        error={touched && !named ? "A name is needed to play in a room" : undefined}
+      {/* The same form a shared link and a refused join show (`mode`), so
+          the name, the buttons and their weight are learned once. */}
+      <RoomEntryForm
+        mode="home"
+        onMake={() => {
+          setEntryIntent({ t: "make" });
+          router.push("/room");
+        }}
+        onJoin={(code) => {
+          setEntryIntent({ t: "join", code });
+          router.push(`/room/${code}`);
+        }}
       />
-
-      <Button tone="primary" className="w-full py-4 text-base" onClick={make}>
-        Make a room
-      </Button>
-
-      <div className="flex items-center gap-3">
-        <span className="h-px flex-1 bg-bone-50/12" />
-        <span className="eyebrow">or join one</span>
-        <span className="h-px flex-1 bg-bone-50/12" />
-      </div>
-
-      <CodeInput value={code} onChange={setCode} onSubmit={join} />
-      <Button className="w-full" disabled={!complete} onClick={join}>
-        Join room
-      </Button>
     </div>
   );
 }
