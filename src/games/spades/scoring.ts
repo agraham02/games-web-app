@@ -46,6 +46,20 @@ export interface RoundScore {
    * (see spades/page.tsx's `roundSummary`, which had exactly this bug).
    */
   bagsAdded: Record<SeatId, number>;
+  /**
+   * Where each team's delta came from, part by part — "Contract 9 +90",
+   * "2 bags +2", "Nil made +100", "10 bags −100" — mirrored per team.
+   * Recorded here, as each part is added, so the round card can say how a
+   * score was made without re-deriving the rules (see `bagsAdded` for what
+   * a UI's own arithmetic got wrong). The parts always sum to the delta.
+   */
+  parts: Record<SeatId, ScorePart[]>;
+}
+
+/** One line of a team's round score. */
+export interface ScorePart {
+  label: string;
+  points: number;
 }
 
 export function scoreRound(
@@ -57,6 +71,7 @@ export function scoreRound(
   const bags: Record<SeatId, number> = {};
   const bagPenalty: Record<SeatId, number> = {};
   const bagsAddedOut: Record<SeatId, number> = {};
+  const partsOut: Record<SeatId, ScorePart[]> = {};
 
   for (const team of [0, 1] as const) {
     const [a, b] = teammates(team);
@@ -64,6 +79,7 @@ export function scoreRound(
 
     let delta = 0;
     let bagsAdded = 0;
+    const parts: ScorePart[] = [];
 
     // The team's shared numeric contract — Nil bidders contribute
     // nothing to it, exactly like they contribute nothing toward "the
@@ -88,10 +104,13 @@ export function scoreRound(
         // Bags are never doubled, blind bid or not — only the contract
         // itself is.
         delta += target * (doubled ? 20 : 10) + bagsAdded;
+        parts.push({ label: `Contract ${target}${doubled ? ", blind" : ""}`, points: target * (doubled ? 20 : 10) });
+        if (bagsAdded > 0) parts.push({ label: `${bagsAdded} bag${bagsAdded === 1 ? "" : "s"}`, points: bagsAdded });
       } else {
         // A failed bid is never doubled either way — "success pays
         // double, failure pays the normal single penalty" per the rule.
         delta -= target * 10;
+        parts.push({ label: `Contract ${target} set`, points: -target * 10 });
       }
     }
 
@@ -106,6 +125,7 @@ export function scoreRound(
       const made = (tricksWon[seat] ?? 0) === 0;
       const bonus = bid.blind ? 200 : 100;
       delta += made ? bonus : -bonus;
+      parts.push({ label: `${bid.blind ? "Blind nil" : "Nil"} ${made ? "made" : "failed"}`, points: made ? bonus : -bonus });
     }
 
     // Raw cumulative total, never reset — "remainder carries over" falls
@@ -116,14 +136,16 @@ export function scoreRound(
     const totalBags = prevBags + bagsAdded;
     const crossings = Math.floor(totalBags / 10) - Math.floor(prevBags / 10);
     delta -= crossings * 100;
+    if (crossings > 0) parts.push({ label: `${crossings * 10} bags`, points: -crossings * 100 });
 
     for (const seat of [a, b]) {
       deltas[seat] = delta;
       bags[seat] = totalBags;
       bagPenalty[seat] = crossings * 100;
       bagsAddedOut[seat] = bagsAdded;
+      partsOut[seat] = parts;
     }
   }
 
-  return { deltas, bags, bagPenalty, bagsAdded: bagsAddedOut };
+  return { deltas, bags, bagPenalty, bagsAdded: bagsAddedOut, parts: partsOut };
 }

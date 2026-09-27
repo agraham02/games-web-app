@@ -69,7 +69,7 @@ import {
 } from "@/games/rummy/state";
 import type { RummyAction, RummyState } from "@/games/rummy/types";
 import type { RoundNote } from "@/table/GameHost";
-import { HandZone } from "@/table/HandZone";
+import { BandNote, HandZone } from "@/table/HandZone";
 import { Button } from "@/ui/primitives/Button";
 import { PanSurface } from "@/table/PanSurface";
 import type { SeatView } from "@/table/SeatRing";
@@ -633,7 +633,9 @@ export function RummyTable({
         right={<SortMenu mode={sortMode} onMode={setSortMode} />}
       />
 
-      <StockBadge state={state} />
+      {/* Not before the deal: while the dealer picks a hand size nothing has
+          been dealt, and "52 in stock" described a pile that is not there. */}
+      {state.dealSizePending !== null ? null : <StockBadge state={state} />}
 
       <PanSurfaces state={state} seat={seat} />
       <StagedRing state={state} depth={pickupDepth} />
@@ -1198,9 +1200,10 @@ function ClaimBar({
 function DealSizeBar({ live }: { live: Live }) {
   const sizes = validDealSizes(live.state.seats);
   const [size, setSize] = useState(sizes[Math.floor(sizes.length / 2)] ?? 7);
+  // "Deal [7] Deal" said the verb twice and never what the number was.
   return (
     <>
-      <span className="shrink-0 text-[10px] font-bold text-bone-300">Deal</span>
+      <BandNote>Cards each</BandNote>
       <NumberStepper
         value={size}
         min={sizes[0]!}
@@ -1209,7 +1212,7 @@ function DealSizeBar({ live }: { live: Live }) {
         label="cards"
         onChange={setSize}
       />
-      <BarButton onClick={() => live.submitAction({ t: "chooseDealSize", size })}>Deal</BarButton>
+      <BarButton onClick={() => live.submitAction({ t: "chooseDealSize", size })}>Deal {size}</BarButton>
     </>
   );
 }
@@ -1636,7 +1639,7 @@ function BoardBody({
         // and an `overflow-x` container clips the other axis too (per the
         // CSS Overflow spec, one axis set to a non-visible value promotes
         // the other) — without room to spare, both get sliced.
-        className="flex items-start overflow-x-auto px-1.5 pt-2 pb-2"
+        className="flex items-start overflow-x-auto px-1.5 pt-2 pb-2 [scrollbar-color:var(--color-brass-500)_transparent] [scrollbar-width:thin]"
         style={{ gap: MELD_GAP.betweenOwners }}
       >
         {groups.map((group) => (
@@ -1664,7 +1667,7 @@ function BoardBody({
               guarantees the SHORTEST legal meld fits — a seven-card run
               in a side rail has to be reachable, not clipped. */}
           <div
-            className="flex flex-wrap items-start overflow-x-auto p-1.5"
+            className="flex flex-wrap items-start overflow-x-auto p-1.5 [scrollbar-color:var(--color-brass-500)_transparent] [scrollbar-width:thin]"
             style={{ gap: MELD_GAP.sameOwner }}
           >
             {melds(group)}

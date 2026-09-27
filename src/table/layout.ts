@@ -599,7 +599,11 @@ export function layoutPiece(
           minGap: panned ? art.w * MIN_HAND_GAP_FRACTION : undefined,
           pan: panned ? ctx!.handScroll : undefined,
         });
-        const lift = p.selected ? -18 : 0;
+        // Lifted within the hand's own strip, never out of it: a tile stands
+        // taller in the strip than a card, and a full 18px carried a picked-up
+        // domino over the band above the hand — over "Tap where it goes".
+        const room = Math.max(0, slot.y - art.h / 2 - g.zones.hand.y);
+        const lift = p.selected ? -Math.min(18, room) : 0;
         return {
           x: slot.x - base.w / 2,
           y: slot.y - base.h / 2 + lift,

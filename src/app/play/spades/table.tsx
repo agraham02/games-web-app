@@ -644,6 +644,18 @@ export function roundSummary(view: SpadesView, state: SpadesState) {
     }
   }
 
+  // How your team's score was made, when nothing more urgent needs the
+  // note: "Contract 9 +90 · 2 bags +2". A spectator's is the first team's.
+  const breakdownSeat = isSeated(view) ? view.viewerSeat : (0 as SeatId);
+  const parts = result.parts?.[breakdownSeat] ?? [];
+  if (!note && parts.length > 0) {
+    note = {
+      tone: "info",
+      title: isSeated(view) ? "Your team's round" : "Team A's round",
+      body: parts.map((p) => `${p.label} ${p.points >= 0 ? "+" : "−"}${Math.abs(p.points)}`).join(" · "),
+    };
+  }
+
   const heroDelta = result.deltas[view.viewerSeat] ?? 0;
   const title = heroDelta > 0 ? "Your team scores" : heroDelta < 0 ? "Your team sets" : "Hand complete";
 
