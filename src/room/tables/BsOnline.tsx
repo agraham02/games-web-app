@@ -41,12 +41,7 @@ import {
   type BsView,
 } from "@/app/play/bs/table";
 import { tintFor } from "../Roster";
-import {
-  awayFrom,
-  continueWaitingFor,
-  openingPosition,
-  useOnlineRuntime,
-} from "../useOnlineRuntime";
+import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 
@@ -80,7 +75,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
       // exactly the effect wanted: nothing on the table is "yours", and every
       // hand at it stays face down.
       viewerSeat: frame.seat ?? -1,
-      nameFor: (seat: SeatId) => frame.seatNames[seat] ?? `Bot ${seat + 1}`,
+      nameFor: (seat: SeatId) => nameForSeat(frame, seat),
       colourFor: (seat: SeatId) => {
         const owner = room.members.find((m) => m.seat === seat);
         return owner ? tintFor(owner.session) : botColour(seat);

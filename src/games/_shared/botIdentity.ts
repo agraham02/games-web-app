@@ -19,11 +19,14 @@ const BOT_COLOURS = [
   "#a0c9c4", "#c9b0a0", "#aab8a0", "#c0a8b8",
 ] as const;
 
-/** `seat` is the real SeatId (1..seats-1) — HERO (0) has no bot identity. */
+/** Seat 1 is the first name, as offline, where seat 0 is always the player.
+ * In a room a bot can hold seat 0 too, and it wraps to the last name. */
+const slot = (seat: SeatId, n: number) => (((seat - 1) % n) + n) % n;
+
 export function botName(seat: SeatId): string {
-  return BOT_NAMES[(seat - 1) % BOT_NAMES.length]!;
+  return BOT_NAMES[slot(seat, BOT_NAMES.length)]!;
 }
 
 export function botColour(seat: SeatId): string {
-  return BOT_COLOURS[(seat - 1) % BOT_COLOURS.length]!;
+  return BOT_COLOURS[slot(seat, BOT_COLOURS.length)]!;
 }

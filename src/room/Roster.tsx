@@ -4,9 +4,8 @@
  * Who is in the room, where they will sit, and what the leader may do
  * about them.
  *
- * The initials-on-a-tinted-circle avatar was already inlined in three
- * places (`SeatRing`, the round scorecard, the game-end standings) before
- * this file; it is lifted here rather than copied a fourth time.
+ * Its avatar is the shared `Avatar` — the same one the seat pods, the
+ * round card and the game-end winner draw.
  *
  * The treatment of a disconnected member is deliberate and follows the
  * disclosure policy's "dim, don't hide": they stay in the list, greyed,
@@ -24,40 +23,12 @@
  * finger swiping down the list has to scroll the page, not pick somebody up.
  */
 
-import { Bot, Crown, Eye, GripVertical, UserMinus } from "lucide-react";
+import { Crown, Eye, GripVertical, UserMinus } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { MemberView } from "@/session/protocol";
+import { Avatar } from "@/ui/primitives/Avatar";
 import { Button } from "@/ui/primitives/Button";
-
-export function Avatar({
-  name,
-  colour,
-  dim = false,
-  size = 32,
-}: {
-  name: string;
-  colour: string;
-  dim?: boolean;
-  size?: number;
-}) {
-  return (
-    <span
-      aria-hidden
-      className="flex shrink-0 items-center justify-center rounded-full font-display font-bold text-felt-950"
-      style={{
-        width: size,
-        height: size,
-        background: colour,
-        fontSize: size * 0.4,
-        opacity: dim ? 0.45 : 1,
-        filter: dim ? "grayscale(1)" : undefined,
-      }}
-    >
-      {name.slice(0, 2).toUpperCase()}
-    </span>
-  );
-}
 
 /** Stable per-name so the same person keeps the same colour across renders. */
 const TINTS = [
@@ -375,12 +346,7 @@ function BotCells({ label, team }: { label: string; team: number | null }) {
   return (
     <>
       <SeatLabel label={label} />
-      <span
-        aria-hidden
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bone-50/8 text-bone-400 ring-1 ring-bone-50/12"
-      >
-        <Bot size={16} />
-      </span>
+      <Avatar name="Bot" colour="" bot />
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm font-semibold text-bone-300">Bot</span>
         <span className="truncate text-xs text-bone-500">Plays this seat</span>

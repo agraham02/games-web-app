@@ -19,6 +19,7 @@ import { Stats, type StatLines } from "@/ui/primitives/Stats";
 import { useTableStore } from "@/table/store";
 import { Button } from "@/ui/primitives/Button";
 import { useState } from "react";
+import { Avatar } from "@/ui/primitives/Avatar";
 
 /* ============================================================
    Round intro — a brief title card over the deal.
@@ -404,13 +405,7 @@ function ScoreRowGroup({ rows, index }: { rows: readonly ScoreRow[]; index: numb
     >
       <span className="flex flex-col gap-1.5">
         {rows.map((r) => (
-          <span
-            key={r.seat}
-            className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-[9px] font-bold text-felt-950"
-            style={{ background: r.colour }}
-          >
-            {r.name.slice(0, 2).toUpperCase()}
-          </span>
+          <Avatar key={r.seat} name={r.name} colour={r.colour} size={22} />
         ))}
       </span>
       <span className="flex flex-col gap-1.5">
@@ -483,18 +478,14 @@ export function GameEndSummary({
       <div className="relative flex flex-col items-center gap-2 pt-4">
         <span className="eyebrow text-brass-400">Winner</span>
         <motion.span
-          className="flex h-[74px] w-[74px] items-center justify-center rounded-full text-2xl font-bold text-felt-950"
-          style={{
-            background: winnerColour,
-            boxShadow:
-              "0 0 0 3px var(--color-brass-500), 0 0 44px rgb(212 175 106 / 0.55)",
-          }}
+          className="rounded-full"
+          style={{ boxShadow: "0 0 0 3px var(--color-brass-500), 0 0 44px rgb(212 175 106 / 0.55)" }}
           initial={{ scale: 0.85, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           // The UI tween like everything else here — the spring overshot.
           transition={TRANSITIONS.uiEnterSlow}
         >
-          {winnerName.slice(0, 2).toUpperCase()}
+          <Avatar name={winnerName} colour={winnerColour} size={74} />
         </motion.span>
         <h2 className="mt-1 font-display text-3xl tracking-wider text-brass-300">
           {winnerName}

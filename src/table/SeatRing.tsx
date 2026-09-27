@@ -17,6 +17,7 @@ import type { SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
+import { Avatar } from "@/ui/primitives/Avatar";
 import { Stats, type Stat, type StatLines } from "@/ui/primitives/Stats";
 
 /** One labelled number on a pod: "Bid 4", "Cards 7" — see `Stats`. */
@@ -92,10 +93,6 @@ export interface SeatView {
   away?: boolean;
 }
 
-function initialsOf(name: string): string {
-  return name.slice(0, 2).toUpperCase();
-}
-
 /**
  * Pod dimensions per density tier. `compact`/`regular` keep the numbers
  * this component always had; `wide` steps up noticeably rather than a
@@ -112,10 +109,10 @@ function initialsOf(name: string): string {
 // lines under its name (`POD_LINES`), and at compact density a top-edge
 // pod's centre is only 37px from the top of the screen — any taller and
 // its avatar goes off the top.
-const POD_STYLES: Record<Density, { pod: string; avatar: string; name: string; meta: string }> = {
-  compact: { pod: "w-16 gap-0.5 py-1", avatar: "h-7 w-7 text-[10px]", name: "text-[11px]", meta: "text-[9px]" },
-  regular: { pod: "w-16 gap-0.5 py-1", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
-  wide: { pod: "w-24 gap-1 py-1.5", avatar: "h-12 w-12 text-[15px]", name: "text-[15px]", meta: "text-[13px]" },
+const POD_STYLES: Record<Density, { pod: string; avatar: number; name: string; meta: string }> = {
+  compact: { pod: "w-16 gap-0.5 py-1", avatar: 28, name: "text-[11px]", meta: "text-[9px]" },
+  regular: { pod: "w-16 gap-0.5 py-1", avatar: 32, name: "text-[11px]", meta: "text-[9px]" },
+  wide: { pod: "w-24 gap-1 py-1.5", avatar: 48, name: "text-[15px]", meta: "text-[13px]" },
 };
 
 export function SeatRing({ players }: { players: readonly SeatView[] }) {
@@ -169,15 +166,13 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
     >
       <div className="relative">
         <AnimatePresence>{view.winning ? <WinnerCrown /> : null}</AnimatePresence>
-        <div
-          className={`flex ${s.avatar} items-center justify-center rounded-full font-bold text-felt-950`}
-          style={{
-            background: view.colour,
-            filter: view.eliminated ? "grayscale(1)" : undefined,
-          }}
-        >
-          {initialsOf(view.name)}
-        </div>
+        <Avatar
+          name={view.name}
+          colour={view.colour}
+          size={s.avatar}
+          // The pod itself fades an eliminated seat; the avatar only greys.
+          style={{ filter: view.eliminated ? "grayscale(1)" : undefined }}
+        />
         {view.thinking ? <ThinkingRing /> : null}
         {view.badge ? <PositionBadge label={view.badge} /> : null}
         {view.away ? <AwayBadge name={view.name} /> : null}

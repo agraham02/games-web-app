@@ -42,12 +42,7 @@ import {
   type RummyView,
 } from "@/app/play/rummy/table";
 import { tintFor } from "../Roster";
-import {
-  awayFrom,
-  continueWaitingFor,
-  openingPosition,
-  useOnlineRuntime,
-} from "../useOnlineRuntime";
+import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 
@@ -81,7 +76,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
     () => ({
       viewerSeat: frame.seat,
       nameFor: (seat: SeatId) =>
-        seat === frame.seat ? "You" : (frame.seatNames[seat] ?? `Bot ${seat + 1}`),
+        seat === frame.seat ? "You" : nameForSeat(frame, seat),
       colourFor: (seat: SeatId) => {
         const owner = room.members.find((m) => m.seat === seat);
         return owner ? tintFor(owner.session) : botColour(seat);

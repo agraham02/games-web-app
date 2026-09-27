@@ -35,12 +35,7 @@ import {
   type LrcView,
 } from "@/app/play/lrc/table";
 import { tintFor } from "../Roster";
-import {
-  awayFrom,
-  continueWaitingFor,
-  openingPosition,
-  useOnlineRuntime,
-} from "../useOnlineRuntime";
+import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 
@@ -70,7 +65,7 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
       // A spectator has no seat. `-1` matches no seat anywhere, which is
       // exactly the effect wanted: nothing on the table is "yours".
       viewerSeat: frame.seat ?? -1,
-      nameFor: (seat: SeatId) => frame.seatNames[seat] ?? `Bot ${seat + 1}`,
+      nameFor: (seat: SeatId) => nameForSeat(frame, seat),
       colourFor: (seat: SeatId) => {
         const owner = room.members.find((m) => m.seat === seat);
         return owner ? tintFor(owner.session) : botColour(seat);
