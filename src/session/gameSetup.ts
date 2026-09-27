@@ -460,3 +460,27 @@ export const GAME_SETUPS = {
   rummy: RUMMY,
   bs: BS,
 } as const satisfies Record<string, GameSetupSpec>;
+
+/**
+ * A game's setup in a few words — "Caribbean · 10 games · Partners off" —
+ * for the lobby's folded Game panel. Only what is in force: hidden options
+ * are left out, and an unavailable rule reads as off.
+ */
+export function summarizeSetup(spec: GameSetupSpec, s: Settings, mode: SetupMode): string[] {
+  const parts: string[] = [];
+  for (const option of spec.options) {
+    if (!isVisible(option, s, mode)) continue;
+    const value = s[option.key];
+    if (option.kind === "choice") {
+      const choice = option.choices.find((c) => c.value === value) ?? option.choices.find((c) => c.value === option.default);
+      if (choice) parts.push(option.ruleset ? choice.label : `${option.label} ${choice.label}`);
+    } else if (option.kind === "number") {
+      const n = typeof value === "number" ? value : option.default;
+      parts.push(`${option.format ? option.format(n) : n} ${option.unit(n)}`);
+    } else {
+      const on = value === true && isAvailable(option, s);
+      parts.push(`${option.label} ${on ? "on" : "off"}`);
+    }
+  }
+  return parts;
+}

@@ -119,6 +119,7 @@ export function DominoesOnline({
         settings={DOMINO_SETTINGS}
         menuActions={
           <TableMenu
+            code={room.code}
             spectator={frame.seat === null}
             leader={room.youAreLeader}
             onStepAway={api.exitGame}

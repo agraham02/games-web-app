@@ -113,6 +113,7 @@ export function SpadesOnline({
         settings={SPADES_SETTINGS}
         menuActions={
           <TableMenu
+            code={room.code}
             spectator={frame.seat === null}
             leader={room.youAreLeader}
             onStepAway={api.exitGame}

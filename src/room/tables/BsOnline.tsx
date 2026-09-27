@@ -102,6 +102,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         continueWaiting={continueWaitingFor(room)}
         menuActions={
           <TableMenu
+            code={room.code}
             spectator={frame.seat === null}
             leader={room.youAreLeader}
             onStepAway={api.exitGame}

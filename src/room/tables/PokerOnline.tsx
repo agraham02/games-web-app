@@ -103,6 +103,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         settings={POKER_SETTINGS}
         menuActions={
           <TableMenu
+            code={room.code}
             spectator={frame.seat === null}
             leader={room.youAreLeader}
             onStepAway={api.exitGame}

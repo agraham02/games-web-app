@@ -287,7 +287,11 @@ describe("the room client", () => {
         gameId: "dominoes",
         settings: { mode: "caribbean", teams: true, keyTileBonus: true, sixLove: false },
       });
-      const teams = screen.getByRole("switch", { name: /partners/i });
+      // On a phone somebody else's game folds to one line — which already
+      // says the rules as they are.
+      expect(screen.getByText(/Dominoes · Caribbean · .*Partners on · Key tile on · Six love off/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Details" }));
+      const teams = await screen.findByRole("switch", { name: /partners/i });
       expect(teams).toHaveAttribute("aria-checked", "true");
       expect(teams).toHaveAttribute("aria-readonly", "true");
       expect(screen.getByRole("switch", { name: /six love/i })).toHaveAttribute("aria-checked", "false");
@@ -312,6 +316,17 @@ describe("the room client", () => {
       expect(replace).toHaveBeenCalledWith("/room/ABCD");
     });
 
+    it("says what Start is waiting for, in words", async () => {
+      // The button said it only through `title`, which a phone never shows.
+      await enterLobby({ youAreLeader: false, gameId: null, seats: 0, seatPlan: ["me"] });
+      expect(screen.getByText("Ada is choosing a game")).toBeInTheDocument();
+    });
+
+    it("tells somebody who is not the leader who they are waiting on", async () => {
+      await enterLobby({ youAreLeader: false, gameId: "spades", seats: 4 });
+      expect(screen.getByText("Waiting for Ada to start")).toBeInTheDocument();
+    });
+
     it("gives the leader the controls, and dims them for everyone else", async () => {
       // Dimmed rather than missing, per the disclosure policy: hiding them
       // would rearrange the lobby every time leadership moved, which it
@@ -328,7 +343,7 @@ describe("the room client", () => {
       await enterLobby({ privacy: "private", pending });
       expect(screen.getByText("Knocker")).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: /let in/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^let in$/i }));
       expect(socket().lastSent("approve")).toMatchObject({ session: "knocker" });
     });
 

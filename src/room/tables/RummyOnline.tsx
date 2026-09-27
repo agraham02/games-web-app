@@ -107,6 +107,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
         continueWaiting={continueWaitingFor(room)}
         menuActions={
           <TableMenu
+            code={room.code}
             spectator={frame.seat === null}
             leader={room.youAreLeader}
             onStepAway={() => {
