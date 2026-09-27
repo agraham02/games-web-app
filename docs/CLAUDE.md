@@ -19,6 +19,7 @@ npm run dev      # server + app on one port: /play/rummy, /room, /lab/seats
 npm run check    # typecheck + lint + test
 npm run harness  # adversarial WebSocket scenarios (needs `npm run dev`)
 npm run e2e      # real browsers, one real server (starts its own, port 3210)
+npm run measure  # how much of the screen each table uses, by what (docs/table-layout-rethink.md)
 ```
 
 `npm run dev` boots `server.ts`, not `next dev`: rooms are live objects
@@ -428,6 +429,10 @@ product. It also means a room has to be a room: **`MIN_ROOM_PLAYERS`
 a room is the offline game plus a round trip per bot turn, and it is
 strictly worse — so the lobby dims Start, says why, and links straight
 to `/play/<gameId>`. The button is the courtesy; the guard is the rule.
+Only the leader has the button at all; everyone else is told who they are
+waiting on (the user's call, 2026-09-27 — a dimmed Start somebody can
+never press was the one exception worth making to the lobby's
+dim-don't-hide rule).
 
 Counted over CONNECTED members, deliberately: somebody whose phone is
 asleep gets a bot seat the moment the deal happens, so counting them
@@ -467,6 +472,20 @@ header — [server/rejoin.ts](src/server/rejoin.ts)), not over the socket: a
 socket's `hello` ATTACHES, which would hand the seat back from the bot
 while the player is still on the home page. `peekSession` looks the token
 up without minting an identity, so asking creates nothing.
+
+**Leaving the room's page hangs up.** The socket is one per tab
+([connection.ts](src/room/connection.ts)), and it used to outlive the
+page: after the back gesture or a link home the server still had the
+player at the table, so the bots played on to their turn and a game with
+nobody real left in it never ended. `RoomConnection` now closes one tick
+after the last page stops listening (`closeWhenIdle`; the tick is what
+StrictMode's remount and `/room` → `/room/ABCD` need), which is exactly
+what closing the tab does: a bot takes the seat, and with no real player
+left `endIfAllBots` ends the game on the spot (the user: "not even for 1
+second"). The home page waits for that close (`roomConnectionClosed`)
+before asking `/api/rejoin`, or it is told about the game as it was.
+Every socket handler checks it is still the current socket, because a
+closed one goes on delivering its last frames and then its close.
 
 ### Presence is table state, so it needs a frame
 
@@ -629,9 +648,13 @@ may they overhang. A side seat's fan compresses rather than reaching past
 the ring. `layout.test.ts`'s band test holds every game, with the band it
 really shows, to this at every `TABLE_VIEWPORTS` size.
 
-**Transient notices use the toast lane** (`toastLane(geometry)`): just
-below the lowest top-edge pod, never on it. `GameToaster` and the
-Reconnecting pill both take it.
+**Toasts sit bottom right, above the band** (`toastLane(geometry)`, px
+from the bottom — the user's call, 2026-09-27). Not in the corner itself,
+which is the viewer's hand: a toast there swallows the tap on a card. The
+Reconnecting pill keeps a lane of its own at the top (`statusLane`: just
+below the lowest top pod), so the two never stack. Off a table,
+`GameToaster` stays above a sticky footer (`useFooterInset`, published by
+`SetupShell`), which is where the lobby's Leave room is.
 
 **Pods say labelled numbers** (`SeatView.stats`, drawn by the shared
 `Stats`), at most two lines under the name (`POD_LINES` — the geometry
@@ -719,7 +742,10 @@ to the spec and all three follow. Defaults are the solo values everywhere
 Reach for these before writing a one-off — each replaced several copies:
 
 - `Button` (cva: tone × size × shape) is the only button. `ChoiceGroup`
-  is one-of-a-few (a game, a ruleset, privacy). `Toggle` and the sliders
+  is one-of-a-few (a game, a ruleset, privacy); `variant="tiles"` makes
+  each option a picture over its words (the lobby's game picker).
+  `GameThumb` / `seatRange` / `GAME_BLURBS` draw a game the same way on
+  the home page and in the lobby. `Toggle` and the sliders
   are Base UI, restyled (`src/ui/base/`); a slider's owner hears only where
   a gesture ends (`useSliderDraft`), because in a room every change is a
   message.
@@ -728,6 +754,9 @@ Reach for these before writing a one-off — each replaced several copies:
 - `Stats` (labelled numbers), `Avatar` (people, with a bot variant),
   `PieceStrip` (the app's motif), `Reveal` / `Swap` / `Collapse` (the only
   motion around the table: 150–250ms tweens, no springs).
+- `EndGameAction` is a solo game's way out, at the foot of its Settings
+  sheet (`GameHost` adds it wherever `onLobby` is given and the table is
+  not a room's). Asked twice, because nothing is saved.
 - Rooms: `RoomEntryForm` is the only way in (`home` / `invite` / `retry`);
   `RoomStatusScreen` is every in-between state; `InviteCard` is the code
   and the link (lobby and a table's Settings sheet). A room names a bot's

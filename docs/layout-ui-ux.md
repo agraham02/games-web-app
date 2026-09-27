@@ -717,6 +717,13 @@ those laptops, so it is the user's call.
 
 ## Open
 
+### The board is the smallest thing on a phone's table
+The user, 2026-09-27: the board is small next to the pods and the visible
+pieces, with a lot of empty felt, in every game. Measured and researched
+in [table-layout-rethink.md](table-layout-rethink.md), which recommends a
+board-first composition on portrait phones and ends with the questions
+only the user can answer. Nothing is built yet.
+
 ### The room pages look plain next to the home page
 **Resolved** — `d089b94` (H4).
 Reported 2026-09-26. The home page has a hero, the piece strip, a
