@@ -41,7 +41,7 @@ import { isShortViewport } from "@/table/geometry";
 import { cn } from "@/lib/utils";
 import { useHeldMarks } from "@/table/useHeldMarks";
 import type { RoundNote } from "@/table/GameHost";
-import type { SeatView } from "@/table/SeatRing";
+import type { SeatStat, SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
@@ -186,14 +186,11 @@ export function SpadesTable({
  * so it never collides with `TurnIndicator`'s centred text.
  */
 function YourBidBadge({ view, state }: { view: SpadesView; state: SpadesState }) {
-  const bid = state.bids[view.viewerSeat];
-  if (!bid) return null;
-  const label = describeBid(bid);
-  const detail =
-    state.phase === "play" && !state.exchange
-      ? `${label} · won ${state.tricksWon[view.viewerSeat] ?? 0}`
-      : `bid ${label}`;
-  return <HeroStatusBadge label="Your bid" detail={detail} />;
+  // A spectator has no bid and no side.
+  if (view.viewerSeat < 0) return null;
+  // The pods' own words — and your team's score, which no pod of yours
+  // carries: your partner's has "Partner" on it instead.
+  return <HeroStatusBadge stats={seatStats(state, view.viewerSeat)} />;
 }
 
 /**
@@ -498,13 +495,12 @@ function seatColour(view: SpadesView, seat: SeatId): string {
   return seat === view.viewerSeat ? "var(--color-brass-300)" : view.colourFor(seat);
 }
 
-function seatMeta(view: SpadesView, state: SpadesState, seat: SeatId): string {
+/** A pod's numbers: the bid (and, once play starts, tricks won), then the score. */
+function seatStats(state: SpadesState, seat: SeatId): SeatStat[][] {
   const bid = state.bids[seat];
-  const score = state.scores[seat] ?? 0;
-  if (!bid) return `${state.exchange ? "exchange" : "bidding…"} · ${score}`;
-  const label = describeBid(bid);
-  if (state.phase === "bid") return `bid ${label} · ${score}`;
-  return `${label} · won ${state.tricksWon[seat] ?? 0} · ${score}`;
+  const first: SeatStat[] = [{ label: "Bid", value: bid ? describeBid(bid) : "…" }];
+  if (bid && state.phase === "play") first.push({ label: "Won", value: state.tricksWon[seat] ?? 0 });
+  return [first, [{ label: "Score", value: state.scores[seat] ?? 0 }]];
 }
 
 export function playerViews(view: SpadesView, state: SpadesState, live: Live): SeatView[] {
@@ -525,7 +521,7 @@ export function playerViews(view: SpadesView, state: SpadesState, live: Live): S
       seat: s,
       name: view.nameFor(s),
       colour: view.colourFor(s),
-      meta: seatMeta(view, state, s),
+      stats: seatStats(state, s),
       active: cue.active,
       thinking: cue.thinking,
       // Never for a spectator. `SPECTATOR_SEAT` is -1 and the

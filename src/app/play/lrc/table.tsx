@@ -155,7 +155,8 @@ export function playerViews(view: LrcView, state: LrcState, live: Live): SeatVie
       seat,
       name: view.nameFor(seat),
       colour: view.colourFor(seat),
-      meta: eliminated ? "Out" : `${held} chip${held === 1 ? "" : "s"}`,
+      status: eliminated ? "Out" : undefined,
+      stats: eliminated ? undefined : [[{ label: "Chips", value: held }]],
       active: cue.active,
       thinking: cue.thinking,
       eliminated,
@@ -212,7 +213,11 @@ export function LrcControls({ view, live }: { view: LrcView; live: Live }) {
         }
         left={
           seated ? (
-            <HeroStatusBadge label="You" detail={chips === 0 ? "out" : `${chips} chip${chips === 1 ? "" : "s"}`} />
+            chips === 0 ? (
+              <HeroStatusBadge label="You" detail="out this round" />
+            ) : (
+              <HeroStatusBadge stats={[[{ label: "Chips", value: chips }]]} />
+            )
           ) : undefined
         }
       />

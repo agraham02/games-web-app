@@ -22,7 +22,8 @@ import { SeatRing } from "./SeatRing";
 import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
-import { useTableStore } from "./store";
+import { toastLane } from "./geometry";
+import { useGeometry, useTableStore } from "./store";
 import { GameToaster } from "@/ui/disclosure";
 import { Button } from "@/ui/primitives/Button";
 import {
@@ -225,6 +226,7 @@ export function GameHostView<S, A>({
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
   const allSettings = useMemo(() => [...(settings ?? []), ...TABLE_SETTINGS], [settings]);
+  const geometry = useGeometry();
   const [settingValues, setSetting] = useGameSettings(definition.id, allSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useSlamFeedback({
@@ -316,7 +318,7 @@ export function GameHostView<S, A>({
           viewerSeat !== null && (winningSeats?.includes(viewerSeat ?? HERO) ?? false)
         }
       />
-      <GameToaster />
+      <GameToaster top={geometry ? toastLane(geometry) : undefined} />
 
       {/* Was already a finished component (see /lab/phases) but nothing
           actually rendered it on a real table — `dealingRound` is

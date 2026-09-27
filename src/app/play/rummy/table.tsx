@@ -852,10 +852,17 @@ function turnLabel(state: RummyState, seat: SeatId): string {
 function HandStatus({ state, seat }: { state: RummyState; seat: SeatId }) {
   const held = handValue(state, seat);
   const board = contributedValue(state, seat);
+  // The round card's words: what you have, what your melds are adding, and
+  // what the cards still in your hand would cost you if the round ended now.
   return (
     <HeroStatusBadge
-      label="You"
-      detail={`${state.scores[seat] ?? 0} · +${board} / −${held}`}
+      stats={[
+        [
+          { label: "Score", value: state.scores[seat] ?? 0 },
+          { label: "Board", value: `+${board}` },
+        ],
+        [{ label: "Held", value: `−${held}` }],
+      ]}
     />
   );
 }
@@ -1822,7 +1829,10 @@ export function playerViews(view: RummyView, seats: number) {
         seat: s,
         name: view.nameFor(s),
         colour: view.colourFor(s),
-        meta: `${(state.hands[s] ?? []).length} cards · ${state.scores[s] ?? 0}`,
+        stats: [
+          [{ label: "Cards", value: (state.hands[s] ?? []).length }],
+          [{ label: "Score", value: state.scores[s] ?? 0 }],
+        ],
         active: cue.active,
         thinking: cue.thinking,
         away: view.awayFor?.(s) ?? false,

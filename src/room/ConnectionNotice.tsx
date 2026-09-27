@@ -35,7 +35,14 @@ import type { ConnectionStatus } from "./connection";
  */
 const QUIET_MS = 1200;
 
-export function ConnectionNotice({ status }: { status: ConnectionStatus }) {
+export function ConnectionNotice({
+  status,
+  top = 0,
+}: {
+  status: ConnectionStatus;
+  /** Over a table, its toast lane (`toastLane`) — below the top seat. */
+  top?: number;
+}) {
   /**
    * The status as it stood `QUIET_MS` ago, rather than a boolean "has it
    * been a while" — which would need clearing when the status changes,
@@ -77,7 +84,8 @@ export function ConnectionNotice({ status }: { status: ConnectionStatus }) {
   return (
     <div
       role="status"
-      className="pointer-events-none fixed inset-x-0 top-0 z-9400 flex justify-center p-2"
+      className="pointer-events-none fixed inset-x-0 z-9400 flex justify-center p-2"
+      style={{ top }}
     >
       <span className="rounded-full bg-felt-950/90 px-3 py-1 text-xs text-brass-300 shadow-lg backdrop-blur-sm">
         Reconnecting…

@@ -15,6 +15,7 @@ import { AnimatePresence, motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
 import { AnimatedNumber } from "@/ui/primitives/AnimatedNumber";
 import { TRANSITIONS } from "@/motion/presets";
+import { Stats, type StatLines } from "@/ui/primitives/Stats";
 
 /* ============================================================
    Round intro — a brief title card over the deal.
@@ -150,26 +151,42 @@ export function TurnIndicator({ label, show }: { label: string; show: boolean })
 export function HeroStatusBadge({
   label,
   detail,
+  stats,
   show = true,
 }: {
-  /** e.g. "Your bid" */
-  label: string;
-  /** e.g. "4 (blind) · won 2" */
-  detail: string;
+  /** e.g. "Your hand" — with `detail`, for a readout that is words. */
+  label?: string;
+  /** e.g. "Pair of 7s" */
+  detail?: string;
+  /**
+   * Labelled numbers — the same vocabulary the game's pods use (`Stats`),
+   * so the viewer's own numbers read like everybody else's. Up to two lines.
+   */
+  stats?: StatLines;
   show?: boolean;
 }) {
   return (
     <AnimatePresence>
       {show ? (
         <motion.div
-          className="min-w-0 truncate rounded-full bg-felt-950/78 px-2.5 py-1.5 text-[10px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm"
+          className={
+            stats
+              ? "flex min-w-0 flex-col gap-1 rounded-xl bg-felt-950/78 px-2.5 py-1.5 text-[10px] ring-1 ring-brass-400/30 backdrop-blur-sm"
+              : "min-w-0 truncate rounded-full bg-felt-950/78 px-2.5 py-1.5 text-[10px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm"
+          }
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 6 }}
           transition={TRANSITIONS.ui}
         >
-          <span className="text-bone-300">{label}: </span>
-          {detail}
+          {stats ? (
+            <Stats lines={stats} />
+          ) : (
+            <>
+              <span className="text-bone-300">{label}: </span>
+              {detail}
+            </>
+          )}
         </motion.div>
       ) : null}
     </AnimatePresence>

@@ -34,7 +34,7 @@ import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/Phase
 import type { RoundNote } from "@/table/GameHost";
 import type { GameSetting } from "@/table/gameSettings";
 import { BandNote, HandZone } from "@/table/HandZone";
-import type { SeatView } from "@/table/SeatRing";
+import type { SeatStat, SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import { useGeometry } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -214,13 +214,10 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
 
     // Two lines rather than "$4837 · bet $362" on one: that is wider than a
     // pod, and the bet — the part that matters mid-hand — was the part cut off.
-    const meta = busted
-      ? "Out"
-      : folded
-        ? "Folded"
-        : bet > 0
-          ? [`$${stack}`, `bet $${bet}`]
-          : `$${stack}`;
+    const status = busted ? "Out" : folded ? "Folded" : undefined;
+    const stats: SeatStat[][] | undefined = status
+      ? undefined
+      : [[{ label: "Stack", value: `$${stack}` }], ...(bet > 0 ? [[{ label: "Bet", value: `$${bet}` }]] : [])];
 
     // Deliberately keyed off `lastAction`, not `currentSeat`/`toAct` —
     // see LRC's own doc on this exact pattern: `state.toAct[0]` already
@@ -233,7 +230,8 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
       seat,
       name: view.nameFor(seat),
       colour: view.colourFor(seat),
-      meta,
+      status,
+      stats,
       active: cue.active,
       thinking: cue.thinking,
       eliminated: busted,
@@ -315,8 +313,10 @@ export function PokerControls({
           seated ? (
             <div className="flex items-center gap-1.5">
               <HeroStatusBadge
-                label="You"
-                detail={`$${stack}${heroBet > 0 ? ` · bet $${heroBet}` : ""}`}
+                stats={[
+                  [{ label: "Stack", value: `$${stack}` }],
+                  ...(heroBet > 0 ? [[{ label: "Bet", value: `$${heroBet}` }]] : []),
+                ]}
               />
               {heroBadge ? <HeroPositionBadge label={heroBadge} spelled={hints} /> : null}
             </div>

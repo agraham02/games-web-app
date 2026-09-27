@@ -37,6 +37,8 @@ import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
 import { RoomStatusScreen } from "./RoomStatusScreen";
 import { tableFor } from "./tables";
 import { useRoom, type RoomApi } from "./useRoom";
+import { toastLane } from "@/table/geometry";
+import { useGeometry } from "@/table/store";
 
 export function RoomScreen({ code }: { code?: string }) {
   const api = useRoom();
@@ -151,6 +153,7 @@ export function RoomScreen({ code }: { code?: string }) {
   const tableShowing = Boolean(
     api.room && api.room.inGame && api.frame && tableFor(api.room.gameId),
   );
+  const geometry = useGeometry();
 
   // Which screen is up — the key a new screen fades in on. Checked in this
   // order because more than one can be true at once: a cached room while
@@ -178,7 +181,10 @@ export function RoomScreen({ code }: { code?: string }) {
 
       {/* Above every screen below, because losing the socket is worth
           saying whichever one you are on. */}
-      <ConnectionNotice status={api.status} />
+      <ConnectionNotice
+        status={api.status}
+        top={tableShowing && geometry ? toastLane(geometry) : undefined}
+      />
 
       {screen === "table" ? (
         // Looked up rather than hardcoded: the room may be running any

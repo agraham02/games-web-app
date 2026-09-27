@@ -1115,6 +1115,24 @@ export function cellHalfExtent(rot: number): { hw: number; hh: number } {
   return turned ? { hw: 1, hh: 0.5 } : { hw: 0.5, hh: 1 };
 }
 
+/**
+ * Where a transient notice goes on a table — a toast, "Reconnecting…" — in
+ * px from the top of the table's box: just below the lowest pod on the top
+ * edge, between the top seat and the centre.
+ *
+ * Toasts used to sit 12px from the top of the screen, which is exactly
+ * where the top seat's pod is: every announcement landed on a person's
+ * name. Below the pod they cover at most the backs of that seat's cards
+ * for two seconds. With nobody on the top edge the top of the screen is
+ * free, and they stay there.
+ */
+export function toastLane(g: TableGeometry): number {
+  const pod = POD_SIZE[g.density];
+  const top = g.seats.filter((s) => s.anchor === "top");
+  if (top.length === 0) return 12;
+  return Math.max(...top.map((s) => s.y + pod.h / 2)) + 6;
+}
+
 export function podBox(slot: SeatSlot, density: Density = "regular"): Box {
   const size = POD_SIZE[density];
   return {

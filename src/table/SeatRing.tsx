@@ -17,6 +17,10 @@ import type { SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
+import { Stats, type Stat, type StatLines } from "@/ui/primitives/Stats";
+
+/** One labelled number on a pod: "Bid 4", "Cards 7" — see `Stats`. */
+export type SeatStat = Stat;
 
 export interface SeatView {
   seat: SeatId;
@@ -24,11 +28,18 @@ export interface SeatView {
   /** Avatar tint. Any CSS colour. */
   colour: string;
   /**
-   * Second line: "bid 3 · won 2", "7 cards", etc. A list is one line each —
-   * for a game with two things to say, like poker's stack and bet. Joined
-   * onto one line, "$4837 · bet $362" is wider than a pod and got cut off.
+   * The numbers under the name, labelled — at most two lines, each a list
+   * of stats. The label is quiet and the number is not, in one style for
+   * every game.
+   *
+   * They used to be bare: "7 cards · 45", "4 · won 2 · 120". A second
+   * number with no label means nothing to anybody who did not write it,
+   * and joined onto one line it was wider than the pod and cut off. The
+   * second line may still truncate; each game keeps its first one short.
    */
-  meta?: string | readonly string[];
+  stats?: StatLines;
+  /** A word that says more than the numbers would: "Folded", "Out". */
+  status?: string;
   /** Highlights the pod and shows a pulse. */
   active?: boolean;
   thinking?: boolean;
@@ -46,7 +57,7 @@ export interface SeatView {
   /**
    * This seat is the HERO's partner — Spades' 2v2 partnership, the first
    * game with any team concept in this app. Purely a rung-1/2 ambient
-   * cue (POLICY.md): a small always-visible tag, same weight as `meta`.
+   * cue (POLICY.md): a small always-visible tag, same weight as `stats`.
    * The hero's own pod never renders here at all (SeatRing filters it
    * out below), so this only ever needs to answer one question — "is
    * THIS pod my partner or an opponent" — not represent teams in the
@@ -127,9 +138,19 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
   );
 }
 
+/**
+ * Lines a pod may carry under the name, all told. The geometry sizes every
+ * pod for this (`POD_SIZE`); a third line made a top-edge pod taller than
+ * its slot, so its avatar went off the top of the screen and its last line
+ * sat under its own cards. "Away", "Partner" and a status word come first
+ * — they change how the numbers read — and the numbers take what is left.
+ */
+const POD_LINES = 2;
+
 const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; density: Density }) {
   const highlighted = view.active || view.winning;
   const s = POD_STYLES[density];
+  const said = (view.away ? 1 : 0) + (view.partner ? 1 : 0) + (view.status ? 1 : 0);
   return (
     <motion.div
       initial={false}
@@ -172,7 +193,7 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
       {view.away ? (
         // The status line, in `warn` rather than in the pod's ordinary
         // muted tone: it has to be findable at a glance across a table,
-        // and it sits directly above `meta`, which is already bone-400.
+        // and it sits directly above the stats, whose labels are bone-400.
         // Not `loss` — nothing has gone wrong, somebody is just not here.
         <div
           className={`max-w-full truncate ${s.meta} leading-none font-bold`}
@@ -188,11 +209,11 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
         </div>
       ) : null}
 
-      {(typeof view.meta === "string" ? [view.meta] : (view.meta ?? [])).map((line, i) => (
-        <div key={i} className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>
-          {line}
-        </div>
-      ))}
+      {view.status ? (
+        <div className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>{view.status}</div>
+      ) : null}
+
+      <Stats lines={view.stats ?? []} max={POD_LINES - said} className={s.meta} />
     </motion.div>
   );
 });

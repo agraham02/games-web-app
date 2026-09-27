@@ -8,6 +8,7 @@ import {
   resolveDensity,
   resolveTable,
   tileShortSide,
+  toastLane,
   type Box,
   type Density,
   type ZoneName,
@@ -894,5 +895,26 @@ describe("the band above the hand — nothing on the table sits under it", () =>
       }
     }
     expect([...new Set(hits)].slice(0, 12)).toEqual([]);
+  });
+});
+
+describe("the toast lane", () => {
+  /**
+   * Toasts sat 12px from the top of the screen — on the top seat's pod, so
+   * every announcement covered somebody's name. `toastLane` puts them just
+   * below the lowest top-edge pod, and never as low as the band.
+   */
+  it("sits below every pod on the top edge, and above the band", () => {
+    for (const vp of TABLE_VIEWPORTS) {
+      for (const seats of [2, 4, 6, 10]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, bandZone: handHeaderHeight(vp.h) });
+        const lane = toastLane(g);
+        for (const slot of g.seats.filter((s) => s.anchor === "top")) {
+          const pod = podBox(slot, g.density);
+          expect(lane, `${vp.name}, ${seats} seats`).toBeGreaterThanOrEqual(pod.y + pod.h);
+        }
+        expect(lane, `${vp.name}, ${seats} seats`).toBeLessThan(g.band.y);
+      }
+    }
   });
 });

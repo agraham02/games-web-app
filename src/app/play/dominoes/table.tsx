@@ -180,7 +180,17 @@ export function DominoTable({
         left={
           // What a blocked round would cost you. A spectator holds no tiles.
           view.viewerSeat >= 0 ? (
-            <HeroStatusBadge label="Pips" detail={`${pipsInHand(state, view.viewerSeat)}`} />
+            <HeroStatusBadge
+              stats={[
+                [{ label: "Pips", value: pipsInHand(state, view.viewerSeat) }],
+                [
+                  {
+                    label: state.rules.mode === "caribbean" ? "Games" : "Score",
+                    value: state.scores[view.viewerSeat] ?? 0,
+                  },
+                ],
+              ]}
+            />
           ) : undefined
         }
         center={<TurnIndicator label="Your turn — tap a tile" show={playable} />}
@@ -377,7 +387,11 @@ export function playerViews(view: DomView, state: DomState, live: Live): SeatVie
       // Your partner takes your own accent, so which two pods are on
       // your side reads at a glance rather than from the score line.
       colour: isPartner ? "var(--color-brass-300)" : view.colourFor(seat),
-      meta: `${tiles} tile${tiles === 1 ? "" : "s"} · ${state.scores[seat] ?? 0}`,
+      // Caribbean counts games won, Block & Draw counts points.
+      stats: [
+        [{ label: "Tiles", value: tiles }],
+        [{ label: state.rules.mode === "caribbean" ? "Games" : "Score", value: state.scores[seat] ?? 0 }],
+      ],
       // Renders a "Partner" line on the pod — already built for Spades,
       // and the hero's own pod is filtered out of the ring, so this only
       // ever answers "is THIS pod on my side".

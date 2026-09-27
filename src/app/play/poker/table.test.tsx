@@ -169,7 +169,10 @@ describe("an opponent's pod", () => {
     // the part cut off.
     const views = playerViews(view, facingARaise(), runtime(facingARaise()));
     const betting = views.find((v) => v.seat === 1)!;
-    expect(betting.meta).toEqual([`$${facingARaise().stacks[1]}`, "bet $100"]);
+    expect(betting.stats).toEqual([
+      [{ label: "Stack", value: `$${facingARaise().stacks[1]}` }],
+      [{ label: "Bet", value: "$100" }],
+    ]);
   });
 });
 

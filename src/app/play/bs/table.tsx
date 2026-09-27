@@ -46,7 +46,7 @@ import {
 } from "@/games/bs/state";
 import type { BsAction, BsState } from "@/games/bs/types";
 import { HandZone } from "@/table/HandZone";
-import type { SeatView } from "@/table/SeatRing";
+import type { SeatStat, SeatView } from "@/table/SeatRing";
 import { useTableStore } from "@/table/store";
 import { useHeldMarks } from "@/table/useHeldMarks";
 import { seatCue } from "@/table/turnCue";
@@ -385,10 +385,12 @@ function seatColour(view: BsView, seat: SeatId): string {
  * thing on the table: a player down to one or two is about to go out, and
  * that is what makes their next claim worth doubting whatever it is.
  */
-function seatMeta(state: BsState, seat: SeatId): string {
-  const cards = (state.hands[seat] ?? []).length;
-  const rounds = state.scores[seat] ?? 0;
-  return `${cards} card${cards === 1 ? "" : "s"} · ${rounds}`;
+/** A pod's numbers: cards still to get rid of, and rounds won. */
+function seatStats(state: BsState, seat: SeatId): SeatStat[][] {
+  return [
+    [{ label: "Cards", value: (state.hands[seat] ?? []).length }],
+    [{ label: "Rounds", value: state.scores[seat] ?? 0 }],
+  ];
 }
 
 export function playerViews(view: BsView, state: BsState, live: Live): SeatView[] {
@@ -416,7 +418,7 @@ export function playerViews(view: BsView, state: BsState, live: Live): SeatView[
       seat,
       name: view.nameFor(seat),
       colour: view.colourFor(seat),
-      meta: seatMeta(state, seat),
+      stats: seatStats(state, seat),
       active: cue.active,
       thinking: cue.thinking,
       winning: state.result?.winner === seat,

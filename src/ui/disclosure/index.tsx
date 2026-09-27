@@ -18,12 +18,17 @@ export { PeekRail } from "./PeekRail";
    Rung 3 — EventToast
    ============================================================ */
 
-/** Mount once inside the table surface. */
-export function GameToaster() {
+/**
+ * Mount once — inside the table surface, or once per screen without one.
+ * On a table, `top` is the table's toast lane (`toastLane`), so a toast
+ * lands between the top seat and the centre rather than on the top seat.
+ */
+export function GameToaster({ top = 12 }: { top?: number }) {
   return (
     <Toaster
       position="top-center"
-      offset={12}
+      offset={{ top }}
+      mobileOffset={{ top }}
       toastOptions={{
         unstyled: true,
         classNames: {
