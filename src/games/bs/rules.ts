@@ -32,7 +32,7 @@ import type {
   SetupOptions,
 } from "@/engine/types";
 import { shuffledDeck, standardDeck } from "@/games/_shared/cards";
-import { countWord, handDisplayOrder, nextRank, rankOf, rankPlural } from "./cards";
+import { claimWords, handDisplayOrder, nextRank, rankOf } from "./cards";
 import {
   CHALLENGE_GRACE_MS,
   CHALLENGE_MS_SOLO,
@@ -206,8 +206,10 @@ function reducePlay(state: BsState, cards: readonly PieceId[]): ReduceResult<BsS
     {
       t: "announce",
       actor: seat,
-      text: "claims " + countWord(playing.length) + " " + rankPlural(claimed),
-      selfText: "claim " + countWord(playing.length) + " " + rankPlural(claimed),
+      // `claimWords`, not a bare plural: "claims one aces" was the toast
+      // for every single-card play.
+      text: "claims " + claimWords(playing.length, claimed),
+      selfText: "claim " + claimWords(playing.length, claimed),
       tone: "info",
     },
   ];

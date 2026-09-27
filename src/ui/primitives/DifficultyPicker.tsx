@@ -44,6 +44,12 @@ export interface DifficultyPickerProps {
   blurbs: DifficultyBlurbs;
   /** Overrides the default "Opponents" heading. */
   label?: string;
+  /**
+   * Shown but not changeable by this person (a room's setting, for anyone
+   * but the leader). Without it the slider looked live, moved under a
+   * finger and snapped back.
+   */
+  locked?: boolean;
 }
 
 export function DifficultyPicker({
@@ -51,12 +57,13 @@ export function DifficultyPicker({
   onChange,
   blurbs,
   label = "Opponents",
+  locked = false,
 }: DifficultyPickerProps) {
   const index = Math.max(0, TIER_ORDER.indexOf(value));
   const tier = TIER_ORDER[index]!;
 
   return (
-    <label className="flex w-full flex-col gap-2">
+    <label className={`flex w-full flex-col gap-2 ${locked ? "opacity-45" : ""}`}>
       <span className="flex items-center justify-between text-xs font-bold text-bone-200">
         {label} <span className="text-brass-300">{DIFFICULTY_NAMES[tier]}</span>
       </span>
@@ -68,7 +75,9 @@ export function DifficultyPicker({
         value={index}
         onChange={(e) => onChange(TIER_ORDER[Number(e.target.value)]!)}
         aria-label={`${label} difficulty`}
-        className="w-full accent-brass-400"
+        aria-valuetext={DIFFICULTY_NAMES[tier]}
+        disabled={locked}
+        className="w-full accent-brass-400 disabled:cursor-not-allowed"
       />
       {/* Fixed two-line box, so stepping through the tiers does not
           reflow everything below it — a setup screen that jumps as you

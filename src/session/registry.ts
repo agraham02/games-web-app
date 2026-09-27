@@ -211,6 +211,31 @@ export function gameEntry(id: GameId): GameEntry {
   return GAMES[id];
 }
 
+/**
+ * The seats a game can really be played with under these settings.
+ *
+ * Usually just the entry's bounds, but a ruleset can pin them: Caribbean
+ * dominoes is four-handed, full stop, while the entry says 2–4 because
+ * Block & Draw is. A room set to three seats therefore started a session
+ * the engine dealt FOUR hands into, and the fourth seat played on with no
+ * pod and its tiles stacked in a corner. So the answer comes from the
+ * definition itself — the thing that deals the hands — never from a copy.
+ */
+export function seatBounds(id: GameId, settings: RawSettings): { min: number; max: number } {
+  const entry = GAMES[id];
+  const definition = entry.create(entry.parse(settings));
+  return {
+    min: Math.max(entry.minSeats, definition.minSeats),
+    max: Math.min(entry.maxSeats, definition.maxSeats),
+  };
+}
+
+/** `seats` pulled inside `seatBounds`. `NaN` stays `NaN`, for the caller to refuse. */
+export function clampSeats(id: GameId, settings: RawSettings, seats: number): number {
+  const { min, max } = seatBounds(id, settings);
+  return Math.min(max, Math.max(min, seats));
+}
+
 export function isGameId(v: unknown): v is GameId {
   return typeof v === "string" && (GAME_IDS as readonly string[]).includes(v);
 }

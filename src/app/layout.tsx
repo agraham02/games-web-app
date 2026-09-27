@@ -23,7 +23,7 @@ const sourceSerif = Source_Serif_4({
 
 export const metadata: Metadata = {
   title: "Table Games",
-  description: "Dominoes, Spades, Rummy 500, Poker and Left Right Center.",
+  description: "Dominoes, Spades, Rummy 500, Poker, Left Right Center and BS.",
 };
 
 // The table sizes itself to the visual viewport and paints into the

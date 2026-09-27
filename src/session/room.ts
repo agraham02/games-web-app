@@ -28,7 +28,7 @@
 
 import type { BotDifficulty, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { gameEntry, type GameId, type RawSettings } from "./registry";
+import { clampSeats, gameEntry, type GameId, type RawSettings } from "./registry";
 
 export type SessionId = string;
 export type RoomCode = string;
@@ -683,7 +683,9 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       const entry = gameEntry(command.gameId);
       if (!entry.online) return fail("game-not-online");
       const settings = entry.parse(command.settings);
-      const seats = Math.min(entry.maxSeats, Math.max(entry.minSeats, Math.round(command.seats)));
+      // The GAME's bounds under these settings, not the entry's: Caribbean
+      // dominoes is four-handed whatever the entry allows (`seatBounds`).
+      const seats = clampSeats(command.gameId, settings, Math.round(command.seats));
       if (!Number.isFinite(seats)) return fail("bad-seat-count");
       return {
         ok: true,
@@ -756,7 +758,7 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       // courtesy and this is the rule.
       if (connectedCount(room) < MIN_ROOM_PLAYERS) return fail("needs-two-players");
 
-      const seats = Math.min(entry.maxSeats, Math.max(entry.minSeats, room.seats || entry.defaultSeats));
+      const seats = clampSeats(room.gameId, room.settings, room.seats || entry.defaultSeats);
       const { seatOwner, present } = seatMembers(room, seats);
 
       return {

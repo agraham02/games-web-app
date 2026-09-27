@@ -11,11 +11,21 @@ import { useEffect, useRef } from "react";
 import { animate, useReducedMotion } from "motion/react";
 import { DURATION, EASE_OUT_QUINT } from "@/motion/presets";
 
+/**
+ * A whole number with a real minus sign (U+2212), not a hyphen: the
+ * scorecard's deltas already print "−145", and a total beside it reading
+ * "-145" was visibly a different character.
+ */
+export function formatWhole(n: number): string {
+  const whole = Math.round(n);
+  return whole < 0 ? `−${Math.abs(whole)}` : String(whole);
+}
+
 export function AnimatedNumber({
   value,
   duration = DURATION.count,
   className,
-  format = (n: number) => String(Math.round(n)),
+  format = formatWhole,
 }: {
   value: number;
   duration?: number;

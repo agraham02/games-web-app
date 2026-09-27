@@ -386,8 +386,12 @@ function ScoreRowGroup({ rows, index }: { rows: readonly ScoreRow[]; index: numb
           </span>
         ))}
       </span>
+      {/* Green is for a gain. "+0" in green read as a win for everybody
+          who scored nothing, so a zero is neutral. */}
       <span
-        className={`text-[13px] font-bold ${first.delta >= 0 ? "text-win" : "text-loss"}`}
+        className={`text-[13px] font-bold ${
+          first.delta > 0 ? "text-win" : first.delta < 0 ? "text-loss" : "text-bone-400"
+        }`}
       >
         {first.delta >= 0 ? "+" : "−"}
         {Math.abs(first.delta)}

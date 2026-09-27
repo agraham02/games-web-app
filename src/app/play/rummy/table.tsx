@@ -1296,7 +1296,7 @@ function BoardSheet({
           <span className="eyebrow">
             {canAttempt
               ? `Lay off ${picked.length} — tap a meld`
-              : `Board · ${state.melds.length} melds`}
+              : `Board · ${state.melds.length} ${state.melds.length === 1 ? "meld" : "melds"}`}
           </span>
           <span className="text-[10px] text-bone-400">
             {snap === 0 ? "drag up ↑" : "drag down ↓"}

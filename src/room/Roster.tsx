@@ -132,7 +132,9 @@ function MemberList({ members, you, youAreLeader, onPromote, onKick }: RosterPro
             label={m.seat !== null ? `Seat ${m.seat + 1}` : null}
             status={
               !m.connected
-                ? "Away — seat held"
+                ? m.seat !== null
+                  ? "Away — seat held"
+                  : "Away"
                 : m.seat !== null
                   ? "At the table"
                   : m.spectating

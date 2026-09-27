@@ -55,12 +55,16 @@ export const VIBRATION_SETTING: GameSetting = {
 export const TABLE_SETTINGS: readonly GameSetting[] = [SOUND_SETTING, VIBRATION_SETTING];
 
 /**
- * A game's Hints switch. What hints MEAN is the game's own (Poker spells
- * out its labels; Spades and Dominoes dim what cannot be played), so the
- * description is too. Per game, not shared.
+ * A game's Hints switch for dimming what cannot be played (Spades and
+ * Dominoes), so the description is the game's own. Per game, not shared.
+ *
+ * OFF by default (the user's call, 2026-09-26): working out what is
+ * playable is the game, so the table does not answer it unless asked.
+ * Poker's Hints means something else — it spells out its button labels
+ * for a newcomer — and declares its own setting, which stays on.
  */
 export function hintsSetting(description: string): GameSetting {
-  return { key: "hints", label: "Hints", description, default: true };
+  return { key: "hints", label: "Hints", description, default: false };
 }
 
 export type SettingValues = Readonly<Record<string, boolean>>;

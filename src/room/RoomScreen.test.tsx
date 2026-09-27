@@ -240,14 +240,40 @@ describe("the room client", () => {
     });
 
     it("lets the leader move somebody with the keyboard, and sends the plan", async () => {
-      await enterLobby({ seatPlan: ["me", "bo", null, null] });
+      await enterLobby({ gameId: "spades", seats: 4, seatPlan: ["me", "bo", null, null] });
       fireEvent.keyDown(screen.getByRole("button", { name: /move ada/i }), { key: "ArrowDown" });
       expect(socket().lastSent("arrangeSeats")).toMatchObject({ plan: ["bo", "me", null, null] });
     });
 
     it("gives nobody but the leader a grip", async () => {
-      await enterLobby({ youAreLeader: false, seatPlan: ["me", "bo", null, null] });
+      await enterLobby({ youAreLeader: false, gameId: "spades", seats: 4, seatPlan: ["me", "bo", null, null] });
       expect(screen.queryByRole("button", { name: /move /i })).toBeNull();
+    });
+
+    it("shows everyone but the leader the rules as they ARE, just locked", async () => {
+      // A locked toggle used to render as off whatever its value, so every
+      // non-leader was told Teams and Key tile were off while the leader
+      // (and the Team A/B chips beside them) said they were on.
+      await enterLobby({
+        youAreLeader: false,
+        gameId: "dominoes",
+        settings: { mode: "caribbean", teams: true, keyTileBonus: true, sixLove: false },
+      });
+      const teams = screen.getByRole("switch", { name: /teams/i });
+      expect(teams).toHaveAttribute("aria-checked", "true");
+      expect(teams).toBeDisabled();
+      expect(screen.getByRole("switch", { name: /six love/i })).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByRole("slider", { name: /difficulty/i })).toBeDisabled();
+    });
+
+    it("does not tell the maker of a fresh room that the table is full", async () => {
+      // No game yet means no seats: the plan's count is 0, and every row
+      // used to read "No seat — Will watch — table full".
+      await enterLobby({ gameId: null, seats: 0, seatPlan: ["me"] });
+      expect(screen.queryByText(/table full/i)).toBeNull();
+      expect(screen.queryByText(/no seat/i)).toBeNull();
+      expect(screen.getByText(/pick a game to set up the seats/i)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /shuffle seats/i })).toBeNull();
     });
 
     it("puts the code in the address bar so it can be shared", async () => {

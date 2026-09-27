@@ -23,10 +23,19 @@
   --color-brass-600: #8e6e39;
   --color-brass-700: #5c4724;
 
-  /* -- text: bone ----------------------------------------- */
+  /* -- text: bone -----------------------------------------
+     Every step the code uses has to be here: Tailwind generates no
+     utility for an undefined shade, so `text-bone-500` silently fell
+     back to the inherited bone-50 — the brightest text on the screen
+     where the dimmest was meant (tokens.test.ts now guards this).
+     500 is lifted a little above the midpoint of 400 and 600 so that
+     11px hints clear 4.5:1 on the felt they sit on. */
   --color-bone-50: #f5f2ea;
+  --color-bone-100: #e9e4d8;
   --color-bone-200: #ddd6c5;
+  --color-bone-300: #c2baa7;
   --color-bone-400: #a69d89;
+  --color-bone-500: #948c79;
   --color-bone-600: #6b6455;
 
   /* -- printed stock -------------------------------------- */

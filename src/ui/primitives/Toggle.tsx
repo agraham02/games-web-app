@@ -12,13 +12,25 @@
  *
  * The hint is required, not optional. An optional rule whose name is its
  * only explanation ("Six love") is a rule nobody turns on.
+ *
+ * Two ways to be unpressable, and they must not look alike:
+ *
+ * - `unavailable` — the rule is NOT IN EFFECT under the current settings
+ *   (Six love without partners). It shows off, with a hint saying why.
+ * - `locked` — the rule is whatever it is, and this person may not change
+ *   it (a room's settings, seen by anyone but the leader). It shows its
+ *   REAL value, dimmed. These used to be one `disabled` prop that forced
+ *   the switch off, so everyone but the leader was shown every locked rule
+ *   as off — Teams and Key tile read OFF above a roster of Team A/B chips.
  */
 export function Toggle({
   label,
   hint,
   checked,
   onChange,
-  disabled = false,
+  unavailable = false,
+  locked = false,
+  disabled,
 }: {
   label: string;
   hint: string;
@@ -31,19 +43,25 @@ export function Toggle({
    * learns the option exists, let alone what would unlock it. Pair this
    * with a `hint` that says why (POLICY.md: "dim, don't hide").
    */
+  unavailable?: boolean;
+  /** Read-only: the real value, dimmed. See the file's doc. */
+  locked?: boolean;
+  /** The old name for `unavailable`, kept so existing callers read the same. */
   disabled?: boolean;
 }) {
-  const on = checked && !disabled;
+  const off = unavailable || Boolean(disabled);
+  const on = checked && !off;
+  const inert = off || locked;
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
-      disabled={disabled}
+      disabled={inert}
       onClick={() => onChange(!checked)}
       className={`flex flex-col gap-0.5 rounded-lg px-3.5 py-2.5 text-left ring-1 ${
         on ? "bg-brass-400/18 ring-brass-400/60" : "bg-bone-50/5 ring-bone-50/12"
-      } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
+      } ${inert ? "cursor-not-allowed opacity-45" : ""}`}
     >
       <span className="flex items-center justify-between">
         <span className={`text-sm font-bold ${on ? "text-brass-300" : "text-bone-200"}`}>

@@ -47,6 +47,11 @@ export function Lobby({ api }: { api: RoomApi }) {
   // the button is off is legible two rows higher.
   const here = room.members.filter((m) => m.connected).length;
   const enoughPeople = here >= MIN_ROOM_PLAYERS;
+  // Seats only exist once there is a game to have seats. Before that the
+  // plan's seat count is 0, and every row read "No seat — Will watch —
+  // table full": the person who had just made the room was told it was
+  // full and they would be watching.
+  const hasGame = room.gameId !== null;
 
   return (
     <SetupShell maxWidth="max-w-md">
@@ -63,22 +68,26 @@ export function Lobby({ api }: { api: RoomApi }) {
           members={room.members}
           you={room.you}
           youAreLeader={leader}
-          plan={room.gameRunning ? null : room.seatPlan}
+          plan={room.gameRunning || !hasGame ? null : room.seatPlan}
           seatCount={room.seats}
           teamsEnabled={teamsEnabled}
           onPromote={api.promote}
           onKick={api.kick}
           onArrange={api.arrangeSeats}
         />
-        {room.gameRunning ? null : (
+        {room.gameRunning ? null : hasGame ? (
           <p className="text-[11px] leading-relaxed text-bone-500">
             Seat 1 is dealt first, and the seats go clockwise from there — each one sits to
             the left of the seat above it.
             {teamsEnabled ? " Partners sit across, so the seat decides the team." : ""}
             {leader ? " Drag a row by its grip to move a person or a bot." : ""}
           </p>
+        ) : (
+          <p className="text-[11px] leading-relaxed text-bone-500">
+            Pick a game to set up the seats.
+          </p>
         )}
-        {leader && !room.gameRunning ? (
+        {leader && !room.gameRunning && hasGame ? (
           <Button size="sm" onClick={api.shuffleSeats} className="self-start">
             <Shuffle size={12} /> Shuffle seats
           </Button>
@@ -97,8 +106,8 @@ export function Lobby({ api }: { api: RoomApi }) {
               <Button size="sm" tone="primary" onClick={() => api.approve(p.session)}>
                 <Check size={12} /> Let in
               </Button>
-              <Button size="sm" onClick={() => api.deny(p.session)}>
-                <X size={12} />
+              <Button size="sm" onClick={() => api.deny(p.session)} aria-label={`Turn ${p.name} away`}>
+                <X size={12} /> Turn away
               </Button>
             </div>
           ))}
@@ -344,21 +353,21 @@ function GamePicker({ api }: { api: RoomApi }) {
                     label="Teams"
                     hint="Partners across the table — seats 1 and 3 against 2 and 4."
                     checked={room.settings.teams === true}
-                    disabled={locked}
+                    locked={locked}
                     onChange={(v) => update(entry.id, { ...room.settings, teams: v })}
                   />
                   <Toggle
                     label="Key tile bonus"
                     hint="Going out on the only tile that could have been played is worth two games."
                     checked={room.settings.keyTileBonus === true}
-                    disabled={locked}
+                    locked={locked}
                     onChange={(v) => update(entry.id, { ...room.settings, keyTileBonus: v })}
                   />
                   <Toggle
                     label="Six love"
                     hint="Your score returns to zero whenever the other side takes a round."
                     checked={room.settings.sixLove === true}
-                    disabled={locked}
+                    locked={locked}
                     onChange={(v) => update(entry.id, { ...room.settings, sixLove: v })}
                   />
                 </>
@@ -375,6 +384,8 @@ function GamePicker({ api }: { api: RoomApi }) {
                   min={100}
                   max={100_000}
                   step={500}
+                  disabled={locked}
+                  title={lockedWhy}
                   onChange={(v) =>
                     leader && update(entry.id, { ...room.settings, startingStack: v })
                   }
@@ -403,14 +414,14 @@ function GamePicker({ api }: { api: RoomApi }) {
                 label="Jokers"
                 hint="Two jokers replace the twos, and beat every spade."
                 checked={room.settings.jokers === true}
-                disabled={locked}
+                locked={locked}
                 onChange={(v) => update(entry.id, { ...room.settings, jokers: v })}
               />
               <Toggle
                 label="Two of spades high"
                 hint="The two of spades outranks the ace."
                 checked={room.settings.twoOfSpadesHigh === true}
-                disabled={locked}
+                locked={locked}
                 onChange={(v) => update(entry.id, { ...room.settings, twoOfSpadesHigh: v })}
               />
             </>
@@ -462,6 +473,7 @@ function GamePicker({ api }: { api: RoomApi }) {
             value={room.difficulty}
             blurbs={BLURBS}
             label="Bots filling empty seats"
+            locked={locked}
             onChange={(v: BotDifficulty) =>
               leader && update(entry.id, room.settings, room.seats, v)
             }

@@ -646,6 +646,39 @@ describe("settings coming off the wire", () => {
     expect(r.seats).toBe(4); // Spades is exactly four.
   });
 
+  it("clamps to the RULESET's seats — Caribbean dominoes is four-handed", () => {
+    // The entry allows 2–4 because Block & Draw does. A room left on three
+    // started a session the engine dealt four hands into, and the fourth
+    // seat played on with no pod on anybody's table.
+    let r = withMembers([]);
+    r = ok(
+      r,
+      { t: "selectGame", gameId: "dominoes", settings: { mode: "caribbean" }, seats: 3, difficulty: "steady" },
+      { actor: LEADER },
+    );
+    expect(r.seats).toBe(4);
+    r = ok(
+      r,
+      { t: "selectGame", gameId: "dominoes", settings: { mode: "classic" }, seats: 3, difficulty: "steady" },
+      { actor: LEADER },
+    );
+    expect(r.seats).toBe(3);
+  });
+
+  it("starts a Caribbean session with four seats even from a stale three", () => {
+    let r = withMembers(["Bo"]);
+    r = ok(
+      r,
+      { t: "selectGame", gameId: "dominoes", settings: { mode: "caribbean" }, seats: 4, difficulty: "steady" },
+      { actor: LEADER },
+    );
+    const stale: Room = { ...r, seats: 3 };
+    const start = effectsOf(stale, { t: "startGame" }, { actor: LEADER, now: 10 }).find(
+      (e) => e.t === "startSession",
+    );
+    expect(start && start.t === "startSession" ? start.seats : null).toBe(4);
+  });
+
   it("refuses any game the room has no table for", () => {
     // Derived from the registry rather than naming games, so this cannot
     // go stale as they are wired up one at a time — which it did, once.
