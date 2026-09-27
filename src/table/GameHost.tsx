@@ -27,6 +27,7 @@ import { useGeometry, useTableStore } from "./store";
 import { GameToaster } from "@/ui/disclosure";
 import { Button } from "@/ui/primitives/Button";
 import {
+  EndGameAction,
   SettingsSheet,
   TABLE_SETTINGS,
   useGameSettings,
@@ -130,7 +131,8 @@ export interface GameHostProps<S, A> {
   /**
    * Buttons at the foot of the Settings sheet: an online table's "Step
    * away" and the leader's "End game" (the user's call, 2026-09-26 — they
-   * used to sit on the table itself, in the corner).
+   * used to sit on the table itself, in the corner). Offline, left out, the
+   * sheet offers `EndGameAction` on `onLobby`.
    */
   menuActions?: React.ReactNode;
   /**
@@ -343,7 +345,7 @@ export function GameHostView<S, A>({
           viewerSeat !== null && (winningSeats?.includes(viewerSeat ?? HERO) ?? false)
         }
       />
-      <GameToaster top={geometry ? toastLane(geometry) : undefined} />
+      <GameToaster bottom={geometry ? toastLane(geometry) : undefined} />
 
       {/* Was already a finished component (see /lab/phases) but nothing
           actually rendered it on a real table — `dealingRound` is
@@ -414,7 +416,9 @@ export function GameHostView<S, A>({
         settings={allSettings}
         values={settingValues}
         onChange={setSetting}
-        actions={menuActions}
+        // A game on this device can always be ended from here; a room's
+        // table brings its own buttons instead.
+        actions={menuActions ?? (serverDriven || !onLobby ? undefined : <EndGameAction onEnd={onLobby} />)}
       />
     </TableSurface>
   );

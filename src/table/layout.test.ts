@@ -8,6 +8,7 @@ import {
   resolveDensity,
   resolveTable,
   tileShortSide,
+  statusLane,
   toastLane,
   type Box,
   type Density,
@@ -900,15 +901,33 @@ describe("the band above the hand — nothing on the table sits under it", () =>
 
 describe("the toast lane", () => {
   /**
-   * Toasts sat 12px from the top of the screen — on the top seat's pod, so
-   * every announcement covered somebody's name. `toastLane` puts them just
-   * below the lowest top-edge pod, and never as low as the band.
+   * Toasts sit bottom right (the user's call, 2026-09-27) — but the corner
+   * itself is the viewer's hand, where a toast would swallow the tap on a
+   * card. `toastLane` is measured from the bottom, and clears the band.
    */
-  it("sits below every pod on the top edge, and above the band", () => {
+  it("sits above the band, and so above the hand", () => {
+    for (const vp of TABLE_VIEWPORTS) {
+      for (const seats of [2, 4, 6, 10]) {
+        for (const band of [handHeaderHeight(vp.h), 140]) {
+          const g = resolveTable({ seats, width: vp.w, height: vp.h, bandZone: band });
+          const toastBottom = g.box.y + g.box.h - toastLane(g);
+          expect(toastBottom, `${vp.name}, ${seats} seats`).toBeLessThanOrEqual(g.band.y);
+          expect(toastBottom, `${vp.name}, ${seats} seats`).toBeLessThanOrEqual(g.zones.hand.y);
+        }
+      }
+    }
+  });
+
+  /**
+   * "Reconnecting…" keeps the old top lane, so it never stacks with a
+   * toast: below every pod on the top edge (where it used to cover a
+   * name), and never as low as the band.
+   */
+  it("keeps the status lane below the top pods, and above the band", () => {
     for (const vp of TABLE_VIEWPORTS) {
       for (const seats of [2, 4, 6, 10]) {
         const g = resolveTable({ seats, width: vp.w, height: vp.h, bandZone: handHeaderHeight(vp.h) });
-        const lane = toastLane(g);
+        const lane = statusLane(g);
         for (const slot of g.seats.filter((s) => s.anchor === "top")) {
           const pod = podBox(slot, g.density);
           expect(lane, `${vp.name}, ${seats} seats`).toBeGreaterThanOrEqual(pod.y + pod.h);

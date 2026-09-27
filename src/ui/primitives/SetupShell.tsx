@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * The page shell every setup screen, the room's own screens and the home
  * screen sit in.
@@ -27,7 +29,41 @@
  * laptop, a landscape phone and a landscape tablet the button was off
  * screen). When the content fits, the footer simply follows it: it is
  * sticky inside the centred block, not pinned to the window's edge.
+ *
+ * Where the footer's top is gets published (`useFooterInset`), because
+ * toasts sit bottom right and would otherwise land on the lobby's Leave
+ * room.
  */
+
+import { useCallback, useSyncExternalStore } from "react";
+
+let footerInset = 0;
+const insetListeners = new Set<() => void>();
+
+function publishInset(px: number): void {
+  const next = Math.max(0, Math.round(px));
+  if (next === footerInset) return;
+  footerInset = next;
+  for (const listener of insetListeners) listener();
+}
+
+/**
+ * How far the top of the sticky footer on screen is from the bottom of the
+ * window, in px; 0 when no screen has one. Measured rather than known,
+ * because a footer that fits follows its content up the page.
+ */
+export function useFooterInset(): number {
+  return useSyncExternalStore(
+    (onChange) => {
+      insetListeners.add(onChange);
+      return () => {
+        insetListeners.delete(onChange);
+      };
+    },
+    () => footerInset,
+    () => 0,
+  );
+}
 
 export interface SetupShellProps {
   children: React.ReactNode;
@@ -38,13 +74,33 @@ export interface SetupShellProps {
 }
 
 export function SetupShell({ children, maxWidth = "max-w-sm", footer }: SetupShellProps) {
+  // The footer moves when it or the content above it changes size, and
+  // when the window does; scrolling does not move it (stuck, or at rest).
+  const measure = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const update = () => publishInset(window.innerHeight - el.getBoundingClientRect().top);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(el);
+    if (el.parentElement) observer?.observe(el.parentElement);
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+      publishInset(0);
+    };
+  }, []);
+
   return (
     <main className="felt felt-weave h-svh overflow-y-auto overscroll-contain">
       <div className="flex min-h-full flex-col px-6 pt-10 pb-6">
         <div className={`m-auto flex w-full ${maxWidth} flex-col items-center gap-7`}>
           {children}
           {footer ? (
-            <div className="sticky bottom-0 z-10 -mx-6 flex w-[calc(100%+3rem)] flex-col items-center gap-3 bg-linear-to-t from-felt-950 from-60% to-transparent px-6 pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <div
+              ref={measure}
+              className="sticky bottom-0 z-10 -mx-6 flex w-[calc(100%+3rem)] flex-col items-center gap-3 bg-linear-to-t from-felt-950 from-60% to-transparent px-6 pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            >
               {footer}
             </div>
           ) : null}

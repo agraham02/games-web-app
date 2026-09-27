@@ -42,7 +42,7 @@ export function ConnectionNotice({
   top = 0,
 }: {
   status: ConnectionStatus;
-  /** Over a table, its toast lane (`toastLane`) — below the top seat. */
+  /** Over a table, its status lane (`statusLane`) — below the top seat. */
   top?: number;
 }) {
   /**

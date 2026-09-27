@@ -28,7 +28,7 @@ import { CODE_LENGTH } from "@/session/room";
 import { GameToaster, announce } from "@/ui/disclosure";
 import { Reveal } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
-import { SetupShell } from "@/ui/primitives/SetupShell";
+import { SetupShell, useFooterInset } from "@/ui/primitives/SetupShell";
 import { cleanCode } from "@/ui/primitives/TextField";
 import { ConnectionNotice } from "./ConnectionNotice";
 import { readSavedName, takeEntryIntent, type EntryIntent } from "./entry";
@@ -37,7 +37,7 @@ import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
 import { RoomStatusScreen } from "./RoomStatusScreen";
 import { tableFor } from "./tables";
 import { useRoom, type RoomApi } from "./useRoom";
-import { toastLane } from "@/table/geometry";
+import { statusLane } from "@/table/geometry";
 import { useGeometry } from "@/table/store";
 
 export function RoomScreen({ code }: { code?: string }) {
@@ -154,6 +154,7 @@ export function RoomScreen({ code }: { code?: string }) {
     api.room && api.room.inGame && api.frame && tableFor(api.room.gameId),
   );
   const geometry = useGeometry();
+  const footerInset = useFooterInset();
 
   // Which screen is up — the key a new screen fades in on. Checked in this
   // order because more than one can be true at once: a cached room while
@@ -177,13 +178,14 @@ export function RoomScreen({ code }: { code?: string }) {
 
   return (
     <>
-      {tableShowing ? null : <GameToaster />}
+      {/* Above the lobby's sticky footer, never on its Leave room. */}
+      {tableShowing ? null : <GameToaster bottom={footerInset + 12} />}
 
       {/* Above every screen below, because losing the socket is worth
           saying whichever one you are on. */}
       <ConnectionNotice
         status={api.status}
-        top={tableShowing && geometry ? toastLane(geometry) : undefined}
+        top={tableShowing && geometry ? statusLane(geometry) : undefined}
       />
 
       {screen === "table" ? (

@@ -19,8 +19,9 @@
  * be a setting that did not stick.
  */
 
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { InfoSheet } from "@/ui/disclosure";
+import { Button } from "@/ui/primitives/Button";
 import { Toggle } from "@/ui/primitives/Toggle";
 
 export interface GameSetting {
@@ -164,8 +165,36 @@ export function useGameSettings(
 }
 
 /**
+ * The way out of a game played on this device, at the foot of its Settings
+ * sheet: back to the game's setup screen, where "← Back" goes home.
+ *
+ * There was none (the user, 2026-09-27). A solo game could be left only by
+ * finishing it or by the browser's back button. Asked twice, because
+ * nothing is saved; the first press says what the second one does. The
+ * question closes with the sheet, which unmounts what is in it.
+ */
+export function EndGameAction({ onEnd }: { onEnd: () => void }) {
+  const [asking, setAsking] = useState(false);
+  if (!asking) return <Button onClick={() => setAsking(true)}>End game</Button>;
+  return (
+    <div role="group" aria-label="End this game?" className="flex flex-col gap-2">
+      <p className="text-center text-xs text-bone-300">End this game? It is not saved.</p>
+      <div className="flex gap-2">
+        <Button className="flex-1" onClick={() => setAsking(false)}>
+          Keep playing
+        </Button>
+        <Button tone="danger" className="flex-1" onClick={onEnd}>
+          End game
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The sheet itself: one toggle per setting, then any `actions` (an online
- * table's Step away and End game). Rung 5 — dismissible, never blocking.
+ * table's Step away and End game, a solo game's `EndGameAction`). Rung 5 —
+ * dismissible, never blocking.
  */
 export function SettingsSheet({
   open,

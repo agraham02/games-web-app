@@ -1116,17 +1116,32 @@ export function cellHalfExtent(rot: number): { hw: number; hh: number } {
 }
 
 /**
- * Where a transient notice goes on a table — a toast, "Reconnecting…" — in
- * px from the top of the table's box: just below the lowest pod on the top
- * edge, between the top seat and the centre.
+ * Where a toast goes on a table, in px from the BOTTOM of the table's box:
+ * bottom right, just above the band (the user's call, 2026-09-27).
  *
- * Toasts used to sit 12px from the top of the screen, which is exactly
- * where the top seat's pod is: every announcement landed on a person's
- * name. Below the pod they cover at most the backs of that seat's cards
- * for two seconds. With nobody on the top edge the top of the screen is
- * free, and they stay there.
+ * Not the corner itself, which is the viewer's hand: a toast there sits on
+ * the cards they are about to tap, and swallows the tap. Above the band it
+ * covers at most the foot of a side seat's fan, for a few seconds. The
+ * band is measured, so the lane rises with a bid or betting panel.
+ *
+ * Toasts used to go top centre, below the top seat's pod (see
+ * `statusLane`), which put every bot's move over the board.
  */
 export function toastLane(g: TableGeometry): number {
+  return Math.max(12, g.box.y + g.box.h - g.band.y + 6);
+}
+
+/**
+ * Where a lasting status goes on a table — "Reconnecting…" — in px from the
+ * top of the table's box: just below the lowest pod on the top edge,
+ * between the top seat and the centre.
+ *
+ * Its own lane rather than the toasts', so the two never stack. It used to
+ * sit 12px from the top of the screen, which is exactly where the top
+ * seat's pod is. With nobody on the top edge the top of the screen is
+ * free, and it stays there.
+ */
+export function statusLane(g: TableGeometry): number {
   const pod = POD_SIZE[g.density];
   const top = g.seats.filter((s) => s.anchor === "top");
   if (top.length === 0) return 12;

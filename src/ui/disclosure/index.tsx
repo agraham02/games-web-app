@@ -20,24 +20,26 @@ export { PeekRail } from "./PeekRail";
 
 /**
  * Mount once — inside the table surface, or once per screen without one.
- * On a table, `top` is the table's toast lane (`toastLane`), so a toast
- * lands between the top seat and the centre rather than on the top seat.
+ *
+ * Bottom right (the user's call, 2026-09-27). `bottom` keeps it off what
+ * lives down there: on a table, the table's toast lane (`toastLane`, just
+ * above the band, never on the hand); on a screen with a sticky footer,
+ * the footer's top (`useFooterInset`).
  */
-export function GameToaster({ top = 12 }: { top?: number }) {
+export function GameToaster({ bottom = 12 }: { bottom?: number }) {
   return (
     <Toaster
-      position="top-center"
-      offset={{ top }}
-      mobileOffset={{ top }}
+      position="bottom-right"
+      offset={{ bottom, right: 12 }}
+      mobileOffset={{ bottom, right: 12, left: 12 }}
       toastOptions={{
         unstyled: true,
         classNames: {
-          // The row is a plain centring box; the pill is `announce`'s own.
-          // Sonner gives every toast row one fixed width, so the pill used
-          // to sit at its left edge, and two toasts of different lengths
-          // lined up on the left instead of each being centred (and the
-          // pill classes were on BOTH, drawing a wide pill behind it).
-          toast: "flex w-full justify-center",
+          // The row is a plain box; the pill is `announce`'s own. Sonner
+          // gives every toast row one fixed width (the whole screen, on a
+          // phone), so each pill is pushed to its right edge — two toasts
+          // of different lengths line up on the right, under each other.
+          toast: "flex w-full justify-end",
         },
       }}
     />
