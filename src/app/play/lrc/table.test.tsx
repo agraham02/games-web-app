@@ -14,12 +14,19 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DURATION } from "@/motion/presets";
+import { createRng } from "@/engine/rng";
+import { createLrc } from "@/games/lrc/rules";
 import { emitDice } from "@/table/fx";
+import { resolveTable } from "@/table/geometry";
+import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
 import { LrcControls, OFFLINE_VIEW } from "./table";
 
+// A real dealt state: the band counts the pot from it.
+const lrc = createLrc();
 const live = {
+  state: lrc.setup({ seats: 3, rng: createRng(1) }),
   isHeroTurn: false,
   busy: true,
   submitAction: () => {},
@@ -34,6 +41,16 @@ const shown = () => screen.queryAllByLabelText(/^die showing/).map((el) => el.ge
 describe("the dice overlay", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // The dice sit on the table's centre, so there has to be a table.
+    useTableStore.getState().setGeometry(resolveTable({ seats: 3, width: 390, height: 844 }));
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
     vi.stubGlobal("matchMedia", (media: string) => ({
       matches: false,
       media,

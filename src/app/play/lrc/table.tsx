@@ -21,6 +21,7 @@ import { Button } from "@/ui/primitives/Button";
 import { DiceFace } from "@/ui/primitives/DiceFace";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
+import { useGeometry } from "@/table/store";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { potSize } from "@/games/lrc/state";
@@ -222,6 +223,8 @@ export function LrcControls({ view, live }: { view: LrcView; live: Live }) {
         }
         // Rolling is the bar; everybody else's turn is this line.
         center={<TurnIndicator label="" show={false} />}
+        // The pot, counted: a pile of identical chips does not say how many.
+        right={<HeroStatusBadge stats={[[{ label: "Pot", value: potSize(live.state) }]]} />}
       />
     </>
   );
@@ -236,6 +239,9 @@ type Face = "L" | "R" | "C" | "dot";
  * just starting from a different offset. */
 const TUMBLE_SEQUENCE: readonly Face[] = ["dot", "L", "C", "R"];
 const TUMBLE_TICK_MS = 100;
+/** A die's size, and the air between the dice and the pot below them. */
+const DIE = 48;
+const DICE_GAP = 14;
 /**
  * Derived from `DURATION.diceTumble`, the same number the choreographer
  * holds the queue for, so the dice cannot still be tumbling when the chips
@@ -261,6 +267,7 @@ const TUMBLE_TICKS = Math.max(1, Math.round((DURATION.diceTumble * 1000) / TUMBL
  * new roll never waits for the last one to leave before it appears.
  */
 function DiceOverlay() {
+  const geometry = useGeometry();
   const [roll, setRoll] = useState<{ id: number; faces: Face[] } | null>(null);
   const [tick, setTick] = useState(TUMBLE_TICKS);
 
@@ -285,10 +292,22 @@ function DiceOverlay() {
     settled ? real : TUMBLE_SEQUENCE[(tick + i) % TUMBLE_SEQUENCE.length]!,
   );
 
+  // One chain with the pot, on the table's own centre: the dice end just
+  // above the point the pot grows down from (layout's "center" zone). They
+  // sat at 38% of the screen instead, and on a phone the pot's first chip
+  // landed on the middle die.
+  if (!geometry) return null;
+  const play = geometry.zones.play;
+  // Where the pot's first chip's top edge is: layout's "center" zone puts
+  // the first row 0.6 of a mini card below the centre, and draws the chips
+  // at table size.
+  const potTop = play.y + play.h / 2 + geometry.miniCard.w * 0.6 - geometry.card.w / 2;
+  const bottom = potTop - DICE_GAP;
+
   return (
     <div
       className="pointer-events-none absolute inset-x-0 grid place-items-center"
-      style={{ top: "38%" }}
+      style={{ top: bottom - DIE, height: DIE }}
     >
       <AnimatePresence initial={false}>
         {roll && shown && shown.length > 0 ? (
@@ -302,7 +321,7 @@ function DiceOverlay() {
             style={{ gridArea: "1 / 1" }}
           >
             {shown.map((face, i) => (
-              <DiceFace key={i} face={face} size={48} />
+              <DiceFace key={i} face={face} size={DIE} />
             ))}
           </motion.div>
         ) : null}
