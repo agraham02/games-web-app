@@ -45,6 +45,11 @@ export interface RoomEntryFormProps {
   errors?: { name?: string; code?: string };
   onMake: (name: string) => void;
   onJoin: (code: string, name: string) => void;
+  /**
+   * Something else on the screen is the one thing to do — the home
+   * screen's "go back to your room" — so none of these buttons is brass.
+   */
+  quiet?: boolean;
 }
 
 export function RoomEntryForm({
@@ -54,6 +59,7 @@ export function RoomEntryForm({
   errors,
   onMake,
   onJoin,
+  quiet = false,
 }: RoomEntryFormProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState(() => cleanCode(initialCode));
@@ -91,6 +97,7 @@ export function RoomEntryForm({
     saveName(name);
     onJoin(code, name.trim());
   };
+  const loud = quiet ? "ghost" : "primary";
   // Enter presses the primary button, whichever that is right now.
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -127,7 +134,7 @@ export function RoomEntryForm({
 
       {mode === "invite" ? (
         <>
-          <Button type="submit" tone="primary" className="w-full">
+          <Button type="submit" tone={loud} className="w-full">
             Join room {code}
           </Button>
           <button
@@ -144,7 +151,7 @@ export function RoomEntryForm({
               under a finger never moves. */}
           <Button
             type={joinFirst ? "button" : "submit"}
-            tone={joinFirst ? "ghost" : "primary"}
+            tone={joinFirst ? "ghost" : loud}
             className="w-full"
             onClick={joinFirst ? make : undefined}
           >
@@ -160,7 +167,7 @@ export function RoomEntryForm({
           <CodeInput ref={codeRef} value={code} onChange={setCode} onEnter={join} error={codeError} />
           <Button
             type={joinFirst ? "submit" : "button"}
-            tone={joinFirst ? "primary" : "ghost"}
+            tone={joinFirst ? loud : "ghost"}
             className="w-full"
             disabled={!complete}
           >

@@ -21,17 +21,41 @@ import { ArrowRight } from "lucide-react";
 import { REJOIN_PATH, TOKEN_HEADER, type RejoinAnswer } from "@/session/protocol";
 import { setEntryIntent, storedSessionToken } from "@/room/entry";
 import { RoomEntryForm } from "@/room/RoomEntryForm";
+import { Collapse } from "@/ui/motion";
+
+type Rejoin = RejoinAnswer["room"];
 
 export function HomeEntry() {
   const router = useRouter();
+  // Opened in, not popped in: the card pushes the form down, and it used to
+  // do it in one frame under somebody's thumb. Not a space held open while
+  // the server is asked either — most browsers that ask have left their
+  // room, and a gap that appears and closes again is the same jump twice.
+  const [rejoin, setRejoin] = useState<Rejoin>(null);
+
+  useEffect(() => {
+    const token = storedSessionToken();
+    if (!token) return;
+    const controller = new AbortController();
+    fetch(REJOIN_PATH, { headers: { [TOKEN_HEADER]: token }, signal: controller.signal })
+      .then((res) => (res.ok ? (res.json() as Promise<RejoinAnswer>) : { room: null }))
+      .then((answer) => setRejoin(answer.room))
+      .catch(() => {
+        /* No answer, no card: the rest of the page works as before. */
+      });
+    return () => controller.abort();
+  }, []);
 
   return (
     <div className="flex w-full flex-col gap-4">
-      <RejoinCard />
+      <Collapse open={Boolean(rejoin)}>{rejoin ? <RejoinCard room={rejoin} /> : null}</Collapse>
       {/* The same form a shared link and a refused join show (`mode`), so
-          the name, the buttons and their weight are learned once. */}
+          the name, the buttons and their weight are learned once. With a
+          room to go back to, going back is the one thing to do, and the
+          form steps down (`quiet`). */}
       <RoomEntryForm
         mode="home"
+        quiet={Boolean(rejoin)}
         onMake={() => {
           setEntryIntent({ t: "make" });
           router.push("/room");
@@ -53,52 +77,32 @@ export function HomeEntry() {
  * player was removed from, is never offered. Rejoining is just opening the
  * room: the seat, hand and score were never given up.
  */
-function RejoinCard() {
+function RejoinCard({ room }: { room: NonNullable<Rejoin> }) {
   const router = useRouter();
-  const [room, setRoom] = useState<RejoinAnswer["room"]>(null);
-
-  useEffect(() => {
-    const token = storedSessionToken();
-    if (!token) return;
-    const controller = new AbortController();
-    fetch(REJOIN_PATH, { headers: { [TOKEN_HEADER]: token }, signal: controller.signal })
-      .then((res) => (res.ok ? (res.json() as Promise<RejoinAnswer>) : { room: null }))
-      .then((answer) => setRoom(answer.room))
-      .catch(() => {
-        /* No answer, no card: the rest of the page works as before. */
-      });
-    return () => controller.abort();
-  }, []);
-
-  if (!room) return null;
   const what = room.running
     ? `${room.game ?? "Game"} in progress`
     : room.game
       ? `${room.game} lobby`
       : "Lobby";
 
-  // The whole card is the button (the user's design, 2026-09-26).
+  // The whole card is the button (the user's design, 2026-09-26), and the
+  // screen's primary action when it is there.
   return (
     <button
       type="button"
       onClick={() => router.push(`/room/${room.code}`)}
-      className="group flex w-full items-center gap-3 rounded-xl bg-brass-400/10 px-4 py-3 text-left ring-1 ring-brass-500/40 transition-colors hover:bg-brass-400/16 hover:ring-brass-400/70"
+      className="group flex w-full items-center gap-3 rounded-xl bg-linear-to-b from-brass-300 to-brass-500 px-4 py-3 text-left shadow-e2 transition-colors hover:from-brass-200 hover:to-brass-400"
     >
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-sm font-semibold text-bone-100">
-          Last room: <span className="tracking-wider text-brass-300">{room.code}</span>
-          <span className="text-bone-500"> · </span>
-          {what}
+        <span className="text-sm font-extrabold text-felt-950">
+          Back to room <span className="tracking-wider">{room.code}</span>
         </span>
-        <span className="text-xs text-bone-400">
-          <span className="hidden pointer-fine:inline">Click</span>
-          <span className="pointer-fine:hidden">Tap</span> to rejoin
-        </span>
+        <span className="text-xs font-semibold text-felt-950/75">{what}</span>
       </span>
       <ArrowRight
         size={16}
         aria-hidden
-        className="shrink-0 text-brass-300 transition-transform group-hover:translate-x-0.5"
+        className="shrink-0 text-felt-950 transition-transform group-hover:translate-x-0.5"
       />
     </button>
   );

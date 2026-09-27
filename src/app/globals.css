@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* A viewport with no vertical room to spare — below 560px tall, the same
+   line as `SHORT_VIEWPORT_H` in table/geometry.ts. A landscape phone. */
+@custom-variant short (@media (max-height: 559.98px));
+
 /* ============================================================
    NEO-FELT — the single source of visual truth.
    Mirrors the Claude Design canvas "Neo-Felt System".

@@ -34,7 +34,7 @@ import { HomeEntry } from "./HomeEntry";
 export default function Home() {
   return (
     <main className="felt felt-weave h-svh overflow-y-auto overscroll-contain">
-      <div className="relative z-1 mx-auto flex max-w-4xl flex-col gap-10 px-6 py-12 sm:py-16">
+      <div className="relative z-1 mx-auto flex max-w-4xl flex-col gap-10 px-6 py-12 sm:py-16 short:gap-6 short:py-5">
         <Hero />
         <PlayTogether />
         <PlayAlone />
@@ -44,17 +44,22 @@ export default function Home() {
   );
 }
 
+/**
+ * On a landscape phone the hero is just its title: the pieces and the
+ * paragraph put "Play together" below the first screen, and a room is
+ * what this page is for.
+ */
 function Hero() {
   return (
-    <header className="flex flex-col gap-4">
-      <PieceStrip />
+    <header className="flex flex-col gap-4 short:gap-1">
+      <PieceStrip className="short:hidden" />
       <div>
         <span className="eyebrow">Six table games</span>
         <h1 className="mt-1.5 font-display text-4xl tracking-wider text-brass-300 sm:text-5xl">
           Table Games
         </h1>
       </div>
-      <p className="max-w-xl text-sm leading-relaxed text-bone-400">
+      <p className="max-w-xl text-sm leading-relaxed text-bone-400 short:hidden">
         Dominoes, Spades, Rummy 500, Poker, Left Right Center and BS — real
         rules, real bots, and a table that moves like a table. Play them
         with people in a room, or on your own against the house.
@@ -123,7 +128,9 @@ function PlayAlone() {
         <span className="eyebrow shrink-0">Or play on your own</span>
         <span className="rule-brass flex-1" />
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Two columns of compact tiles on a phone — six full-width cards
+          were most of a phone's scroll for the page's second purpose. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {GAME_IDS.map((id) => (
           <GameCard key={id} id={id} />
         ))}
@@ -166,20 +173,22 @@ function GameCard({ id }: { id: GameId }) {
   return (
     <Link
       href={`/play/${id}`}
-      className="group flex flex-col gap-3 rounded-xl bg-bone-50/5 p-4 ring-1 ring-bone-50/12 transition-colors hover:bg-bone-50/10 hover:ring-brass-400/45"
+      className="group flex flex-col gap-2 rounded-xl bg-bone-50/5 p-3 ring-1 ring-bone-50/12 transition-colors hover:bg-bone-50/10 hover:ring-brass-400/45 sm:gap-3 sm:p-4"
     >
-      <div className="flex items-center gap-3">
+      {/* Stacked on a phone: beside the thumbnail, a half-width tile left a
+          name like "Dominoes" about 85px, and it did not fit. */}
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span aria-hidden className="flex h-13 w-11 shrink-0 items-center justify-center">
           {THUMBS[id]}
         </span>
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate font-display text-lg tracking-wide text-bone-50">
+        <span className="flex min-w-0 max-w-full flex-col">
+          <span className="font-display text-base leading-tight tracking-wide text-bone-50 sm:truncate sm:text-lg">
             {game.name}
           </span>
           <span className="text-[11px] font-semibold text-bone-600">{seats}</span>
         </span>
       </div>
-      <p className="text-xs leading-relaxed text-bone-400">{BLURBS[id]}</p>
+      <p className="hidden text-xs leading-relaxed text-bone-400 sm:block">{BLURBS[id]}</p>
       <span className="mt-auto flex items-center gap-1 pt-1 text-xs font-bold text-brass-300">
         Play solo
         <ArrowRight
