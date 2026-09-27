@@ -19,7 +19,7 @@ clear of pods and hands) and add a layout test across `TABLE_VIEWPORTS`.
 **Do that for every centre zone, and for every overlay that sits over the
 table**, instead of waiting for a screenshot.
 
-## 2026-09-26 — Combined audit and proposal (reviewed; being built)
+## 2026-09-26 — Combined audit and proposal (reviewed; built — see 4.9)
 
 One pass over every table, the home page, the six setup screens, the room
 (entry form, lobby, online table) and the online flow around it: read,
@@ -668,9 +668,57 @@ Each fix verified live at the sizes it targets, and `npm run check`.
 [Sonner — Toaster](https://sonner.emilkowal.ski/toaster) ·
 [Deque — meta-viewport](https://dequeuniversity.com/rules/axe/4.1/meta-viewport)
 
+#### 4.9 Built (Step 5, `feat/layout-ui-ux-pass`, 2026-09-26/27)
+
+Each verified live at the sizes it targets, and `npm run check` green
+throughout (1092 tests at the end).
+
+| Commit | What |
+|---|---|
+| `d547abf` | The audit's bugs: undefined bone shades (+ guard test), the 3-seat Caribbean deal, locked rules shown as off, the fresh room's seats, deny's name, copy slips. |
+| `84ef52c` | Primitives on Base UI (Switch, Toggle Group, Slider), `Button` on `cva`, `ChoiceGroup`, role tokens, UI motion tokens and `Reveal`/`Swap`/`Collapse`. |
+| `0dbbf90` | C2/C3: one options spec per game (`GAME_SETUPS`), `GameOptions` for solo and lobby, `parse` clamping from it, one `GameSetup` for all six; sliders commit on gesture end. |
+| `3ade933` | C1/H2/H3/H6: `RoomEntryForm`, `RoomStatusScreen`, refusals on the form, leaving goes home. |
+| `7468a89` | T1/T2/T5: the band above the hand reserved and measured (row / bar / panel), Poker's folded phone panel, Spades' one-row short bid, centre chains that shrink (`zoneScale`), the band test at every viewport (+ both tablets and 1366×768). |
+| `0e0d1bb` | T3/T4/T9: toast lane, labelled pod stats (`Stats`), dev panel folded. |
+| `b6fcb86` | T7: whose turn it is, when it is not yours; pods sized for two stat lines. |
+| `851551d` | T6: progress line, rows by total, the viewer highlighted, "Hand" for poker, *Look at the table*. |
+| `dcbda62` | T8: one `Avatar`; online bots named by `nameForSeat`. |
+| `d089b94` | H4/H7: the lobby as invite, Game and Table panels, and a sticky footer that says what Start waits for; the invite in a table's Settings sheet. |
+| `21d7a18` | H1: the `short:` variant, compact solo tiles, the Rejoin card as the primary action. |
+| `90441b6` | 4.5: route entrances, collapsing errors and rules, list entrances, the options cross-fade, the Reconnecting fade. |
+| `6163961` | LRC: dice and pot as one chain, the pot counted. |
+| `bc67133` | Spades' score parts on the round card, Rummy's deal wording and stock badge, a domino's lift inside its strip. |
+
+**Deliberately not built** (each a decision, not an oversight):
+- C3's *How to play* rules sheet, and folding Dominoes' optional rules on
+  the solo screen (the lobby folds its whole Game panel instead).
+- H3's last-known room kept on screen after a reload (needs a
+  `sessionStorage` cache of the room view — "can come later").
+- H8, the invite preview (the user: fine, not necessary).
+- 4.2 Dominoes: shrinking hand tiles on short viewports.
+- 4.5's global `MotionConfig` transition: in-game motion sets its own, and a
+  default would change pieces nobody meant to touch.
+- 4.6: `maximumScale: 1` is still on the root layout — take it off only
+  after a check on a real phone (pinch on the felt must stay dead).
+- T8's bot glyph is on the lobby's bot rows only; a room's bot pods carry
+  the solo table's bot names instead.
+
+**Open question — Poker at laptop heights.** At 1366×650 with the betting
+bar up, the `wide` density's hand strip (221px) and pods leave Poker's
+centre about 26px of height, so its chain reaches the legible floor and
+the stub and burn piles overhang the band (allowed by the rule above, and
+better than the old panel over the flop — but not good). The candidate fix
+is density, not layout: demote to `regular` below roughly 720px tall
+(computed from the geometry, not yet seen live: the community cards would
+draw 72px tall at 0.93 of `regular` size, against 40px — the floor — at
+`wide`). It shrinks every game's pieces on
+those laptops, so it is the user's call.
+
 ## Open
 
 ### The room pages look plain next to the home page
+**Resolved** — `d089b94` (H4).
 Reported 2026-09-26. The home page has a hero, the piece strip, a
 panelled "Play together" card and the game grid. The room's own screens —
 the lobby at `/room/[code]`, the entry form a shared link lands on, and
@@ -688,6 +736,7 @@ Ideas for the pass, none built:
   rather than a lone line of text.
 
 ### The table's centre runs into the seats — fix it ONCE, centrally
+**Resolved** — `7468a89` (T2: `zoneScale`, and the band test over every game and viewport).
 The user has reported this in nearly every game: Spades' trick, Poker's
 board and betting panel, and now Rummy's piles. Each got its own fix,
 one screenshot at a time. It needs one shared fix, plus a check of each
@@ -755,6 +804,7 @@ from the hand zone with no reserved space.
 - Spades: the trick already scales; just include it in the shared test.
 
 ### BS: the centre pile was cut off at the bottom
+**Resolved** — `7468a89` (T2).
 - Reported 2026-09-25 (screenshot, about 1524×790 CSS). The pile card
   sat under BS's bottom sheet. The sheet is now REMOVED (the user's call:
   BS does not need it), which also took it off the path cards fly from
@@ -789,6 +839,7 @@ from the hand zone with no reserved space.
   length, so check the length does not run into neighbours).
 
 ### Poker: betting panel vs the board on short laptop windows
+**Resolved** — `7468a89` (T1 — the panel is the band's; see 4.9 for what is left at 650px).
 - At 1366×650 the panel (now a single 96px row on wide screens) still
   overlaps the flop by ~12px. Between the board's bottom and the hero's
   cards there is only ~118px there. Clear at 1536×780 (89px to spare).
@@ -801,17 +852,20 @@ from the hand zone with no reserved space.
   the board on phone landscape.
 
 ### Centre zones not yet audited against HANDS on laptop heights
+**Resolved** — `7468a89` (the band test checks opponents' hands too).
 - Rummy: now measured and reported (see "The table's centre runs into the
   seats" above).
 - BS's `pile`/`reveal` pair and Dominoes' `line` are still to be measured.
 
 ### The round-end summary hides the table
+**Resolved** — `851551d` (*Look at the table*).
 - It blurs and covers the felt, so at a poker showdown you cannot look at
   the cards that decided the hand while reading the result. (The summary
   now names the winning hand in words, which helps, but the cards are the
   real answer.) POLICY.md: reference information should not be modal.
 
 ### Pod text that can outgrow a pod
+**Resolved** — `0e0d1bb` (T4) and `b6fcb86` (two lines, sized).
 - Poker's "$4837 · bet $362" was cut off (fixed by splitting it into two
   lines). Other games still build a single `meta` string that can outgrow a
   96px pod — e.g. Spades' "4 (blind) · won 2 · 150". Audit with long values.
@@ -826,11 +880,13 @@ from the hand zone with no reserved space.
   has the vocabulary.
 
 ### Poker says "Round" where players say "hand"
+**Resolved** — `851551d` (`roundNoun`).
 - The round intro and scorecard eyebrow are shared ("Round 3"). For poker
   that number is the hand count, and "Hand 3" is the word players use.
   A per-game label would do it.
 
 ### Offline dev chrome
+**Resolved** — `0e0d1bb` (T9 — folded by default).
 - The dev panel (top-left, open by default) covers the left seat's pod.
   Dev-only, but it is what the table looks like every time it is opened
   in development.

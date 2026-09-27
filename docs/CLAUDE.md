@@ -609,9 +609,34 @@ flex/grid flow inside as few geometry-anchored containers as possible.
 A z-index bump is a symptom, not a fix: it means two things occupy the
 same space and are being told who wins, instead of being laid out so
 they never occupy it at all. [HandZone.tsx](src/table/HandZone.tsx) is
-the worked example — one row owning the whole band above the hand, with
+the worked example — one owner of the whole band above the hand, with
 three **equal** `minmax(0, 1fr)` columns, because a `flex-1` centre
 item centres in the space *left over* rather than in the row.
+
+**The band is reserved, not drawn over.** It has three modes — `row`
+(readouts), `bar` (one row of actions), `panel` (a decision bigger than a
+row: Spades' bid, Poker's betting) — and it measures itself; the surface
+reserves what it measures (`ResolveOptions.bandZone`, granted in full) and
+publishes it as `geometry.band`, so nothing the table lays out sits under
+it. Every decision a game asks for goes in the band. Nothing is positioned
+with a `calc()` against the hand any more (`--hand-zone` is gone).
+
+**The centre shrinks; it does not overflow.** Poker's community → pot →
+stub chain and BS's reveal + pile draw at `geometry.zoneScale[zone]` — the
+largest scale at which each chain fits between the top seats' cards and
+the ring — down to a legible floor (`LEGIBLE_CARD_H`), and only past that
+may they overhang. A side seat's fan compresses rather than reaching past
+the ring. `layout.test.ts`'s band test holds every game, with the band it
+really shows, to this at every `TABLE_VIEWPORTS` size.
+
+**Transient notices use the toast lane** (`toastLane(geometry)`): just
+below the lowest top-edge pod, never on it. `GameToaster` and the
+Reconnecting pill both take it.
+
+**Pods say labelled numbers** (`SeatView.stats`, drawn by the shared
+`Stats`), at most two lines under the name (`POD_LINES` — the geometry
+sizes every pod for that). The viewer's own chip in the band uses the same
+vocabulary.
 
 ### Compress-then-pan
 
@@ -671,6 +696,43 @@ screens use [SetupShell](src/ui/primitives/SetupShell.tsx) and the home
 screen the same shape: `h-svh overflow-y-auto` on the page, and `m-auto`
 rather than `justify-center` for the centring, because a flex container
 centres its overflow in *both* directions and puts the top out of reach.
+`SetupShell`'s `footer` sticks the screen's primary action to the bottom
+of that scroll container, so "Deal in" and a lobby's Start are never below
+the fold.
+
+### A game's options are data
+
+Each game's setup — what it asks, in what order, with what ranges,
+defaults and hints — is one spec in
+[gameSetup.ts](src/session/gameSetup.ts) (`GAME_SETUPS`). `GameOptions`
+draws it for the solo setup screen (`GameSetup`, one component for all
+six) AND the lobby (`mode: "room"`, `locked` for everyone but the leader),
+and the registry's `parse` clamps what arrives off the wire from the same
+numbers. The three used to be written separately and had drifted — the
+room played Rummy to 500 with no way to change it, offered LRC a
+difficulty slider, and let Caribbean be set to three seats. Add an option
+to the spec and all three follow. Defaults are the solo values everywhere
+(the user's call).
+
+## Shared UI primitives
+
+Reach for these before writing a one-off — each replaced several copies:
+
+- `Button` (cva: tone × size × shape) is the only button. `ChoiceGroup`
+  is one-of-a-few (a game, a ruleset, privacy). `Toggle` and the sliders
+  are Base UI, restyled (`src/ui/base/`); a slider's owner hears only where
+  a gesture ends (`useSliderDraft`), because in a room every change is a
+  message.
+- `locked` (shown, not changeable — anyone but a room's leader) is not
+  `unavailable` (off, with its reason — Six love without partners).
+- `Stats` (labelled numbers), `Avatar` (people, with a bot variant),
+  `PieceStrip` (the app's motif), `Reveal` / `Swap` / `Collapse` (the only
+  motion around the table: 150–250ms tweens, no springs).
+- Rooms: `RoomEntryForm` is the only way in (`home` / `invite` / `retry`);
+  `RoomStatusScreen` is every in-between state; `InviteCard` is the code
+  and the link (lobby and a table's Settings sheet). A room names a bot's
+  seat through `nameForSeat(frame, seat)` — the solo table's bot name for
+  it, never "Bot 3".
 
 ## Performance
 
@@ -750,7 +812,8 @@ a game by adding an entry to its list, never a per-game sheet.
 
 - **Hints** (`hintsSetting`) is per game and means what the game says:
   Poker spells out its labels; Spades and Dominoes dim what cannot be
-  played. The host syncs it into the store as `hintsShown`, and with it off
+  played. Off by default (the user's call, 2026-09-26) — except Poker's,
+  which a newcomer needs and would not know to turn on. The host syncs it into the store as `hintsShown`, and with it off
   `PieceLayer` ignores `dimmed` — the piece looks and taps like any other,
   and the game's tap handler says why it was refused (`whyNotPlayable` in
   Spades). Feedback AFTER a tap, never a hint before one.
@@ -778,8 +841,9 @@ declared `pieces()` vocabulary. Zero per-game code — use it to reach a
 ## Bot difficulty is a wired setting, not a decoration
 
 Every game's setup screen offers `DifficultyPicker` (shared 3-stop
-slider, each tier with a line of copy stating what actually changes) and
-passes `botTable(seats, tier)` — one tier for the whole table — into
+slider, each tier with a line of copy stating what actually changes — the
+copy lives in the game's spec, `GAME_SETUPS[game].difficulty`) and passes
+`botTable(seats, tier)` — one tier for the whole table — into
 `GameRuntime.difficulty`. This used to default silently to `steady`
 everywhere with nothing ever overriding it, so casual and sharp were
 unreachable in every game at once. If a future difficulty-related report
