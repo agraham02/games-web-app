@@ -135,6 +135,7 @@ export default function PhasesLab() {
             eyebrow="Round 3 of 7"
             title="Hand complete"
             rows={rows}
+            target={500}
             note={{
               tone: "warn",
               title: "Bag warning",

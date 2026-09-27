@@ -52,6 +52,7 @@ export default function PokerPlayPage() {
       definition={definition}
       runtime={{ seats, difficulty: botTable(seats, setup.difficulty) }}
       gameTitle="Poker"
+      roundNoun="Hand"
       players={(state, live) => playerViews(OFFLINE_VIEW, state, live)}
       standings={(state, live, seats) => standings(OFFLINE_VIEW, state, live, seats)}
       stats={(state) => [

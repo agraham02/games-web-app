@@ -647,7 +647,7 @@ export function roundSummary(view: SpadesView, state: SpadesState) {
   const heroDelta = result.deltas[view.viewerSeat] ?? 0;
   const title = heroDelta > 0 ? "Your team scores" : heroDelta < 0 ? "Your team sets" : "Hand complete";
 
-  return { title, rows, note };
+  return { title, rows, note, target: state.target };
 }
 
 export function pendingLabel(view: SpadesView, state: SpadesState, seat: SeatId): string {

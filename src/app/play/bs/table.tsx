@@ -489,6 +489,7 @@ export function roundSummary(view: BsView, state: BsState) {
     title: won ? "You take the round" : `${view.nameFor(result.winner)} takes the round`,
     rows,
     note,
+    target: state.target,
   };
 }
 

@@ -82,7 +82,9 @@ export interface GameHostProps<S, A> {
     state: S,
     live: GameRuntime<S, A>,
     seats: SeatView[],
-  ) => { title: string; rows: ScoreRow[]; note?: RoundNote } | null;
+  ) => { title: string; rows: ScoreRow[]; note?: RoundNote; target?: number } | null;
+  /** What this game calls a round — "Hand" for poker. Default "Round". */
+  roundNoun?: string;
   /** Taps on a piece — the hero picking a card or tile off the table.
    * Only pieces in the hero's hand or explicitly `highlighted` are
    * clickable at all; see PieceLayer. Handed the live runtime for the
@@ -223,6 +225,7 @@ export function GameHostView<S, A>({
   corner,
   handActive,
   continueWaiting,
+  roundNoun = "Round",
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
   const allSettings = useMemo(() => [...(settings ?? []), ...TABLE_SETTINGS], [settings]);
@@ -352,16 +355,17 @@ export function GameHostView<S, A>({
           mask blocking it — see useGameRuntime's own doc. */}
       <RoundIntro
         show={live.dealingRound !== null}
-        eyebrow={`Round ${live.dealingRound ?? live.round}`}
+        eyebrow={`${roundNoun} ${live.dealingRound ?? live.round}`}
         title={gameTitle}
       />
 
       <RoundEndScorecard
         show={Boolean(card)}
-        eyebrow={`Round ${live.round}`}
+        eyebrow={`${roundNoun} ${live.round}`}
         title={card?.title ?? ""}
         rows={card?.rows ?? []}
         note={card?.note}
+        target={card?.target}
         onContinue={live.nextRound}
         waiting={continueWaiting}
       />

@@ -117,7 +117,7 @@ export function roundSummary(view: LrcView, state: LrcState) {
   rows.sort((a, b) => b.total - a.total);
 
   const title = `${name(result.winner)} ${result.winner === view.viewerSeat ? "take" : "takes"} the pot`;
-  return { title, rows };
+  return { title, rows, target: state.target };
 }
 
 /** DevPanel's game-specific line — see GameHostProps.pendingLabel. */

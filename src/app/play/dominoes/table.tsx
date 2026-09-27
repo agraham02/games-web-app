@@ -472,7 +472,7 @@ export function roundSummary(view: DomView, state: DomState) {
           : `${name(result.winner)} ${result.winner === view.viewerSeat ? "go" : "goes"} out`
         : `${name(result.winner)} ${result.winner === view.viewerSeat ? "win" : "wins"} it`;
 
-  return { title, rows, note };
+  return { title, rows, note, target: state.target };
 }
 
 function roundNote(

@@ -17,6 +17,8 @@ import { AnimatedNumber } from "@/ui/primitives/AnimatedNumber";
 import { TRANSITIONS } from "@/motion/presets";
 import { Stats, type StatLines } from "@/ui/primitives/Stats";
 import { useTableStore } from "@/table/store";
+import { Button } from "@/ui/primitives/Button";
+import { useState } from "react";
 
 /* ============================================================
    Round intro — a brief title card over the deal.
@@ -233,6 +235,23 @@ export interface ScoreRow {
    * has, unaffected.
    */
   team?: string | number;
+  /** The viewer's own row — highlighted. Defaults to a row named "You". */
+  you?: boolean;
+}
+
+const isYou = (r: ScoreRow) => r.you ?? r.name === "You";
+
+/**
+ * "First to 10 · Mia 3" — how far the match has to go, and who is nearest.
+ * A team is named by its members. A tie at the top says so rather than
+ * picking one of them.
+ */
+function progressLine(groups: readonly (readonly ScoreRow[])[], target: number): string {
+  const [top, next] = groups;
+  if (!top?.[0]) return `First to ${target}`;
+  const total = top[0].total;
+  if (next?.[0] && next[0].total === total) return `First to ${target} · tied at ${total}`;
+  return `First to ${target} · ${top.map((r) => r.name).join(" & ")} ${total}`;
 }
 
 export function RoundEndScorecard({
@@ -244,6 +263,7 @@ export function RoundEndScorecard({
   onContinue,
   continueLabel = "Next round",
   waiting,
+  target,
 }: {
   show: boolean;
   eyebrow: string;
@@ -257,47 +277,82 @@ export function RoundEndScorecard({
    * "Waiting for Ada to continue". A room's round is the leader's to deal.
    */
   waiting?: string;
+  /** What the match is played to — adds the progress line. */
+  target?: number;
 }) {
+  // Lowered to a strip, so the table under it can be read — a showdown's
+  // board, the last trick, the melds. Every new card opens full.
+  const [peek, setPeek] = useState(false);
+  const [shownFor, setShownFor] = useState(show);
+  if (show !== shownFor) {
+    setShownFor(show);
+    if (show) setPeek(false);
+  }
+
+  // Highest total first: the order a player reads a scoreboard in.
+  const groups = groupScoreRows(rows).sort((a, b) => (b[0]?.total ?? 0) - (a[0]?.total ?? 0));
+
   return (
-    <PhaseSheet show={show}>
-      <div className="flex flex-col items-center gap-1.5 pt-2">
-        <span className="eyebrow">{eyebrow}</span>
-        <h2 className="font-display text-2xl tracking-wider text-brass-300">
-          {title}
-        </h2>
-        <span className="rule-brass mt-1 w-32" />
-      </div>
-
-      <div className="mt-6 flex flex-col">
-        {groupScoreRows(rows).map((group, i) => (
-          <ScoreRowGroup key={group.map((r) => r.seat).join("-")} rows={group} index={i} />
-        ))}
-      </div>
-
-      {note ? (
-        <div
-          className={`mt-6 rounded-xl p-3.5 ring-1 ${
-            note.tone === "warn"
-              ? "bg-warn/9 ring-warn/28"
-              : "bg-bone-50/5 ring-bone-50/12"
-          }`}
-        >
-          <div
-            className={`mb-1 text-[11px] font-bold ${note.tone === "warn" ? "text-warn" : "text-bone-200"}`}
-          >
-            {note.title}
-          </div>
-          <div className="text-[11px] text-bone-200">{note.body}</div>
+    <PhaseSheet show={show} strip={peek}>
+      {peek ? (
+        <div className="flex items-center justify-between gap-3">
+          <span className="min-w-0 truncate font-display text-lg tracking-wide text-brass-300">
+            {title}
+          </span>
+          <Button size="sm" onClick={() => setPeek(false)}>
+            Show scores
+          </Button>
         </div>
-      ) : null}
+      ) : (
+        <>
+          <div className="flex flex-col items-center gap-1.5 pt-2">
+            <span className="eyebrow">{eyebrow}</span>
+            <h2 className="font-display text-2xl tracking-wider text-brass-300">{title}</h2>
+            {target !== undefined ? (
+              <span className="text-xs font-semibold text-bone-400">{progressLine(groups, target)}</span>
+            ) : null}
+            <span className="rule-brass mt-1 w-32" />
+          </div>
 
-      {waiting ? (
-        <p className="mt-6 text-center text-sm font-semibold text-bone-300" role="status">
-          {waiting}
-        </p>
-      ) : onContinue ? (
-        <PrimaryAction onClick={onContinue}>{continueLabel}</PrimaryAction>
-      ) : null}
+          <div className="mt-6 flex flex-col">
+            {groups.map((group, i) => (
+              <ScoreRowGroup key={group.map((r) => r.seat).join("-")} rows={group} index={i} />
+            ))}
+          </div>
+
+          {note ? (
+            <div
+              className={`mt-6 rounded-xl p-3.5 ring-1 ${
+                note.tone === "warn" ? "bg-warn/9 ring-warn/28" : "bg-bone-50/5 ring-bone-50/12"
+              }`}
+            >
+              <div
+                className={`mb-1 text-[11px] font-bold ${note.tone === "warn" ? "text-warn" : "text-bone-200"}`}
+              >
+                {note.title}
+              </div>
+              <div className="text-[11px] text-bone-200">{note.body}</div>
+            </div>
+          ) : null}
+
+          {waiting ? (
+            <p className="mt-6 text-center text-sm font-semibold text-bone-300" role="status">
+              {waiting}
+            </p>
+          ) : onContinue ? (
+            <Button tone="primary" className="mt-7 w-full" onClick={onContinue}>
+              {continueLabel}
+            </Button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setPeek(true)}
+            className="mt-3 w-full text-center text-xs text-bone-400 underline-offset-4 hover:text-bone-200 hover:underline"
+          >
+            Look at the table
+          </button>
+        </>
+      )}
     </PhaseSheet>
   );
 }
@@ -340,7 +395,9 @@ function ScoreRowGroup({ rows, index }: { rows: readonly ScoreRow[]; index: numb
   if (!first) return null;
   return (
     <motion.div
-      className="grid grid-cols-[22px_1fr_auto_auto] items-center gap-2.5 border-b border-bone-50/7 py-2.5 last:border-b-0"
+      className={`grid grid-cols-[22px_1fr_auto_auto] items-center gap-2.5 border-b border-bone-50/7 py-2.5 last:border-b-0 ${
+        rows.some(isYou) ? "-mx-2 rounded-lg bg-brass-400/8 px-2" : ""
+      }`}
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ ...TRANSITIONS.ui, delay: 0.06 * index }}
@@ -432,9 +489,10 @@ export function GameEndSummary({
             boxShadow:
               "0 0 0 3px var(--color-brass-500), 0 0 44px rgb(212 175 106 / 0.55)",
           }}
-          initial={{ scale: 0.7, opacity: 0 }}
+          initial={{ scale: 0.85, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 220, damping: 18 }}
+          // The UI tween like everything else here — the spring overshot.
+          transition={TRANSITIONS.uiEnterSlow}
         >
           {winnerName.slice(0, 2).toUpperCase()}
         </motion.span>
@@ -493,22 +551,14 @@ export function GameEndSummary({
 
       <div className="mt-7 flex gap-2.5">
         {onLobby ? (
-          <button
-            type="button"
-            onClick={onLobby}
-            className="flex-1 rounded-lg bg-bone-50/6 px-5 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
-          >
+          <Button className="flex-1" onClick={onLobby}>
             Lobby
-          </button>
+          </Button>
         ) : null}
         {onRematch ? (
-          <button
-            type="button"
-            onClick={onRematch}
-            className="flex-[1.4] rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-5 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
-          >
+          <Button tone="primary" className="flex-[1.4]" onClick={onRematch}>
             Rematch
-          </button>
+          </Button>
         ) : null}
       </div>
     </PhaseSheet>
@@ -525,24 +575,32 @@ export function GameEndSummary({
  */
 function PhaseSheet({
   show,
+  strip = false,
   children,
 }: {
   show: boolean;
+  /** Lowered to a bar at the bottom, with no backdrop over the table. */
+  strip?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <AnimatePresence>
       {show ? (
         <motion.div
-          className="absolute inset-0 z-3000 flex items-end justify-center sm:items-center"
+          className={`absolute inset-0 z-3000 flex items-end justify-center ${
+            strip ? "pointer-events-none" : "sm:items-center"
+          }`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={TRANSITIONS.ui}
         >
-          <div className="absolute inset-0 bg-felt-950/70 backdrop-blur-sm" />
+          {strip ? null : <div className="absolute inset-0 bg-felt-950/70 backdrop-blur-sm" />}
           <motion.div
-            className="relative max-h-full w-full overflow-y-auto rounded-t-[20px] bg-linear-to-b from-felt-800/95 to-felt-900 p-5 ring-1 ring-brass-400/25 sm:max-w-md sm:rounded-2xl"
+            layout
+            className={`pointer-events-auto relative max-h-full w-full overflow-y-auto rounded-t-[20px] bg-linear-to-b from-felt-800/95 to-felt-900 ring-1 ring-brass-400/25 sm:max-w-md ${
+              strip ? "px-5 py-3 sm:mb-4 sm:rounded-2xl" : "p-5 sm:rounded-2xl"
+            }`}
             initial={{ y: 40, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 24, opacity: 0 }}
@@ -556,20 +614,3 @@ function PhaseSheet({
   );
 }
 
-function PrimaryAction({
-  children,
-  onClick,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="mt-7 w-full rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-5 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
-    >
-      {children}
-    </button>
-  );
-}

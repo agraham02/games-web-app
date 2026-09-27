@@ -1860,7 +1860,7 @@ export function statsFor(state: RummyState) {
 }
 
 export function roundSummary(view: RummyView, seats: number) {
-  return (state: RummyState): { title: string; rows: ScoreRow[]; note?: RoundNote } | null => {
+  return (state: RummyState): { title: string; rows: ScoreRow[]; note?: RoundNote; target?: number } | null => {
     const result = state.result;
     if (!result) return null;
 
@@ -1891,6 +1891,7 @@ export function roundSummary(view: RummyView, seats: number) {
             : `${view.nameFor(result.wentOut)} went out`,
       rows,
       note,
+      target: state.target,
     };
   };
 }

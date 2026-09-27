@@ -91,6 +91,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         definition={definition}
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "poker"].name}
+        roundNoun="Hand"
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
