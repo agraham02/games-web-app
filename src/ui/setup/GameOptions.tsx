@@ -37,6 +37,7 @@ import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { SeatsSlider, SetupField } from "@/ui/primitives/SetupField";
 import { Toggle } from "@/ui/primitives/Toggle";
 import { cn } from "@/lib/utils";
+import { Collapse } from "@/ui/motion";
 
 /** Everything a game is set up with before the deal. */
 export interface SetupValue {
@@ -122,7 +123,9 @@ export function GameOptions({ game, mode, value, onChange, locked = false, class
 
         {match.map(field)}
 
-        {toggles.length > 0 ? (
+        {/* Its own height, opening and closing: Caribbean's three rules
+            arrive and leave with the ruleset, and used to jump the form. */}
+        <Collapse open={toggles.length > 0}>
           <SetupField label="Optional rules">
             <div className="flex flex-col gap-2">
               {toggles.map((option) => (
@@ -138,7 +141,7 @@ export function GameOptions({ game, mode, value, onChange, locked = false, class
               ))}
             </div>
           </SetupField>
-        ) : null}
+        </Collapse>
 
         {spec.difficulty ? (
           <DifficultyPicker

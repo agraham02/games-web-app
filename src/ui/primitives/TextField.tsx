@@ -12,6 +12,7 @@
 import { useId, type InputHTMLAttributes, type Ref } from "react";
 import { CODE_LENGTH } from "@/session/room";
 import { cn } from "@/lib/utils";
+import { Collapse } from "@/ui/motion";
 
 export interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "onChange"> {
   label: string;
@@ -45,15 +46,16 @@ export function TextField({
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-lg bg-felt-950/60 px-3.5 py-3 font-sans text-base text-bone-50 ring-1 ring-bone-50/16 outline-none placeholder:text-bone-600 focus:ring-2 focus:ring-brass-400 aria-invalid:ring-destructive/70"
       />
-      {error ? (
-        <span id={noteId} className="text-xs font-semibold text-destructive">
-          {error}
-        </span>
-      ) : hint ? (
+      {hint && !error ? (
         <span id={noteId} className="text-xs text-bone-400">
           {hint}
         </span>
       ) : null}
+      <Collapse open={Boolean(error)}>
+        <span id={noteId} className="block text-xs font-semibold text-destructive">
+          {error}
+        </span>
+      </Collapse>
     </label>
   );
 }
@@ -146,11 +148,11 @@ export function CodeInput({ value, onChange, onEnter, label = "Room code", error
           ))}
         </div>
       </div>
-      {error ? (
-        <span id={errorId} className="text-xs font-semibold text-destructive">
+      <Collapse open={Boolean(error)}>
+        <span id={errorId} className="block text-xs font-semibold text-destructive">
           {error}
         </span>
-      ) : null}
+      </Collapse>
     </div>
   );
 }

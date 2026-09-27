@@ -29,6 +29,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MemberView } from "@/session/protocol";
 import { Avatar } from "@/ui/primitives/Avatar";
 import { Button } from "@/ui/primitives/Button";
+import { TRANSITIONS } from "@/motion/presets";
 
 /** Stable per-name so the same person keeps the same colour across renders. */
 const TINTS = [
@@ -251,6 +252,10 @@ function SeatRow({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       className={`${ROW} relative`}
+      // Somebody arriving fades in rather than popping into the list.
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={TRANSITIONS.uiEnter}
       whileDrag={{ scale: 1.02, zIndex: 1, boxShadow: "0 8px 24px rgb(0 0 0 / 0.35)" }}
     >
       {canArrange ? (

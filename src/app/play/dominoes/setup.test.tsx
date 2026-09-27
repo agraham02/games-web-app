@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import DominoesPlayPage from "./page";
 
 /**
@@ -35,13 +35,14 @@ describe("dominoes setup — default", () => {
 });
 
 describe("dominoes setup — classic", () => {
-  it("switches to Block & Draw with its own controls", () => {
+  it("switches to Block & Draw with its own controls", async () => {
     setup();
     clickClassic();
     // The classic-only target row and seat slider.
     expect(screen.getByText("Play to")).toBeTruthy();
     expect(screen.getByText(/^Players/)).toBeTruthy();
-    expect(screen.queryByText("Optional rules")).toBeNull();
+    // Caribbean's rules close rather than vanish, so they leave a beat later.
+    await waitFor(() => expect(screen.queryByText("Optional rules")).toBeNull());
   });
 });
 

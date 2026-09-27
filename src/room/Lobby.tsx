@@ -29,7 +29,8 @@ import { defaultSettings, summarizeSetup, textOf } from "@/session/gameSetup";
 import type { RoomView } from "@/session/protocol";
 import { GAMES, GAME_IDS, isGameId, onlineGames, type GameId } from "@/session/registry";
 import { MIN_ROOM_PLAYERS } from "@/session/room";
-import { Collapse } from "@/ui/motion";
+import { motion } from "motion/react";
+import { Collapse, Swap, listItemMotion } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
 import { ChoiceGroup } from "@/ui/primitives/ChoiceGroup";
 import { DIFFICULTY_NAMES } from "@/ui/primitives/DifficultyPicker";
@@ -206,8 +207,9 @@ function GamePanel({ api }: { api: RoomApi }) {
             </p>
           ) : null}
 
+          {/* A different game's options cross-fade in rather than jumping. */}
           {entry ? (
-            <>
+            <Swap swapKey={entry.id}>
               <p className="text-xs leading-relaxed text-bone-400">{textOf(entry.setup.description, room.settings)}</p>
               {/*
                 Empty seats are filled by bots, so their skill is a real setting
@@ -226,7 +228,7 @@ function GamePanel({ api }: { api: RoomApi }) {
                 }}
                 onChange={(next) => api.selectGame(entry.id, next.settings, next.seats, next.difficulty)}
               />
-            </>
+            </Swap>
           ) : null}
         </div>
       </Collapse>
@@ -253,8 +255,9 @@ function TablePanel({ api }: { api: RoomApi }) {
         <div className="flex flex-col gap-2">
           <span className="eyebrow">Asking to join</span>
           {room.pending.map((p) => (
-            <div
+            <motion.div
               key={p.session}
+              {...listItemMotion}
               className="flex items-center gap-3 rounded-lg bg-brass-400/10 px-3 py-2.5 ring-1 ring-brass-500/40"
             >
               <span className="flex-1 truncate text-sm font-semibold text-bone-100">{p.name}</span>
@@ -264,7 +267,7 @@ function TablePanel({ api }: { api: RoomApi }) {
               <Button size="sm" onClick={() => api.deny(p.session)} aria-label={`Turn ${p.name} away`}>
                 <X size={12} /> Turn away
               </Button>
-            </div>
+            </motion.div>
           ))}
         </div>
       ) : null}

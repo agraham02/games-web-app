@@ -25,6 +25,8 @@
 
 import { useEffect, useState } from "react";
 import type { ConnectionStatus } from "./connection";
+import { AnimatePresence, motion } from "motion/react";
+import { TRANSITIONS } from "@/motion/presets";
 
 /**
  * How long a connection may be away before it is worth mentioning.
@@ -79,17 +81,22 @@ export function ConnectionNotice({
     );
   }
 
-  if (!lingering) return null;
-
   return (
-    <div
-      role="status"
-      className="pointer-events-none fixed inset-x-0 z-9400 flex justify-center p-2"
-      style={{ top }}
-    >
-      <span className="rounded-full bg-felt-950/90 px-3 py-1 text-xs text-brass-300 shadow-lg backdrop-blur-sm">
-        Reconnecting…
-      </span>
-    </div>
+    <AnimatePresence>
+      {lingering ? (
+        <motion.div
+          role="status"
+          className="pointer-events-none fixed inset-x-0 z-9400 flex justify-center p-2"
+          style={{ top }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1, transition: TRANSITIONS.uiEnter }}
+          exit={{ opacity: 0, transition: TRANSITIONS.uiExit }}
+        >
+          <span className="rounded-full bg-felt-950/90 px-3 py-1 text-xs text-brass-300 shadow-lg backdrop-blur-sm">
+            Reconnecting…
+          </span>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   );
 }
