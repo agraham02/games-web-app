@@ -14,6 +14,12 @@ export const DURATION = {
     collect: 0.42,
     flip: 0.3,
     ui: 0.2,
+    /** A small change — a hover, a colour, something leaving. */
+    uiFast: 0.15,
+    /** A whole screen or panel arriving. The ceiling for UI chrome: NN/g
+     * puts most interface motion at 100–400ms, and anything slower than
+     * this starts to read as waiting. */
+    uiSlow: 0.25,
     count: 0.9,
     /**
      * A `sweep` (many pieces gathered to a shared pile at once, e.g. a
@@ -95,12 +101,23 @@ export const SETTLE: Transition = {
 
 export const EASE_OUT_QUINT = [0.22, 1, 0.36, 1] as const;
 
+/** For leaving: gathers speed as it goes, so an exit never lingers. */
+export const EASE_IN = [0.4, 0, 1, 1] as const;
+
 export const TRANSITIONS = {
     deal: SETTLE,
     play: { duration: DURATION.play, ease: EASE_OUT_QUINT },
     collect: { duration: DURATION.collect, ease: EASE_OUT_QUINT },
     flip: { duration: DURATION.flip, ease: EASE_OUT_QUINT },
     ui: { duration: DURATION.ui, ease: "easeOut" },
+    /**
+     * The screens around the table (home, setup, the room) move on these
+     * three and nothing else — `src/ui/motion` is built on them. Tweens,
+     * never springs: the table's pieces have weight; a panel just arrives.
+     */
+    uiEnter: { duration: DURATION.ui, ease: EASE_OUT_QUINT },
+    uiEnterSlow: { duration: DURATION.uiSlow, ease: EASE_OUT_QUINT },
+    uiExit: { duration: DURATION.uiFast, ease: EASE_IN },
     /** Resize and reflow: instant, because it is not a game event. */
     reflow: { duration: 0 },
 } satisfies Record<string, Transition>;

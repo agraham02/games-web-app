@@ -45,6 +45,26 @@ describe("theme tokens", () => {
     expect([...new Set(missing)]).toEqual([]);
   });
 
+  it("maps every shadcn role a component uses onto the palette", () => {
+    // The primitives in ui/base come from shadcn and speak in roles. A role
+    // nobody mapped (a later `shadcn add` bringing `bg-sidebar`, say) would
+    // render as nothing, silently, exactly like an undefined shade.
+    const roles = new RegExp(
+      "\\b(?:bg|text|border|ring|ring-offset|outline|fill|stroke|from|via|to|placeholder|caret|divide|decoration)-" +
+        "((?:background|foreground|card|popover|primary|secondary|muted|accent|destructive|input|ring|border|sidebar|chart)(?:-[a-z0-9]+)*)\\b",
+      "g",
+    );
+    const missing: string[] = [];
+    for (const file of sourceFiles(SRC)) {
+      const text = readFileSync(file, "utf8");
+      for (const match of text.matchAll(roles)) {
+        const role = match[1]!;
+        if (!DEFINED.has(role)) missing.push(`${path.relative(SRC, file)}: ${match[0]}`);
+      }
+    }
+    expect([...new Set(missing)]).toEqual([]);
+  });
+
   it("finds the palette it is guarding, so a moved stylesheet fails loudly", () => {
     for (const family of FAMILIES) {
       expect([...DEFINED].some((t) => t.startsWith(`${family}-`))).toBe(true);

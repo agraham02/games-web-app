@@ -181,7 +181,9 @@ describe("LRC play page — the game actually starts", () => {
     async () => {
       render(<LrcPlayPage />);
 
-      fireEvent.change(screen.getByRole("slider"), { target: { value: "3" } });
+      // `hidden`: Base UI keeps a slider's thumb invisible until it has
+      // measured the track, and jsdom never lays anything out.
+      fireEvent.change(screen.getByRole("slider", { hidden: true }), { target: { value: "3" } });
       expect((screen.getByLabelText("Players") as HTMLInputElement).value).toBe("3");
 
       const fewer = screen.getAllByRole("button", { name: /Fewer round/i })[0]!;

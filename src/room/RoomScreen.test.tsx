@@ -261,9 +261,12 @@ describe("the room client", () => {
       });
       const teams = screen.getByRole("switch", { name: /teams/i });
       expect(teams).toHaveAttribute("aria-checked", "true");
-      expect(teams).toBeDisabled();
+      expect(teams).toHaveAttribute("aria-readonly", "true");
       expect(screen.getByRole("switch", { name: /six love/i })).toHaveAttribute("aria-checked", "false");
-      expect(screen.getByRole("slider", { name: /difficulty/i })).toBeDisabled();
+      // By label, not role: Base UI keeps a slider's thumb invisible until
+      // it has measured the track, jsdom never lays anything out, and an
+      // invisible input computes no accessible name.
+      expect(screen.getByLabelText(/difficulty/i)).toBeDisabled();
     });
 
     it("does not tell the maker of a fresh room that the table is full", async () => {

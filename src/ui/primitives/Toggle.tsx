@@ -13,25 +13,26 @@
  * The hint is required, not optional. An optional rule whose name is its
  * only explanation ("Six love") is a rule nobody turns on.
  *
+ * The whole row is the switch (Base UI's, rendered as a real button), so
+ * the label and the hint are its accessible name and every pixel of it is
+ * the target.
+ *
  * Two ways to be unpressable, and they must not look alike:
  *
  * - `unavailable` — the rule is NOT IN EFFECT under the current settings
  *   (Six love without partners). It shows off, with a hint saying why.
  * - `locked` — the rule is whatever it is, and this person may not change
  *   it (a room's settings, seen by anyone but the leader). It shows its
- *   REAL value, dimmed. These used to be one `disabled` prop that forced
- *   the switch off, so everyone but the leader was shown every locked rule
- *   as off — Teams and Key tile read OFF above a roster of Team A/B chips.
+ *   REAL value, dimmed and read-only. These used to be one `disabled` prop
+ *   that forced the switch off, so everyone but the leader was shown every
+ *   locked rule as off — Teams and Key tile read OFF above a roster of
+ *   Team A/B chips.
  */
-export function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-  unavailable = false,
-  locked = false,
-  disabled,
-}: {
+
+import { Switch as SwitchPrimitive } from "@base-ui/react/switch";
+import { cn } from "@/lib/utils";
+
+export interface ToggleProps {
   label: string;
   hint: string;
   checked: boolean;
@@ -48,34 +49,46 @@ export function Toggle({
   locked?: boolean;
   /** The old name for `unavailable`, kept so existing callers read the same. */
   disabled?: boolean;
-}) {
+}
+
+export function Toggle({
+  label,
+  hint,
+  checked,
+  onChange,
+  unavailable = false,
+  locked = false,
+  disabled,
+}: ToggleProps) {
   const off = unavailable || Boolean(disabled);
-  const on = checked && !off;
-  const inert = off || locked;
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      disabled={inert}
-      onClick={() => onChange(!checked)}
-      className={`flex flex-col gap-0.5 rounded-lg px-3.5 py-2.5 text-left ring-1 ${
-        on ? "bg-brass-400/18 ring-brass-400/60" : "bg-bone-50/5 ring-bone-50/12"
-      } ${inert ? "cursor-not-allowed opacity-45" : ""}`}
+    <SwitchPrimitive.Root
+      nativeButton
+      render={<button type="button" />}
+      checked={checked && !off}
+      onCheckedChange={(next) => onChange(next)}
+      disabled={off}
+      readOnly={locked}
+      className={cn(
+        "group flex w-full flex-col gap-0.5 rounded-lg px-3.5 py-2.5 text-left ring-1 transition-colors duration-(--duration-ui) outline-none",
+        "bg-bone-50/5 ring-bone-50/12 data-checked:bg-brass-400/18 data-checked:ring-brass-400/60",
+        "focus-visible:ring-2 focus-visible:ring-ring",
+        "data-disabled:cursor-not-allowed data-disabled:opacity-45",
+        "data-readonly:cursor-not-allowed data-readonly:opacity-45",
+      )}
     >
-      <span className="flex items-center justify-between">
-        <span className={`text-sm font-bold ${on ? "text-brass-300" : "text-bone-200"}`}>
+      <span className="flex items-center justify-between gap-3">
+        <span className="text-sm font-bold text-bone-200 group-data-checked:text-brass-300">
           {label}
         </span>
         <span
-          className={`flex h-5 w-9 items-center rounded-full px-0.5 transition-colors ${
-            on ? "justify-end bg-brass-400" : "justify-start bg-bone-50/15"
-          }`}
+          aria-hidden
+          className="flex h-5 w-9 shrink-0 items-center rounded-full bg-bone-50/15 px-0.5 transition-colors duration-(--duration-ui) group-data-checked:bg-primary"
         >
-          <span className="h-4 w-4 rounded-full bg-felt-950" />
+          <SwitchPrimitive.Thumb className="block size-4 rounded-full bg-felt-950 transition-transform duration-(--duration-ui) data-checked:translate-x-4" />
         </span>
       </span>
       <span className="text-[11px] text-bone-500">{hint}</span>
-    </button>
+    </SwitchPrimitive.Root>
   );
 }

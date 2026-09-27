@@ -1,6 +1,7 @@
 "use client";
 
 import type { BotDifficulty } from "@/engine/types";
+import { Slider } from "@/ui/base/slider";
 
 /**
  * How smart the table is, as a three-stop slider.
@@ -12,8 +13,8 @@ import type { BotDifficulty } from "@/engine/types";
  * and nothing else.
  *
  * A slider rather than three buttons because every setup screen here
- * already picks its player count with one, and because the tiers are
- * genuinely ordered — "more or less of the same thing", which is what a
+ * already picks its player count with one (both are `ui/base/slider`), and
+ * because the tiers are genuinely ordered — "more or less of the same thing", which is what a
  * slider means and what a segmented control does not.
  *
  * Each tier carries a line of copy stating what actually changes. "Sharp"
@@ -63,27 +64,25 @@ export function DifficultyPicker({
   const tier = TIER_ORDER[index]!;
 
   return (
-    <label className={`flex w-full flex-col gap-2 ${locked ? "opacity-45" : ""}`}>
+    <div className="flex w-full flex-col gap-2">
       <span className="flex items-center justify-between text-xs font-bold text-bone-200">
         {label} <span className="text-brass-300">{DIFFICULTY_NAMES[tier]}</span>
       </span>
-      <input
-        type="range"
+      <Slider
+        label={`${label} difficulty`}
+        value={index}
         min={0}
         max={TIER_ORDER.length - 1}
         step={1}
-        value={index}
-        onChange={(e) => onChange(TIER_ORDER[Number(e.target.value)]!)}
-        aria-label={`${label} difficulty`}
-        aria-valuetext={DIFFICULTY_NAMES[tier]}
         disabled={locked}
-        className="w-full accent-brass-400 disabled:cursor-not-allowed"
+        valueText={(v) => DIFFICULTY_NAMES[TIER_ORDER[v] ?? tier]}
+        onValueChange={(v) => onChange(TIER_ORDER[v as number] ?? tier)}
       />
       {/* Fixed two-line box, so stepping through the tiers does not
           reflow everything below it — a setup screen that jumps as you
           drag a slider reads as broken. */}
       <span className="min-h-8 text-[11px] leading-4 text-bone-400">{blurbs[tier]}</span>
-    </label>
+    </div>
   );
 }
 
