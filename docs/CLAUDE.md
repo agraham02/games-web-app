@@ -438,6 +438,19 @@ Counted over CONNECTED members, deliberately: somebody whose phone is
 asleep gets a bot seat the moment the deal happens, so counting them
 would admit exactly the game the rule exists to prevent.
 
+**The site installs as an app** (the user, 2026-09-27). `app/manifest.ts`
+and the icons `scripts/app-icons.ts` draws make it installable.
+`public/sw.js` answers page loads only (the network, or an offline page)
+and caches nothing: Chromium fires `beforeinstallprompt` only for a site
+whose service worker handles fetches, and ignores an empty handler.
+`installCapture.ts` runs inline in the root layout's `<head>`, before React,
+because the event fires once and often during load; it keeps the event and
+registers the worker. `InstallPrompt`, on the home page only, offers Install
+on Chromium and the Share → Add to Home Screen steps on iOS, where nothing
+can start it (••• first in Safari 26, whose user agent still says iOS
+18_6). It says nothing inside the installed app, and "Not now" lasts a
+month.
+
 **The next round is the leader's to deal** (`mayContinueRound`, which gates
 the server and becomes `RoomView.youMayContinue`); everyone else's
 scorecard says who they are waiting on. It can never strand a table:

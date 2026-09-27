@@ -4,6 +4,7 @@ import { GAMES, GAME_IDS, type GameId } from "@/session/registry";
 import { GAME_BLURBS, GameThumb, seatRange } from "@/ui/primitives/GameThumb";
 import { PieceStrip } from "@/ui/primitives/PieceStrip";
 import { HomeEntry } from "./HomeEntry";
+import { InstallPrompt } from "./InstallPrompt";
 
 /**
  * The front door.
@@ -34,6 +35,7 @@ export default function Home() {
         <PlayAlone />
         <Footer />
       </div>
+      <InstallPrompt />
     </main>
   );
 }
