@@ -1,11 +1,8 @@
 import Link from "next/link";
 import { ArrowRight, Bot, Eye, Users } from "lucide-react";
 import { GAMES, GAME_IDS, type GameId } from "@/session/registry";
-import { CardBack, CardFace } from "@/ui/primitives/CardFace";
-import { ChipFace } from "@/ui/primitives/ChipFace";
-import { DiceFace } from "@/ui/primitives/DiceFace";
+import { GAME_BLURBS, GameThumb, seatRange } from "@/ui/primitives/GameThumb";
 import { PieceStrip } from "@/ui/primitives/PieceStrip";
-import { TileFace } from "@/ui/primitives/TileFace";
 import { HomeEntry } from "./HomeEntry";
 
 /**
@@ -18,11 +15,8 @@ import { HomeEntry } from "./HomeEntry";
  * a room you can make or join without leaving this screen, and below it the
  * solo tables for when nobody else is around.
  *
- * The thumbnails are the app's own piece primitives at a small size rather
- * than icons or art. They cost nothing (every one of them is already in the
- * bundle), they cannot drift from what the table actually draws, and a
- * domino that is really a domino says what the game is faster than its name
- * does.
+ * The thumbnails are the app's own piece primitives (`GameThumb`, shared
+ * with the lobby's game picker).
  *
  * The PAGE scrolls, not the body — `body` is `overflow: hidden` on both
  * axes so a table can own its pan gestures (globals.css), and a page that
@@ -139,36 +133,8 @@ function PlayAlone() {
   );
 }
 
-/**
- * Seat counts and names come from the shared registry rather than being
- * written out here, so the one place that already has to be right about
- * them stays the only place that says them.
- */
-const BLURBS: Record<GameId, string> = {
-  dominoes: "Block & Draw, or the Caribbean game with the whole set dealt and no boneyard.",
-  spades: "Partners across the table. Bids, bags, and nil if you are feeling brave.",
-  rummy: "Melds on the table, and a discard anybody at the table can race you for.",
-  poker: "No-limit hold'em, with real side pots and a proper showdown.",
-  lrc: "Three dice, three chips, and not one decision to make.",
-  bs: "Claim the rank, lie about it, and see who doubts you before the next card goes down.",
-};
-
-const THUMBS: Record<GameId, React.ReactNode> = {
-  dominoes: <TileFace tile="5-2" w={26} h={50} ariaHidden />,
-  spades: <CardFace card="SA" w={36} h={50} detail="index" ariaHidden />,
-  rummy: <CardFace card="D10" w={36} h={50} detail="index" ariaHidden />,
-  poker: <ChipFace colour="ruby" size={40} />,
-  lrc: <DiceFace face="L" size={40} />,
-  // A back rather than a face, because the back of a card is the whole game.
-  bs: <CardBack w={36} h={50} ariaHidden />,
-};
-
 function GameCard({ id }: { id: GameId }) {
   const game = GAMES[id];
-  const seats =
-    game.minSeats === game.maxSeats
-      ? `${game.minSeats} players`
-      : `${game.minSeats}–${game.maxSeats} players`;
 
   return (
     <Link
@@ -179,16 +145,16 @@ function GameCard({ id }: { id: GameId }) {
           name like "Dominoes" about 85px, and it did not fit. */}
       <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span aria-hidden className="flex h-13 w-11 shrink-0 items-center justify-center">
-          {THUMBS[id]}
+          <GameThumb id={id} />
         </span>
         <span className="flex min-w-0 max-w-full flex-col">
           <span className="font-display text-base leading-tight tracking-wide text-bone-50 sm:truncate sm:text-lg">
             {game.name}
           </span>
-          <span className="text-[11px] font-semibold text-bone-600">{seats}</span>
+          <span className="text-[11px] font-semibold text-bone-600">{seatRange(id)}</span>
         </span>
       </div>
-      <p className="hidden text-xs leading-relaxed text-bone-400 sm:block">{BLURBS[id]}</p>
+      <p className="hidden text-xs leading-relaxed text-bone-400 sm:block">{GAME_BLURBS[id]}</p>
       <span className="mt-auto flex items-center gap-1 pt-1 text-xs font-bold text-brass-300">
         Play solo
         <ArrowRight

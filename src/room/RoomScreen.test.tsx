@@ -332,10 +332,16 @@ describe("the room client", () => {
       // would rearrange the lobby every time leadership moved, which it
       // does whenever the leader's phone sleeps.
       await enterLobby({ youAreLeader: false, gameId: "spades" });
-      expect(screen.getByRole("button", { name: /start spades/i })).toBeDisabled();
-
       const privacy = screen.getByRole("button", { name: /anyone with the code/i });
       expect(privacy).toBeDisabled();
+    });
+
+    it("gives Start to the leader alone", async () => {
+      // The exception to dimming: somebody else could never press it, at
+      // any point, and the status line already says who they wait on.
+      await enterLobby({ youAreLeader: false, gameId: "spades" });
+      expect(screen.queryByRole("button", { name: /start/i })).toBeNull();
+      expect(screen.getByText("Waiting for Ada to start")).toBeInTheDocument();
     });
 
     it("shows join requests to the leader alone", async () => {
@@ -359,7 +365,7 @@ describe("the room client", () => {
       const offline = GAME_IDS.filter((id) => !GAMES[id].online);
 
       for (const id of GAME_IDS) {
-        const button = screen.queryByRole("button", { name: GAMES[id].name });
+        const button = screen.queryByRole("button", { name: new RegExp(`^${GAMES[id].name},`) });
         if (GAMES[id].online) expect(button, `${id} should be offered`).not.toBeNull();
         else expect(button, `${id} cannot be drawn`).toBeNull();
       }

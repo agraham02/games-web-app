@@ -20,6 +20,11 @@
  * moment leadership moves — which it does whenever the leader's phone
  * sleeps — and would leave everyone else unable to see what the leader is
  * even choosing between.
+ *
+ * Start is the exception: only the leader has it. Dimmed, it was the one
+ * control here that somebody else could never use at any point, and it sat
+ * in the footer's best spot saying nothing a dimmed button can say (the
+ * user, 2026-09-27). The line above it says who they are waiting on.
  */
 
 import { Check, Shuffle, X } from "lucide-react";
@@ -34,6 +39,7 @@ import { Collapse, Swap, listItemMotion } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
 import { ChoiceGroup } from "@/ui/primitives/ChoiceGroup";
 import { DIFFICULTY_NAMES } from "@/ui/primitives/DifficultyPicker";
+import { GameThumb, seatRange } from "@/ui/primitives/GameThumb";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameOptions } from "@/ui/setup/GameOptions";
 import { useMediaQuery } from "@/ui/useMediaQuery";
@@ -102,11 +108,11 @@ function LobbyFooter({ api }: { api: RoomApi }) {
             Watch instead
           </Button>
         </div>
-      ) : (
+      ) : leader ? (
         <Button tone="primary" className="w-full" disabled={!ready} onClick={api.startGame}>
-          {room.gameId ? `Start ${GAMES[room.gameId].name}` : leader ? "Pick a game first" : "Start"}
+          {room.gameId ? `Start ${GAMES[room.gameId].name}` : "Pick a game first"}
         </Button>
-      )}
+      ) : null}
       <div className="flex w-full items-center justify-between gap-3">
         {room.gameRunning && leader ? (
           <Button size="sm" tone="danger" onClick={api.endGame}>
@@ -174,15 +180,37 @@ function GamePanel({ api }: { api: RoomApi }) {
         </p>
       ) : null}
 
-      {folded ? <p className="text-sm leading-relaxed text-bone-200">{summary}</p> : null}
+      {folded && entry ? (
+        <div className="flex items-center gap-3">
+          <span aria-hidden className="flex h-11 w-8 shrink-0 items-center justify-center">
+            <GameThumb id={entry.id} size="sm" />
+          </span>
+          <p className="text-sm leading-relaxed text-bone-200">{summary}</p>
+        </div>
+      ) : null}
 
       <Collapse open={!folded}>
         <div className="flex flex-col gap-3">
+          {/* The home page's pictures, not a row of names (the user,
+              2026-09-27): a domino says "Dominoes" faster than the word. */}
           <ChoiceGroup
             label="Game"
             size="sm"
+            variant="tiles"
             value={room.gameId ?? ""}
-            options={games.map((g) => ({ value: g.id, label: g.name }))}
+            options={games.map((g) => ({
+              value: g.id,
+              name: `${g.name}, ${seatRange(g.id)}`,
+              label: (
+                <>
+                  <span aria-hidden className="flex h-11 items-center justify-center">
+                    <GameThumb id={g.id} size="sm" />
+                  </span>
+                  <span className="font-display text-[13px] leading-tight tracking-wide">{g.name}</span>
+                  <span className="text-[10px] font-semibold text-bone-500">{seatRange(g.id)}</span>
+                </>
+              ),
+            }))}
             locked={locked}
             // A new game starts on its own defaults — the solo screen's values
             // (the user's call, 2026-09-26) — keeping only the bots' skill,

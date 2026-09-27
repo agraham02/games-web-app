@@ -18,7 +18,8 @@ const toggleVariants = cva(
     "bg-bone-50/5 text-bone-300 ring-bone-50/12 hover:bg-bone-50/10 hover:text-bone-100",
     "aria-pressed:bg-brass-400/18 aria-pressed:text-brass-300 aria-pressed:ring-brass-400/60",
     "focus-visible:ring-2 focus-visible:ring-ring",
-    "data-disabled:cursor-not-allowed data-disabled:opacity-45",
+    // Locked, the choice that was made is the one thing worth reading.
+    "data-disabled:cursor-not-allowed data-disabled:opacity-45 aria-pressed:data-disabled:opacity-90",
     "[&_svg]:pointer-events-none [&_svg]:shrink-0",
   ],
   {
