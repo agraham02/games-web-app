@@ -252,21 +252,21 @@ describe("the room client", () => {
 
     it("shows everyone but the leader the rules as they ARE, just locked", async () => {
       // A locked toggle used to render as off whatever its value, so every
-      // non-leader was told Teams and Key tile were off while the leader
+      // non-leader was told Partners and Key tile were off while the leader
       // (and the Team A/B chips beside them) said they were on.
       await enterLobby({
         youAreLeader: false,
         gameId: "dominoes",
         settings: { mode: "caribbean", teams: true, keyTileBonus: true, sixLove: false },
       });
-      const teams = screen.getByRole("switch", { name: /teams/i });
+      const teams = screen.getByRole("switch", { name: /partners/i });
       expect(teams).toHaveAttribute("aria-checked", "true");
       expect(teams).toHaveAttribute("aria-readonly", "true");
       expect(screen.getByRole("switch", { name: /six love/i })).toHaveAttribute("aria-checked", "false");
       // By label, not role: Base UI keeps a slider's thumb invisible until
       // it has measured the track, jsdom never lays anything out, and an
       // invisible input computes no accessible name.
-      expect(screen.getByLabelText(/difficulty/i)).toBeDisabled();
+      expect(screen.getByLabelText(/bot skill/i)).toBeDisabled();
     });
 
     it("does not tell the maker of a fresh room that the table is full", async () => {

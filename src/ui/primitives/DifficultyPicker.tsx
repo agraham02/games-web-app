@@ -1,7 +1,7 @@
 "use client";
 
 import type { BotDifficulty } from "@/engine/types";
-import { Slider } from "@/ui/base/slider";
+import { Slider, useSliderDraft } from "@/ui/base/slider";
 
 /**
  * How smart the table is, as a three-stop slider.
@@ -43,7 +43,7 @@ export interface DifficultyPickerProps {
   onChange: (v: BotDifficulty) => void;
   /** One line per tier stating what actually changes IN THIS GAME. */
   blurbs: DifficultyBlurbs;
-  /** Overrides the default "Opponents" heading. */
+  /** Overrides the default "Bot skill" heading. */
   label?: string;
   /**
    * Shown but not changeable by this person (a room's setting, for anyone
@@ -57,11 +57,17 @@ export function DifficultyPicker({
   value,
   onChange,
   blurbs,
-  label = "Opponents",
+  label = "Bot skill",
   locked = false,
 }: DifficultyPickerProps) {
-  const index = Math.max(0, TIER_ORDER.indexOf(value));
-  const tier = TIER_ORDER[index]!;
+  // `onChange` hears where a drag ends; the header and the blurb follow the
+  // finger in between (`useSliderDraft`).
+  const draft = useSliderDraft(
+    Math.max(0, TIER_ORDER.indexOf(value)),
+    (i) => onChange(TIER_ORDER[i] ?? value),
+    locked,
+  );
+  const tier = TIER_ORDER[draft.value] ?? value;
 
   return (
     <div className="flex w-full flex-col gap-2">
@@ -69,14 +75,13 @@ export function DifficultyPicker({
         {label} <span className="text-brass-300">{DIFFICULTY_NAMES[tier]}</span>
       </span>
       <Slider
-        label={`${label} difficulty`}
-        value={index}
+        label={label}
         min={0}
         max={TIER_ORDER.length - 1}
         step={1}
         disabled={locked}
         valueText={(v) => DIFFICULTY_NAMES[TIER_ORDER[v] ?? tier]}
-        onValueChange={(v) => onChange(TIER_ORDER[v as number] ?? tier)}
+        {...draft.props}
       />
       {/* Fixed two-line box, so stepping through the tiers does not
           reflow everything below it — a setup screen that jumps as you

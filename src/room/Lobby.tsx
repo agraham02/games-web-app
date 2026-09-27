@@ -3,10 +3,10 @@
 /**
  * The lobby.
  *
- * Composed almost entirely from what the setup screens already use —
- * `SetupShell` (whose `maxWidth` prop is documented "widen for content
- * that is a list", written before any list existed), `Toggle`,
- * `NumberStepper`, `DifficultyPicker`. The genuinely new parts are the
+ * The game's options are the SAME `GameOptions` the solo setup screen
+ * draws, from the same spec — the lobby used to hand-roll its own copy of
+ * every game's controls, and it drifted from the solo screens in labels,
+ * ranges, defaults and whole options. The genuinely new parts here are the
  * roster and the join code.
  *
  * The rule the layout follows: a member who is not the leader sees the
@@ -20,22 +20,15 @@
 import { Check, Copy, Lock, LockOpen, Shuffle, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import type { BotDifficulty } from "@/engine/types";
-import { GAMES, GAME_IDS, onlineGames, type GameId } from "@/session/registry";
+import { defaultSettings, textOf } from "@/session/gameSetup";
+import { GAMES, GAME_IDS, isGameId, onlineGames, type GameId } from "@/session/registry";
 import { MIN_ROOM_PLAYERS } from "@/session/room";
 import { Button } from "@/ui/primitives/Button";
-import { DifficultyPicker, type DifficultyBlurbs } from "@/ui/primitives/DifficultyPicker";
-import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { ChoiceGroup } from "@/ui/primitives/ChoiceGroup";
 import { SetupShell } from "@/ui/primitives/SetupShell";
-import { Toggle } from "@/ui/primitives/Toggle";
+import { GameOptions } from "@/ui/setup/GameOptions";
 import type { RoomApi } from "./useRoom";
 import { Roster } from "./Roster";
-
-const BLURBS: DifficultyBlurbs = {
-  casual: "Opponents play honestly and miss things.",
-  steady: "Opponents count what has gone and play the odds.",
-  sharp: "Opponents read the table and punish mistakes.",
-};
 
 export function Lobby({ api }: { api: RoomApi }) {
   const room = api.room!;
@@ -245,39 +238,38 @@ function GamePicker({ api }: { api: RoomApi }) {
   // match and these controls went on looking exactly as usable as ever, so
   // the leader tapped Poker, the server said no, and nothing at all appeared.
   // Dimmed rather than hidden, like the rest of this screen, with the reason
-  // on them: the guard is the server's, this is the courtesy.
+  // under them: the guard is the server's, this is the courtesy.
   const locked = !room.youAreLeader || room.gameRunning;
-  const lockedWhy = room.gameRunning ? "Finish the game first" : undefined;
-  const leader = !locked;
   const games = onlineGames();
   const offline = GAME_IDS.map((id) => GAMES[id]).filter((g) => !g.online);
   const entry = room.gameId ? GAMES[room.gameId] : null;
-
-  const update = (gameId: GameId, settings = room.settings, seats = room.seats, diff = room.difficulty) =>
-    api.selectGame(gameId, settings, seats, diff);
 
   return (
     <section className="flex w-full flex-col gap-3">
       <span className="eyebrow">Game</span>
 
-      <div className="flex flex-wrap gap-2">
-        {games.map((g) => (
-          <button
-            key={g.id}
-            type="button"
-            disabled={locked}
-            title={lockedWhy}
-            onClick={() => update(g.id, g.defaultSettings ?? {}, g.defaultSeats)}
-            className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              room.gameId === g.id
-                ? "bg-brass-400 text-felt-950"
-                : "bg-bone-50/6 text-bone-300 ring-1 ring-bone-50/16"
-            }`}
-          >
-            {g.name}
-          </button>
-        ))}
-      </div>
+      <ChoiceGroup
+        label="Game"
+        size="sm"
+        value={room.gameId ?? ""}
+        options={games.map((g) => ({ value: g.id, label: g.name }))}
+        locked={locked}
+        // A new game starts on its own defaults — the solo screen's values
+        // (the user's call, 2026-09-26) — keeping only the bots' skill,
+        // which is the room's taste rather than any one game's.
+        onChange={(id) => {
+          if (!isGameId(id)) return;
+          const next = GAMES[id];
+          api.selectGame(id, defaultSettings(next.setup), next.defaultSeats, room.difficulty);
+        }}
+      />
+      {locked ? (
+        <p className="text-[11px] text-bone-500">
+          {room.gameRunning
+            ? "Fixed until this game ends."
+            : "Only the party leader can change the game and its rules."}
+        </p>
+      ) : null}
       {/*
         Games with no online table are absent above rather than shown
         disabled, and that is the one exception to this screen's
@@ -294,191 +286,28 @@ function GamePicker({ api }: { api: RoomApi }) {
       ) : null}
 
       {entry ? (
-        <div className="flex w-full flex-col gap-3">
-          {entry.minSeats !== entry.maxSeats ? (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-bone-200">Seats</span>
-              <NumberStepper
-                value={room.seats || entry.defaultSeats}
-                min={entry.minSeats}
-                max={entry.maxSeats}
-                disabled={locked}
-                title={lockedWhy}
-                onChange={(v) => leader && update(entry.id, room.settings, v)}
-                label="seats"
-              />
-            </div>
-          ) : null}
-
-          {entry.id === "lrc" ? (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-bone-200">Rounds to win</span>
-              <NumberStepper
-                value={(room.settings.target as number) ?? 3}
-                min={1}
-                max={20}
-                disabled={locked}
-                title={lockedWhy}
-                onChange={(v) => leader && update(entry.id, { ...room.settings, target: v })}
-                label="rounds to win"
-              />
-            </div>
-          ) : null}
-
-          {entry.id === "dominoes" ? (
-            <>
-              <div className="flex flex-wrap gap-2">
-                {(["caribbean", "classic"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    disabled={locked}
-                    title={lockedWhy}
-                    onClick={() =>
-                      update(entry.id, { ...room.settings, mode }, mode === "caribbean" ? 4 : room.seats)
-                    }
-                    className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                      (room.settings.mode ?? "classic") === mode
-                        ? "bg-brass-400 text-felt-950"
-                        : "bg-bone-50/6 text-bone-300 ring-1 ring-bone-50/16"
-                    }`}
-                  >
-                    {mode === "classic" ? "Block & Draw" : "Caribbean"}
-                  </button>
-                ))}
-              </div>
-              {room.settings.mode === "caribbean" ? (
-                <>
-                  <Toggle
-                    label="Teams"
-                    hint="Partners across the table — seats 1 and 3 against 2 and 4."
-                    checked={room.settings.teams === true}
-                    locked={locked}
-                    onChange={(v) => update(entry.id, { ...room.settings, teams: v })}
-                  />
-                  <Toggle
-                    label="Key tile bonus"
-                    hint="Going out on the only tile that could have been played is worth two games."
-                    checked={room.settings.keyTileBonus === true}
-                    locked={locked}
-                    onChange={(v) => update(entry.id, { ...room.settings, keyTileBonus: v })}
-                  />
-                  <Toggle
-                    label="Six love"
-                    hint="Your score returns to zero whenever the other side takes a round."
-                    checked={room.settings.sixLove === true}
-                    locked={locked}
-                    onChange={(v) => update(entry.id, { ...room.settings, sixLove: v })}
-                  />
-                </>
-              ) : null}
-            </>
-          ) : null}
-
-          {entry.id === "poker" ? (
-            <>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-bone-200">Starting stack</span>
-                <NumberStepper
-                  value={(room.settings.startingStack as number) ?? 5000}
-                  min={100}
-                  max={100_000}
-                  step={500}
-                  disabled={locked}
-                  title={lockedWhy}
-                  onChange={(v) =>
-                    leader && update(entry.id, { ...room.settings, startingStack: v })
-                  }
-                  label="starting stack"
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-bone-200">Big blind</span>
-                <NumberStepper
-                  value={(room.settings.bigBlind as number) ?? 50}
-                  min={2}
-                  max={1000}
-                  step={10}
-                  disabled={locked}
-                  title={lockedWhy}
-                  onChange={(v) => leader && update(entry.id, { ...room.settings, bigBlind: v })}
-                  label="big blind"
-                />
-              </div>
-            </>
-          ) : null}
-
-          {entry.id === "spades" ? (
-            <>
-              <Toggle
-                label="Jokers"
-                hint="Two jokers replace the twos, and beat every spade."
-                checked={room.settings.jokers === true}
-                locked={locked}
-                onChange={(v) => update(entry.id, { ...room.settings, jokers: v })}
-              />
-              <Toggle
-                label="Two of spades high"
-                hint="The two of spades outranks the ace."
-                checked={room.settings.twoOfSpadesHigh === true}
-                locked={locked}
-                onChange={(v) => update(entry.id, { ...room.settings, twoOfSpadesHigh: v })}
-              />
-            </>
-          ) : null}
-
-          {entry.id === "bs" ? (
-            <>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-bone-200">Rounds to win</span>
-                <NumberStepper
-                  value={(room.settings.target as number) ?? 3}
-                  min={1}
-                  max={9}
-                  disabled={locked}
-                  title={lockedWhy}
-                  onChange={(v) => leader && update(entry.id, { ...room.settings, target: v })}
-                  label="rounds to win"
-                />
-              </div>
-              {/*
-                Longer than the five seconds a solo table gives, and the
-                reason is the room: whoever is next to play can end a window
-                early simply by playing, so the only person a generous one
-                costs anything is the one who chooses to use all of it.
-              */}
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-bone-200">Seconds to call BS</span>
-                <NumberStepper
-                  value={Math.round(((room.settings.windowMs as number) ?? 10_000) / 1000)}
-                  min={2}
-                  max={20}
-                  disabled={locked}
-                  title={lockedWhy}
-                  onChange={(v) =>
-                    leader && update(entry.id, { ...room.settings, windowMs: v * 1000 })
-                  }
-                  label="seconds"
-                />
-              </div>
-            </>
-          ) : null}
-
+        <>
+          <p className="text-xs leading-relaxed text-bone-400">
+            {textOf(entry.setup.description, room.settings)}
+          </p>
           {/*
-            Empty seats are filled by bots, so difficulty is a real setting
+            Empty seats are filled by bots, so their skill is a real setting
             in a room even when every seat has a person in it — somebody
             stepping away hands their seat to one.
           */}
-          <DifficultyPicker
-            value={room.difficulty}
-            blurbs={BLURBS}
-            label="Bots filling empty seats"
+          <GameOptions
+            game={entry.id}
+            mode="room"
             locked={locked}
-            onChange={(v: BotDifficulty) =>
-              leader && update(entry.id, room.settings, room.seats, v)
-            }
+            className="mt-3"
+            value={{
+              settings: room.settings,
+              seats: room.seats || entry.defaultSeats,
+              difficulty: room.difficulty,
+            }}
+            onChange={(next) => api.selectGame(entry.id, next.settings, next.seats, next.difficulty)}
           />
-        </div>
+        </>
       ) : null}
     </section>
   );

@@ -1,4 +1,6 @@
-import { Slider } from "@/ui/base/slider";
+"use client";
+
+import { Slider, useSliderDraft } from "@/ui/base/slider";
 
 /**
  * One labelled control on a setup screen — the single header style every
@@ -50,19 +52,13 @@ export interface SeatsSliderProps {
   locked?: boolean;
 }
 
-/** The player-count control: a slider with the count in the header. */
+/** The player-count control: a slider with the count in the header.
+ * `onChange` hears where a drag ends, not every step (`useSliderDraft`). */
 export function SeatsSlider({ value, min, max, onChange, locked = false }: SeatsSliderProps) {
+  const draft = useSliderDraft(value, onChange, locked);
   return (
-    <SetupField label="Players" value={value}>
-      <Slider
-        label="Players"
-        value={value}
-        min={min}
-        max={max}
-        step={1}
-        disabled={locked}
-        onValueChange={(v) => onChange(v as number)}
-      />
+    <SetupField label="Players" value={draft.value}>
+      <Slider label="Players" min={min} max={max} step={1} disabled={locked} {...draft.props} />
     </SetupField>
   );
 }

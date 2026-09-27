@@ -32,10 +32,9 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { type BotDifficulty, type PieceId } from "@/engine/types";
-import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
-import { SetupShell } from "@/ui/primitives/SetupShell";
+import { type PieceId } from "@/engine/types";
+import { botTable } from "@/ui/primitives/DifficultyPicker";
+import { GameSetup, useGameSetup } from "@/ui/setup/GameSetup";
 import { GameHost } from "@/table/GameHost";
 import {
   OFFLINE_VIEW,
@@ -51,16 +50,13 @@ import {
   SPADES_SETTINGS,
 } from "./table";
 import type { GameRuntime } from "@/table/useGameRuntime";
-import { Toggle } from "@/ui/primitives/Toggle";
-import { createSpades } from "@/games/spades/rules";
+import { GAMES } from "@/session/registry";
 import { SpadesAction, SpadesState } from "@/games/spades/types";
 
 type Live = GameRuntime<SpadesState, SpadesAction>;
 
 export default function SpadesPlayPage() {
-  const [jokers, setJokers] = useState(false);
-  const [twoOfSpadesHigh, setTwoOfSpadesHigh] = useState(false);
-  const [difficulty, setDifficulty] = useState<BotDifficulty>("steady");
+  const [setup, setSetup] = useGameSetup("spades");
   const [started, setStarted] = useState(false);
   const [gameKey, setGameKey] = useState(0);
   /** Up to 2 cards picked for the current blind-nil exchange step.
@@ -69,8 +65,8 @@ export default function SpadesPlayPage() {
   const [held, setHeld] = useState<PieceId[]>([]);
 
   const definition = useMemo(
-    () => createSpades({ jokers, twoOfSpadesHigh }),
-    [jokers, twoOfSpadesHigh],
+    () => GAMES.spades.create(GAMES.spades.parse(setup.settings)),
+    [setup.settings],
   );
 
   // Both rules live in `table.tsx` now, so the room screen cannot drift
@@ -88,24 +84,14 @@ export default function SpadesPlayPage() {
   const onPieceTap = (id: PieceId, live: Live) => tapCard(view, id, live, toggleHeld);
 
   if (!started) {
-    return (
-      <SetupScreen
-        difficulty={difficulty}
-        onDifficultyChange={setDifficulty}
-        jokers={jokers}
-        twoOfSpadesHigh={twoOfSpadesHigh}
-        onJokersChange={setJokers}
-        onTwoOfSpadesHighChange={setTwoOfSpadesHigh}
-        onStart={() => setStarted(true)}
-      />
-    );
+    return <GameSetup game="spades" value={setup} onChange={setSetup} onStart={() => setStarted(true)} />;
   }
 
   return (
     <GameHost<SpadesState, SpadesAction>
       key={gameKey}
       definition={definition}
-      runtime={{ seats: 4, difficulty: botTable(4, difficulty) }}
+      runtime={{ seats: 4, difficulty: botTable(4, setup.difficulty) }}
       gameTitle="Spades"
       players={(state, live) => playerViews(view, state, live)}
       standings={(state, live, seats) => standings(view, state, live, seats)}
@@ -127,84 +113,3 @@ export default function SpadesPlayPage() {
     </GameHost>
   );
 }
-
-/* ============================================================
-   Setup
-   ============================================================ */
-
-/** What each tier actually does — see `estimateTricks`/`choosePlay` in
- * bots.ts. */
-const SPADES_BLURBS = {
-  casual: "Bids near the floor and plays low — never really counts its hand.",
-  steady: "Bids off a real hand read, cashes its winners, and wins tricks as cheaply as it can.",
-  sharp: "Counts the cards played, remembers who is void, works a nil from either seat, and watches its bags.",
-};
-
-function SetupScreen({
-  jokers,
-  twoOfSpadesHigh,
-  onJokersChange,
-  onTwoOfSpadesHighChange,
-  difficulty,
-  onDifficultyChange,
-  onStart,
-}: {
-  jokers: boolean;
-  twoOfSpadesHigh: boolean;
-  onJokersChange: (v: boolean) => void;
-  onTwoOfSpadesHighChange: (v: boolean) => void;
-  difficulty: BotDifficulty;
-  onDifficultyChange: (d: BotDifficulty) => void;
-  onStart: () => void;
-}) {
-  return (
-    <SetupShell maxWidth="max-w-xs">
-      <div className="flex flex-col items-center gap-2 text-center">
-        <span className="eyebrow">New match</span>
-        <h1 className="font-display text-4xl tracking-wider text-brass-300">Spades</h1>
-        <p className="max-w-xs text-sm text-bone-400">
-          Partnership trick-taking — you and the seat across from you bid and
-          play as a team. Follow suit, spades are always trump, and a bid
-          made together is scored together.
-        </p>
-      </div>
-
-      <div className="flex w-full flex-col gap-5">
-        <Toggle
-          label="Jokers"
-          hint="Adds the Big and Little Joker, ranked above every spade."
-          checked={jokers}
-          onChange={onJokersChange}
-        />
-        <Toggle
-          label="2 of spades ranks above Ace"
-          hint="Within spades only — every other suit is unaffected."
-          checked={twoOfSpadesHigh}
-          onChange={onTwoOfSpadesHighChange}
-        />
-        {/* Applies to your partner too — a Spades table is 2v2, and a
-            partner who plays a different game from the opponents would be
-            a much stranger setting than one difficulty for the table. */}
-        <DifficultyPicker
-          value={difficulty}
-          onChange={onDifficultyChange}
-          label="Table"
-          blurbs={SPADES_BLURBS}
-        />
-      </div>
-
-      <button
-        type="button"
-        onClick={onStart}
-        className="rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-8 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
-      >
-        Deal in
-      </button>
-
-      <Link href="/" className="text-xs text-bone-400 hover:text-bone-200">
-        ← Back
-      </Link>
-    </SetupShell>
-  );
-}
-

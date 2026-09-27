@@ -15,9 +15,6 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { type BotDifficulty } from "@/engine/types";
-import { createPoker, DEFAULT_BIG_BLIND, DEFAULT_STARTING_STACK, MAX_BIG_BLIND, MAX_SEATS, MAX_STARTING_STACK, MIN_BIG_BLIND, MIN_SEATS, MIN_STARTING_STACK } from "@/games/poker/rules";
 import type { PokerAction, PokerState } from "@/games/poker/types";
 import { GameHost } from "@/table/GameHost";
 import {
@@ -29,39 +26,23 @@ import {
   roundSummary,
   standings,
 } from "./table";
-import { DifficultyPicker, botTable } from "@/ui/primitives/DifficultyPicker";
-import { NumberStepper } from "@/ui/primitives/NumberStepper";
-import { SeatsSlider, SetupField } from "@/ui/primitives/SetupField";
-import { SetupShell } from "@/ui/primitives/SetupShell";
-
+import { botTable } from "@/ui/primitives/DifficultyPicker";
+import { GameSetup, useGameSetup } from "@/ui/setup/GameSetup";
+import { GAMES, clampSeats } from "@/session/registry";
 
 export default function PokerPlayPage() {
-  const [seats, setSeats] = useState(6);
-  const [difficulty, setDifficulty] = useState<BotDifficulty>("steady");
-  const [startingStack, setStartingStack] = useState(DEFAULT_STARTING_STACK);
-  const [bigBlind, setBigBlind] = useState(DEFAULT_BIG_BLIND);
+  const [setup, setSetup] = useGameSetup("poker");
   const [started, setStarted] = useState(false);
   const [gameKey, setGameKey] = useState(0);
 
+  const seats = clampSeats("poker", setup.settings, setup.seats);
   const definition = useMemo(
-    () => createPoker(startingStack, bigBlind),
-    [startingStack, bigBlind],
+    () => GAMES.poker.create(GAMES.poker.parse(setup.settings)),
+    [setup.settings],
   );
 
   if (!started) {
-    return (
-      <SetupScreen
-        seats={seats}
-        onSeats={setSeats}
-        difficulty={difficulty}
-        onDifficulty={setDifficulty}
-        startingStack={startingStack}
-        onStartingStack={setStartingStack}
-        bigBlind={bigBlind}
-        onBigBlind={setBigBlind}
-        onStart={() => setStarted(true)}
-      />
-    );
+    return <GameSetup game="poker" value={setup} onChange={setSetup} onStart={() => setStarted(true)} />;
   }
 
   return (
@@ -69,7 +50,7 @@ export default function PokerPlayPage() {
       settings={POKER_SETTINGS}
       key={gameKey}
       definition={definition}
-      runtime={{ seats, difficulty: botTable(seats, difficulty) }}
+      runtime={{ seats, difficulty: botTable(seats, setup.difficulty) }}
       gameTitle="Poker"
       players={(state, live) => playerViews(OFFLINE_VIEW, state, live)}
       standings={(state, live, seats) => standings(OFFLINE_VIEW, state, live, seats)}
@@ -84,98 +65,5 @@ export default function PokerPlayPage() {
     >
       {(live, prefs) => <PokerControls view={OFFLINE_VIEW} live={live} hints={prefs.hints ?? true} />}
     </GameHost>
-  );
-}
-
-/* ============================================================
-   Setup
-   ============================================================ */
-
-/** What each tier actually does — grounded in `bots.ts`'s own tables
- * (`CALL_MARGIN`, `RAISE_EDGE`, `LIMPS_PREFLOP`, `BLUFF_CHANCE`), not
- * generic copy. `blurbs` is a required prop precisely so this stays
- * true of the code underneath it. */
-const POKER_BLURBS = {
-  casual: "Limps into most pots and calls too wide — it pays you off, but it never folds either.",
-  steady: "Raises or folds before the flop, and weighs the pot odds on every call.",
-  sharp: "Plays position, values its draws properly, varies its sizing, and bluffs just enough.",
-};
-
-function SetupScreen({
-  seats,
-  onSeats,
-  difficulty,
-  onDifficulty,
-  startingStack,
-  onStartingStack,
-  bigBlind,
-  onBigBlind,
-  onStart,
-}: {
-  seats: number;
-  onSeats: (n: number) => void;
-  difficulty: BotDifficulty;
-  onDifficulty: (d: BotDifficulty) => void;
-  startingStack: number;
-  onStartingStack: (n: number) => void;
-  bigBlind: number;
-  onBigBlind: (n: number) => void;
-  onStart: () => void;
-}) {
-  return (
-    <SetupShell maxWidth="max-w-xs">
-      <div className="flex flex-col items-center gap-2 text-center">
-        <span className="eyebrow">New match</span>
-        <h1 className="font-display text-4xl tracking-wider text-brass-300">Poker</h1>
-        <p className="max-w-sm text-xs leading-relaxed text-bone-400">
-          No-limit Texas Hold&apos;em. Fixed blinds, real side pots — a
-          short stack going all-in only ever risks what they have left.
-          Last seat standing with chips wins the match.
-        </p>
-      </div>
-
-      <div className="flex w-full flex-col gap-5">
-        <SeatsSlider value={seats} min={MIN_SEATS} max={MAX_SEATS} onChange={onSeats} />
-
-        <DifficultyPicker value={difficulty} onChange={onDifficulty} blurbs={POKER_BLURBS} />
-
-        <SetupField label="Starting stack">
-          <NumberStepper
-            value={startingStack}
-            min={MIN_STARTING_STACK}
-            max={MAX_STARTING_STACK}
-            step={100}
-            label="chips"
-            onChange={onStartingStack}
-          />
-        </SetupField>
-
-        <SetupField
-          label="Big blind"
-          hint={`Small blind is always half — ${Math.max(1, Math.round(bigBlind / 2))} chips.`}
-        >
-          <NumberStepper
-            value={bigBlind}
-            min={MIN_BIG_BLIND}
-            max={MAX_BIG_BLIND}
-            step={2}
-            label="chips"
-            onChange={onBigBlind}
-          />
-        </SetupField>
-      </div>
-
-      <button
-        type="button"
-        onClick={onStart}
-        className="rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-8 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
-      >
-        Deal in
-      </button>
-
-      <Link href="/" className="text-xs text-bone-400 hover:text-bone-200">
-        ← Back
-      </Link>
-    </SetupShell>
   );
 }
