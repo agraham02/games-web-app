@@ -27,13 +27,14 @@ import {
 import type { ChainEnd, DomAction, DomState } from "@/games/dominoes/types";
 import { boardCamera, boardPieceSize, projectCell } from "@/table/layout";
 import { TRANSITIONS } from "@/motion/presets";
+import { Button } from "@/ui/primitives/Button";
 import { TileFace } from "@/ui/primitives/TileFace";
-import { HandZone } from "@/table/HandZone";
+import { BandNote, HandZone } from "@/table/HandZone";
 import type { RoundNote } from "@/table/GameHost";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import { useBoardView, useGeometry, useTableStore } from "@/table/store";
-import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { announce } from "@/ui/disclosure";
 import { hintsSetting, type GameSetting } from "@/table/gameSettings";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -144,77 +145,47 @@ export function DominoTable({
     if (!live.isHeroTurn && held) onRelease();
   }, [live.isHeroTurn, held, onRelease]);
 
-  const label = held
-    ? "Tap where it goes"
-    : playable
-      ? "Your turn — tap a tile"
-      : canDraw
-        ? "Nothing to play — draw"
-        : mustPass
-          ? "Nothing to play — pass"
-          : "";
+  // One band, one owner: the turn line when there is a tile to pick, the
+  // bar when there is only one thing left to do. Draw, Pass and Cancel sat
+  // in a strip of their own pinned to the bottom of the screen — over the
+  // hand they are about.
+  const bar = held ? (
+    <>
+      <BandNote>Tap where it goes</BandNote>
+      <Button shape="pill" onClick={onRelease}>
+        Cancel
+      </Button>
+    </>
+  ) : canDraw || mustPass ? (
+    <>
+      <BandNote>Nothing to play</BandNote>
+      <Button
+        shape="pill"
+        tone="primary"
+        onClick={() => live.submitAction({ t: canDraw ? "draw" : "pass" })}
+      >
+        {canDraw ? "Draw" : "Pass"}
+      </Button>
+    </>
+  ) : undefined;
 
   return (
     <>
       <OpenEndBadges state={state} dimmed={held !== null} />
       <GhostTiles live={live} held={held} onPlace={onPlace} />
-      <BoneyardCount view={view} state={state} />
+      <BoneyardCount state={state} />
 
       <HandZone
-        center={<TurnIndicator inline label={label} show={live.isHeroTurn && label !== ""} />}
+        bar={bar}
+        left={
+          // What a blocked round would cost you. A spectator holds no tiles.
+          view.viewerSeat >= 0 ? (
+            <HeroStatusBadge label="Pips" detail={`${pipsInHand(state, view.viewerSeat)}`} />
+          ) : undefined
+        }
+        center={<TurnIndicator label="Your turn — tap a tile" show={playable} />}
       />
-
-      <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 flex items-end justify-center gap-2 pb-3"
-        style={{ height: 56 }}
-      >
-        <AnimatePresence>
-          {canDraw ? (
-            <ActionButton key="draw" onClick={() => live.submitAction({ t: "draw" })}>
-              Draw
-            </ActionButton>
-          ) : null}
-          {mustPass ? (
-            <ActionButton key="pass" onClick={() => live.submitAction({ t: "pass" })}>
-              Pass
-            </ActionButton>
-          ) : null}
-          {held ? (
-            <ActionButton key="cancel" onClick={onRelease} tone="quiet">
-              Cancel
-            </ActionButton>
-          ) : null}
-        </AnimatePresence>
-      </div>
     </>
-  );
-}
-
-function ActionButton({
-  onClick,
-  tone = "primary",
-  children,
-}: {
-  onClick: () => void;
-  tone?: "primary" | "quiet";
-  children: React.ReactNode;
-}) {
-  return (
-    <motion.button
-      type="button"
-      onClick={onClick}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      transition={TRANSITIONS.ui}
-      className={
-        tone === "primary"
-          ? "pointer-events-auto rounded-full bg-linear-to-b from-brass-300 to-brass-500 px-7 py-2.5 text-sm font-extrabold text-felt-950 shadow-e2"
-          : "pointer-events-auto rounded-full bg-bone-50/8 px-5 py-2.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/18"
-      }
-    >
-      {children}
-    </motion.button>
   );
 }
 
@@ -357,35 +328,25 @@ function OpenEndBadges({ state, dimmed }: { state: DomState; dimmed: boolean }) 
 }
 
 /**
- * How deep the boneyard still is, and how heavy your own hand is. A
- * stack of identical backs can say neither, and both are numbers a
- * domino player keeps in their head all game — how much is left to draw,
- * and how much a blocked round would cost them.
+ * How deep the boneyard still is — a number a domino player keeps in
+ * their head all game, and a stack of identical backs cannot say. Beside
+ * the pile it describes. (Your own pip weight, which used to sit under it,
+ * is the band's: it is about your hand, not the pile.)
  */
-function BoneyardCount({ view, state }: { view: DomView; state: DomState }) {
+function BoneyardCount({ state }: { state: DomState }) {
   const geometry = useGeometry();
-  if (!geometry) return null;
+  // Caribbean has no boneyard at all, so there is nothing to report —
+  // "boneyard dry" would describe a pile that never existed.
+  if (!geometry || state.rules.mode === "caribbean") return null;
   const zone = geometry.zones.boneyard;
   const left = drawableTiles(state);
-  // Caribbean has no boneyard at all, so there is nothing to report on
-  // it — "boneyard dry" would describe a pile that never existed. Own
-  // pip weight still matters (it decides a blocked round), so that line
-  // stays and simply moves up into the slot.
-  const caribbean = state.rules.mode === "caribbean";
 
   return (
     <div
-      className="pointer-events-none absolute z-1900 flex flex-col items-center gap-0.5 text-center text-[10px] leading-tight"
+      className="pointer-events-none absolute z-1900 flex flex-col items-center text-center text-[10px] leading-tight"
       style={{ left: zone.x - 8, top: zone.y + zone.h + 4, width: zone.w + 16 }}
     >
-      {caribbean ? null : (
-        <span className="font-semibold text-bone-400">
-          {left > 0 ? `${left} to draw` : "boneyard dry"}
-        </span>
-      )}
-      <span className="tnum font-bold text-brass-400">
-        {pipsInHand(state, view.viewerSeat)} pips
-      </span>
+      <span className="font-semibold text-bone-400">{left > 0 ? `${left} to draw` : "boneyard dry"}</span>
     </div>
   );
 }

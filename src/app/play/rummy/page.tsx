@@ -15,7 +15,6 @@ import { useMemo, useState } from "react";
 
 import { GameHost } from "@/table/GameHost";
 
-import { handHeaderHeight } from "@/table/HandZone";
 import { botTable } from "@/ui/primitives/DifficultyPicker";
 import { GameSetup, useGameSetup } from "@/ui/setup/GameSetup";
 import { GAMES, clampSeats } from "@/session/registry";
@@ -39,7 +38,7 @@ export default function RummyPlayPage() {
   const [setup, setSetup] = useGameSetup("rummy");
   const [started, setStarted] = useState(false);
   const [gameKey, setGameKey] = useState(0);
-  const { vh, short, touch } = useViewport();
+  const { short, touch } = useViewport();
 
   const seats = clampSeats("rummy", setup.settings, setup.seats);
   const definition = useMemo(
@@ -59,11 +58,12 @@ export default function RummyPlayPage() {
         definition={definition}
         runtime={{ seats, difficulty: botTable(seats, setup.difficulty) }}
         gameTitle="Rummy 500"
-        // The table reserves the band the hand header and the resting sheet
-        // occupy, so no pod or pile is ever laid underneath them. No
-        // `pileAnchor`: the default lines the piles up with the side seat
-        // pods, which is exactly where they should sit.
-        bottomZone={handHeaderHeight(vh) + SHEET_PEEK_H}
+        // The table reserves the resting sheet's height above the band (the
+        // band itself is reserved for every table), so no pod or pile is
+        // ever laid underneath either. No `pileAnchor`: the default lines
+        // the piles up with the side seat pods, which is exactly where they
+        // should sit.
+        bottomZone={SHEET_PEEK_H}
         players={playerViews(OFFLINE_VIEW, seats)}
         standings={standings(OFFLINE_VIEW, seats)}
         stats={statsFor}

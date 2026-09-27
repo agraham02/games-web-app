@@ -17,13 +17,17 @@ import { DURATION } from "@/motion/presets";
 import { emitDice } from "@/table/fx";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
-import { LrcControls } from "./table";
+import { LrcControls, OFFLINE_VIEW } from "./table";
 
 const live = {
   isHeroTurn: false,
   busy: true,
   submitAction: () => {},
 } as unknown as GameRuntime<LrcState, LrcAction>;
+
+// A spectator's view: the stub runtime has no state, and a spectator holds
+// no chips for the band to count. The dice are the same for everybody.
+const view = { ...OFFLINE_VIEW, viewerSeat: -1 };
 
 const shown = () => screen.queryAllByLabelText(/^die showing/).map((el) => el.getAttribute("aria-label"));
 
@@ -47,12 +51,12 @@ describe("the dice overlay", () => {
   });
 
   it("shows nothing until dice are thrown", () => {
-    render(<LrcControls live={live} />);
+    render(<LrcControls view={view} live={live} />);
     expect(shown()).toEqual([]);
   });
 
   it("tumbles the moment the roll is played, and settles before any chip may move", () => {
-    render(<LrcControls live={live} />);
+    render(<LrcControls view={view} live={live} />);
     act(() => emitDice({ seat: 1, faces: ["L", "C", "R"] }));
     // On screen at once — not waiting behind a previous roll's exit.
     expect(shown()).toHaveLength(3);
@@ -88,7 +92,7 @@ describe("the dice overlay", () => {
       removeListener: () => {},
       dispatchEvent: () => false,
     }));
-    render(<LrcControls live={live} />);
+    render(<LrcControls view={view} live={live} />);
     act(() => emitDice({ seat: 1, faces: ["dot", "L", "dot"] }));
     expect(shown()[1]).toBe("die showing L");
   });

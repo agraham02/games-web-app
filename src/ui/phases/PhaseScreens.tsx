@@ -86,42 +86,19 @@ export function RoundIntro({
  * point. The pulsing halo behind the label reuses the same
  * opacity/scale pulse language as SeatRing's `ThinkingRing` (a bot
  * deliberating), so the two read as one consistent "something is
- * happening here, act or wait" motion vocabulary across every game that
- * uses this shared component — which, as of writing, is all of them.
+ * happening here, act or wait" motion vocabulary across every game.
+ *
+ * A layout child of `HandZone`'s band and nothing else. It used to have a
+ * second, free-floating mode — `absolute`, `calc()`'d against
+ * `--hand-zone`, and in a z-index contest with the badge beside it — which
+ * is exactly what the band exists to replace.
  */
-export function TurnIndicator({
-  label,
-  show,
-  inline = false,
-}: {
-  label: string;
-  show: boolean;
-  /**
-   * Render as an ordinary layout child — no positioning, no z-index of
-   * its own — for use inside `HandZone`'s grid. See that component for
-   * why placing this band's contents by hand is the thing being fixed.
-   * Defaults false, so every pre-existing call site is untouched.
-   */
-  inline?: boolean;
-}) {
+export function TurnIndicator({ label, show }: { label: string; show: boolean }) {
   return (
     <AnimatePresence>
       {show ? (
         <motion.div
-          // z-1700 when free-floating, above HeroStatusBadge's z-1600 —
-          // on a narrow phone the label can wrap to 2 lines and reach
-          // far enough left to brush the hero's own left-anchored badge,
-          // and at equal z-index the badge (rendered later in every
-          // game's table overlay) won that tie and covered the turn cue.
-          // This is the one that says "act now"; it should never lose a
-          // stacking fight with an ambient, passive readout. Both were
-          // raised past a bottom sheet's z-1500 for the same reason.
-          className={
-            inline
-              ? "pointer-events-none min-w-0"
-              : "pointer-events-none absolute left-1/2 z-1700 -translate-x-1/2"
-          }
-          style={inline ? undefined : { bottom: "calc(var(--hand-zone, 150px) + 8px)" }}
+          className="pointer-events-none min-w-0"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
@@ -131,9 +108,8 @@ export function TurnIndicator({
               text-align governs how a BLOCK's own line boxes wrap, and an
               inline element sets none of its own; centering it on the
               span was a no-op, which is why a wrapped 2-line label (a
-              real case on a narrow phone) rendered left-ragged despite
-              the outer block itself being screen-centered. */}
-          <div className={`relative py-1 text-center ${inline ? "px-1" : "px-3"}`}>
+              real case on a narrow phone) rendered left-ragged. */}
+          <div className="relative px-1 py-1 text-center">
             <motion.span
               aria-hidden
               className="pointer-events-none absolute -inset-5 rounded-full"
@@ -144,13 +120,8 @@ export function TurnIndicator({
               animate={{ opacity: [0.35, 1, 0.35], scale: [0.9, 1.08, 0.9] }}
               transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
             />
-            {/* Tighter type inline: a HandZone column is roughly a third
-                of the hand's width, far narrower than the free-floating
-                badge's whole-screen run. */}
             <span
-              className={`relative font-bold text-brass-300 uppercase ${
-                inline ? "text-[10px] tracking-widest" : "text-[11px] tracking-[0.16em]"
-              }`}
+              className="relative text-[10px] font-bold tracking-widest text-brass-300 uppercase"
               style={{ textShadow: "0 0 10px rgb(212 175 106 / 0.7)" }}
             >
               {label}
@@ -168,50 +139,30 @@ export function TurnIndicator({
    ============================================================ */
 
 /**
- * The hero's own always-visible readout of whatever this game's
- * central "stake" is — Spades' bid + tricks won, a future Poker's
- * current bet, a future Rummy's deadwood count. Every OTHER seat gets
- * this on their pod's `meta` string (SeatRing); the hero has no pod at
- * all, so this exists to carry the same rung-1 information for them.
+ * The hero's own always-visible readout of whatever this game's central
+ * "stake" is — Spades' bid and tricks won, Poker's stack, Rummy's score.
+ * Every OTHER seat carries this on its pod (SeatRing); the hero has no pod
+ * at all, so this carries the same rung-1 information for them.
  *
- * Anchored to the hand zone's top edge, offset to one side so it never
- * collides with `TurnIndicator`'s centred text — deliberately close to
- * the cards it's describing rather than a distant corner.
+ * A layout child of `HandZone`'s band, beside the cards it describes —
+ * see `TurnIndicator` for the positioned mode it no longer has.
  */
 export function HeroStatusBadge({
   label,
   detail,
   show = true,
-  side = "left",
-  inline = false,
 }: {
   /** e.g. "Your bid" */
   label: string;
   /** e.g. "4 (blind) · won 2" */
   detail: string;
   show?: boolean;
-  side?: "left" | "right";
-  /** Render as a plain layout child, for `HandZone`. See TurnIndicator. */
-  inline?: boolean;
 }) {
   return (
     <AnimatePresence>
       {show ? (
         <motion.div
-          // z-1600 when free-floating, deliberately BELOW
-          // TurnIndicator's z-1700 — see that component's own doc. This
-          // badge is an ambient, always-on readout; the turn cue is the
-          // one thing that must never be hidden if the two brush against
-          // each other on a narrow screen. Both sit above a bottom
-          // sheet's z-1500.
-          className={
-            inline
-              ? "min-w-0 truncate rounded-full bg-felt-950/78 px-2.5 py-1.5 text-[10px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm"
-              : `pointer-events-none absolute z-1600 rounded-full bg-felt-950/78 px-3.5 py-2 text-[11px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm ${
-                  side === "left" ? "left-3" : "right-3"
-                }`
-          }
-          style={inline ? undefined : { bottom: "calc(var(--hand-zone, 150px) + 10px)" }}
+          className="min-w-0 truncate rounded-full bg-felt-950/78 px-2.5 py-1.5 text-[10px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 6 }}

@@ -16,8 +16,8 @@
  * would make that impossible to see.
  */
 
-import { useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useState, type ReactNode } from "react";
+import { motion } from "motion/react";
 import type { PieceId, SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { partnerOf, teamOf, teammates } from "@/games/_shared/partnership";
@@ -32,10 +32,13 @@ import type { Bid, SpadesAction, SpadesState } from "@/games/spades/types";
 import { BlockingDialog, announce } from "@/ui/disclosure";
 import { hintsSetting, type GameSetting } from "@/table/gameSettings";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { Button } from "@/ui/primitives/Button";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { TRANSITIONS } from "@/motion/presets";
-import { HandZone } from "@/table/HandZone";
-import { useTableStore } from "@/table/store";
+import { BandNote, HandZone } from "@/table/HandZone";
+import { useGeometry, useTableStore } from "@/table/store";
+import { isShortViewport } from "@/table/geometry";
+import { cn } from "@/lib/utils";
 import { useHeldMarks } from "@/table/useHeldMarks";
 import type { RoundNote } from "@/table/GameHost";
 import type { SeatView } from "@/table/SeatRing";
@@ -155,17 +158,20 @@ export function SpadesTable({
   const state = live.state;
   const playable = live.isHeroTurn && state.phase === "play" && !state.exchange;
   useHeldMarks(held, EXCHANGE_MARKS, live.state);
+  const bid = bidding(view, live, held, onClearHeld);
 
   return (
     <>
-      {/* One row owns the band above the hand — see HandZone for why
-          two independently positioned badges up here is the thing being
-          fixed, not a style preference. */}
+      {/* One band owns the space above the hand — see HandZone for why
+          independently positioned badges and panels up here are the thing
+          being fixed, not a style preference. */}
       <HandZone
         left={<YourBidBadge view={view} state={state} />}
-        center={<TurnIndicator inline label="Your turn — tap a card" show={playable} />}
+        center={<TurnIndicator label="Your turn — tap a card" show={playable} />}
+        bar={bid.bar}
+        panel={bid.panel}
       />
-      <BidPad view={view} live={live} held={held} onClearHeld={onClearHeld} />
+      {bid.dialog}
     </>
   );
 }
@@ -187,45 +193,55 @@ function YourBidBadge({ view, state }: { view: SpadesView; state: SpadesState })
     state.phase === "play" && !state.exchange
       ? `${label} · won ${state.tricksWon[view.viewerSeat] ?? 0}`
       : `bid ${label}`;
-  return <HeroStatusBadge inline label="Your bid" detail={detail} side="left" />;
+  return <HeroStatusBadge label="Your bid" detail={detail} />;
 }
 
-function BidPad({
-  view,
-  live,
-  held,
-  onClearHeld,
-}: {
-  view: SpadesView;
-  live: Live;
-  held: PieceId[];
-  onClearHeld: () => void;
-}) {
+/**
+ * What the bidding is asking of this viewer right now, and where it goes:
+ * an ordinary bid is the band's panel (it is decided looking at the hand),
+ * the exchange and a cast vote are its bar, and the two blind decisions
+ * are dialogs (the hand is still hidden, so there is nothing to look at).
+ */
+function bidding(
+  view: SpadesView,
+  live: Live,
+  held: PieceId[],
+  onClearHeld: () => void,
+): { bar?: ReactNode; panel?: ReactNode; dialog?: ReactNode } {
   const state = live.state;
-  if (state.phase !== "bid") return null;
+  if (state.phase !== "bid") return {};
 
   // Checked before whose turn it is: the vote is open to both partners at
   // once, so it is often not "your turn" while you still have a vote.
   if (blindVoteOpen(state, view.viewerSeat) && !live.animating) {
-    return state.blindVotes[view.viewerSeat] ? (
-      <BlindVoteWaiting view={view} state={state} />
-    ) : (
-      <BlindVoteDialog view={view} live={live} />
-    );
+    return state.blindVotes[view.viewerSeat]
+      ? { bar: <BlindVoteWaiting view={view} state={state} /> }
+      : { dialog: <BlindVoteDialog view={view} live={live} /> };
   }
-  if (!live.isHeroTurn) return null;
+  if (!live.isHeroTurn) return {};
 
   if (state.exchange) {
-    return <ExchangeBar live={live} isGiver={state.exchange.stage === "give"} held={held} onClearHeld={onClearHeld} />;
+    return {
+      bar: (
+        <ExchangeBar
+          live={live}
+          isGiver={state.exchange.stage === "give"}
+          held={held}
+          onClearHeld={onClearHeld}
+        />
+      ),
+    };
   }
-  if (isHiddenFromSelf(state, view.viewerSeat)) return <BlindChoiceDialog view={view} live={live} />;
-  return <NumericBidPanel view={view} live={live} />;
+  if (isHiddenFromSelf(state, view.viewerSeat)) {
+    return { dialog: <BlindChoiceDialog view={view} live={live} /> };
+  }
+  return { panel: <NumericBidPanel view={view} live={live} /> };
 }
 
 /**
- * NOT a BlockingDialog — see this file's top doc. Mirrors Dominoes'
- * DominoTable bottom bar: an inline instruction plus a floating,
- * non-modal action row, so the hero's own hand stays tappable underneath.
+ * NOT a BlockingDialog — see this file's top doc. The band's bar: the
+ * instruction and its buttons in one row above the hand, so the hand stays
+ * tappable underneath — which is how the cards are picked.
  */
 function ExchangeBar({
   live,
@@ -238,10 +254,6 @@ function ExchangeBar({
   held: PieceId[];
   onClearHeld: () => void;
 }) {
-  const label = isGiver
-    ? "Choose 2 cards to give your partner, unseen"
-    : "Choose 2 cards to send back to your partner";
-
   const confirm = () => {
     if (held.length !== 2) return;
     const cards: [PieceId, PieceId] = [held[0]!, held[1]!];
@@ -256,54 +268,18 @@ function ExchangeBar({
 
   return (
     <>
-      <TurnIndicator label={`${label} (${held.length}/2)`} show />
-      <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 flex items-end justify-center gap-2 pb-3"
-        style={{ height: 56 }}
-      >
-        <AnimatePresence>
-          {isGiver ? (
-            <ActionButton key="skip" onClick={skip} tone="quiet">
-              Skip
-            </ActionButton>
-          ) : null}
-          <ActionButton key="confirm" onClick={confirm} disabled={held.length !== 2}>
-            {isGiver ? "Give" : "Send back"}
-          </ActionButton>
-        </AnimatePresence>
-      </div>
+      <BandNote>
+        {isGiver ? "Give your partner 2, unseen" : "Send 2 back"} · {held.length}/2
+      </BandNote>
+      {isGiver ? (
+        <Button shape="pill" onClick={skip}>
+          Skip
+        </Button>
+      ) : null}
+      <Button shape="pill" tone="primary" disabled={held.length !== 2} onClick={confirm}>
+        {isGiver ? "Give" : "Send back"}
+      </Button>
     </>
-  );
-}
-
-function ActionButton({
-  onClick,
-  tone = "primary",
-  disabled = false,
-  children,
-}: {
-  onClick: () => void;
-  tone?: "primary" | "quiet";
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <motion.button
-      type="button"
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: disabled ? 0.4 : 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      transition={TRANSITIONS.ui}
-      className={
-        tone === "primary"
-          ? "pointer-events-auto rounded-full bg-linear-to-b from-brass-300 to-brass-500 px-7 py-2.5 text-sm font-extrabold text-felt-950 shadow-e2 disabled:pointer-events-none"
-          : "pointer-events-auto rounded-full bg-bone-50/8 px-5 py-2.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/18"
-      }
-    >
-      {children}
-    </motion.button>
   );
 }
 
@@ -319,23 +295,28 @@ function ActionButton({
  */
 function NumericBidPanel({ view, live }: { view: SpadesView; live: Live }) {
   const state = live.state;
+  const geometry = useGeometry();
   const floor = minLegalBid(state, view.viewerSeat);
   const min = Math.max(1, floor);
   const partnerBid = state.bids[partnerOf(view.viewerSeat)];
   const [value, setValue] = useState(min);
   const submit = (action: SpadesAction) => live.submitAction(action);
+  // A short viewport gets one row — stepper, Bid, Nil — because the band's
+  // height is taken from the table, and a landscape phone has none to give.
+  // The partner's bid is on their pod either way.
+  const short = geometry ? isShortViewport(geometry.box) : false;
 
   return (
-    <div
-      className="pointer-events-none absolute inset-x-0 z-1800 flex justify-center px-4"
-      style={{ bottom: "calc(var(--hand-zone, 150px) + 12px)" }}
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={TRANSITIONS.ui}
+      className={cn(
+        "flex items-center rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 shadow-e2 backdrop-blur-md",
+        short ? "flex-row gap-2 px-3 py-2" : "w-full max-w-xs flex-col gap-3 p-4",
+      )}
     >
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={TRANSITIONS.ui}
-        className="pointer-events-auto flex w-[min(20rem,92vw)] flex-col items-center gap-3 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-4 shadow-e2 backdrop-blur-md"
-      >
+      {short ? null : (
         <div className="flex flex-col items-center gap-1">
           <h3 className="font-display text-[15px] tracking-wide text-brass-300">Your bid</h3>
           {partnerBid ? (
@@ -345,28 +326,36 @@ function NumericBidPanel({ view, live }: { view: SpadesView; live: Live }) {
             </p>
           ) : null}
         </div>
+      )}
 
-        <NumberStepper value={value} min={min} max={13} onChange={setValue} label="tricks" />
+      <NumberStepper
+        value={value}
+        min={min}
+        max={13}
+        onChange={setValue}
+        label="tricks"
+        size={short ? "sm" : undefined}
+      />
 
-        <button
-          type="button"
-          onClick={() => submit({ t: "bid", tricks: value, nil: false })}
-          className="w-full rounded-lg bg-linear-to-b from-brass-300 to-brass-500 py-2.5 text-sm font-extrabold text-felt-950 shadow-e2"
+      <Button
+        tone="primary"
+        size={short ? "xs" : "md"}
+        className={short ? undefined : "w-full"}
+        onClick={() => submit({ t: "bid", tricks: value, nil: false })}
+      >
+        Bid {value}
+      </Button>
+
+      {floor === 0 ? (
+        <Button
+          size={short ? "xs" : "md"}
+          className={cn("hover:bg-warn/15 hover:text-warn", short ? undefined : "w-full")}
+          onClick={() => submit({ t: "bid", tricks: 0, nil: true })}
         >
-          Bid {value}
-        </button>
-
-        {floor === 0 ? (
-          <button
-            type="button"
-            onClick={() => submit({ t: "bid", tricks: 0, nil: true })}
-            className="w-full rounded-lg bg-bone-50/6 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-warn/15 hover:text-warn"
-          >
-            Nil
-          </button>
-        ) : null}
-      </motion.div>
-    </div>
+          Nil
+        </Button>
+      ) : null}
+    </motion.div>
   );
 }
 
@@ -417,19 +406,14 @@ function BlindVoteDialog({ view, live }: { view: SpadesView; live: Live }) {
   );
 }
 
-/** Non-modal: once you have voted there is nothing left to decide. */
+/** The band's bar: once you have voted there is nothing left to decide. */
 function BlindVoteWaiting({ view, state }: { view: SpadesView; state: SpadesState }) {
   const mine = state.blindVotes[view.viewerSeat];
   return (
-    <div
-      className="pointer-events-none absolute inset-x-0 z-1800 flex justify-center px-4"
-      style={{ bottom: "calc(var(--hand-zone, 150px) + 12px)" }}
-    >
-      <p className="rounded-full border border-brass-400/25 bg-felt-900/90 px-4 py-2 text-[12px] text-bone-300 shadow-e2">
-        You voted {mine?.blind ? "blind" : "to look"} — waiting for{" "}
-        {view.nameFor(partnerOf(view.viewerSeat))}
-      </p>
-    </div>
+    <p className="min-w-0 truncate rounded-full border border-brass-400/25 bg-felt-900/90 px-4 py-2 text-[12px] text-bone-300 shadow-e2">
+      You voted {mine?.blind ? "blind" : "to look"} — waiting for{" "}
+      {view.nameFor(partnerOf(view.viewerSeat))}
+    </p>
   );
 }
 

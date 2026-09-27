@@ -124,6 +124,16 @@ interface TableState {
    * allow.
    */
   handOrder: Record<PieceId, number> | null;
+  /**
+   * The height `HandZone` measured for its band, in px — one row, or a
+   * decision that needs more (a bid, a bet). 0 while there is no band.
+   *
+   * Measured by the band and read by `TableSurface`, which reserves it
+   * (`ResolveOptions.bandZone`) so nothing the table lays out ever sits
+   * under it. It cannot loop: the band's width comes from the hand, which
+   * the reserved height does not move, so one measurement settles it.
+   */
+  bandHeight: number;
 
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
@@ -156,6 +166,7 @@ interface TableState {
   setDiscardScroll(px: number | null): void;
   setHandScroll(px: number | null): void;
   setHandOrder(order: Record<PieceId, number> | null): void;
+  setBandHeight(px: number): void;
 }
 
 function countInZone(placements: PlacementMap, zone: Placement["zone"]): number {
@@ -222,6 +233,7 @@ export const useTableStore = create<TableState>((set) => {
     discardCount: 0,
     handScroll: null,
     handOrder: null,
+    bandHeight: 0,
 
     setGeometry: (geometry) => set({ geometry }),
 
@@ -328,6 +340,8 @@ export const useTableStore = create<TableState>((set) => {
     setHandScroll: (px) => set((s) => (s.handScroll === px ? s : { handScroll: px })),
 
     setHandOrder: (order) => set({ handOrder: order }),
+
+    setBandHeight: (px) => set((s) => (s.bandHeight === px ? s : { bandHeight: px })),
   };
 });
 

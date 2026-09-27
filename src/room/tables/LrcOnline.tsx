@@ -112,7 +112,7 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
         pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
         onLobby={api.exitGame}
       >
-        {(l) => <LrcControls live={l} />}
+        {(l) => <LrcControls view={view} live={l} />}
       </GameHostView>
 
     </div>

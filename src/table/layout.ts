@@ -31,6 +31,7 @@ import {
   type Box,
   type PieceSize,
   type TableGeometry,
+  type ZoneName,
 } from "./geometry";
 
 type BoardCell = NonNullable<Placement["cell"]>;
@@ -136,6 +137,17 @@ function boxCentre(b: Box) {
  * below rather than duplicated, since they differ only in which zone
  * box they read.
  */
+/**
+ * How long a side seat's fan may run, centred on `anchorY`, before its
+ * lower end passes the ring's bottom edge — below which is the band above
+ * the viewer's hand. `tilt` pays for a tilted piece's corners reaching a
+ * little further than its own width.
+ */
+function sideFanRoom(g: TableGeometry, anchorY: number, tilt: number): number {
+  const bottom = g.zones.play.y + g.zones.play.h;
+  return Math.max(0, 2 * (bottom - anchorY) - tilt * 0.3);
+}
+
 function miniStackSlot(zone: Box, index: number) {
   const { cx, cy } = boxCentre(zone);
   const lift = Math.min(index, 6) * 0.6;
@@ -301,6 +313,9 @@ export function layoutPiece(
   const tableScale = tableArt(g, ctx?.kind) / art.w;
   const miniScale = miniArt(g, ctx?.kind) / art.w;
 
+  // Where a chain of centre zones had to shrink to fit (see
+  // `TableGeometry.zoneScale`); 1 everywhere else.
+  const zs = g.zoneScale[p.zone as ZoneName] ?? 1;
   const zBase = Z[p.zone] ?? 0;
   const z = p.selected ? Z_SELECTED + p.index : zBase + p.index;
   // `dimmed` no longer touches opacity — POLICY.md's "invalid options
@@ -695,7 +710,7 @@ export function layoutPiece(
           away: { x: -ux, y: -uy },
           index: p.index,
           count: p.count,
-          spreadWidth: fanW,
+          spreadWidth: Math.min(fanW, sideFanRoom(g, anchorY, miniH)),
           // Unrotated dimensions: `radialFanSlot` measures spacing along
           // `spread` from `size.w`, which for an upright tile is its
           // SHORT side — exactly "pack by the short side," the same
@@ -754,6 +769,11 @@ export function layoutPiece(
       const anchorX = seat.x + ux * inset;
       const anchorY = seat.y + uy * inset;
 
+      // A side seat's fan runs down the screen, centred on the seat, and
+      // the lowest one's used to hang past the ring's bottom edge — under
+      // the band, over the viewer's own controls. It compresses instead.
+      const spreadWidth = rotatedQuarter ? Math.min(fanW, sideFanRoom(g, anchorY, miniH)) : fanW;
+
       const slot = radialFanSlot({
         anchor: { x: anchorX, y: anchorY },
         // Perpendicular to (ux, uy) — the axis the fan spreads along.
@@ -764,7 +784,7 @@ export function layoutPiece(
         away: { x: -ux, y: -uy },
         index: p.index,
         count: p.count,
-        spreadWidth: fanW,
+        spreadWidth,
         size: { w: miniW, h: miniH },
         baseRotation: seat.rotation,
         maxTilt: 7,
@@ -844,10 +864,17 @@ export function layoutPiece(
       // density, so every anchor clears by roughly the same amount
       // regardless of how far that seat happens to sit from centre.
       const pod = POD_SIZE[g.density];
-      const clearance = axisReach(ux, uy, pod) + g.miniCard.h * 0.55;
+      // The viewer's own pile has no pod to clear — it starts from the top
+      // of the band above their hand (`TableGeometry.band`), which is where
+      // their controls are. Measured from the seat like everybody else's,
+      // it landed under the band: LRC's Roll button sat on the chips it
+      // was about to roll for.
+      const fromBand = seat.isHero && g.band.h > 0;
+      const originY = fromBand ? g.band.y : seat.y;
+      const clearance = fromBand ? g.miniCard.h * 0.55 : axisReach(ux, uy, pod) + g.miniCard.h * 0.55;
 
       const rowOriginX = seat.x + ux * (clearance + row * rowSpacing);
-      const rowOriginY = seat.y + uy * (clearance + row * rowSpacing);
+      const rowOriginY = originY + uy * (clearance + row * rowSpacing);
       // Centred on how many chips are actually IN this row, not on the
       // grid's max width. `cols` is a wrap limit, not every row's real
       // count — centring against it left every row short of a full 3
@@ -883,13 +910,13 @@ export function layoutPiece(
       // pile in this file. Laid left-to-right across the geometry box
       // `resolveTable` already sized to fit the play area.
       const zone = g.zones.community;
-      const gap = g.card.w * 0.15;
-      const minGap = g.card.w * 0.04;
+      const gap = g.card.w * 0.15 * zs;
+      const minGap = g.card.w * 0.04 * zs;
       // When the box is narrower than 5 cards and their gaps — it is
       // bounded by the space between the seats' hands, which a phone or a
       // laptop can make tight — compress the GAP first, and only then
       // shrink the cards. Five cards that do not fit spill into a hand.
-      let cardW = g.card.w;
+      let cardW = g.card.w * zs;
       let effGap = Math.max(minGap, Math.min(gap, (zone.w - cardW * 5) / 4));
       if (cardW * 5 + effGap * 4 > zone.w) {
         cardW = Math.max(0, (zone.w - minGap * 4) / 5);
@@ -921,7 +948,7 @@ export function layoutPiece(
       // that zone to never overlap `community`, so keeping the pile
       // inside it is what keeps that guarantee true on screen too.
       const zone = g.zones.pot;
-      const chipSize = g.miniCard.w;
+      const chipSize = g.miniCard.w * zs;
       const cols = 5;
       const col = p.index % cols;
       const row = Math.floor(p.index / cols);
@@ -933,9 +960,9 @@ export function layoutPiece(
       const px = cx + (col - (rowCount - 1) / 2) * colSpacing;
       const py = zone.y + chipSize / 2 + row * rowSpacing;
 
-      const clamped = clampToBox(px, py, zone, g.miniCard.w / 2, g.miniCard.h / 2);
+      const clamped = clampToBox(px, py, zone, (g.miniCard.w * zs) / 2, (g.miniCard.h * zs) / 2);
       const { x, y } = centred(clamped.cx, clamped.cy, g);
-      return { x, y, rotate: 0, scale: miniScale, z, opacity };
+      return { x, y, rotate: 0, scale: miniScale * zs, z, opacity };
     }
 
     /* --------------------------------------------------- stub */
@@ -945,7 +972,7 @@ export function layoutPiece(
       // than a repositioning of it.
       const { cx, cy, tilt } = miniStackSlot(g.zones.stub, p.index);
       const { x, y } = centred(cx, cy, g);
-      return { x, y, rotate: tilt, scale: miniScale, z, opacity };
+      return { x, y, rotate: tilt, scale: miniScale * zs, z, opacity };
     }
 
     /* -------------------------------------------------- burnt */
@@ -954,7 +981,7 @@ export function layoutPiece(
       // for why this is a separate zone from Rummy's `"discard"`.
       const { cx, cy, tilt } = miniStackSlot(g.zones.burnt, p.index);
       const { x, y } = centred(cx, cy, g);
-      return { x, y, rotate: tilt, scale: miniScale, z, opacity };
+      return { x, y, rotate: tilt, scale: miniScale * zs, z, opacity };
     }
 
     /* -------------------------------------------------- pile */
@@ -977,13 +1004,13 @@ export function layoutPiece(
       // the live play its own `group` would restart `index`/`count`
       // inside it and take the stack's whole depth with it.
       const fromTop = p.count - 1 - p.index;
-      const step = p.highlighted === true ? g.card.w * 0.17 : 0;
+      const step = p.highlighted === true ? g.card.w * 0.17 * zs : 0;
       const { x, y } = centred(
         cx + lift + fromTop * step,
         cy - lift - fromTop * step * 0.4,
         g,
       );
-      return { x, y, rotate: tilt, scale: tableScale, z, opacity };
+      return { x, y, rotate: tilt, scale: tableScale * zs, z, opacity };
     }
 
     /* ------------------------------------------------ reveal */
@@ -994,16 +1021,17 @@ export function layoutPiece(
       // `resolveTable` already clamped the box to the play area, so the
       // only thing left to give on a narrow phone is the spacing.
       const zone = g.zones.reveal;
-      const gap = g.card.w * 0.16;
+      const cardW = g.card.w * zs;
+      const gap = cardW * 0.16;
       const gaps = Math.max(0, p.count - 1);
-      const totalW = g.card.w * p.count + gap * gaps;
+      const totalW = cardW * p.count + gap * gaps;
       const effGap = gap * Math.min(1, zone.w / Math.max(1, totalW));
-      const rowW = g.card.w * p.count + effGap * gaps;
-      const originX = zone.x + zone.w / 2 - rowW / 2 + g.card.w / 2;
-      const rcx = originX + p.index * (g.card.w + effGap);
+      const rowW = cardW * p.count + effGap * gaps;
+      const originX = zone.x + zone.w / 2 - rowW / 2 + cardW / 2;
+      const rcx = originX + p.index * (cardW + effGap);
       const rcy = zone.y + zone.h / 2;
       const { x, y } = centred(rcx, rcy, g);
-      return { x, y, rotate: 0, scale: tableScale, z, opacity };
+      return { x, y, rotate: 0, scale: tableScale * zs, z, opacity };
     }
 
     /* ------------------------------------------------ centre */

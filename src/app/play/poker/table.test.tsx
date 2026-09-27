@@ -15,8 +15,41 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRng } from "@/engine/rng";
 import { createPoker } from "@/games/poker/rules";
 import type { PokerAction, PokerState } from "@/games/poker/types";
+import { resolveTable } from "@/table/geometry";
+import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { PokerControls, playerViews, roundSummary, type PokerView } from "./table";
+
+/**
+ * What a real table has and jsdom does not: a laid-out geometry for the
+ * band above the hand to sit on (the betting panel lives in it now), a
+ * `ResizeObserver` for the band to measure itself with, and an answer to
+ * "is this a laptop" — the panel is one row there and folded on a phone.
+ */
+let laptop = true;
+beforeEach(() => {
+  laptop = true;
+  useTableStore.getState().setGeometry(resolveTable({ seats: 3, width: 1440, height: 900 }));
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    matches: media.includes("min-width") ? laptop : false,
+    media,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }));
+});
+afterEach(() => vi.unstubAllGlobals());
 
 const view: PokerView = {
   viewerSeat: 0,
@@ -49,20 +82,6 @@ function runtime(state: PokerState, submitAction = vi.fn()) {
 }
 
 describe("the betting panel", () => {
-  beforeEach(() => {
-    vi.stubGlobal("matchMedia", (media: string) => ({
-      matches: false,
-      media,
-      onchange: null,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      addListener: () => {},
-      removeListener: () => {},
-      dispatchEvent: () => false,
-    }));
-  });
-  afterEach(() => vi.unstubAllGlobals());
-
   it("says what the bet is and what you have in, not only the difference", () => {
     render(<PokerControls view={view} live={runtime(facingARaise())} />);
     const figure = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
@@ -109,6 +128,38 @@ describe("the betting panel", () => {
     // With nothing in yet this round the call IS the bet, so the button
     // does not repeat it back ("Call $362 · matches $362").
     expect(screen.getByRole("button", { name: /Call \$362/ }).textContent).not.toContain("matches");
+  });
+});
+
+describe("the betting panel on a phone", () => {
+  /**
+   * Stacked, the panel was ~275px on a phone — most of the table, now that
+   * the table makes room for it. Folded (the user's call, 2026-09-26): one
+   * line of figures, one row of choices, and the sizing only once Raise is
+   * tapped.
+   */
+  beforeEach(() => {
+    laptop = false;
+  });
+
+  it("folds the four figures into one line", () => {
+    render(<PokerControls view={view} live={runtime(facingARaise())} />);
+    expect(screen.queryByText("Current bet")).toBeNull();
+    expect(screen.getByText(/To call \$50/).textContent).toMatch(/To call \$50 · Pot \$\d+/);
+  });
+
+  it("opens the sizing only once Raise is tapped, then raises to what it shows", () => {
+    const submit = vi.fn();
+    render(<PokerControls view={view} live={runtime(facingARaise(), submit)} />);
+    expect(screen.queryByRole("button", { name: "More chips" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Raise…/ }));
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "More chips" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Raise to/ }));
+    const sent = submit.mock.calls.at(-1)?.[0] as PokerAction;
+    expect(sent.t).toBe("raise");
+    expect((sent as { to: number }).to).toBeGreaterThan(150);
   });
 });
 

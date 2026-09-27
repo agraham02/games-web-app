@@ -885,9 +885,12 @@ describe("bs — the pile and the reveal row", () => {
     for (const vp of VIEWPORTS) {
       const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
       const { play, reveal } = g.zones;
-      if (play.w >= g.card.w * 4.5) {
+      // At the row's own scale: on a short screen the pair shrinks to fit
+      // the height (`zoneScale`), and four of ITS cards must still fit.
+      const cardW = g.card.w * (g.zoneScale.reveal ?? 1);
+      if (play.w >= cardW * 4.5) {
         expect(reveal.w, `${vp.name}: reveal row too narrow for four cards`)
-          .toBeGreaterThanOrEqual(g.card.w * 4);
+          .toBeGreaterThanOrEqual(cardW * 4);
       }
     }
   });

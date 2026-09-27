@@ -27,7 +27,6 @@ import { GAMES } from "@/session/registry";
 import type { RummyAction, RummyState } from "@/games/rummy/types";
 import { botColour } from "@/games/_shared/botIdentity";
 import { GameHostView } from "@/table/GameHost";
-import { handHeaderHeight } from "@/table/HandZone";
 import { Button } from "@/ui/primitives/Button";
 import {
   RotateNotice,
@@ -58,7 +57,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
     return entry.create(room.settings);
   }, [room.gameId, room.settings]);
 
-  const { vh, short, touch } = useViewport();
+  const { short, touch } = useViewport();
 
   const live = useOnlineRuntime<RummyState, RummyAction>({
     frame,
@@ -126,7 +125,8 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
           />
         }
         live={live}
-        bottomZone={handHeaderHeight(vh) + SHEET_PEEK_H}
+        // The resting sheet, above the band every table reserves.
+        bottomZone={SHEET_PEEK_H}
         players={playerViews(view, room.seats)}
         standings={standings(view, room.seats)}
         stats={statsFor}

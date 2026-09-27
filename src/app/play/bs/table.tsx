@@ -239,7 +239,7 @@ export function BsTable({
       <HandZone
         bar={bar}
         left={<RankBadge state={state} />}
-        center={<TurnIndicator label={turnLabel(view, state)} show={!bar} inline />}
+        center={<TurnIndicator label={turnLabel(view, state)} show={!bar} />}
       />
     </>
   );
@@ -256,8 +256,6 @@ function RankBadge({ state }: { state: BsState }) {
     <HeroStatusBadge
       label={rankPluralTitle(state.rank)}
       detail={pile === 0 ? "pile empty" : `${pile} on the pile`}
-      side="left"
-      inline
     />
   );
 }

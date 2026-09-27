@@ -3,12 +3,14 @@ import {
   cellHalfExtent,
   discardMaxScroll,
   handFanMaxScroll,
+  handHeaderHeight,
   podBox,
   resolveDensity,
   resolveTable,
   tileShortSide,
   type Box,
   type Density,
+  type ZoneName,
 } from "./geometry";
 import { boardCamera, boardPieceSize, layoutPiece, projectCell, baseSize } from "./layout";
 import type { Placement } from "@/engine/types";
@@ -725,6 +727,11 @@ const TABLE_VIEWPORTS = [
   { name: "laptop 125%", w: 1536, h: 730 },
   { name: "laptop small", w: 1366, h: 650 },
   { name: "desktop 1440p", w: 2552, h: 1227 },
+  // The audit's sizes (2026-09-26): tablets both ways round, and the
+  // commonest laptop screen.
+  { name: "tablet portrait", w: 768, h: 1024 },
+  { name: "tablet landscape", w: 1024, h: 768 },
+  { name: "laptop 1366", w: 1366, h: 768 },
 ];
 
 /** A card's on-screen box, with a side seat's quarter turn accounted for. */
@@ -806,5 +813,86 @@ describe("poker's centre — stays clear of every opponent's hand", () => {
       }
     }
     expect([...new Set(hits)].slice(0, 10)).toEqual([]);
+  });
+});
+
+describe("the band above the hand — nothing on the table sits under it", () => {
+  /**
+   * `HandZone` owns the band above the hand: the turn line, the viewer's
+   * readouts, and any decision bigger than a row (Spades' bid, Poker's
+   * betting). It used to reserve nothing — the row was drawn over the
+   * bottom of the ring and the decisions floated over the table on a
+   * `calc()`, over the flop and the lowest pods. The surface now reserves
+   * the band's measured height (`ResolveOptions.bandZone`), and this holds
+   * the table to it — each game with the band it really shows, and the
+   * zones it really uses.
+   *
+   * The one allowance is the documented one: a centre chain that has
+   * already shrunk to the smallest legible card (`zoneScale` at its floor)
+   * may overhang rather than shrink into illegibility.
+   */
+  const POKER_BAR = 80; // the laptop's one-row betting bar
+  const POKER_FOLDED = 150; // a phone's folded panel, sizing open
+  const GAMES: Array<{
+    game: string;
+    seats: number[];
+    /** Cards in an opponent's hand — the most the game deals. */
+    hand: number;
+    zones: readonly ZoneName[];
+    panel: (vp: { w: number; h: number }) => number;
+    bottomZone?: number;
+  }> = [
+    { game: "poker", seats: [2, 4, 6, 8, 10], hand: 2, zones: ["community", "pot", "stub", "burnt"], panel: (vp) => (vp.w >= 1024 ? POKER_BAR : POKER_FOLDED) },
+    { game: "bs", seats: [2, 4, 6], hand: 13, zones: ["reveal", "pile"], panel: () => 0 },
+    // The bid: one row on a short screen, the full panel otherwise.
+    { game: "spades", seats: [4], hand: 13, zones: ["trick"], panel: (vp) => (vp.h < 560 ? 56 : 250) },
+    { game: "rummy", seats: [2, 4, 6], hand: 10, zones: ["deck", "discard"], panel: () => 0, bottomZone: 140 },
+    { game: "dominoes", seats: [2, 3, 4], hand: 7, zones: ["line"], panel: () => 0 },
+  ];
+
+  it("grants at least the band's own row, on every screen", () => {
+    for (const vp of TABLE_VIEWPORTS) {
+      const row = handHeaderHeight(vp.h);
+      const g = resolveTable({ seats: 6, width: vp.w, height: vp.h, bandZone: row });
+      expect(g.band.h, vp.name).toBe(row);
+      expect(g.band.y + g.band.h, vp.name).toBeCloseTo(g.zones.hand.y);
+    }
+  });
+
+  it("keeps every pod, hand and centre zone out of it", () => {
+    const hits: string[] = [];
+    for (const vp of TABLE_VIEWPORTS) {
+      const row = handHeaderHeight(vp.h);
+      for (const game of GAMES) {
+        for (const seats of game.seats) {
+          const g = resolveTable({
+            seats,
+            width: vp.w,
+            height: vp.h,
+            bandZone: row + game.panel(vp),
+            bottomZone: game.bottomZone,
+          });
+          const label = `${vp.name}, ${game.game} at ${seats}`;
+          for (const slot of g.seats) {
+            if (slot.isHero) continue;
+            if (overlapsBox(podBox(slot, g.density), g.band)) hits.push(`${label}: seat ${slot.seat}'s pod`);
+            for (let index = 0; index < game.hand; index++) {
+              const card = cardRect(g, { zone: "hand", seat: slot.seat, index, count: game.hand, faceUp: false });
+              if (overlapsBox(card, g.band)) hits.push(`${label}: seat ${slot.seat}'s hand`);
+            }
+          }
+          const floor = Math.min(1, 40 / g.card.h);
+          for (const zone of game.zones) {
+            const atFloor = (g.zoneScale[zone] ?? 1) <= floor + 1e-9;
+            if (overlapsBox(g.zones[zone], g.band) && !atFloor) hits.push(`${label}: ${zone}`);
+          }
+          // The viewer's own pile (LRC's chips, Spades' tricks) starts above
+          // the band rather than under it.
+          const own = cardRect(g, { zone: "collected", seat: 0, index: 0, count: 3, faceUp: true });
+          if (overlapsBox(own, g.band)) hits.push(`${label}: the viewer's own pile`);
+        }
+      }
+    }
+    expect([...new Set(hits)].slice(0, 12)).toEqual([]);
   });
 });

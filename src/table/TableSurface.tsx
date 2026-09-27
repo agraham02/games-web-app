@@ -15,7 +15,13 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PieceId, SeatId } from "@/engine/types";
-import { resolveTable, type Density, type TableGeometry, type ZoneName } from "./geometry";
+import {
+  handHeaderHeight,
+  resolveTable,
+  type Density,
+  type TableGeometry,
+  type ZoneName,
+} from "./geometry";
 import { useTableStore } from "./store";
 import { PieceLayer } from "./PieceLayer";
 
@@ -44,6 +50,11 @@ export interface TableSurfaceProps {
   fill?: "viewport" | "parent";
   /** See `ResolveOptions.viewerSeat`. Omit offline; `null` is a spectator. */
   viewerSeat?: SeatId | null;
+  /**
+   * Reserve the band above the hand that `HandZone` owns. On for every
+   * game table; a lab page drawing bare geometry turns it off.
+   */
+  band?: boolean;
 }
 
 export function TableSurface({
@@ -59,10 +70,11 @@ export function TableSurface({
   className,
   fill = "viewport",
   viewerSeat,
+  band = true,
 }: TableSurfaceProps) {
   const ref = useRef<HTMLDivElement>(null);
   const setGeometry = useTableStore((s) => s.setGeometry);
-  const handHeight = useTableStore((s) => s.geometry?.zones.hand.h ?? null);
+  const bandMeasured = useTableStore((s) => s.bandHeight);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
   // ResizeObserver rather than a window listener: this element can be
@@ -86,6 +98,11 @@ export function TableSurface({
     return () => ro.disconnect();
   }, []);
 
+  // The band's one row is reserved from the first layout, before anything
+  // has measured it, so a table does not deal into space the band then
+  // takes back. Only a taller band — a bid, a bet — moves the table, once.
+  const bandZone = band && size ? Math.max(handHeaderHeight(size.h), bandMeasured) : 0;
+
   useEffect(() => {
     if (!size || size.w === 0 || size.h === 0) return;
     setGeometry(
@@ -97,11 +114,12 @@ export function TableSurface({
         handZone,
         topZone,
         bottomZone,
+        bandZone,
         pileAnchor,
         viewerSeat,
       }),
     );
-  }, [size, seats, density, handZone, topZone, bottomZone, pileAnchor, viewerSeat, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, setGeometry]);
 
   return (
     <div
@@ -133,17 +151,12 @@ export function TableSurface({
           : { width: "100%", height: "100%" }
       }
     >
-      {/* Measured box: everything inside the safe area. `--hand-zone`
-          is published so overlays can sit above the hand without
-          subscribing to geometry themselves. */}
+      {/* Measured box: everything inside the safe area. It used to publish
+          `--hand-zone` for overlays to sit above the hand by `calc()`; the
+          band (`HandZone`) owns that space now, and the table reserves it. */}
       <div
         ref={ref}
         className="relative z-1 h-full w-full"
-        style={
-          {
-            "--hand-zone": handHeight !== null ? `${handHeight}px` : undefined,
-          } as React.CSSProperties
-        }
         // Tapping the bare felt cancels a touch-preview left open by
         // PieceLayer's tap-to-preview/tap-to-confirm (see that file) —
         // `target === currentTarget` means this only fires for a genuine

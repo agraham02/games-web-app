@@ -16,8 +16,10 @@ import { chipsHeld, diceCountFor } from "@/games/lrc/state";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
 import { DURATION, TRANSITIONS, prefersReducedMotion } from "@/motion/presets";
 import { onDice } from "@/table/fx";
+import { BandNote, HandZone } from "@/table/HandZone";
+import { Button } from "@/ui/primitives/Button";
 import { DiceFace } from "@/ui/primitives/DiceFace";
-import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { HeroStatusBadge, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -46,8 +48,9 @@ export const OFFLINE_VIEW: LrcView = {
 };
 
 /**
- * Vertical room the Roll button needs. There is no hand in LRC — the
- * strip is the button and nothing else.
+ * The strip where a hand would be. LRC has no hand — the viewer's chips
+ * pile up from the band above it, like everybody else's from their pod —
+ * so it only needs to hold the viewer's seat off the bottom edge.
  *
  * A constant because both shells have to agree, and they did not: the
  * room passed `0` while `LrcControls` went on rendering a fixed 64px
@@ -162,8 +165,13 @@ export function playerViews(view: LrcView, state: LrcState, live: Live): SeatVie
   return out;
 }
 
-/** The one game-specific slot: the Roll button and the dice it produces. */
-export function LrcControls({ live }: { live: Live }) {
+/**
+ * The one game-specific slot: the Roll button and the dice it produces.
+ *
+ * Roll is the band's bar, above the viewer's chips; the band's row says
+ * how many chips they hold, since the viewer has no pod to say it.
+ */
+export function LrcControls({ view, live }: { view: LrcView; live: Live }) {
   // The dice are NOT rolled here any more. They used to be — the screen
   // resolved them with `live.rng`, showed the tumble, and held the submit
   // back for its length so the chips would not move under the dice.
@@ -181,36 +189,33 @@ export function LrcControls({ live }: { live: Live }) {
     live.submitAction({ t: "roll", dice: [] });
   };
 
-  const showRoll = live.isHeroTurn;
+  // A spectator holds no chips and rolls nothing.
+  const seated = view.viewerSeat >= 0;
+  const chips = seated ? chipsHeld(live.state, view.viewerSeat) : 0;
 
   return (
     <>
-      <TurnIndicator label="Your turn — roll" show={showRoll} />
-
       {/* Driven by the `dice` event as the queue reaches it, not by
           `lastAction` — see the event's doc. */}
       <DiceOverlay />
 
-      <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 flex justify-center pb-4"
-        style={{ height: 64 }}
-      >
-        <AnimatePresence>
-          {showRoll ? (
-            <motion.button
-              type="button"
-              onClick={roll}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              transition={TRANSITIONS.ui}
-              className="pointer-events-auto rounded-full bg-linear-to-b from-brass-300 to-brass-500 px-8 py-3 text-sm font-extrabold text-felt-950 shadow-e2"
-            >
-              Roll
-            </motion.button>
-          ) : null}
-        </AnimatePresence>
-      </div>
+      <HandZone
+        bar={
+          live.isHeroTurn ? (
+            <>
+              <BandNote>Your turn</BandNote>
+              <Button shape="pill" tone="primary" onClick={roll}>
+                Roll
+              </Button>
+            </>
+          ) : undefined
+        }
+        left={
+          seated ? (
+            <HeroStatusBadge label="You" detail={chips === 0 ? "out" : `${chips} chip${chips === 1 ? "" : "s"}`} />
+          ) : undefined
+        }
+      />
     </>
   );
 }

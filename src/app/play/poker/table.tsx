@@ -27,11 +27,13 @@ import { bestOfSeven, describeBest, HAND_CATEGORY_INFO, type HandCategory } from
 import type { PokerAction, PokerState } from "@/games/poker/types";
 import { TRANSITIONS } from "@/motion/presets";
 import { InfoSheet } from "@/ui/disclosure";
+import { Button } from "@/ui/primitives/Button";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { useMediaQuery } from "@/ui/useMediaQuery";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { RoundNote } from "@/table/GameHost";
 import type { GameSetting } from "@/table/gameSettings";
-import { HandZone } from "@/table/HandZone";
+import { BandNote, HandZone } from "@/table/HandZone";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import { useGeometry } from "@/table/store";
@@ -294,9 +296,9 @@ export function PokerControls({
   // is a perfectly ordinary index everywhere else.
   const seated = view.viewerSeat >= 0;
   const heroBadge = positionBadge(state, view.viewerSeat);
-  const toCall = amountToCall(state, view.viewerSeat);
   const stack = state.stacks[view.viewerSeat] ?? 0;
   const heroBet = state.streetCommitted[view.viewerSeat] ?? 0;
+  const betting = live.isHeroTurn && !state.pendingShowdown;
 
   return (
     <>
@@ -304,6 +306,7 @@ export function PokerControls({
 
       <HandZone
         bar={showdownPending ? <ShowMuckBar live={live} /> : undefined}
+        panel={betting ? <BettingPanel view={view} live={live} hand={hand} hints={hints} /> : undefined}
         left={
           // Nothing for a spectator. `SPECTATOR_SEAT` is -1, which is in
           // nobody's `stacks`, so this rendered a confident "You · $0" to
@@ -312,7 +315,6 @@ export function PokerControls({
           seated ? (
             <div className="flex items-center gap-1.5">
               <HeroStatusBadge
-                inline
                 label="You"
                 detail={`$${stack}${heroBet > 0 ? ` · bet $${heroBet}` : ""}`}
               />
@@ -321,18 +323,17 @@ export function PokerControls({
           ) : undefined
         }
         center={
-          live.isHeroTurn && !showdownPending ? (
-            <TurnIndicator inline show label={toCall > 0 ? `To call $${toCall}` : "Check or bet"} />
+          // On your turn the panel above says what the decision is, the
+          // amount to call included, so this says only whose turn it is —
+          // it used to say "To call $20" right under a panel that said it.
+          betting ? (
+            <TurnIndicator show label="Your turn" />
           ) : hand ? (
-            <HeroStatusBadge inline label="Your hand" detail={hand} />
+            <HeroStatusBadge label="Your hand" detail={hand} />
           ) : undefined
         }
         right={<HintsButton onOpen={() => setHintsOpen(true)} />}
       />
-
-      {live.isHeroTurn && !state.pendingShowdown ? (
-        <BettingPanel view={view} live={live} hand={hand} hints={hints} />
-      ) : null}
 
       <HandRankingsSheet view={view} open={hintsOpen} onClose={() => setHintsOpen(false)} state={state} />
     </>
@@ -420,14 +421,22 @@ function HintsButton({ onOpen }: { onOpen: () => void }) {
  * "fold/call/raise" under that rung, but the actual working convention
  * (Spades' `NumericBidPanel`, justified by POLICY's own "never put
  * reference info in a modal" rule) is that any decision needing your
- * own stack/hand visible stays non-modal. Sizing a bet needs both. Same
- * free-floating shape as `NumericBidPanel` — not `HandZone`'s `bar`
- * slot, which is sized for a single compact row and this needs more.
+ * own stack/hand visible stays non-modal. Sizing a bet needs both.
  *
- * Remounts fresh every time it's the hero's turn (the parent only
- * renders it while `live.isHeroTurn`), so the stepper's own local state
- * starting at the fresh legal minimum needs no effect to reset it —
- * the same reasoning `NumericBidPanel` relies on.
+ * The band's `panel`, so the table makes room for it — it used to float
+ * over the table on a `calc()` against the hand, over the flop the decision
+ * is about.
+ *
+ * Two shapes, because the band's height is taken from the table:
+ *
+ *  - a laptop gets ONE row: the four figures, the sizing and the choices;
+ *  - anything narrower folds it — one line of figures, one row of choices,
+ *    and the sizing only once Raise is tapped (the user's call,
+ *    2026-09-26). Stacked, it was ~275px on a phone, most of the table.
+ *
+ * Remounts fresh every time it's the hero's turn (the band only holds it
+ * while `live.isHeroTurn`), so the stepper starts at the fresh legal
+ * minimum and the sizing starts folded, with no effect to reset either.
  */
 function BettingPanel({
   view,
@@ -452,17 +461,29 @@ function BettingPanel({
   // The two numbers a player actually reasons with: what the bet IS, and
   // what they have already put in. The call amount is the difference, and
   // showing only the difference ("Call $50" after a raise to $100) read as
-  // "the bet is $50". Both used to be missing from the panel entirely.
+  // "the bet is $50".
   const currentBet = highestStreetCommitted(state);
   const myBet = state.streetCommitted[me] ?? 0;
   const totalBet = state.totalCommitted[me] ?? 0;
   const toCall = amountToCall(state, me);
+  const pot = potTotal(state);
   const range = canBet || canRaise ? betRange(state, me) : null;
   const [amount, setAmount] = useState(range?.min ?? 0);
   const allIn = range !== null && amount >= range.max;
 
+  const wide = useMediaQuery("(min-width: 1024px)");
+  const [sizing, setSizing] = useState(false);
+  const sizingShown = range !== null && (wide || sizing);
+
   const submit = (action: PokerAction) => live.submitAction(action);
   const verb = canBet ? "Bet" : "Raise to";
+  const raise = () => {
+    if (!sizingShown) {
+      setSizing(true);
+      return;
+    }
+    submit(canBet ? { t: "bet", to: amount } : { t: "raise", to: amount });
+  };
 
   // Every choice the same size and weight. Making the raise big and gold
   // and the rest small and grey was steering: the button you are shown
@@ -471,24 +492,14 @@ function BettingPanel({
     "flex flex-1 flex-col items-center justify-center rounded-xl bg-bone-50/8 px-2 py-2.5 text-sm font-bold text-bone-100 ring-1 ring-bone-50/18 hover:bg-brass-400/15 hover:text-brass-300";
 
   return (
-    <div
-      className="pointer-events-none absolute inset-x-0 z-1800 flex justify-center px-4"
-      style={{ bottom: "calc(var(--hand-zone, 150px) + 2px)" }}
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={TRANSITIONS.ui}
+      className="flex w-full max-w-md flex-col gap-2.5 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-3 shadow-e2 backdrop-blur-md lg:w-[min(64rem,96vw)] lg:max-w-none lg:flex-row lg:items-center lg:gap-3 lg:p-2.5"
     >
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={TRANSITIONS.ui}
-        // ONE row on anything wider than a tablet. Stacked, the panel was
-        // ~275px tall and grew up from the hand into the middle of the
-        // table: on a laptop it sat over the flop, hiding the very cards
-        // the decision is about. A 1366x650 window leaves only ~120px
-        // between the board and the hero's cards, so the bar has to fit in
-        // that, not merely be shorter. A phone keeps the stack — it has the
-        // height, and not the width.
-        className="pointer-events-auto flex w-[min(24rem,94vw)] flex-col gap-3 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-4 shadow-e2 backdrop-blur-md lg:w-[min(64rem,96vw)] lg:flex-row lg:items-center lg:gap-3 lg:p-2.5"
-      >
-        <dl className="grid grid-cols-4 gap-2 text-center lg:w-[25rem] lg:shrink-0">
+      {wide ? (
+        <dl className="grid w-100 shrink-0 grid-cols-4 gap-2 text-center">
           <BetFigure label="Current bet" value={currentBet > 0 ? `$${currentBet}` : "None"} strong />
           {/* This round only, which is the number a call is measured against —
               so the whole hand's worth, which already sits in the pot, is
@@ -501,90 +512,93 @@ function BettingPanel({
             sub={totalBet !== myBet ? `Total bet $${totalBet}` : undefined}
             strong
           />
-          <BetFigure label="Pot" value={`$${potTotal(state)}`} />
+          <BetFigure label="Pot" value={`$${pot}`} />
           <BetFigure label="Your hand" value={hand ?? "—"} wrap />
         </dl>
+      ) : (
+        // The four figures folded into one line. Your own bet is on the
+        // band's "You" badge right below, so it is not said twice.
+        <p className="tnum text-center text-[11px] font-semibold text-bone-300">
+          {toCall > 0 ? `To call $${toCall}` : "Nothing to call"}
+          <span className="text-bone-500"> · </span>
+          Pot ${pot}
+          {hand ? (
+            <>
+              <span className="text-bone-500"> · </span>
+              {hand}
+            </>
+          ) : null}
+        </p>
+      )}
 
-        {range ? (
-          <div className="flex flex-col items-center gap-2 lg:shrink-0 lg:flex-row">
-            {/* Dropped on the bar, where every pixel of height is table: the
-                button beside it already says "Raise to $X". */}
-            <span className="text-[11px] font-semibold tracking-wide text-bone-400 uppercase lg:hidden">
-              {verb}
-            </span>
-            <NumberStepper
-              value={amount}
-              min={range.min}
-              max={range.max}
-              step={state.bigBlind}
-              onChange={setAmount}
-              label="chips"
-              format={(v) => `$${v}`}
-              size="sm"
-            />
-            <div className="flex w-full gap-1.5 lg:w-auto lg:flex-col lg:gap-1">
-              {betPresets(potTotal(state), range).map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => setAmount(preset.to)}
-                  className="flex-1 rounded-full bg-bone-50/6 px-2.5 py-1.5 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 lg:py-0.5"
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
+      {sizingShown && range ? (
+        <div className="flex flex-col items-center gap-2 lg:shrink-0 lg:flex-row">
+          <NumberStepper
+            value={amount}
+            min={range.min}
+            max={range.max}
+            step={state.bigBlind}
+            onChange={setAmount}
+            label="chips"
+            format={(v) => `$${v}`}
+            size="sm"
+          />
+          <div className="flex w-full gap-1.5 lg:w-auto lg:flex-col lg:gap-1">
+            {betPresets(pot, range).map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => setAmount(preset.to)}
+                className="flex-1 rounded-full bg-bone-50/6 px-2.5 py-1.5 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 lg:py-0.5"
+              >
+                {preset.label}
+              </button>
+            ))}
           </div>
-        ) : null}
-
-        <div className="flex gap-2 lg:flex-1">
-          {canFold ? (
-            <button type="button" onClick={() => submit({ t: "fold" })} className={choice}>
-              <span>Fold</span>
-              {hints ? <ChoiceNote>give up this hand</ChoiceNote> : null}
-            </button>
-          ) : null}
-          {canCheck ? (
-            <button type="button" onClick={() => submit({ t: "check" })} className={choice}>
-              <span>Check</span>
-              {hints ? <ChoiceNote>pass — no bet</ChoiceNote> : null}
-            </button>
-          ) : null}
-          {canCall ? (
-            <button type="button" onClick={() => submit({ t: "call" })} className={choice}>
-              <span>Call ${toCall}</span>
-              {/* Only when it says something the amount does not: with
-                  nothing of yours in yet this round, the call IS the bet,
-                  and "Call $362 · matches $362" just repeats itself. Once
-                  you have chips in — a blind, or a bet somebody raised
-                  over — the two differ, and that is when it helps. */}
-              {myBet > 0 || hints ? (
-                <ChoiceNote>
-                  {myBet > 0 ? `matches $${currentBet}` : "match the bet"}
-                  {hints ? " to stay in" : ""}
-                </ChoiceNote>
-              ) : null}
-            </button>
-          ) : null}
-          {range ? (
-            <button
-              type="button"
-              onClick={() => submit(canBet ? { t: "bet", to: amount } : { t: "raise", to: amount })}
-              className={choice}
-            >
-              <span>
-                {verb} ${amount}
-              </span>
-              {allIn ? (
-                <span className="text-[10px] font-semibold text-warn">all in</span>
-              ) : hints ? (
-                <ChoiceNote>others must match it</ChoiceNote>
-              ) : null}
-            </button>
-          ) : null}
         </div>
-      </motion.div>
-    </div>
+      ) : null}
+
+      <div className="flex gap-2 lg:flex-1">
+        {canFold ? (
+          <button type="button" onClick={() => submit({ t: "fold" })} className={choice}>
+            <span>Fold</span>
+            {hints ? <ChoiceNote>give up this hand</ChoiceNote> : null}
+          </button>
+        ) : null}
+        {canCheck ? (
+          <button type="button" onClick={() => submit({ t: "check" })} className={choice}>
+            <span>Check</span>
+            {hints ? <ChoiceNote>pass — no bet</ChoiceNote> : null}
+          </button>
+        ) : null}
+        {canCall ? (
+          <button type="button" onClick={() => submit({ t: "call" })} className={choice}>
+            <span>Call ${toCall}</span>
+            {/* Only when it says something the amount does not: with
+                nothing of yours in yet this round, the call IS the bet,
+                and "Call $362 · matches $362" just repeats itself. Once
+                you have chips in — a blind, or a bet somebody raised
+                over — the two differ, and that is when it helps. */}
+            {myBet > 0 || hints ? (
+              <ChoiceNote>
+                {myBet > 0 ? `matches $${currentBet}` : "match the bet"}
+                {hints ? " to stay in" : ""}
+              </ChoiceNote>
+            ) : null}
+          </button>
+        ) : null}
+        {range ? (
+          <button type="button" onClick={raise} className={choice}>
+            <span>{sizingShown ? `${verb} $${amount}` : canBet ? "Bet…" : "Raise…"}</span>
+            {sizingShown && allIn ? (
+              <span className="text-[10px] font-semibold text-warn">all in</span>
+            ) : hints ? (
+              <ChoiceNote>{sizingShown ? "others must match it" : "choose how much"}</ChoiceNote>
+            ) : null}
+          </button>
+        ) : null}
+      </div>
+    </motion.div>
   );
 }
 
@@ -658,23 +672,13 @@ function useShowdownCountdown(live: Live, active: boolean) {
 function ShowMuckBar({ live }: { live: Live }) {
   return (
     <>
-      <span className="min-w-0 shrink truncate text-[10px] font-bold text-brass-300">
-        Show your hand?
-      </span>
-      <button
-        type="button"
-        onClick={() => live.submitAction({ t: "muck" })}
-        className="rounded-full bg-bone-50/8 px-4 py-2 text-xs font-bold text-bone-200 ring-1 ring-bone-50/18"
-      >
+      <BandNote>Show your hand?</BandNote>
+      <Button shape="pill" onClick={() => live.submitAction({ t: "muck" })}>
         Muck
-      </button>
-      <button
-        type="button"
-        onClick={() => live.submitAction({ t: "show" })}
-        className="rounded-full bg-linear-to-b from-brass-300 to-brass-500 px-4 py-2 text-xs font-extrabold text-felt-950 shadow-e2"
-      >
+      </Button>
+      <Button shape="pill" tone="primary" onClick={() => live.submitAction({ t: "show" })}>
         Show
-      </button>
+      </Button>
     </>
   );
 }

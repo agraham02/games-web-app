@@ -69,7 +69,8 @@ import {
 } from "@/games/rummy/state";
 import type { RummyAction, RummyState } from "@/games/rummy/types";
 import type { RoundNote } from "@/table/GameHost";
-import { HandZone, handHeaderHeight } from "@/table/HandZone";
+import { HandZone } from "@/table/HandZone";
+import { Button } from "@/ui/primitives/Button";
 import { PanSurface } from "@/table/PanSurface";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -622,12 +623,11 @@ export function RummyTable({
             // Somebody else's decision, and the table is parked on it —
             // without this the other players saw nothing happen at all.
             <HeroStatusBadge
-              inline
               label={view.nameFor(state.dealSizePending)}
               detail="choosing how many cards to deal"
             />
           ) : (
-            <TurnIndicator inline show={heroTurn} label={turnLabel(state, seat)} />
+            <TurnIndicator show={heroTurn} label={turnLabel(state, seat)} />
           )
         }
         right={<SortMenu mode={sortMode} onMode={setSortMode} />}
@@ -854,7 +854,6 @@ function HandStatus({ state, seat }: { state: RummyState; seat: SeatId }) {
   const board = contributedValue(state, seat);
   return (
     <HeroStatusBadge
-      inline
       label="You"
       detail={`${state.scores[seat] ?? 0} · +${board} / −${held}`}
     />
@@ -969,6 +968,10 @@ function SortMenu({ mode, onMode }: { mode: HandSort; onMode: (m: HandSort) => v
    The band above the hand — action mode
    ============================================================ */
 
+/**
+ * The shared `Button`, small, and allowed to give ground: a Rummy bar can
+ * hold three actions and a meld's name, and the name is what shrinks.
+ */
 function BarButton({
   children,
   onClick,
@@ -981,18 +984,17 @@ function BarButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      size="xs"
+      tone={tone === "primary" ? "primary" : "ghost"}
+      className="min-w-0 shrink"
       onClick={onClick}
       disabled={disabled}
-      className={`min-w-0 shrink truncate rounded-lg px-3 py-2 text-xs font-extrabold disabled:opacity-40 ${
-        tone === "primary"
-          ? "bg-linear-to-b from-brass-300 to-brass-500 text-felt-950 shadow-e2"
-          : "bg-bone-50/8 text-bone-200 ring-1 ring-bone-50/16"
-      }`}
     >
-      {children}
-    </button>
+      {/* Its own span: an ellipsis needs a block box, and the button is a
+          flex one. */}
+      <span className="truncate">{children}</span>
+    </Button>
   );
 }
 
@@ -1232,13 +1234,15 @@ function BoardSheet({
   if (!geometry) return null;
 
   const handH = geometry.zones.hand.h;
-  const headerH = handHeaderHeight(geometry.box.h);
+  // The band above the hand as the table GRANTED it (`TableGeometry.band`)
+  // — the surface reserves it now, so this page no longer asks for it.
+  const bandH = geometry.band.h;
   // BOTH numbers come from the identical set of reserved terms. If the
   // tallest snap failed to subtract a band that `offsetBottom` adds, the
   // rail would overshoot the far edge and take its own grab handle with
   // it — the "can't close it" bug. Applies to either edge: a side rail
   // still stops above the hand.
-  const offsetBottom = handH + headerH;
+  const offsetBottom = handH + bandH;
   // The RESTING extent is what geometry actually GRANTED, not what this
   // page asked for. A short phone cannot always give up the full band,
   // and assuming it did is how a rail ends up resting on top of the seat
@@ -1246,7 +1250,7 @@ function BoardSheet({
   const available = Math.max(48, geometry.box.h - offsetBottom - 12);
   const peek = Math.max(
     72,
-    Math.min(available, geometry.reserved.bottom - headerH || SHEET_PEEK_H),
+    Math.min(available, geometry.reserved.bottom || SHEET_PEEK_H),
   );
   // TWO stops only: resting and fully open. A middle stop earns its
   // place when the content is long enough that a half view is a

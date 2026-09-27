@@ -56,7 +56,7 @@ export default function LrcPlayPage() {
       onRematch={() => setGameKey((k) => k + 1)}
       onLobby={() => setStarted(false)}
     >
-      {(live) => <LrcControls live={live} />}
+      {(live) => <LrcControls view={OFFLINE_VIEW} live={live} />}
     </GameHost>
   );
 }

@@ -149,6 +149,23 @@ export interface TableGeometry {
    * sheet ends up resting on top of the seat pods on exactly one device.
    */
   reserved: { top: number; bottom: number };
+  /**
+   * The band directly above the hand that `HandZone` owns: the turn line,
+   * the viewer's own readouts, and whatever they are being asked to decide
+   * right now (a bid, a bet). As granted — see `ResolveOptions.bandZone`.
+   * Zero height where no band was asked for.
+   */
+  band: Box;
+  /**
+   * The scale a zone's pieces draw at where the zone had to shrink to fit
+   * the table — absent means full size. Pieces shrink; the region does not
+   * grow. Poker's centre (community, pot, stub, burn) and BS's reveal and
+   * pile are chains of full-size cards, and on a laptop or a landscape
+   * phone they used to run straight past the bottom of the ring, under the
+   * band's buttons. Each chain now draws at the largest scale that fits
+   * between the top seats' cards and the ring's bottom edge.
+   */
+  zoneScale: Partial<Record<ZoneName, number>>;
   /** Cards lying on the table. */
   card: PieceSize;
   /** Cards in the hero's hand — always the largest. */
@@ -171,6 +188,28 @@ export const CARD_ASPECT = 2.5 / 3.5;
  * out at all (see `isShortViewport`).
  */
 export const SHORT_VIEWPORT_H = 560;
+
+/**
+ * The band's own height when it holds one row (readouts, or a bar of
+ * actions), in px — the least `HandZone` ever takes.
+ *
+ * Deliberately not per-DENSITY: the surface needs it BEFORE `resolveTable`
+ * has run (it feeds `ResolveOptions.bandZone`, which is an input to the
+ * very geometry that would tell you the density), so a density-aware value
+ * would be circular.
+ *
+ * It does vary by viewport HEIGHT, which is not circular — the caller
+ * already knows that before asking for any geometry. On a short screen
+ * every vertical pixel is contested and 64px for one row of chips is more
+ * than the row needs; 44 still clears the tallest thing that goes in it (a
+ * pill button). See `SHORT_VIEWPORT_H`.
+ */
+export const HAND_HEADER_H = 64;
+export const HAND_HEADER_H_SHORT = 44;
+
+export function handHeaderHeight(viewportH: number): number {
+  return viewportH < SHORT_VIEWPORT_H ? HAND_HEADER_H_SHORT : HAND_HEADER_H;
+}
 
 export function resolveDensity(w: number, h: number): Density {
   // Width drives the tier, but a short landscape phone (e.g. 844x390)
@@ -338,6 +377,20 @@ const LINE_BREATHING = 6;
 const PILE_BREATHING = 16;
 
 /**
+ * The smallest a table card may be drawn to make a centre chain fit, in px
+ * of height. Below it the chain keeps this size and is allowed to overflow
+ * — a card nobody can read is worse than one sitting a little close.
+ */
+const LEGIBLE_CARD_H = 40;
+
+/** The largest scale ≤ 1 at which `need` px fits in `room`, never below legible. */
+function fitScale(room: number, need: number, cardH: number): number {
+  const floor = Math.min(1, LEGIBLE_CARD_H / cardH);
+  if (need <= 0) return 1;
+  return Math.max(floor, Math.min(1, room / need));
+}
+
+/**
  * Felt between the deck and the discard fan, as a fraction of card
  * width. Shared between `pileAssembly`, which lays the pair out, and
  * `pileRegion`'s own minimum width, which has to be wide enough to hold
@@ -471,6 +524,23 @@ export interface ResolveOptions {
    */
   bottomZone?: number;
   /**
+   * The band directly above the hand that `HandZone` owns, in px — its
+   * one row, or a decision that takes more (Spades' bid, Poker's betting),
+   * measured. Laid out BETWEEN the hand and `bottomZone`.
+   *
+   * Granted in full, unlike `topZone`/`bottomZone`, which scale down
+   * together when a viewport cannot afford them: the band holds controls,
+   * and a control squeezed below its own height is one nobody can press.
+   * The only limit is that the ring keeps the least it needs to exist.
+   *
+   * It used to reserve nothing. `HandZone` drew its row at a fixed height
+   * over the bottom of the ring, and every multi-row decision floated above
+   * it on a `calc()` against `--hand-zone`, over whatever the table had
+   * laid out there: Poker's betting over the flop, Spades' bid over the
+   * lowest pods. Default 0.
+   */
+  bandZone?: number;
+  /**
    * Where the pile assembly's CENTRE LINE sits within `pileRegion`, as a
    * 0..1 fraction (0 = flush top, 1 = flush bottom).
    *
@@ -556,7 +626,13 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // granted, so a game can size its own chrome to the answer instead of
   // assuming it got what it asked for.
   const ringNeed = podInset + spec.card.h * 1.1;
-  const reserveCap = Math.max(0, height - handZone - spec.ringPad * 2 - ringNeed);
+  // The band first, and whole (see `ResolveOptions.bandZone`); the two
+  // optional bands share what is left.
+  const bandZone = Math.min(
+    Math.max(0, opts.bandZone ?? 0),
+    Math.max(0, height - handZone - spec.ringPad * 2 - ringNeed),
+  );
+  const reserveCap = Math.max(0, height - handZone - bandZone - spec.ringPad * 2 - ringNeed);
   const wantTop = Math.max(0, opts.topZone ?? 0);
   const wantBottom = Math.max(0, opts.bottomZone ?? 0);
   const wanted = wantTop + wantBottom;
@@ -566,7 +642,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const ringLeft = spec.ringPad;
   const ringRight = width - spec.ringPad;
   const ringTop = spec.ringPad + topZone;
-  const ringBottom = height - handZone - bottomZone - spec.ringPad;
+  const ringBottom = height - handZone - bandZone - bottomZone - spec.ringPad;
   const ringW = Math.max(0, ringRight - ringLeft);
   const ringH = Math.max(0, ringBottom - ringTop);
 
@@ -668,21 +744,8 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // only arrangement in which the two cannot overlap — the same reason
   // poker's community/pot/stub/burnt are computed as one chain rather than
   // each from its own fraction of `cy` (see `engine/types.ts`'s `ZoneId`).
-  //
-  // The gap between them gives ground first on a viewport too short for
-  // both rows; past that the pair keeps its size and is clamped as far
-  // inside `play` as it will go, the same "being drawable beats being
-  // perfectly contained" trade every zone below `community` already makes.
-  const bsGapWanted = spec.card.h * 0.3;
-  const bsGap = Math.max(0, Math.min(bsGapWanted, play.h - spec.card.h * 2));
-  const bsPairH = spec.card.h * 2 + bsGap;
-  const bsTop = Math.max(play.y, Math.min(cy - bsPairH / 2, play.y + play.h - bsPairH));
-  // Four cards is as many as one rank can hold, so a reveal never needs a
-  // fifth slot. They deliberately do not overlap — the whole point of the
-  // row is that all of them are legible at once — so it wants its full
-  // width, clamped to the play area for a narrow phone.
-  const bsRevealGap = spec.card.w * 0.16;
-  const bsRevealW = Math.min(play.w * 0.94, spec.card.w * 4 + bsRevealGap * 3);
+  // Laid out below, once `pileRegion`'s clearances are known: the pair has
+  // to fit between the top seats' cards and the ring's bottom edge.
 
   const pileGap = spec.card.w * 0.45;
   const deckX = cx - spec.card.w / 2 - pileGap;
@@ -814,19 +877,50 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     h: floorH,
   };
 
+  // The centre's vertical budget: from below the top seats' fanned cards
+  // (`rawPile`'s top) to a breath above the ring's bottom edge, below
+  // which is the band. Every centre chain fits in this by SHRINKING
+  // (`zoneScale`), because the region cannot grow — past its bottom is
+  // the viewer's own controls.
+  const centreTop = rawPile.y;
+  const centreBottom = rawPile.y + rawPile.h;
+  const centreH = Math.max(0, rawPile.h);
+
+  // BS: the reveal row directly above the one face-down pile, laid out as
+  // a PAIR centred on `cy` — the only arrangement in which the two cannot
+  // overlap. The gap between them gives ground first; past that, both
+  // cards shrink together.
+  const bsScale = fitScale(centreH, spec.card.h * 2, spec.card.h);
+  const bsCardW = spec.card.w * bsScale;
+  const bsCardH = spec.card.h * bsScale;
+  const bsGap = Math.max(0, Math.min(bsCardH * 0.3, centreH - bsCardH * 2));
+  const bsPairH = bsCardH * 2 + bsGap;
+  const bsTop = Math.max(centreTop, Math.min(cy - bsPairH / 2, centreBottom - bsPairH));
+  // Four cards is as many as one rank can hold, so a reveal never needs a
+  // fifth slot. They deliberately do not overlap — the whole point of the
+  // row is that all of them are legible at once — so it wants its full
+  // width, clamped to the play area for a narrow phone.
+  const bsRevealGap = bsCardW * 0.16;
+  const bsRevealW = Math.min(play.w * 0.94, bsCardW * 4 + bsRevealGap * 3);
+
+  // Poker's chain — community, pot, stub + burn — at the largest scale
+  // whose SHORTEST form (every part at its floor) fits the budget.
+  const pokerNeed = spec.card.h + spec.miniCard.h * 1.2 + spec.miniCard.w;
+  const ps = fitScale(centreH, pokerNeed, spec.card.h);
+
   // Community: a fixed row of 5 slots — poker's flop/turn/river. Unlike
   // `trick`'s fanned cluster, these never overlap, so the row wants its
   // full 5-card width; clamped to the play area so it still fits on a
   // narrow phone (layout.ts's own scale math shrinks the cards to match
   // if this clamp ever engages). Sits ABOVE centre, deliberately, leaving
   // room below for the `pot` zone computed right after it.
-  const communityGap = spec.card.w * 0.15;
+  const communityGap = spec.card.w * 0.15 * ps;
   // Bounded by `pileRegion`, not `play`, in both directions: `play` clears
   // the pods but not the cards fanned out of them, so on a laptop the row
   // sat inside the top seats' hole cards, and on a phone its ends reached
   // the side seats'. The layout shrinks the cards to a narrower box.
-  const communityW = Math.min(pileRegion.w, spec.card.w * 5 + communityGap * 4);
-  const communityH = spec.card.h;
+  const communityW = Math.min(pileRegion.w, spec.card.w * 5 * ps + communityGap * 4);
+  const communityH = spec.card.h * ps;
   // The desired gap between the row's own centre-line and `cy`, clamped
   // so it can never push the row above `play.y` — on a short landscape
   // phone `play.h` can be thin enough that the "ideal" offset would put
@@ -834,10 +928,15 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // giving ground on the tightest viewport rather than asserting the
   // impossible.
   const communityOffset = Math.min(
-    spec.card.h * 0.65,
+    spec.card.h * 0.65 * ps,
     Math.max(0, play.h / 2 - communityH / 2),
   );
-  const communityTop = Math.max(pileRegion.y, cy - communityOffset - communityH / 2);
+  // Raised, if need be, so the whole chain's shortest form ends above the
+  // budget's bottom — and never above its top.
+  const communityTop = Math.max(
+    centreTop,
+    Math.min(cy - communityOffset - communityH / 2, centreBottom - pokerNeed * ps),
+  );
   const communityBottom = communityTop + communityH;
 
   // Pot: box for the pot-total badge, sized off `miniCard` (see
@@ -853,16 +952,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // height, the BOX shrinks to what's actually there rather than
   // reaching down past `play`'s own bottom edge, the same "give ground
   // on the tightest viewport" trade `pileRegion` already makes.
-  const potGap = spec.miniCard.h * 0.3;
+  const potGap = spec.miniCard.h * 0.3 * ps;
   const potRows = 3;
-  const potHWanted = spec.miniCard.w * (1 + 0.85 * (potRows - 1));
-  const potRoom = Math.max(0, play.y + play.h - (communityBottom + potGap));
+  const potHWanted = spec.miniCard.w * ps * (1 + 0.85 * (potRows - 1));
+  // The stub's own floor is kept back for it: the pot used to take every
+  // pixel down to the ring, and the stub then had to hang below it.
+  const stubGap = spec.miniCard.h * 0.3 * ps;
+  const stubMin = spec.miniCard.h * 0.6 * ps;
+  const potRoom = Math.max(0, centreBottom - (communityBottom + potGap) - stubGap - stubMin);
   // At least one row tall even on the rare viewport where `potRoom`
   // undershoots that — same "being drawable beats being perfectly
-  // contained" trade `pileRegion`'s own floor makes — but never more
-  // than what community + gap actually left below it.
-  const potH = Math.max(spec.miniCard.w, Math.min(potHWanted, potRoom));
-  const potW = Math.max(spec.miniCard.w, Math.min(play.w * 0.9, spec.miniCard.w * 5));
+  // contained" trade `pileRegion`'s own floor makes.
+  const potH = Math.max(spec.miniCard.w * ps, Math.min(potHWanted, potRoom));
+  const potW = Math.max(spec.miniCard.w * ps, Math.min(play.w * 0.9, spec.miniCard.w * 5 * ps));
   const potY = communityBottom + potGap;
 
   // Stub + burnt: poker's own low-emphasis face-down piles — the
@@ -876,13 +978,12 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // reaches back up into `pot`) on a viewport too short to fit its
   // wanted size, the same floor-then-shrink trade every zone below
   // `community` already makes.
-  const stubGap = spec.miniCard.h * 0.3;
-  const stubHWanted = spec.miniCard.h * 1.3;
-  const stubRoom = Math.max(0, play.y + play.h - (potY + potH + stubGap));
-  const stubH = Math.max(spec.miniCard.h * 0.6, Math.min(stubHWanted, stubRoom));
+  const stubHWanted = spec.miniCard.h * 1.3 * ps;
+  const stubRoom = Math.max(0, centreBottom - (potY + potH + stubGap));
+  const stubH = Math.max(stubMin, Math.min(stubHWanted, stubRoom));
   const stubY = potY + potH + stubGap;
-  const stubCardW = spec.miniCard.w * 1.3;
-  const stubPairGap = spec.miniCard.w * 0.3;
+  const stubCardW = spec.miniCard.w * 1.3 * ps;
+  const stubPairGap = spec.miniCard.w * 0.3 * ps;
 
   // Centred on `pileRegion` rather than on `play`, and never larger than
   // it. `play` clears the top pod but not the cards fanned below it, so a
@@ -918,12 +1019,12 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     stub: { x: cx - stubPairGap / 2 - stubCardW, y: stubY, w: stubCardW, h: stubH },
     burnt: { x: cx + stubPairGap / 2, y: stubY, w: stubCardW, h: stubH },
     pile: {
-      x: cx - spec.card.w / 2,
-      y: bsTop + spec.card.h + bsGap,
-      w: spec.card.w,
-      h: spec.card.h,
+      x: cx - bsCardW / 2,
+      y: bsTop + bsCardH + bsGap,
+      w: bsCardW,
+      h: bsCardH,
     },
-    reveal: { x: cx - bsRevealW / 2, y: bsTop, w: bsRevealW, h: spec.card.h },
+    reveal: { x: cx - bsRevealW / 2, y: bsTop, w: bsRevealW, h: bsCardH },
   };
 
   // The line the pile assembly is centred on.
@@ -965,6 +1066,15 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     pileRegion,
     pileAxis,
     reserved: { top: topZone, bottom: bottomZone },
+    band: { x: hand.x, y: hand.y - bandZone, w: hand.w, h: bandZone },
+    zoneScale: {
+      community: ps,
+      pot: ps,
+      stub: ps,
+      burnt: ps,
+      pile: bsScale,
+      reveal: bsScale,
+    },
     card: spec.card,
     handCard: spec.handCard,
     miniCard: spec.miniCard,
