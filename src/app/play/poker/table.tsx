@@ -18,6 +18,7 @@ import { isHiddenCard, legalActions } from "@/games/poker/rules";
 import {
   amountToCall,
   betRange,
+  deriveStreet,
   highestStreetCommitted,
   positionBadge,
   potTotal,
@@ -300,7 +301,7 @@ export function PokerControls({
 
   return (
     <>
-      <PotBadge state={state} />
+      <PotBadge state={state} hints={hints} />
 
       <HandZone
         bar={showdownPending ? <ShowMuckBar live={live} /> : undefined}
@@ -350,24 +351,60 @@ export function PokerControls({
  * `placements()`/`PieceLayer` — geometry.ts still anchors that box below
  * `community` with a real gap, so the two can't overlap by construction
  * regardless of viewport.
+ *
+ * Beside it, which betting round the hand is in (the user's ask,
+ * 2026-09-28). Where the pot box is too narrow for both — a landscape
+ * phone's one-row chain gives it 104px — the round wraps onto its own line
+ * above the pot rather than pushing into the cards either side.
  */
-function PotBadge({ state }: { state: PokerState }) {
+function PotBadge({ state, hints }: { state: PokerState; hints: boolean }) {
   const geometry = useGeometry();
   const pot = potTotal(state);
   const box = geometry?.zones.pot;
   if (!box || pot <= 0) return null;
+  const round = bettingRound(state);
 
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute z-1200 flex items-center justify-center"
+      className="pointer-events-none absolute z-1200 flex flex-wrap items-center justify-center gap-1.5"
       style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
     >
-      <span className="rounded-full bg-felt-950/80 px-3 py-1.5 text-xs font-extrabold tnum text-brass-300 ring-1 ring-brass-400/30 shadow-e1">
+      <span className="rounded-full bg-felt-950/80 px-3 py-1.5 text-xs font-extrabold whitespace-nowrap text-bone-200 ring-1 ring-bone-50/15 shadow-e1">
+        {round.name}
+        {/* A newcomer does not know which card the turn is, and "Turn" alone
+            sits a few inches from "Your turn". Said with Hints on only. */}
+        {hints && round.detail ? (
+          <span className="font-semibold text-bone-400"> · {round.detail}</span>
+        ) : null}
+      </span>
+      <span className="rounded-full bg-felt-950/80 px-3 py-1.5 text-xs font-extrabold whitespace-nowrap tnum text-brass-300 ring-1 ring-brass-400/30 shadow-e1">
         Pot ${pot}
       </span>
     </div>
   );
+}
+
+/**
+ * The betting round the hand is in, named as players name it. The four
+ * rounds follow the shared cards (`deriveStreet`); a showdown is the hand's
+ * last phase, once betting is over and hands are compared.
+ */
+export function bettingRound(state: PokerState): { name: string; detail?: string } {
+  if (state.pendingShowdown || state.result?.showdown) return { name: "Showdown" };
+  // Details kept to a few characters: on a landscape phone the pot box is
+  // 104px, between the flop and the stub, and the chip must stay inside the
+  // gaps either side of it.
+  switch (deriveStreet(state)) {
+    case "preflop":
+      return { name: "Pre-flop" };
+    case "flop":
+      return { name: "Flop", detail: "3 cards" };
+    case "turn":
+      return { name: "Turn", detail: "4th card" };
+    case "river":
+      return { name: "River", detail: "5th card" };
+  }
 }
 
 /**
@@ -438,6 +475,22 @@ function HintsButton({ onOpen }: { onOpen: () => void }) {
  * while `live.isHeroTurn`), so the stepper starts at the fresh legal
  * minimum and the sizing starts folded, with no effect to reset either.
  */
+/**
+ * How much room the betting panel needs above the band's row, reserved on
+ * the table ALWAYS (`TableSurfaceProps.panelReserve`). A once-a-round panel
+ * (Spades' bid) is drawn over the felt instead, but this one opens on every
+ * one of the viewer's turns: drawn over the felt, it covered the flop it is
+ * asking about on a landscape phone. Reserved whether or not it is open, the
+ * table never moves when it does. Measured in Chrome, in the panel's three
+ * shapes (see `BettingPanel`): a laptop's row, a landscape phone's row, and
+ * the folded panel on a phone held upright.
+ */
+export function usePokerPanelReserve(): number {
+  const wide = useMediaQuery("(min-width: 1024px)");
+  const shortWide = useMediaQuery("(max-height: 559px) and (min-width: 640px)");
+  return wide ? 104 : shortWide ? 84 : 114;
+}
+
 function BettingPanel({
   view,
   live,
@@ -472,6 +525,12 @@ function BettingPanel({
   const allIn = range !== null && amount >= range.max;
 
   const wide = useMediaQuery("(min-width: 1024px)");
+  // A landscape phone is wide enough for the laptop's one row and far too
+  // short for the phone's folded two: stacked, the panel and the band took
+  // half of a 390px-tall screen and left the table 68px. It gets the row,
+  // with the phone's one-line figures and its folded sizing.
+  const shortWide = useMediaQuery("(max-height: 559px) and (min-width: 640px)");
+  const row = wide || shortWide;
   const [sizing, setSizing] = useState(false);
   const sizingShown = range !== null && (wide || sizing);
 
@@ -496,7 +555,11 @@ function BettingPanel({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={TRANSITIONS.ui}
-      className="flex w-full max-w-md flex-col gap-2.5 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-3 shadow-e2 backdrop-blur-md lg:w-[min(64rem,96vw)] lg:max-w-none lg:flex-row lg:items-center lg:gap-3 lg:p-2.5"
+      className={
+        row
+          ? "flex w-[min(64rem,96vw)] flex-row items-center gap-3 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-2.5 shadow-e2 backdrop-blur-md"
+          : "flex w-full max-w-md flex-col gap-2.5 rounded-2xl border border-brass-400/25 bg-linear-to-b from-felt-800/95 to-felt-900/95 p-3 shadow-e2 backdrop-blur-md"
+      }
     >
       {wide ? (
         <dl className="grid w-100 shrink-0 grid-cols-4 gap-2 text-center">
@@ -518,7 +581,13 @@ function BettingPanel({
       ) : (
         // The four figures folded into one line. Your own bet is on the
         // band's "You" badge right below, so it is not said twice.
-        <p className="tnum text-center text-[11px] font-semibold text-bone-300">
+        <p
+          className={
+            row
+              ? "tnum shrink-0 text-left text-[11px] font-semibold text-bone-300"
+              : "tnum text-center text-[11px] font-semibold text-bone-300"
+          }
+        >
           {toCall > 0 ? `To call $${toCall}` : "Nothing to call"}
           <span className="text-bone-500"> · </span>
           Pot ${pot}
@@ -532,24 +601,34 @@ function BettingPanel({
       )}
 
       {sizingShown && range ? (
-        <div className="flex flex-col items-center gap-2 lg:shrink-0 lg:flex-row">
+        <div className={row ? "flex shrink-0 flex-row items-center gap-2" : "flex flex-col items-center gap-2"}>
           <NumberStepper
             value={amount}
             min={range.min}
             max={range.max}
+            // The buttons move by the big blind and land on its multiples
+            // ($154 → $160 → $180); any other amount is typed. The rules
+            // take any whole dollar from the minimum raise up — stepping
+            // $20 at a time was the stepper, never the game.
             step={state.bigBlind}
+            snap
+            editable
             onChange={setAmount}
             label="chips"
             format={(v) => `$${v}`}
             size="sm"
           />
-          <div className="flex w-full gap-1.5 lg:w-auto lg:flex-col lg:gap-1">
+          <div className={row ? "flex w-auto flex-col gap-1" : "flex w-full gap-1.5"}>
             {betPresets(pot, range).map((preset) => (
               <button
                 key={preset.label}
                 type="button"
                 onClick={() => setAmount(preset.to)}
-                className="flex-1 rounded-full bg-bone-50/6 px-2.5 py-1.5 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 lg:py-0.5"
+                className={
+                  row
+                    ? "flex-1 rounded-full bg-bone-50/6 px-2.5 py-0.5 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300"
+                    : "flex-1 rounded-full bg-bone-50/6 px-2.5 py-1.5 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300"
+                }
               >
                 {preset.label}
               </button>
@@ -558,7 +637,7 @@ function BettingPanel({
         </div>
       ) : null}
 
-      <div className="flex gap-2 lg:flex-1">
+      <div className={row ? "flex flex-1 gap-2" : "flex gap-2"}>
         {canFold ? (
           <button type="button" onClick={() => submit({ t: "fold" })} className={choice}>
             <span>Fold</span>

@@ -82,6 +82,7 @@ import {
   isShortViewport,
   pileAssembly,
   pileAssemblyHorizontal,
+  pileCard,
 } from "@/table/geometry";
 import {
   useGeometry,
@@ -383,6 +384,20 @@ export function rummyScenarios(live: Live) {
         };
       }),
     },
+    {
+      label: "Deep discard pile",
+      run: build((state) => {
+        // Twenty off the stock onto the pile, keeping one to draw: deep
+        // enough to pan on any screen, so the pile's snap to its newest
+        // card can be watched without playing a dozen turns first.
+        const moved = state.stock.slice(0, Math.min(20, state.stock.length - 1));
+        return {
+          ...state,
+          stock: state.stock.slice(moved.length),
+          discard: [...state.discard, ...moved],
+        };
+      }),
+    },
   ];
 }
 
@@ -617,6 +632,10 @@ export function RummyTable({
     <>
       <HandZone
         bar={bar}
+        // Before the deal nobody holds a card, so the dealer's "cards each"
+        // choice (and everybody else's "choosing…") centres in the whole
+        // player section instead of sitting on top of an empty hand strip.
+        overHand={state.dealSizePending !== null}
         left={<HandStatus state={state} seat={seat} />}
         center={
           !heroTurn && state.dealSizePending !== null ? (
@@ -810,10 +829,26 @@ function PanSurfaces({ state, seat }: { state: RummyState; seat: SeatId }) {
   const handScroll = useTableStore((s) => s.handScroll);
   const setDiscardScroll = useSetDiscardScroll();
   const setHandScroll = useSetHandScroll();
+  // The pile as the pieces show it, not as `state` has it: the store's
+  // count moves with each card as it lands, and the range below must agree
+  // with the fan being drawn, or the snap is clamped to a stale range.
+  const pileCount = useTableStore((s) => s.discardCount);
+
+  // Whenever a card joins or leaves the pile, show its newest end. The fan
+  // used to stay wherever it had been dragged, so after every discard and
+  // every pickup the player had to drag it back to see the top card
+  // (reported 2026-09-28). `+range/2` is the oldest end, `-range/2` the
+  // newest (see `fanPanRange`). Written as `0 - x` so an unscrollable pile
+  // stores +0 rather than -0 and does not look like a change.
+  const wired = discardScroll !== null;
+  const newestEnd = geometry ? 0 - discardMaxScroll(geometry, pileCount) / 2 : 0;
+  useEffect(() => {
+    if (wired) setDiscardScroll(newestEnd);
+  }, [wired, newestEnd, setDiscardScroll]);
 
   if (!geometry || discardScroll === null || handScroll === null) return null;
 
-  const assembly = pileAssembly(geometry, state.discard.length);
+  const assembly = pileAssembly(geometry, pileCount);
   const handCount = (state.hands[seat] ?? []).length;
 
   return (
@@ -821,7 +856,7 @@ function PanSurfaces({ state, seat }: { state: RummyState; seat: SeatId }) {
       <PanSurface
         within={assembly.fan}
         axis={isPortraitTable(geometry.pileRegion) ? "y" : "x"}
-        range={discardMaxScroll(geometry, state.discard.length)}
+        range={discardMaxScroll(geometry, pileCount)}
         value={discardScroll}
         onChange={setDiscardScroll}
       />
@@ -890,12 +925,14 @@ function StockBadge({ state }: { state: RummyState }) {
     geometry,
     discardPan ? state.discard.length : 0,
   );
-  const width = geometry.card.w * 2;
+  // The deck is drawn with the pile's fitted card, not the table card.
+  const card = pileCard(geometry);
+  const width = card.w * 2;
 
   return (
     <div
       className="pointer-events-none absolute z-1200 text-center"
-      style={{ left: deckX - width / 2, top: deckY - geometry.card.h / 2 - 24, width }}
+      style={{ left: deckX - width / 2, top: deckY - card.h / 2 - 24, width }}
     >
       <span className="rounded-full bg-felt-950/80 px-2 py-1 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/12">
         {state.stock.length > 0 ? `${state.stock.length} in stock` : "stock empty"}

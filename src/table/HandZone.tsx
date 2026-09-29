@@ -28,12 +28,12 @@
  *  - **panel** — a decision that needs more than a row (Spades' bid,
  *    Poker's betting), stacked above the row or bar.
  *
- * The band is MEASURED and the table reserves what it measures
- * (`ResolveOptions.bandZone`), so the centre lays out in what the band
- * leaves. Decisions used to float over the table on a `calc()` against
- * `--hand-zone`, over whatever was laid out there: the betting panel over
- * the flop, the bid over the lowest pods. It cannot loop — the band's
- * width comes from the hand, which the reserved height does not move.
+ * The table reserves the band's ONE ROW (`ResolveOptions.bandZone`), so
+ * nothing on the table is laid out under the turn line and the readouts. A
+ * `panel` is not reserved: it is a temporary decision, and reserving it
+ * re-laid the table out every time one opened — side seats jumping up for a
+ * bid panel that never went near them. It is drawn over the felt while it is
+ * open instead (the user's call, 2026-09-28).
  *
  * THREE EQUAL COLUMNS, and the "equal" is load-bearing. A `flex-1`
  * centre item centres itself within the space LEFT OVER after its
@@ -54,9 +54,8 @@
  * real runtime geometry, which moves per viewport and density.
  */
 
-import { useCallback } from "react";
 import { handHeaderHeight } from "./geometry";
-import { useGeometry, useTableStore } from "./store";
+import { useGeometry } from "./store";
 
 // Re-exported: callers reserved the band by hand before the surface did.
 export { HAND_HEADER_H, HAND_HEADER_H_SHORT, handHeaderHeight } from "./geometry";
@@ -75,10 +74,17 @@ export interface HandZoneProps {
    */
   bar?: React.ReactNode;
   /**
-   * A decision bigger than a row, above the row or bar. The band grows to
-   * hold it and the table makes room (see the file's doc).
+   * A decision bigger than a row, above the row or bar — drawn over the
+   * felt while it is open, never reserved (see the file's doc).
    */
   panel?: React.ReactNode;
+  /**
+   * The viewer holds no cards yet (a deal-size choice before the deal), so
+   * the band may use the empty hand strip too: its content is centred in
+   * the viewer's whole section — band and hand — rather than sitting on top
+   * of a strip with nothing in it.
+   */
+  overHand?: boolean;
 }
 
 /**
@@ -93,28 +99,8 @@ export function BandNote({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function HandZone({ left, center, right, bar, panel }: HandZoneProps) {
+export function HandZone({ left, center, right, bar, panel, overHand = false }: HandZoneProps) {
   const geometry = useGeometry();
-  const setBandHeight = useTableStore((s) => s.setBandHeight);
-
-  // A callback ref, because the band first mounts only once geometry
-  // exists. `offsetHeight` rather than a bounding box: an entering panel's
-  // own transform must not be reserved as table.
-  const measure = useCallback(
-    (el: HTMLDivElement | null) => {
-      if (!el) return;
-      const report = () => setBandHeight(el.offsetHeight);
-      report();
-      const observer = new ResizeObserver(report);
-      observer.observe(el);
-      return () => {
-        observer.disconnect();
-        setBandHeight(0);
-      };
-    },
-    [setBandHeight],
-  );
-
   if (!geometry) return null;
 
   const hand = geometry.zones.hand;
@@ -122,12 +108,21 @@ export function HandZone({ left, center, right, bar, panel }: HandZoneProps) {
 
   return (
     <div
-      ref={measure}
       // `pointer-events-none` on the shell so the felt and the cards
       // underneath stay reachable through the band's empty parts; each
-      // cell turns them back on for its own content.
-      className="pointer-events-none absolute z-1700 flex flex-col items-center justify-end"
-      style={{ left: hand.x, width: hand.w, bottom: geometry.box.h - hand.y, minHeight: rowH }}
+      // cell turns them back on for its own content. Whole class strings
+      // for the two modes — Tailwind reads source statically.
+      className={
+        overHand
+          ? "pointer-events-none absolute z-1700 flex flex-col items-center justify-center"
+          : "pointer-events-none absolute z-1700 flex flex-col items-center justify-end"
+      }
+      style={{
+        left: hand.x,
+        width: hand.w,
+        bottom: geometry.box.h - (overHand ? hand.y + hand.h : hand.y),
+        minHeight: overHand ? rowH + hand.h : rowH,
+      }}
     >
       {/* The panel takes the hand's whole width, not the row's cap: a
           decision laid out as one row on a laptop (Poker's) needs more. */}

@@ -64,6 +64,8 @@ export interface GameHostProps<S, A> {
   topZone?: number;
   bottomZone?: number;
   pileAnchor?: number;
+  /** See `TableSurfaceProps.panelReserve`. Poker only. */
+  panelReserve?: number;
   /** Dev-only one-shot rigs, handed the live runtime so a game can build
    *  a state that is otherwise only reachable by waiting for it. */
   scenarios?: (live: GameRuntime<S, A>) => ReadonlyArray<{ label: string; run: () => void }>;
@@ -152,6 +154,14 @@ export interface GameHostProps<S, A> {
    */
   handActive?: (live: GameRuntime<S, A>) => boolean;
   /**
+   * The seat the "…is thinking" line names. Defaults to `live.currentSeat`,
+   * the seat the table's pacing waits on — which is the seat whose turn it
+   * is everywhere but in BS's challenge window, where it walks the answer
+   * queue one bot at a time. BS names the player whose play is under
+   * challenge instead, the same seat its pods keep lit.
+   */
+  turnSeat?: (state: S, live: GameRuntime<S, A>) => SeatId | null;
+  /**
    * When somebody ELSE deals the next round, what to say instead of the
    * button — a room's non-leaders get "Waiting for Ada to continue". Absent
    * offline, where the only person at the table always continues.
@@ -210,6 +220,7 @@ export function GameHostView<S, A>({
   handZone,
   topZone,
   bottomZone,
+  panelReserve,
   pileAnchor,
   scenarios,
   gameTitle,
@@ -226,6 +237,7 @@ export function GameHostView<S, A>({
   menuActions,
   corner,
   handActive,
+  turnSeat,
   continueWaiting,
   roundNoun = "Round",
   children,
@@ -292,16 +304,19 @@ export function GameHostView<S, A>({
   // never on turn). It names who and never what they could do. A turn
   // being played out right now is a bot's think beat; one the table is
   // merely parked on is a person who has not moved yet.
+  const onTurn = turnSeat ? turnSeat(live.state, live) : live.currentSeat;
   const waitingOn =
-    live.currentSeat !== null && live.currentSeat !== (viewerSeat === undefined ? HERO : viewerSeat)
-      ? seatViews.find((v) => v.seat === live.currentSeat)
+    onTurn !== null && onTurn !== (viewerSeat === undefined ? HERO : viewerSeat)
+      ? seatViews.find((v) => v.seat === onTurn)
       : undefined;
   // Offline every other seat is a bot, so it is thinking from the moment
   // its turn opens; reading the think beat there flickered "Waiting for
   // Mia" before every bot move. Online the beat is what tells a bot (which
-  // has one) from a person (who does not).
+  // has one) from a person (who does not). A seat named by `turnSeat` that
+  // the pacing is NOT waiting on has already moved, so "Waiting for" would
+  // be false of it; its turn is simply still the one on show.
   const turnLine = waitingOn
-    ? waitingOn.thinking || !serverDriven
+    ? waitingOn.thinking || !serverDriven || onTurn !== live.currentSeat
       ? `${waitingOn.name} is thinking…`
       : `Waiting for ${waitingOn.name}`
     : null;
@@ -321,6 +336,11 @@ export function GameHostView<S, A>({
     [definition],
   );
 
+  // A card is read from its corner, so on a short screen a card hand may run
+  // off the bottom edge and give the board what it saves; a domino needs
+  // both halves, so a tile game keeps its whole hand (see `handBleed`).
+  const handBleed = !Object.values(pieceVocabulary).some((m) => m.kind === "tile");
+
   const pendingSeat = live.pendingReveal ? definition.currentSeat(live.state) : null;
   // Built only while it is actually showing: a game's scorecard reads
   // `state.result`, which is null for most of a round.
@@ -333,8 +353,10 @@ export function GameHostView<S, A>({
       handZone={handZone}
       topZone={topZone}
       bottomZone={bottomZone}
+      panelReserve={panelReserve}
       pileAnchor={pileAnchor}
       viewerSeat={viewerSeat}
+      handBleed={handBleed}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
@@ -345,7 +367,7 @@ export function GameHostView<S, A>({
           viewerSeat !== null && (winningSeats?.includes(viewerSeat ?? HERO) ?? false)
         }
       />
-      <GameToaster bottom={geometry ? toastLane(geometry) : undefined} />
+      <GameToaster top={geometry ? toastLane(geometry) : undefined} />
 
       {/* Was already a finished component (see /lab/phases) but nothing
           actually rendered it on a real table — `dealingRound` is

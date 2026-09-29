@@ -20,9 +20,12 @@ import {
   fanSlot,
   pileAssembly,
   pileAssemblyHorizontal,
+  pileCard,
+  potChip,
   radialFanSlot,
   slotForSeat,
   tileShortSide,
+  HAND_LIFT_ROOM,
   MAX_DISCARD_STEP_FRACTION,
   MIN_HAND_GAP_FRACTION,
   POD_SIZE,
@@ -30,6 +33,7 @@ import {
   type BoardView,
   type Box,
   type PieceSize,
+  type SeatSlot,
   type TableGeometry,
   type ZoneName,
 } from "./geometry";
@@ -79,10 +83,362 @@ const Z: Record<string, number> = {
 };
 const Z_HERO_HAND = 1000;
 const Z_SELECTED = 5000;
+/**
+ * A tucked hand draws BEHIND its pod (SeatRing is z-800 and the piece layer
+ * makes no stacking context of its own, so the two compete directly), and a
+ * face-down won pile behind that. A shown hand — face up, at a showdown —
+ * draws over the pod, where it can be read.
+ */
+const Z_TUCKED = 700;
+const Z_TUCKED_WON = 600;
+const Z_SHOWN = 960;
 
-/** The base box every piece is rendered at, before scaling. */
+/**
+ * Where chip `index` of a `count`-chip pile sits on the felt beside its pod —
+ * every seat's pile but a rim side seat's (`rimPileSpot`), the viewer's own
+ * included.
+ */
+function groundPileSpot(g: TableGeometry, seat: SeatSlot, index: number, count: number) {
+  // A real grid, not a stack: a 0.6px-per-card offset (the old
+  // value) is imperceptible on a ~30px chip, so two or three chips
+  // rendered as one indistinguishable blob — exactly the "why does
+  // it look like I only have one chip" bug this replaces. Fanning
+  // outward from the pod in rows of 3 keeps the count legible at a
+  // glance, which is the entire point of a chip pile in LRC.
+  const { cx: pcx, cy: pcy } = boxCentre(g.zones.play);
+  // Where seats are a rim (phones), toward the board from the pod's own
+  // EDGE (see `rimVectors`): two seats stack high down a side there, and
+  // the line from the upper one to the board's centre runs straight down
+  // through the pod below it — LRC dealt Sam's chips onto Mia's avatar.
+  const rim = g.tuck ? rimVectors(seat.anchor).inward : null;
+  const dx = rim ? -rim.x : seat.x - pcx;
+  const dy = rim ? -rim.y : seat.y - pcy;
+  const len = Math.hypot(dx, dy) || 1;
+  // Every seat's pile points TOWARD table centre, never away from
+  // it. An earlier version sent opponent piles outward, past the
+  // pod, toward the nearest screen edge — reasoning that the space
+  // out there was "empty." It isn't safe: a pod near an edge has
+  // almost no room behind it, so the outward point regularly landed
+  // off-screen and clampToBox dragged it straight back on top of
+  // the pod it was trying to clear (the actual cause of chips
+  // covering names/avatars/chip counts). Toward centre always has
+  // room — the play area is large and, in LRC, otherwise empty — so
+  // the clamp is a rare safety net again instead of the thing doing
+  // the real positioning.
+  const ux = -dx / len;
+  const uy = -dy / len;
+  // Perpendicular unit vector — spreads chips sideways to the pod
+  // rather than radially, so a growing pile doesn't drift table-ward.
+  const px = -uy;
+  const py = ux;
+
+  const chipSize = g.miniCard.w;
+  // Two abreast on the rim (phones), like a side seat's pile above: three
+  // under a top pod reached into the side pod beside it on a small phone.
+  const cols = g.tuck ? 2 : 3;
+  const col = index % cols;
+  const row = Math.floor(index / cols);
+  const colSpacing = chipSize * 0.85;
+  const rowSpacing = chipSize * 0.9;
+  // Clears the pod by its own real footprint along the push
+  // direction (ux, uy) — the same `axisReach` helper this file's
+  // opponent-hand placement already uses for exactly this question
+  // ("how far past this pod does something reaching outward from it
+  // need to start"), plus a little breathing room so the pile
+  // visibly separates rather than grazing the pod's edge.
+  //
+  // Deliberately NOT derived from `len` (the seat's distance to
+  // table centre) — an earlier version scaled clearance with `len`,
+  // reasoning that on a wide table a TOP/BOTTOM seat's span to
+  // centre is longer than a LEFT/RIGHT seat's. That's backwards: a
+  // wide table's real horizontal room means LEFT/RIGHT seats are
+  // the ones far from centre (large `len`), while a top seat, pinned
+  // close to the short vertical edge, sits near it (small `len`).
+  // Scaling by `len` therefore pushed LEFT/RIGHT piles further from
+  // their own pod, toward centre — the seats nobody complained about
+  // — while TOP/BOTTOM (the actual "too far from the pod" report)
+  // stayed essentially at the old flat value, since its small `len`
+  // rarely cleared that floor. The pod's own footprint has no such
+  // backwards relationship: `POD_SIZE` is close to square at every
+  // density, so every anchor clears by roughly the same amount
+  // regardless of how far that seat happens to sit from centre.
+  const pod = POD_SIZE[g.density];
+  // The viewer's own pile has no pod to clear — it starts from the top
+  // of the band above their hand (`TableGeometry.band`), which is where
+  // their controls are. Measured from the seat like everybody else's,
+  // it landed under the band: LRC's Roll button sat on the chips it
+  // was about to roll for.
+  const fromBand = seat.isHero && g.band.h > 0;
+  const originY = fromBand ? g.band.y : seat.y;
+  const clearance = fromBand ? g.miniCard.h * 0.55 : axisReach(ux, uy, pod) + g.miniCard.h * 0.55;
+
+  const rowOriginX = seat.x + ux * (clearance + row * rowSpacing);
+  const rowOriginY = originY + uy * (clearance + row * rowSpacing);
+  // Centred on how many chips are actually IN this row, not on the
+  // grid's max width. `cols` is a wrap limit, not every row's real
+  // count — centring against it left every row short of a full 3
+  // (which, for LRC's 3-chips-per-player start, is nearly all of
+  // them) visibly shifted toward the pod-outward edge instead of
+  // sitting under the pod. A 1-chip pile centred against a
+  // 3-wide grid, for instance, always landed at that grid's
+  // leftmost slot rather than its middle.
+  const rowCount = Math.min(cols, count - row * cols);
+  const colOffset = (col - (rowCount - 1) / 2) * colSpacing;
+
+  // Margins are the piece's real scaled half-extents, not a rough
+  // guess: the underlying box is card-shaped (taller than wide), so
+  // a width-based margin used for BOTH axes undershoots vertically
+  // by exactly enough to let a chip's top edge clip off-screen —
+  // confirmed once already at exactly this gap (~2-3px) in
+  // /play/lrc before this was axis-correct.
+  const clamped = clampToBox(
+    rowOriginX + px * colOffset,
+    rowOriginY + py * colOffset,
+    g.box,
+    g.miniCard.w / 2,
+    g.miniCard.h / 2,
+  );
+  return clamped;
+}
+
+/** A face-up pile beside a SIDE pod on the rim — LRC's chips on a phone. */
+function isRimSidePile(g: TableGeometry, seat: SeatSlot): boolean {
+  return g.tuck && !seat.isHero && (seat.anchor === "left" || seat.anchor === "right");
+}
+
+/**
+ * Where chip `index` of a rim side pile sits: `cols` abreast from the pod's
+ * edge, the rows stacking toward the board's middle, never starting above
+ * the top seats' pods. At most two, not three or four: a wider pile beside
+ * a corner seat ran into the top seat's own pile, and six chips in one row
+ * said nothing about whose they were. Aimed at the board's centre instead,
+ * a pile from a seat in the top corner ran up into the top seat's pod or
+ * down into the pod stacked below it — `layout.test.ts` found both.
+ */
+function rimPileSpot(g: TableGeometry, seat: SeatSlot, index: number, shape: RimPileShape) {
+  const pod = POD_SIZE[g.density];
+  const d = g.miniCard.w;
+  if (shape.kind === "hang") {
+    // Two abreast, centred under the pod, rows running down its column.
+    const col = index % 2;
+    const row = Math.floor(index / 2);
+    return clampToBox(
+      seat.x + (col - 0.5) * d * 0.86,
+      seat.y + pod.h / 2 + 4 + d / 2 + row * shape.step,
+      g.box,
+      g.miniCard.w / 2,
+      g.miniCard.h / 2,
+    );
+  }
+  const step = d * 0.86;
+  const cols = shape.cols;
+  const col = index % cols;
+  const row = Math.floor(index / cols);
+  const inward = seat.anchor === "left" ? 1 : -1;
+  const topRim = Math.max(
+    -Infinity,
+    ...g.seats.filter((s) => s.anchor === "top").map((s) => s.y + pod.h / 2),
+  );
+  const toward = Math.sign(g.zones.play.y + g.zones.play.h / 2 - seat.y) || 1;
+  const firstY = toward > 0 ? Math.max(seat.y, topRim + 4 + d / 2) : seat.y;
+  // A tall pile stacks tighter rather than climbing into the top pods or
+  // sinking under the band (a ninth chip on a landscape phone did).
+  const rowY = Math.min(
+    Math.max(firstY + toward * row * step, topRim + 4 + d / 2),
+    g.band.y - 4 - d / 2,
+  );
+  return clampToBox(
+    seat.x + inward * (pod.w / 2 + 6 + d / 2 + col * step),
+    rowY,
+    g.box,
+    g.miniCard.w / 2,
+    g.miniCard.h / 2,
+  );
+}
+
+/**
+ * How a rim side pile is laid out. Beside its pod two abreast, as a rule.
+ * With many seats a side seat sits level with the middle of the table, and
+ * its pile's second column covered the left die (9 seats on a 390px phone);
+ * on a 360px phone the dice fill the stage between the side pods, and even
+ * one column did. Such a pile hangs in the seat's own column below its pod
+ * instead, in the gap before the next pod down, which nothing else uses;
+ * one chip wide beside the pod only where that gap is too short too.
+ */
+type RimPileShape = { kind: "beside"; cols: 1 | 2 } | { kind: "hang"; step: number };
+
+/**
+ * What a seat's pile must keep off: the dice, and the pot at the most it is
+ * ever drawn loose — its full stack on a phone, two rows of five elsewhere.
+ */
+function centreKeepOut(g: TableGeometry): Box[] {
+  const base = baseSize(g);
+  const most = g.profile === "roomy" ? POT_GRID_MAX : CHIP_STACK_LIFT_MAX + 1;
+  const pot: Box[] = [];
+  for (let index = 0; index < most; index++) {
+    const t = layoutPiece({ zone: "center", index, count: most, faceUp: true }, g, { kind: "chip" });
+    const d = t.scale * base.w;
+    pot.push({ x: t.x + base.w / 2 - d / 2, y: t.y + base.h / 2 - d / 2, w: d, h: d });
+  }
+  return [g.zones.dice, ...pot];
+}
+
+/**
+ * How many of a pile's three rows keep off the dice and the pot. The pile
+ * shows that many rows of chips one by one, and stacks past them.
+ */
+function rowsClear(g: TableGeometry, cols: number, spot: (index: number) => { cx: number; cy: number }): number {
+  const d = g.miniCard.w;
+  const keep = centreKeepOut(g);
+  const hits = (at: { cx: number; cy: number }) =>
+    keep.some(
+      (k) =>
+        at.cx + d / 2 + 4 > k.x &&
+        at.cx - d / 2 - 4 < k.x + k.w &&
+        at.cy + d / 2 + 4 > k.y &&
+        at.cy - d / 2 - 4 < k.y + k.h,
+    );
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < cols; col++) if (hits(spot(row * cols + col))) return row;
+  }
+  return 3;
+}
+
+/**
+ * A seat's pile, decided once per table: its shape if it is a rim side
+ * pile, and how many chips it shows before it becomes a stack. From the
+ * viewport alone, never today's count, so a pile never changes shape as
+ * chips come and go.
+ */
+interface PilePlan {
+  shape: RimPileShape | null;
+  cap: number;
+}
+
+const pilePlans = new WeakMap<TableGeometry, Map<SeatId, PilePlan>>();
+
+function pilePlan(g: TableGeometry, seat: SeatSlot): PilePlan {
+  let plans = pilePlans.get(g);
+  if (!plans) pilePlans.set(g, (plans = new Map()));
+  let plan = plans.get(seat.seat);
+  if (!plan) plans.set(seat.seat, (plan = planPile(g, seat)));
+  return plan;
+}
+
+function planPile(g: TableGeometry, seat: SeatSlot): PilePlan {
+  if (!isRimSidePile(g, seat)) {
+    const cols = g.tuck ? 2 : 3;
+    const rows = rowsClear(g, cols, (i) => groundPileSpot(g, seat, i, cols * 3));
+    return { shape: null, cap: Math.max(1, rows * cols) };
+  }
+  const two: RimPileShape = { kind: "beside", cols: 2 };
+  if (rowsClear(g, 2, (i) => rimPileSpot(g, seat, i, two)) === 3) return { shape: two, cap: 6 };
+
+  // The gap below the pod: to the next pod down this side, or the band.
+  const d = g.miniCard.w;
+  const pod = POD_SIZE[g.density];
+  const below = g.seats
+    .filter((s) => s.anchor === seat.anchor && s.y > seat.y)
+    .map((s) => s.y - pod.h / 2);
+  const room = Math.min(g.band.y, ...below) - (seat.y + pod.h / 2) - 8;
+  // Three rows, overlapping more where the gap is short, but never so much
+  // that a row stops showing.
+  const step = Math.min(d * 0.86, (room - d) / 2);
+  if (step >= d * 0.55) return { shape: { kind: "hang", step }, cap: 6 };
+
+  const one: RimPileShape = { kind: "beside", cols: 1 };
+  return { shape: one, cap: Math.max(1, rowsClear(g, 1, (i) => rimPileSpot(g, seat, i, one))) };
+}
+
+/**
+ * When LRC's chips stop being laid out one by one and become one stack with
+ * its count on it (the user's call, 2026-09-28). On a phone the pot always
+ * stacks: its grid sat on the dice, and four chips at the pot's size already
+ * crowded the middle of a small screen. A seat's pile stacks past its third
+ * row, where fifteen chips beside a pod stopped reading as a count at all —
+ * or sooner, past the last row that keeps off the dice and the pot (see
+ * `planPile`). A larger screen's pot keeps two rows of five.
+ */
+const POT_GRID_MAX = 10;
+/** Each chip up a stack sits this share of a chip higher, up to this many. */
+const CHIP_STACK_STEP = 0.04;
+const CHIP_STACK_LIFT_MAX = 6;
+
+export function chipPileStacks(g: TableGeometry, p: Pick<Placement, "zone" | "seat" | "count">): boolean {
+  if (p.count < 2) return false;
+  if (p.zone === "center") return g.profile !== "roomy" || p.count > POT_GRID_MAX;
+  if (p.zone !== "collected") return false;
+  const seat = p.seat !== undefined ? slotForSeat(g, p.seat) : undefined;
+  if (!seat) return false;
+  return p.count > pilePlan(g, seat).cap;
+}
+
+/**
+ * Where to write each stacked chip pile's count: the centre and drawn
+ * diameter of the TOP chip of every pile `chipPileStacks` collapses. Read
+ * from the placements the pieces are drawn from, so the number changes as a
+ * chip sets off for the pile rather than when the turn's state settles.
+ */
+export function chipStackBadges(
+  g: TableGeometry,
+  placements: Record<string, Placement>,
+): Array<{ key: string; count: number; cx: number; cy: number; diameter: number }> {
+  const base = baseSize(g);
+  const out: Array<{ key: string; count: number; cx: number; cy: number; diameter: number }> = [];
+  for (const p of Object.values(placements)) {
+    if (p.index !== p.count - 1 || !chipPileStacks(g, p)) continue;
+    const t = layoutPiece(p, g, { kind: "chip" });
+    out.push({
+      key: `${p.zone}:${p.seat ?? ""}`,
+      count: p.count,
+      cx: t.x + base.w / 2,
+      cy: t.y + base.h / 2,
+      diameter: t.scale * base.w,
+    });
+  }
+  return out;
+}
+
+
+/**
+ * Directions for a seat on the rim: `along` runs parallel to its edge,
+ * `inward` points at the board. By the edge the seat is on, not by the line
+ * to the board's centre — a high side seat sits in the top corner, and the
+ * line from there points mostly DOWN, which would put the left player's
+ * trick card where the partner's goes.
+ */
+function rimVectors(anchor: SeatSlot["anchor"]) {
+  switch (anchor) {
+    case "top":
+      return { along: { x: 1, y: 0 }, inward: { x: 0, y: 1 } };
+    case "left":
+      return { along: { x: 0, y: 1 }, inward: { x: 1, y: 0 } };
+    case "right":
+      return { along: { x: 0, y: 1 }, inward: { x: -1, y: 0 } };
+    default:
+      return { along: { x: 1, y: 0 }, inward: { x: 0, y: -1 } };
+  }
+}
+
+/**
+ * The base box every piece is rendered at, before scaling — the largest any
+ * piece is drawn (`TableGeometry.pieceBox`). The viewer's own hand used to BE
+ * this box; on a laptop it is now drawn smaller than it (`handArt`), so the
+ * board may grow past the hand without a piece ever scaling above 1.
+ */
 export function baseSize(g: TableGeometry) {
-  return g.handCard;
+  return g.pieceBox;
+}
+
+/**
+ * What the viewer's own hand DRAWS, card or tile — `artSize`'s counterpart
+ * for the hand. Everything sized as a fraction of "a card in your hand" (the
+ * fan's spacing, a lift, a hover spread) measures this, not the base box.
+ */
+export function handArt(g: TableGeometry, kind: PieceKind | undefined): PieceSize {
+  if (kind !== "tile") return g.handCard;
+  const w = tileShortSide(g.handCard);
+  return { w, h: w * 2 };
 }
 
 /**
@@ -172,6 +528,110 @@ function clampToBox(cx: number, cy: number, box: Box, marginW: number, marginH: 
 }
 
 /* ============================================================
+   Tucked and shown hands — an opponent's hand on a phone.
+   ============================================================ */
+
+/**
+ * A face-down opponent hand where hands are tucked (`TableGeometry.tuck`):
+ * a tight fan of backs behind the pod, running along its edge, with its
+ * inner part (`TUCK_PEEK_FRACTION` of a card) showing past the pod's inner edge.
+ *
+ * Costs the board nothing, which is the point: on a phone the fanned hands
+ * used to reach further into the table than the board itself got. The count
+ * they stood for is in the pod's own text. Every card still has a place, so
+ * a deal flies to its player and a play flies from them.
+ */
+function tuckedHand(
+  g: TableGeometry,
+  seat: SeatSlot,
+  p: Placement,
+  kind: PieceKind | undefined,
+  opacity: number,
+): PieceTransform {
+  const base = baseSize(g);
+  const pod = POD_SIZE[g.density];
+  const { along, inward } = rimVectors(seat.anchor);
+  const miniW = miniArt(g, kind);
+  // Turned with its seat, a piece's long side points at the board on every
+  // edge, so its reach INWARD is its height and its run ALONG is its width.
+  const miniH = kind === "tile" ? miniW * 2 : g.miniCard.h;
+  const podDepth = along.x !== 0 ? pod.h : pod.w;
+  const podAlong = along.x !== 0 ? pod.w : pod.h;
+  // How far it shows past the pod's inner edge — the board keeps clear of
+  // exactly this. A top seat's may be 0 (a landscape phone, where height is
+  // scarce): its hand then fans wider along the pod and shows at its sides.
+  const peek = seat.anchor === "left" || seat.anchor === "right" ? g.tuckPeek.side : g.tuckPeek.top;
+  const offset = podDepth / 2 + peek - miniH / 2;
+  const tile = kind === "tile";
+  const slot = radialFanSlot({
+    anchor: { x: seat.x + inward.x * offset, y: seat.y + inward.y * offset },
+    spread: along,
+    away: { x: -inward.x, y: -inward.y },
+    index: p.index,
+    count: p.count,
+    // A little wider than the pod, so the backs show at its sides too —
+    // much wider where they do not peek past it at all.
+    spreadWidth: podAlong * (peek > 0 ? 1.25 : 1.9),
+    size: { w: miniW, h: miniH },
+    baseRotation: seat.rotation,
+    maxTilt: tile ? 0 : 5,
+    arcLift: tile ? 0 : 2,
+    maxGap: miniW * (tile ? 0.55 : 0.3),
+  });
+  return {
+    x: slot.x - base.w / 2,
+    y: slot.y - base.h / 2,
+    rotate: slot.rotation,
+    scale: miniW / artSize(g, kind).w,
+    z: Z_TUCKED + p.index,
+    opacity,
+  };
+}
+
+/**
+ * A face-UP opponent hand where hands are tucked — a showdown. Drawn over
+ * the pod, upright whatever edge the seat is on (a quarter-turned card is
+ * not read, and reading it is the whole reason it was turned over), a
+ * little larger than a tucked back, and shifted toward the board so the
+ * player's name stays in view above it.
+ */
+const SHOWN_SCALE = 1.25;
+
+function shownHand(
+  g: TableGeometry,
+  seat: SeatSlot,
+  p: Placement,
+  kind: PieceKind | undefined,
+  opacity: number,
+): PieceTransform {
+  const base = baseSize(g);
+  const pod = POD_SIZE[g.density];
+  const { along, inward } = rimVectors(seat.anchor);
+  const podDepth = along.x !== 0 ? pod.h : pod.w;
+  const w = miniArt(g, kind) * SHOWN_SCALE;
+  const h = (kind === "tile" ? miniArt(g, kind) * 2 : g.miniCard.h) * SHOWN_SCALE;
+  const cx = seat.x + inward.x * podDepth * 0.3;
+  const cy = seat.y + inward.y * podDepth * 0.3;
+  const slot = fanSlot({
+    index: p.index,
+    count: p.count,
+    within: { x: cx - pod.w / 2 - w * 0.3, y: cy, w: pod.w + w * 0.6, h: 0 },
+    size: { w, h },
+    maxRotation: 6,
+    arcLift: 2,
+    maxGap: w * 0.62,
+  });
+  return {
+    x: slot.x - base.w / 2,
+    y: slot.y - base.h / 2,
+    rotate: slot.rotation,
+    scale: w / artSize(g, kind).w,
+    z: Z_SHOWN + p.index,
+    opacity,
+  };
+}
+
+/* ============================================================
    The board camera — dominoes' line of play.
    ============================================================ */
 
@@ -192,9 +652,9 @@ function clampToBox(cx: number, cy: number, box: Box, marginW: number, marginH: 
  *
  * Two properties keep it calm:
  *
- *  - `unit` is CLAMPED at the normal table piece size, so for the
- *    opening tiles the camera is completely still — it only starts
- *    easing out once the chain genuinely no longer fits.
+ *  - `unit` is CLAMPED at the hand's own tile, so for the opening tiles
+ *    the camera is completely still — it only starts easing out once the
+ *    chain genuinely no longer fits.
  *  - the bounding box only ever grows (tiles are never removed), so the
  *    scale is monotonically non-increasing. It cannot oscillate.
  */
@@ -225,7 +685,12 @@ export function boardCamera(g: TableGeometry, board: BoardView | null): BoardCam
   const zone = g.zones.line;
   const cx = zone.x + zone.w / 2;
   const cy = zone.y + zone.h / 2;
-  const maxUnit = tileShortSide(g.card);
+  // The hand's own tile, not the table card: a short chain is the whole
+  // board, and it used to be drawn smaller than the tiles in your hand
+  // however much felt it had (docs/table-layout-rethink.md). The hand's
+  // tile is also the base box every piece renders at, so this is the
+  // largest a tile can be drawn without blurring (see `stageCeiling`).
+  const maxUnit = tileShortSide(g.pieceBox);
 
   // Turning the whole board a quarter turn on a portrait zone is not a
   // gimmick: domino pips are rotation-invariant, so it costs nothing to
@@ -308,6 +773,28 @@ export function layoutPiece(
   g: TableGeometry,
   ctx?: LayoutContext,
 ): PieceTransform {
+  // A chip pile past what its room shows one by one is ONE stack: every chip
+  // on the pile's first spot, lifted a hair each so it reads as a stack, and
+  // the count said on top (`chipStackBadges`).
+  if (ctx?.kind === "chip" && chipPileStacks(g, p)) {
+    const first = layoutLoose({ ...p, index: 0, count: 1 }, g, ctx);
+    const diameter = first.scale * artSize(g, ctx.kind).w;
+    const step = diameter * CHIP_STACK_STEP;
+    const height = Math.min(p.count - 1, CHIP_STACK_LIFT_MAX) * step;
+    // Inside the room the pile would have grown into, never past its first
+    // spot the other way: a stack lifted UP from a pile that grows down (a
+    // side seat's, the pot) climbed into the top seat's pod. Such a stack
+    // starts its own height lower, so its top chip is where the first was.
+    const last = layoutLoose({ ...p, index: p.count - 1 }, g, ctx);
+    const settle = last.y > first.y + 0.5 ? height : 0;
+    const lift = Math.min(p.index, CHIP_STACK_LIFT_MAX) * step;
+    return { ...first, y: first.y + settle - lift, z: first.z + p.index };
+  }
+  return layoutLoose(p, g, ctx);
+}
+
+/** Every piece laid out on its own, with no pile collapsed to a stack. */
+function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): PieceTransform {
   const base = baseSize(g);
   const art = artSize(g, ctx?.kind);
   const tableScale = tableArt(g, ctx?.kind) / art.w;
@@ -349,7 +836,7 @@ export function layoutPiece(
       // A tall stack reads as depth, not as 52 offset cards — cap it.
       const lift = Math.min(p.index, 10) * 0.4;
       const { x, y } = centred(anchor.cx + lift, anchor.cy - lift, g);
-      return { x, y, rotate: 0, scale: tableScale, z, opacity };
+      return { x, y, rotate: 0, scale: tableScale * zs, z, opacity };
     }
 
     /* ----------------------------------------------- discard */
@@ -370,7 +857,8 @@ export function layoutPiece(
         // stay in step. `size.w` is the piece's extent along the spread
         // axis by that function's own convention, hence the swap.
         const a = pileAssembly(g, p.count);
-        const along = a.portrait ? g.card.h : g.card.w;
+        const pc = pileCard(g);
+        const along = a.portrait ? pc.h : pc.w;
         const slot = radialFanSlot({
           anchor: boxCentreXY(a.fan),
           spread: a.portrait ? { x: 0, y: 1 } : { x: 1, y: 0 },
@@ -402,21 +890,21 @@ export function layoutPiece(
         // `overflow: hidden` on (CLAUDE.md). So the card fades out as it
         // crosses the boundary instead — which is what a masked scroller
         // looks like anyway, and stays on the compositor.
-        return { x, y, rotate: 0, scale: tableScale, z, opacity: opacity * slot.visible };
+        return { x, y, rotate: 0, scale: tableScale * zs, z, opacity: opacity * slot.visible };
       }
       const { cx, cy } = boxCentre(g.zones.discard);
       if (p.fanned) {
         // Fanned so the player can see how deep the eligible run goes.
-        const step = g.card.w * 0.38;
+        const step = pileCard(g).w * 0.38;
         const spread = step * (p.count - 1);
         const { x, y } = centred(cx - spread / 2 + p.index * step, cy, g);
-        return { x, y, rotate: 0, scale: tableScale, z, opacity };
+        return { x, y, rotate: 0, scale: tableScale * zs, z, opacity };
       }
       const lift = Math.min(p.index, 6) * 0.5;
       const { x, y } = centred(cx + lift, cy - lift, g);
       // A small deterministic tilt per card makes a real discard pile.
       const tilt = ((p.index * 37) % 9) - 4;
-      return { x, y, rotate: tilt, scale: tableScale, z, opacity };
+      return { x, y, rotate: tilt, scale: tableScale * zs, z, opacity };
     }
 
     /* ------------------------------------------------- trick */
@@ -427,13 +915,17 @@ export function layoutPiece(
 
       if (!seat) {
         const { x, y } = centred(cx, cy, g);
-        return { x, y, rotate: 0, scale: tableScale, z, opacity };
+        return { x, y, rotate: 0, scale: tableScale * zs, z, opacity };
       }
 
       // Each played card sits offset from the centre toward whoever
       // played it, so a glance at the trick tells you who is winning.
-      const dx = seat.x - cx;
-      const dy = seat.y - cy;
+      // Toward the EDGE they sit on where seats are a rim (see
+      // `rimVectors`): a high side seat is up in the corner, and the true
+      // line to it would stack the left player's card on the partner's.
+      const compass = g.tuck ? rimVectors(seat.anchor).inward : null;
+      const dx = compass ? -compass.x : seat.x - cx;
+      const dy = compass ? -compass.y : seat.y - cy;
       const len = Math.hypot(dx, dy) || 1;
       const radius = Math.min(trick.w, trick.h) * 0.26;
       // ...but never so far that the card leaves the trick box. On a short
@@ -441,8 +933,8 @@ export function layoutPiece(
       // hero's, and a full offset would carry a card back out into one of
       // them; the cards overlapping each other a little more is the
       // better trade.
-      const reachX = Math.max(0, trick.w / 2 - (art.w * tableScale) / 2);
-      const reachY = Math.max(0, trick.h / 2 - (art.h * tableScale) / 2);
+      const reachX = Math.max(0, trick.w / 2 - (art.w * tableScale * zs) / 2);
+      const reachY = Math.max(0, trick.h / 2 - (art.h * tableScale * zs) / 2);
       const clamp = (v: number, reach: number) => Math.max(-reach, Math.min(reach, v));
       const { x, y } = centred(
         cx + clamp((dx / len) * radius, reachX),
@@ -453,7 +945,7 @@ export function layoutPiece(
         x,
         y,
         rotate: ((p.index * 53) % 13) - 6,
-        scale: tableScale,
+        scale: tableScale * zs,
         z,
         opacity,
       };
@@ -493,20 +985,20 @@ export function layoutPiece(
       // animation stops carrying information.
       const region = g.pileRegion;
       const play = g.zones.play;
-      const overlap = g.card.w * 0.44;
-      const meldW = g.card.w + overlap * Math.max(0, p.count - 1);
+      const pc = pileCard(g);
+      const overlap = pc.w * 0.44;
+      const meldW = pc.w + overlap * Math.max(0, p.count - 1);
 
       const below = region.y + region.h;
       const room = Math.max(0, play.y + play.h - below);
       // A small per-meld stagger so a meld landing while the previous
       // one is still fading doesn't sit exactly on top of it.
       const lane = (p.group ?? 0) % 3;
-      const originX = region.x + region.w / 2 - meldW / 2 + g.card.w / 2;
-      const originY =
-        below + Math.min(room / 2, g.card.h * 0.7) + (lane - 1) * (g.card.h * 0.16);
+      const originX = region.x + region.w / 2 - meldW / 2 + pc.w / 2;
+      const originY = below + Math.min(room / 2, pc.h * 0.7) + (lane - 1) * (pc.h * 0.16);
 
       const { x, y } = centred(originX + p.index * overlap, originY, g);
-      return { x, y, rotate: 0, scale: tableScale, z, opacity };
+      return { x, y, rotate: 0, scale: tableScale * zs, z, opacity };
     }
 
     /* -------------------------------------------------- line */
@@ -568,10 +1060,19 @@ export function layoutPiece(
         // zone regardless of what's parked beside it; a matching phantom
         // margin on the right is the price of that, and it's cheap.
         const gutter = isTile ? g.zones.boneyard.w + 14 : 0;
+        // The hand as DRAWN — smaller than the base box on a laptop, where the
+        // board may outgrow it (see `baseSize`).
+        const ha = handArt(g, ctx?.kind);
+        // A bleeding hand (short screens — see `TableGeometry.handBleed`)
+        // hangs from the strip's TOP edge, below the room a picked-up card
+        // lifts into, and runs off the bottom of the screen: the strip is
+        // shorter than a card on purpose, and centring the card in it would
+        // push its index up under the band instead.
         const within: Box = {
           ...g.zones.hand,
           x: g.zones.hand.x + gutter,
           w: g.zones.hand.w - gutter * 2,
+          ...(g.handBleed ? { y: g.zones.hand.y + HAND_LIFT_ROOM, h: ha.h } : {}),
         };
         // A hand that has just swallowed six cards off the discard pile
         // needs the same compress-then-pan treatment the pile itself
@@ -592,23 +1093,23 @@ export function layoutPiece(
           index: handIndex,
           count: p.count,
           within,
-          size: art,
+          size: ha,
           maxRotation: isTile ? 0 : undefined,
           arcLift: isTile ? 0 : undefined,
-          maxGap: isTile ? art.w * 1.14 : undefined,
-          minGap: panned ? art.w * MIN_HAND_GAP_FRACTION : undefined,
+          maxGap: isTile ? ha.w * 1.14 : undefined,
+          minGap: panned ? ha.w * MIN_HAND_GAP_FRACTION : undefined,
           pan: panned ? ctx!.handScroll : undefined,
         });
         // Lifted within the hand's own strip, never out of it: a tile stands
         // taller in the strip than a card, and a full 18px carried a picked-up
         // domino over the band above the hand — over "Tap where it goes".
-        const room = Math.max(0, slot.y - art.h / 2 - g.zones.hand.y);
+        const room = Math.max(0, slot.y - ha.h / 2 - g.zones.hand.y);
         const lift = p.selected ? -Math.min(18, room) : 0;
         return {
           x: slot.x - base.w / 2,
           y: slot.y - base.h / 2 + lift,
           rotate: slot.rotation,
-          scale: 1,
+          scale: ha.w / art.w,
           // Selection does NOT change the stacking order. A fan overlaps,
           // so which card paints over which has to follow the order the
           // eye reads along the fan — full stop, in every state. Lifting a
@@ -630,6 +1131,14 @@ export function layoutPiece(
       // centre of the table so they never hang off the edge.
       const seat = slotForSeat(g, seatId);
       if (!seat) return { x: 0, y: 0, rotate: 0, scale: miniScale, z, opacity };
+
+      // On a phone an opponent's hand is texture behind their pod, or — face
+      // up at a showdown — something to read over it. See `tuckedHand`.
+      if (g.tuck) {
+        return p.faceUp
+          ? shownHand(g, seat, p, ctx?.kind, opacity)
+          : tuckedHand(g, seat, p, ctx?.kind, opacity);
+      }
 
       const miniW = miniArt(g, ctx?.kind);
       const miniH = isTile ? miniW * 2 : g.miniCard.h;
@@ -811,99 +1320,25 @@ export function layoutPiece(
       const seat = p.seat !== undefined ? slotForSeat(g, p.seat) : undefined;
       if (!seat) return { x: 0, y: 0, rotate: 0, scale: miniScale, z, opacity };
 
-      // A real grid, not a stack: a 0.6px-per-card offset (the old
-      // value) is imperceptible on a ~30px chip, so two or three chips
-      // rendered as one indistinguishable blob — exactly the "why does
-      // it look like I only have one chip" bug this replaces. Fanning
-      // outward from the pod in rows of 3 keeps the count legible at a
-      // glance, which is the entire point of a chip pile in LRC.
-      const { cx: pcx, cy: pcy } = boxCentre(g.zones.play);
-      const dx = seat.x - pcx;
-      const dy = seat.y - pcy;
-      const len = Math.hypot(dx, dy) || 1;
-      // Every seat's pile points TOWARD table centre, never away from
-      // it. An earlier version sent opponent piles outward, past the
-      // pod, toward the nearest screen edge — reasoning that the space
-      // out there was "empty." It isn't safe: a pod near an edge has
-      // almost no room behind it, so the outward point regularly landed
-      // off-screen and clampToBox dragged it straight back on top of
-      // the pod it was trying to clear (the actual cause of chips
-      // covering names/avatars/chip counts). Toward centre always has
-      // room — the play area is large and, in LRC, otherwise empty — so
-      // the clamp is a rare safety net again instead of the thing doing
-      // the real positioning.
-      const ux = -dx / len;
-      const uy = -dy / len;
-      // Perpendicular unit vector — spreads chips sideways to the pod
-      // rather than radially, so a growing pile doesn't drift table-ward.
-      const px = -uy;
-      const py = ux;
+      // A face-down won pile (Spades' tricks) says one number, and the pod
+      // says it too ("Won 3"). Where hands are tucked it goes behind the pod
+      // with them: the trick flies to its winner and settles out of sight.
+      // A face-up pile — LRC's chips, which ARE that game's information —
+      // stays on the felt below.
+      if (g.tuck && !p.faceUp && !seat.isHero) {
+        const { x, y } = centred(seat.x, seat.y, g);
+        return { x, y, rotate: seat.rotation, scale: miniScale, z: Z_TUCKED_WON + p.index, opacity };
+      }
 
-      const chipSize = g.miniCard.w;
-      const cols = 3;
-      const col = p.index % cols;
-      const row = Math.floor(p.index / cols);
-      const colSpacing = chipSize * 0.85;
-      const rowSpacing = chipSize * 0.9;
-      // Clears the pod by its own real footprint along the push
-      // direction (ux, uy) — the same `axisReach` helper this file's
-      // opponent-hand placement already uses for exactly this question
-      // ("how far past this pod does something reaching outward from it
-      // need to start"), plus a little breathing room so the pile
-      // visibly separates rather than grazing the pod's edge.
-      //
-      // Deliberately NOT derived from `len` (the seat's distance to
-      // table centre) — an earlier version scaled clearance with `len`,
-      // reasoning that on a wide table a TOP/BOTTOM seat's span to
-      // centre is longer than a LEFT/RIGHT seat's. That's backwards: a
-      // wide table's real horizontal room means LEFT/RIGHT seats are
-      // the ones far from centre (large `len`), while a top seat, pinned
-      // close to the short vertical edge, sits near it (small `len`).
-      // Scaling by `len` therefore pushed LEFT/RIGHT piles further from
-      // their own pod, toward centre — the seats nobody complained about
-      // — while TOP/BOTTOM (the actual "too far from the pod" report)
-      // stayed essentially at the old flat value, since its small `len`
-      // rarely cleared that floor. The pod's own footprint has no such
-      // backwards relationship: `POD_SIZE` is close to square at every
-      // density, so every anchor clears by roughly the same amount
-      // regardless of how far that seat happens to sit from centre.
-      const pod = POD_SIZE[g.density];
-      // The viewer's own pile has no pod to clear — it starts from the top
-      // of the band above their hand (`TableGeometry.band`), which is where
-      // their controls are. Measured from the seat like everybody else's,
-      // it landed under the band: LRC's Roll button sat on the chips it
-      // was about to roll for.
-      const fromBand = seat.isHero && g.band.h > 0;
-      const originY = fromBand ? g.band.y : seat.y;
-      const clearance = fromBand ? g.miniCard.h * 0.55 : axisReach(ux, uy, pod) + g.miniCard.h * 0.55;
+      // A face-up pile beside a SIDE pod on the rim: see `rimPileSpot`.
+      if (isRimSidePile(g, seat)) {
+        const spot = rimPileSpot(g, seat, p.index, pilePlan(g, seat).shape!);
+        const { x, y } = centred(spot.cx, spot.cy, g);
+        return { x, y, rotate: 0, scale: miniScale, z, opacity };
+      }
 
-      const rowOriginX = seat.x + ux * (clearance + row * rowSpacing);
-      const rowOriginY = originY + uy * (clearance + row * rowSpacing);
-      // Centred on how many chips are actually IN this row, not on the
-      // grid's max width. `cols` is a wrap limit, not every row's real
-      // count — centring against it left every row short of a full 3
-      // (which, for LRC's 3-chips-per-player start, is nearly all of
-      // them) visibly shifted toward the pod-outward edge instead of
-      // sitting under the pod. A 1-chip pile centred against a
-      // 3-wide grid, for instance, always landed at that grid's
-      // leftmost slot rather than its middle.
-      const rowCount = Math.min(cols, p.count - row * cols);
-      const colOffset = (col - (rowCount - 1) / 2) * colSpacing;
-
-      // Margins are the piece's real scaled half-extents, not a rough
-      // guess: the underlying box is card-shaped (taller than wide), so
-      // a width-based margin used for BOTH axes undershoots vertically
-      // by exactly enough to let a chip's top edge clip off-screen —
-      // confirmed once already at exactly this gap (~2-3px) in
-      // /play/lrc before this was axis-correct.
-      const clamped = clampToBox(
-        rowOriginX + px * colOffset,
-        rowOriginY + py * colOffset,
-        g.box,
-        g.miniCard.w / 2,
-        g.miniCard.h / 2,
-      );
-      const { x, y } = centred(clamped.cx, clamped.cy, g);
+      const spot = groundPileSpot(g, seat, p.index, p.count);
+      const { x, y } = centred(spot.cx, spot.cy, g);
       return { x, y, rotate: 0, scale: miniScale, z, opacity };
     }
 
@@ -1048,12 +1483,13 @@ export function layoutPiece(
       // above center clear for a game's own centre-table overlay (LRC's
       // dice) to live without the two visually colliding.
       const { cx, cy } = boxCentre(g.zones.play);
-      const chipSize = g.miniCard.w;
+      // Drawn at `potChip`, and piled at the overlap they always had.
+      const chipSize = potChip(g);
       const cols = 5;
       const col = p.index % cols;
       const row = Math.floor(p.index / cols);
-      const colSpacing = chipSize * 0.8;
-      const rowSpacing = chipSize * 0.85;
+      const colSpacing = chipSize * 0.53;
+      const rowSpacing = chipSize * 0.56;
       // Same partial-row centring as `collected` above — a pot of 2 or 3
       // chips (i.e. most of the game, until several rolls land on "C")
       // was centring against a 5-wide grid and landing skewed toward the
@@ -1074,9 +1510,11 @@ export function layoutPiece(
       // half-extents, not a guess — and `card`, not `miniCard`, because
       // this piece renders at `tableScale` (see the return below), the
       // one difference from `collected`'s otherwise identical clamp.
-      const clamped = clampToBox(x, y, g.box, g.card.w / 2, g.card.h / 2);
+      // Margins from the chip's drawn box, which is card-shaped (taller than
+      // the disc inside it).
+      const clamped = clampToBox(x, y, g.box, chipSize / 2, (chipSize * art.h) / art.w / 2);
       const { x: fx, y: fy } = centred(clamped.cx, clamped.cy, g);
-      return { x: fx, y: fy, rotate: 0, scale: tableScale, z, opacity };
+      return { x: fx, y: fy, rotate: 0, scale: chipSize / art.w, z, opacity };
     }
 
     /* --------------------------------------------- offscreen */

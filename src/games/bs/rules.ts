@@ -630,6 +630,11 @@ export function placements(state: BsState, viewer: SeatId): PlacementMap {
         count: ordered.length,
         faceUp: own,
         fanned: own,
+        // A hand tap only picks a card for the claim — Play commits it — so
+        // the touch preview-then-confirm gate is wrong here: it made a card
+        // take two taps to pick (see `Placement.instantAct`). Rummy's hand is
+        // the same.
+        instantAct: own ? true : undefined,
       };
     });
   }

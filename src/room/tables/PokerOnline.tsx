@@ -31,6 +31,7 @@ import {
   playerViews,
   roundSummary,
   standings,
+  usePokerPanelReserve,
   type PokerView,
 } from "@/app/play/poker/table";
 import { tintFor } from "../Roster";
@@ -75,6 +76,8 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
     [frame, room.members],
   );
 
+  const panelReserve = usePokerPanelReserve();
+
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
@@ -87,6 +90,8 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "poker"].name}
         roundNoun="Hand"
+        // A spectator never bets, so their table keeps the room.
+        panelReserve={frame.seat === null ? 0 : panelReserve}
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}

@@ -21,7 +21,8 @@ import { Button } from "@/ui/primitives/Button";
 import { DiceFace } from "@/ui/primitives/DiceFace";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
-import { useGeometry } from "@/table/store";
+import { chipStackBadges } from "@/table/layout";
+import { useGeometry, useTableStore } from "@/table/store";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { potSize } from "@/games/lrc/state";
@@ -51,14 +52,16 @@ export const OFFLINE_VIEW: LrcView = {
 /**
  * The strip where a hand would be. LRC has no hand — the viewer's chips
  * pile up from the band above it, like everybody else's from their pod —
- * so it only needs to hold the viewer's seat off the bottom edge.
+ * so it only needs to hold the band off the bottom edge. It was 64px, an
+ * empty strip under the Roll button (the user, 2026-09-28: "a lil too
+ * much white space underneath my chips and the roll button").
  *
  * A constant because both shells have to agree, and they did not: the
  * room passed `0` while `LrcControls` went on rendering a fixed 64px
  * bar, so online the button sat on top of whatever the geometry had
  * laid into the bottom band.
  */
-export const LRC_HAND_ZONE = 64;
+export const LRC_HAND_ZONE = 16;
 
 /**
  * The HUD numbers. Shared for the same reason as the hand zone — the two
@@ -200,6 +203,7 @@ export function LrcControls({ view, live }: { view: LrcView; live: Live }) {
       {/* Driven by the `dice` event as the queue reaches it, not by
           `lastAction` — see the event's doc. */}
       <DiceOverlay />
+      <ChipStackCounts />
 
       <HandZone
         bar={
@@ -239,9 +243,6 @@ type Face = "L" | "R" | "C" | "dot";
  * just starting from a different offset. */
 const TUMBLE_SEQUENCE: readonly Face[] = ["dot", "L", "C", "R"];
 const TUMBLE_TICK_MS = 100;
-/** A die's size, and the air between the dice and the pot below them. */
-const DIE = 48;
-const DICE_GAP = 14;
 /**
  * Derived from `DURATION.diceTumble`, the same number the choreographer
  * holds the queue for, so the dice cannot still be tumbling when the chips
@@ -249,6 +250,39 @@ const DICE_GAP = 14;
  * that is how the two drifted apart.
  */
 const TUMBLE_TICKS = Math.max(1, Math.round((DURATION.diceTumble * 1000) / TUMBLE_TICK_MS));
+
+/**
+ * The count on every pile that has become one stack (see layout's
+ * `chipPileStacks`): written on its top chip, the way a real stack is
+ * counted, since a stack no longer shows how many it holds. Chrome over the
+ * piece layer rather than a label on a piece: the top chip is the one that
+ * leaves when the pile loses one, and a label on it would fly off with it.
+ */
+function ChipStackCounts() {
+  const geometry = useGeometry();
+  const placements = useTableStore((s) => s.placements);
+  if (!geometry) return null;
+  return (
+    <>
+      {chipStackBadges(geometry, placements).map((b) => (
+        <div
+          key={b.key}
+          aria-hidden
+          className="pointer-events-none absolute z-1100 flex items-center justify-center font-extrabold tnum text-bone-50 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]"
+          style={{
+            left: b.cx - b.diameter / 2,
+            top: b.cy - b.diameter / 2,
+            width: b.diameter,
+            height: b.diameter,
+            fontSize: Math.max(11, b.diameter * 0.4),
+          }}
+        >
+          {b.count}
+        </div>
+      ))}
+    </>
+  );
+}
 
 /**
  * Transient dice display — not a Piece (see dice.ts / DiceFace.tsx for
@@ -295,19 +329,16 @@ function DiceOverlay() {
   // One chain with the pot, on the table's own centre: the dice end just
   // above the point the pot grows down from (layout's "center" zone). They
   // sat at 38% of the screen instead, and on a phone the pot's first chip
-  // landed on the middle die.
+  // landed on the middle die. The geometry sizes the row (`zones.dice`), so
+  // the dice grow with the table rather than staying 48px on every screen.
   if (!geometry) return null;
-  const play = geometry.zones.play;
-  // Where the pot's first chip's top edge is: layout's "center" zone puts
-  // the first row 0.6 of a mini card below the centre, and draws the chips
-  // at table size.
-  const potTop = play.y + play.h / 2 + geometry.miniCard.w * 0.6 - geometry.card.w / 2;
-  const bottom = potTop - DICE_GAP;
+  const zone = geometry.zones.dice;
+  const die = zone.h;
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 grid place-items-center"
-      style={{ top: bottom - DIE, height: DIE }}
+      className="pointer-events-none absolute grid place-items-center"
+      style={{ left: zone.x, top: zone.y, width: zone.w, height: zone.h }}
     >
       <AnimatePresence initial={false}>
         {roll && shown && shown.length > 0 ? (
@@ -317,11 +348,11 @@ function DiceOverlay() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
             transition={TRANSITIONS.ui}
-            className="flex gap-2"
-            style={{ gridArea: "1 / 1" }}
+            className="flex"
+            style={{ gridArea: "1 / 1", gap: die * 0.18 }}
           >
             {shown.map((face, i) => (
-              <DiceFace key={i} face={face} size={DIE} />
+              <DiceFace key={i} face={face} size={die} />
             ))}
           </motion.div>
         ) : null}

@@ -447,11 +447,15 @@ export function roundSummary(view: DomView, state: DomState) {
   const rows: ScoreRow[] = [];
   for (let seat = 0; seat < state.seats; seat++) {
     const pips = result.pips[seat] ?? 0;
+    // Only the seat that laid its last tile went out. Read from the result,
+    // never from a zero pip count: a hand holding just the double blank
+    // counts zero too, and it read "went out" beside the real winner.
+    const wentOut = result.kind === "domino" && result.winner === seat;
     rows.push({
       seat,
       name: name(seat),
       colour: seat === view.viewerSeat ? "var(--color-brass-300)" : view.colourFor(seat),
-      detail: pips === 0 ? "went out" : `${pips} pips left`,
+      detail: wentOut ? "went out" : `${pips} pip${pips === 1 ? "" : "s"} left`,
       // Every seat on the winning SIDE shows the gain — in team mode the
       // partner who was still holding tiles scored just as much as the
       // one who laid the last.

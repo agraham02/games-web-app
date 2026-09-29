@@ -25,6 +25,7 @@ import {
   playerViews,
   roundSummary,
   standings,
+  usePokerPanelReserve,
 } from "./table";
 import { botTable } from "@/ui/primitives/DifficultyPicker";
 import { GameSetup, useGameSetup } from "@/ui/setup/GameSetup";
@@ -34,6 +35,7 @@ export default function PokerPlayPage() {
   const [setup, setSetup] = useGameSetup("poker");
   const [started, setStarted] = useState(false);
   const [gameKey, setGameKey] = useState(0);
+  const panelReserve = usePokerPanelReserve();
 
   const seats = clampSeats("poker", setup.settings, setup.seats);
   const definition = useMemo(
@@ -53,6 +55,7 @@ export default function PokerPlayPage() {
       runtime={{ seats, difficulty: botTable(seats, setup.difficulty) }}
       gameTitle="Poker"
       roundNoun="Hand"
+      panelReserve={panelReserve}
       players={(state, live) => playerViews(OFFLINE_VIEW, state, live)}
       standings={(state, live, seats) => standings(OFFLINE_VIEW, state, live, seats)}
       stats={(state) => [

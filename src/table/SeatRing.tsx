@@ -109,10 +109,15 @@ export interface SeatView {
 // lines under its name (`POD_LINES`), and at compact density a top-edge
 // pod's centre is only 37px from the top of the screen — any taller and
 // its avatar goes off the top.
+//
+// Retuned 2026-09-28 from both ends at once: on a phone, beside a board now
+// fitted to its room, 64px pods with 9px stats read too small and cut "Bid 3
+// · Won 0" to "Bid …"; on a laptop the 96px pods were among the biggest
+// things on the table. Keep `POD_SIZE` in geometry.ts in step (measured).
 const POD_STYLES: Record<Density, { pod: string; avatar: number; name: string; meta: string }> = {
-  compact: { pod: "w-16 gap-0.5 py-1", avatar: 28, name: "text-[11px]", meta: "text-[9px]" },
-  regular: { pod: "w-16 gap-0.5 py-1", avatar: 32, name: "text-[11px]", meta: "text-[9px]" },
-  wide: { pod: "w-24 gap-1 py-1.5", avatar: 48, name: "text-[15px]", meta: "text-[13px]" },
+  compact: { pod: "w-19 gap-0.5 py-1", avatar: 32, name: "text-[12px]", meta: "text-[10px]" },
+  regular: { pod: "w-19 gap-0.5 py-1", avatar: 32, name: "text-[12px]", meta: "text-[10px]" },
+  wide: { pod: "w-20 gap-0.5 py-1.5", avatar: 38, name: "text-[13px]", meta: "text-[11px]" },
 };
 
 export function SeatRing({ players }: { players: readonly SeatView[] }) {
@@ -132,7 +137,7 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
               className="absolute -translate-x-1/2 -translate-y-1/2"
               style={{ left: slot.x, top: slot.y }}
             >
-              <SeatPod view={view} density={geometry.density} />
+              <SeatPod view={view} density={geometry.density} solid={geometry.tuck} />
             </div>
           );
         })}
@@ -149,7 +154,20 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
  */
 const POD_LINES = 2;
 
-const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; density: Density }) {
+/**
+ * `solid`: the seat's hand is tucked BEHIND this pod (phones — see
+ * `TableGeometry.tuck`), so the pod has to be opaque. Translucent, the white
+ * backs of the cards behind it washed its stats out to grey on grey.
+ */
+const SeatPod = memo(function SeatPod({
+  view,
+  density,
+  solid,
+}: {
+  view: SeatView;
+  density: Density;
+  solid: boolean;
+}) {
   const highlighted = view.active || view.winning;
   const s = POD_STYLES[density];
   const said = (view.away ? 1 : 0) + (view.partner ? 1 : 0) + (view.status ? 1 : 0);
@@ -160,8 +178,8 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
       transition={TRANSITIONS.ui}
       className={`flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
         highlighted
-          ? "bg-felt-950/70 ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]"
-          : "bg-felt-950/55 ring-1 ring-brass-400/20"
+          ? `${solid ? "bg-felt-950" : "bg-felt-950/70"} ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]`
+          : `${solid ? "bg-felt-950" : "bg-felt-950/55"} ring-1 ring-brass-400/20`
       }`}
     >
       <div className="relative">

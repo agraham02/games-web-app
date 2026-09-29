@@ -629,8 +629,72 @@ only ONE pile in either reads as visibly off-centre with nothing beside
 it to explain why.
 
 Three density tiers (`compact` / `regular` / `wide`) set piece sizes.
-Width picks the tier but height can demote it — a 844×390 landscape
-phone is wide enough for `wide` and far too short for it.
+Width picks the tier, but a SHORT screen is `compact` whatever its width —
+a 844×390 landscape phone is wide enough for `wide`, and every band on its
+short axis is sized from these pieces.
+
+### The board comes first
+
+Measured on a 390×844 phone (docs/table-layout-rethink.md), the board was
+the smallest thing on every table: 1–6% of the screen, drawn at half to
+three quarters of the hand's size, because `resolveTable` seated everybody
+first — pods, then their fanned hands reaching inward — and the board got
+the remainder at a fixed size. Every commercial table measured for that doc
+draws its board at least as big as the hand. So the order is now:
+
+1. **A profile** (`tableProfile`): `phonePortrait` (< 600 wide),
+   `phoneLandscape` (short), `roomy` (tablets and desktops). One engine;
+   a profile only sets its parameters (`RIM`). Never a second layout — the
+   user scrapped one before for being a second thing to maintain.
+2. **The controls**: hand strip, band, reserved bands — as before.
+3. **A thin rim of seats.** On phones an opponent's FACE-DOWN hand is
+   **tucked** behind their pod (`TableGeometry.tuck`; the user's call,
+   2026-09-27, reversing "keep the piles" on phones only): its backs peek
+   `TUCK_PEEK_FRACTION` of a card past the pod's inner edge (a few px read
+   as a sliver — 2026-09-28), the pod (opaque there) says the count, and the
+   board keeps clear of exactly that peek (`tuckPeek`). On a landscape
+   phone a TOP seat's hand does not peek down at all — it fans wider and
+   shows at the pod's sides, because height is what that table lacks. A FACE-UP opponent hand — a showdown —
+   is **shown** over the pod, upright. On a phone held upright, up to two
+   seats per side stack HIGH, below the corner buttons, so the board gets
+   the full width beneath them; the trick then offsets cards by the seat's
+   EDGE (`rimVectors`), not the line to it, or the left player's card lands
+   where the partner's goes. A face-up pile beside a side pod (LRC's chips)
+   hangs off that edge too, two abreast — aimed at the board's centre, a
+   corner seat's chips landed on the pod stacked below it. Where that pile
+   would reach the dice (many seats, a side seat level with the middle) it
+   hangs in the seat's own column BELOW its pod instead (`planPile`).
+   **A chip pile becomes one stack with its count on top** past what its
+   room shows one by one (`chipPileStacks`; the user's call, 2026-09-28):
+   a phone's pot always, a seat's pile past three rows — or sooner, past the
+   last row that keeps off the dice and the pot. Decided from the viewport,
+   never the count, so a pile never changes shape as chips move. The count
+   is chrome (`ChipStackCounts`), never a label on a piece: the top chip is
+   the one that leaves.
+4. **The stage** — everything inside the rim — and each board is **fitted**
+   to it: `zoneScale` may now exceed 1, up to `stageCeiling`, the RENDER BOX
+   (`pieceBox`). That ceiling is not taste: it is the base box every piece
+   renders at, pieces are `will-change: transform`, and a piece drawn past
+   its base box is an upscaled, blurred bitmap. `boardCamera` caps the domino
+   unit at the render box's tile for the same reason. On a phone the render
+   box IS the hand's card; on a laptop the hand is drawn smaller than it
+   (`handArt`, `handCard` 96×134 inside a 118×165 box), so the board may
+   outgrow the hand — the user found the hand, pods and opponents' cards the
+   biggest things on a laptop table (2026-09-28). Anything measured as a
+   fraction of "a card in your hand" uses `handArt`, never the base box.
+
+On a short, wide board poker's chain runs **sideways** (`pokerRow`: flop,
+pot badge, stub + burn in one row) and its betting panel takes the laptop's
+one row; a card hand may **bleed** off the bottom (`handBleed`, the top
+`HAND_PEEK` of each card — a tile hand never does, since a domino needs both
+halves; `GameHost` tells them apart from the game's own `pieces()`).
+
+`measure.test.ts` holds every game to its size targets through the same code
+`npm run measure` prints. Every other layout test asks whether things
+COLLIDE, and none of them could see a board drawn at half size — it
+collides with nothing. `POD_SIZE` is measured, not guessed (it was 7–13px
+short on every tier, which a tucked hand made visible), and
+`geometry.test.ts` checks real pod boxes, not centre distances.
 
 ### Chrome is laid out, not positioned
 
@@ -645,29 +709,36 @@ the worked example — one owner of the whole band above the hand, with
 three **equal** `minmax(0, 1fr)` columns, because a `flex-1` centre
 item centres in the space *left over* rather than in the row.
 
-**The band is reserved, not drawn over.** It has three modes — `row`
-(readouts), `bar` (one row of actions), `panel` (a decision bigger than a
-row: Spades' bid, Poker's betting) — and it measures itself; the surface
-reserves what it measures (`ResolveOptions.bandZone`, granted in full) and
-publishes it as `geometry.band`, so nothing the table lays out sits under
-it. Every decision a game asks for goes in the band. Nothing is positioned
-with a `calc()` against the hand any more (`--hand-zone` is gone).
+**The band's row is reserved; a panel is drawn over the felt.** The band has
+three modes — `row` (readouts), `bar` (one row of actions), `panel` (a
+decision bigger than a row: Spades' bid, Poker's betting). The surface
+reserves the ROW (`ResolveOptions.bandZone`) and publishes it as
+`geometry.band`, so nothing the table lays out sits under it. A panel is
+NOT reserved (the user's call, 2026-09-28): it is temporary, and reserving
+it re-laid the whole table out every time one opened — side seats jumping
+up for a bid panel that never went near them. The table's geometry does not
+change while a round is played. The one exception is a panel the viewer is
+asked for on EVERY turn — Poker's betting (`panelReserve`,
+`usePokerPanelReserve`): drawn over the felt, it covered the flop it was
+asking about on a landscape phone, so its room is reserved ALWAYS, open or
+not. Always, not while open, so that table does not move either. Every decision a game asks for goes in the
+band. Nothing is positioned with a `calc()` against the hand any more
+(`--hand-zone` is gone). Before a deal, with no cards to hold, a game may
+centre the band over the empty hand strip too (`HandZone overHand`, Rummy's
+"cards each" choice).
 
-**The centre shrinks; it does not overflow.** Poker's community → pot →
+**The centre is fitted; it does not overflow.** Poker's community → pot →
 stub chain and BS's reveal + pile draw at `geometry.zoneScale[zone]` — the
-largest scale at which each chain fits between the top seats' cards and
-the ring — down to a legible floor (`LEGIBLE_CARD_H`), and only past that
-may they overhang. A side seat's fan compresses rather than reaching past
+largest scale, up to the hand's card, at which each chain fits between the
+top seats and the ring — down to a legible floor (`LEGIBLE_CARD_H`), and
+only past that may they overhang. A side seat's fan compresses rather than reaching past
 the ring. `layout.test.ts`'s band test holds every game, with the band it
 really shows, to this at every `TABLE_VIEWPORTS` size.
 
-**Toasts sit bottom right, above the band** (`toastLane(geometry)`, px
-from the bottom — the user's call, 2026-09-27). Not in the corner itself,
-which is the viewer's hand: a toast there swallows the tap on a card. The
-Reconnecting pill keeps a lane of its own at the top (`statusLane`: just
-below the lowest top pod), so the two never stack. Off a table,
-`GameToaster` stays above a sticky footer (`useFooterInset`, published by
-`SetupShell`), which is where the lobby's Leave room is.
+**Toasts sit top left, below the corner buttons** (`toastLane(geometry)`, px
+from the top — the user's call, 2026-09-28; bottom right before that, top
+centre over the board before that). The Reconnecting pill keeps a lane of
+its own (`statusLane`: centred, just below the lowest top pod).
 
 **Pods say labelled numbers** (`SeatView.stats`, drawn by the shared
 `Stats`), at most two lines under the name (`POD_LINES` — the geometry
@@ -682,7 +753,20 @@ separate constants precisely because they no longer share a value); past
 that the overflow becomes a pannable range instead of ever-thinner
 slivers. Opt-in per game via the store's `discardScroll`/`handScroll`
 (`null` means "this game does not pan"), so every existing fan is
-untouched. The gesture is [usePanZone](src/table/usePanZone.ts) —
+untouched. A game whose hand can outgrow the screen mounts
+[HandPan](src/table/HandPan.tsx) (BS; Rummy wires its own, with the
+discard).
+
+**One tap picks a card where a tap only selects.** On touch, a hand tap
+first previews and a second acts — the guard against a fat-fingered,
+unrecoverable PLAY (Spades, Dominoes). Where the tap only toggles a
+selection that a button then commits (Rummy's melds, BS's claim), the hand's
+placements set `instantAct` and one tap selects; without it BS took two taps
+per card and then the button (the user, 2026-09-28). A Dominoes tile that
+fits BOTH ends sets it too: its tap only picks it up, and the ghost it then
+offers is the second tap (three taps before). A pannable DISCARD pile shows
+its newest card again whenever a card joins or leaves it — the player used
+to drag it back after every turn. The gesture is [usePanZone](src/table/usePanZone.ts) —
 coordinate-based at `document` level, never hit-tested, because a
 pointerdown landing on a card never reaches a catcher beneath it. It
 also takes the wheel, which is what a desktop player reaches for first;

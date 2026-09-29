@@ -36,6 +36,7 @@ import {
   standings,
   statsFor,
   togglePlayCard,
+  turnSeat,
 } from "./table";
 
 type Live = GameRuntime<BsState, BsAction>;
@@ -83,6 +84,7 @@ export default function BsPlayPage() {
       pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
       onPieceTap={onPieceTap}
       handActive={(live) => canPlay(view, live)}
+      turnSeat={turnSeat}
       onRematch={() => {
         clearHeld();
         setGameKey((k) => k + 1);

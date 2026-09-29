@@ -1,8 +1,10 @@
 # Table layout rethink — the board first, on phones
 
-**Status:** research brief, 2026-09-27. Nothing here is built. It is the
-starting point for a fresh session that will research further and propose
-designs; it ends with the questions only the user can answer.
+**Status:** BUILT on phones, 2026-09-27 (§11 has what was built, measured
+before and after, and what is left). The user answered §9: a tight rim, not
+a top strip; opponents' face-down hands tucked behind their pods on phones;
+landscape phones use the same engine, tuned; Rummy's melds decided later.
+§1–§10 are the research brief as it was written, kept for the reasoning.
 
 **Why now.** The user, after the layout/UX pass (`feat/layout-ui-ux-pass`):
 
@@ -402,3 +404,170 @@ Research still to do:
 - [Android Developers — Canonical layouts](https://developer.android.com/develop/adaptive-apps/guides/canonical-layouts)
 - [Game UI Database — Balatro](https://www.gameuidatabase.com/gameData.php?id=1935) (the database is a
   good place to survey card-table HUDs by genre)
+
+---
+
+## 11. What was built (2026-09-27)
+
+One engine, three profiles (`tableProfile`: `phonePortrait`, `phoneLandscape`,
+`roomy`), and a new allocation order: controls → a thin rim of seats → the
+stage, with every board fitted to the stage up to the size of the hand's own
+cards. `docs/CLAUDE.md` ("The board comes first") has the mechanism; this is
+the evidence and the result.
+
+### More research, done this session
+
+Chrome at 390×844 on real web tables, and App Store screenshots of the
+top-rated apps:
+
+| Table | What it does on a portrait phone |
+|---|---|
+| cardgames.io (Spades, Rummy) | One card size (69×94) for hand, deck and discard; each seat's melds as compact index chips under it |
+| Spades by Fiogonia (4.6★, 429K ratings) | Seats on the edges, backs bleeding off the screen edge, a small badge per seat, the trick a large compass cross, the hero's own hand bleeding off the bottom |
+| Rummy 500 by Fiogonia (4.9★, #28 Card) | Melds on the felt grouped by owner, as corner-only strips; deck + discard fan across the middle |
+| Dominoes Jogatina (4.6★, 53K) · PlayDrift | Opponent as a slim strip with a tile count; the board fills the middle; the chain snakes to the box; board tiles about hand size. PlayDrift is built like this app (absolute tiles, transform transitions, a scaled board camera) |
+| PokerStars, ClubGG | A tall oval, pods ON the rail, large community cards, a full-width action row |
+
+Every one draws its board at least as big as its hand.
+
+### What changed
+
+- **Board zones are fitted, both ways.** `zoneScale` may exceed 1, up to
+  `stageCeiling` — the hand card, which is also the base box every piece
+  renders at (above it a `will-change: transform` piece blurs). The trick,
+  deck/discard/meld landing, community chain, reveal + pile, and LRC's dice
+  (`zones.dice`) all fit. The domino camera is capped at the hand's tile.
+- **The rim** (phones): face-down opponent hands tuck behind opaque pods
+  (a showdown's face-up hand is drawn over the pod, upright); up to two seats
+  per side stack high below the corner buttons on a portrait phone; the trick
+  offsets by the seat's edge. `line` and `pileRegion` lose the rack/fan
+  clearances. A face-up pile beside a side pod (LRC's chips) grows inward two
+  abreast, rows toward the board's middle, never above the top pods — aimed
+  at the board's centre, a corner seat's chips landed on the pod stacked
+  below it (found in Chrome; `layout.test.ts` now sweeps it).
+- **Landscape**: pieces sized for height (`compact`), 8px vertical padding,
+  card hands bleed off the bottom (`HAND_PEEK` = 0.66; tile hands never),
+  the trick box may use the whole short stage, poker's chain runs sideways
+  (`pokerRow`) and its betting panel takes the laptop's single row.
+- **Measured pods.** `POD_SIZE` was 7–13px short on every tier (real: 64×71,
+  64×75, 96×113). Fixed, with edge capacity counted in pod heights down a
+  side, and a real-box test: every pod whole, on screen, clear of every other,
+  at 9 viewports × 9 seat counts, playing and watching.
+- **Instruments.** `src/table/measure.ts` (shared by `npm run measure` and
+  `measure.test.ts`, which holds the targets), seven viewports, a board ÷ hand
+  column and the domino camera's opening/mid units.
+
+### Before → after (`npm run measure`, board piece ÷ hand piece)
+
+| Game | 390×844 | 360×780 | 844×390 | 932×430 |
+|---|---|---|---|---|
+| Spades trick | 0.75 → **1.00** | 0.75 → **1.00** | 0.76 → **0.82** | 0.76 → **1.00** |
+| Rummy deck/discard | 0.75 → **1.00** | 0.75 → **1.00** | (rotate prompt) | (rotate prompt) |
+| Poker flop, 6 seats | 0.38 → **0.98** | 0.34 → **0.89** | 0.39 → **0.81** | 0.39 → **1.00** |
+| BS reveal | 0.75 → **1.00** | 0.75 → **1.00** | 0.39 → **0.85** | 0.39 → **1.00** |
+| Dominoes, mid-round unit | 22.4 → **35.9**px | 17.9 → **31.1** | 8.2 → **19.0** | 14.2 → **25.0** |
+| Dominoes, opening tile | 33.5 → **45** (hand) | | 17.3 → **39.8** | 29.8 → **45** |
+
+Dominoes' `line` box on a 390px phone went from 150×489 to 350×474.
+Tablets are at 1.00 for every card game. Desktop moved less (Spades 0.78 →
+0.79, Dominoes 0.63 → 0.61 after the pod fix): the `roomy` profile keeps
+today's ring and fans, and a 900px-tall desktop is height-bound by its
+250px hand strip — not the phone priority, and not touched.
+
+### What is left, honestly
+
+- **Landscape Dominoes is height-bound by the chain's fixed shape.** The
+  snake's rows are `ARM_REACH` = 7 units in board space, which is game state
+  every viewer online shares, so a wide, short box cannot get a longer, flatter
+  snake without a rules change. 19px a unit is legible; it is not big.
+- **Rummy in landscape still asks to rotate.** Its board sheet (140px) leaves
+  a 54px table even now. Bringing melds onto the felt (the user deferred it)
+  is what would change that — the felt around the piles on a portrait phone is
+  also where they would go.
+- **Desktop and tablet** keep the ring; the stage fit made their boards bigger
+  where there was room, but their fans and podInsets are unchanged.
+- **The hero's band chip truncates** ("Stack $…") when Poker's spelled-out
+  "Small blind" chip sits beside it on a 390px phone — a band item, found
+  while checking this, not caused by it.
+- **Five room e2e tests already fail at HEAD `1de52ce`**, with or without
+  this work (checked in a clean worktree): the lobby roster, the leader ending
+  the game, a private room's approval, and both BS room tests. All fail in
+  the LOBBY, before a table is drawn — the specs look older than the recent
+  lobby changes. Everything else in `npm run e2e` passes on this work,
+  including the Pixel 7 mobile spec. Note `npm run e2e` cannot start its own
+  server while `npm run dev` is running in the same checkout (Next refuses a
+  second dev server); `E2E_URL=http://localhost:3000` runs it against the
+  one that is up.
+
+---
+
+## 12. Second pass, after the user's review (2026-09-28)
+
+The user reviewed §11 on a phone and on a laptop (~1280×870) and found both
+ends off balance: on a phone the pods and the tucked opponents' cards had
+become too small; on a laptop the hand, pods and opponents' cards were still
+the biggest things on the table. Six items, all built:
+
+1. **Phones: bigger pods, visible tucked hands.** Pods 64 → 76px wide with
+   12/10px text (was 11/9); phone mini cards 28×39 → 32×45; a tucked hand now
+   peeks `TUCK_PEEK_FRACTION` (0.42) of a card past its pod, and fans a
+   little wider than it — it read as a sliver at 9px. The board keeps clear
+   of exactly that peek (`tuckPeek`). On a landscape phone a TOP seat's hand
+   does not peek down (height is what that table lacks); it fans wider and
+   shows at the pod's sides. Top seats keep clear of a high side seat's
+   whole column.
+2. **Decision panels do not move the table.** Only the band's row is
+   reserved; a bid panel is drawn over the felt. Poker is the one exception
+   — its betting panel opens every turn and, drawn over the felt, covered the
+   flop on a landscape phone — so its room is reserved ALWAYS
+   (`panelReserve`), open or not.
+3. **Laptops: the board may outgrow the hand.** A render box (`pieceBox`,
+   118×165 on a laptop) separate from the drawn hand (`handCard`, 96×134);
+   the ceiling for the board is the render box. Laptop pods 96 → 80px, mini
+   cards 50×70 → 40×56, hand strip 250 → 196. LRC's pot chips drawn at 1.5×
+   a mini card (60px) instead of the table card (92px); its dice capped at
+   72px; its empty strip under the Roll button 64 → 16px. Rummy's deck and
+   discard no longer run under the board sheet or the top seat's hand.
+4. **Toasts top left**, below the corner buttons.
+5. **Rummy's "cards each" choice** centres in the whole player section while
+   nobody holds cards (`HandZone overHand`).
+6. **BS: one tap picks a card** (`instantAct`, as Rummy already had), and a
+   long hand pans (`HandPan`, shared).
+
+| Game | Laptop 1280×800, board ÷ hand | Phone 390×844 | Landscape 844×390 |
+|---|---|---|---|
+| Spades | 0.96 | 1.00 | 0.80 |
+| Rummy | **1.23** | 1.00 | (rotate prompt) |
+| Poker | **1.23** | 0.98 | 0.81 |
+| BS | **1.19** | 1.00 | 0.83 |
+| Dominoes (mid-round unit) | 50.7 (hand tile 67; opening 82.5) | 34.2 | 18.4 |
+
+The phone's Dominoes unit gave back ~2px (35.9 → 34.2) to the bigger pods and
+peeks — the trade the user asked for.
+
+## 13. Third pass (2026-09-28, the user's second review)
+
+Seven items; the layout ones:
+
+- **LRC's piles become one stack with a count** (`chipPileStacks`,
+  `ChipStackCounts`). A phone's pot is always one stack — four chips at the
+  pot's size crowded the dice. A seat's pile stacks past three rows, or
+  sooner past the last row clear of the dice and the pot at its biggest
+  (`planPile`, per seat, from the viewport only). Building it found two old
+  collisions the tests had never asked about: with nine seats on a 390px
+  phone a side seat sits level with the dice and its pile's second column
+  covered a die (on a 360px phone the dice fill the stage, so even one
+  column did — those piles now hang in the seat's column below its pod); on
+  a landscape phone the viewer's own pile rose into the pot by its second
+  row (the three chips a round starts with). `layout.test.ts` now checks
+  every pile against the dice and the pot on phones and laptops.
+- **Poker names the betting round** beside the pot — Pre-flop, Flop, Turn,
+  River, Showdown; with Hints on, which card ("Turn · 4th card"). Where the
+  pot box is 104px (a landscape phone's one-row chain) the round wraps above
+  the pot rather than into the cards.
+- **Rummy's discard pile shows its newest card** whenever it changes.
+- Not layout, same review: Dominoes' two-end tile is two taps; the round
+  card no longer says a player holding the double blank "went out"; BS's
+  status line and pods stay on the player whose play is under challenge and
+  never light a seat for letting a play go; the raise stepper steps to the
+  big blind's multiples and takes a typed amount.

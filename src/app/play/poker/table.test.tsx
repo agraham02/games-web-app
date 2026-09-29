@@ -131,6 +131,68 @@ describe("the betting panel", () => {
   });
 });
 
+describe("sizing a raise to any amount", () => {
+  /**
+   * Reported 2026-09-28: facing $77 the minimum raise was $154 — right, the
+   * bet plus the last raise — but the stepper then went $174, $194, so $160
+   * was not a raise anyone could make. The rules take any whole dollar from
+   * the minimum up; the $20 steps were the stepper's.
+   */
+  it("steps to multiples of the big blind", () => {
+    const state = facingARaise();
+    render(<PokerControls view={view} live={runtime(state)} />);
+    fireEvent.click(screen.getByRole("button", { name: "More chips" }));
+    const next = (Math.floor(150 / state.bigBlind) + 1) * state.bigBlind;
+    screen.getByRole("button", { name: new RegExp(`^Raise to \\$${next}`) });
+  });
+
+  it("raises to a typed amount", () => {
+    const submit = vi.fn();
+    render(<PokerControls view={view} live={runtime(facingARaise(), submit)} />);
+    fireEvent.click(screen.getByRole("button", { name: /tap to type/ }));
+    const field = screen.getByRole("textbox", { name: /Type the number of chips/ });
+    fireEvent.change(field, { target: { value: "163" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: /^Raise to \$163/ }));
+    expect(submit).toHaveBeenLastCalledWith({ t: "raise", to: 163 });
+  });
+
+  it("holds a typed amount inside the legal range", () => {
+    render(<PokerControls view={view} live={runtime(facingARaise())} />);
+    fireEvent.click(screen.getByRole("button", { name: /tap to type/ }));
+    const field = screen.getByRole("textbox", { name: /Type the number of chips/ });
+    fireEvent.change(field, { target: { value: "20" } });
+    fireEvent.blur(field);
+    screen.getByRole("button", { name: /^Raise to \$150/ });
+  });
+});
+
+describe("the betting round, beside the pot", () => {
+  it("names the round the hand is in", () => {
+    const { unmount } = render(<PokerControls view={view} live={runtime(facingARaise())} />);
+    screen.getByText("Pre-flop");
+    unmount();
+    const flop = facingARaise();
+    render(<PokerControls view={view} live={runtime({ ...flop, communityOrder: flop.deck.slice(0, 3) })} />);
+    screen.getByText("Flop");
+    // With Hints on, which card the round is about.
+    screen.getByText(/3 cards/);
+  });
+
+  it("says only the round's name with Hints off", () => {
+    const flop = facingARaise();
+    render(
+      <PokerControls
+        view={view}
+        live={runtime({ ...flop, communityOrder: flop.deck.slice(0, 4) })}
+        hints={false}
+      />,
+    );
+    screen.getByText("Turn");
+    expect(screen.queryByText(/4th card/)).toBeNull();
+  });
+});
+
 describe("the betting panel on a phone", () => {
   /**
    * Stacked, the panel was ~275px on a phone — most of the table, now that

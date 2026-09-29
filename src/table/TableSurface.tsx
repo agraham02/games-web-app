@@ -41,6 +41,14 @@ export interface TableSurfaceProps {
   topZone?: number;
   bottomZone?: number;
   pileAnchor?: number;
+  /**
+   * Height to keep reserved above the band's row for a decision panel the
+   * viewer is asked for on EVERY turn (Poker's betting) — reserved always,
+   * open or not, so the table never moves when it opens and the board is
+   * never under it. A panel that comes once a round (Spades' bid) reserves
+   * nothing and is drawn over the felt (see `bandZone` below).
+   */
+  panelReserve?: number;
   onPieceTap?: (id: PieceId) => void;
   /** Debug overlay: seat slots and zone boxes. */
   showGuides?: boolean;
@@ -55,6 +63,8 @@ export interface TableSurfaceProps {
    * game table; a lab page drawing bare geometry turns it off.
    */
   band?: boolean;
+  /** See `ResolveOptions.handBleed`. `GameHost` works it out per game. */
+  handBleed?: boolean;
 }
 
 export function TableSurface({
@@ -64,6 +74,7 @@ export function TableSurface({
   topZone,
   bottomZone,
   pileAnchor,
+  panelReserve = 0,
   onPieceTap,
   showGuides,
   children,
@@ -71,10 +82,10 @@ export function TableSurface({
   fill = "viewport",
   viewerSeat,
   band = true,
+  handBleed,
 }: TableSurfaceProps) {
   const ref = useRef<HTMLDivElement>(null);
   const setGeometry = useTableStore((s) => s.setGeometry);
-  const bandMeasured = useTableStore((s) => s.bandHeight);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
   // ResizeObserver rather than a window listener: this element can be
@@ -98,10 +109,14 @@ export function TableSurface({
     return () => ro.disconnect();
   }, []);
 
-  // The band's one row is reserved from the first layout, before anything
-  // has measured it, so a table does not deal into space the band then
-  // takes back. Only a taller band — a bid, a bet — moves the table, once.
-  const bandZone = band && size ? Math.max(handHeaderHeight(size.h), bandMeasured) : 0;
+  // The band's ONE ROW is reserved — never a decision panel above it (a
+  // bid, a bet). A panel is temporary, and reserving it re-laid the whole
+  // table out every time one opened: the side seats and their cards jumped
+  // up for a bid panel that never went near them (the user's call,
+  // 2026-09-28 — "it's fine if they overlap with some of the UI"). So the
+  // table's geometry never changes while a round is played, and a panel
+  // is drawn over the felt for as long as it is open.
+  const bandZone = band && size ? handHeaderHeight(size.h) + panelReserve : 0;
 
   useEffect(() => {
     if (!size || size.w === 0 || size.h === 0) return;
@@ -117,9 +132,10 @@ export function TableSurface({
         bandZone,
         pileAnchor,
         viewerSeat,
+        handBleed,
       }),
     );
-  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, setGeometry]);
 
   return (
     <div

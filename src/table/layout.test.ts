@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   cellHalfExtent,
+  CORNER_CLEAR,
+  TUCK_PEEK_FRACTION,
   discardMaxScroll,
   handFanMaxScroll,
   handHeaderHeight,
@@ -14,7 +16,15 @@ import {
   type Density,
   type ZoneName,
 } from "./geometry";
-import { boardCamera, boardPieceSize, layoutPiece, projectCell, baseSize } from "./layout";
+import {
+  boardCamera,
+  boardPieceSize,
+  chipPileStacks,
+  chipStackBadges,
+  layoutPiece,
+  projectCell,
+  baseSize,
+} from "./layout";
 import type { Placement } from "@/engine/types";
 import { createRng } from "@/engine/rng";
 import { createDominoes } from "@/games/dominoes/rules";
@@ -49,7 +59,8 @@ function pieceOnScreen(
   g: ReturnType<typeof resolveTable>,
 ) {
   const placement: Placement = { zone, seat, index, count, faceUp: true };
-  const t = layoutPiece(placement, g);
+  // As a chip, so a pile big enough to become one stack is laid out as one.
+  const t = layoutPiece(placement, g, { kind: "chip" });
   const base = baseSize(g);
   const onScreenW = base.w * t.scale;
   const onScreenH = base.h * t.scale;
@@ -222,13 +233,18 @@ describe("domino line — camera framing", () => {
     }
   });
 
-  it("holds a chain tile at or below the normal table piece size", () => {
+  it("holds a chain tile at or below the base box's tile", () => {
     // The clamp is what keeps the camera perfectly still for the opening
-    // few tiles instead of blowing one domino up to fill the table.
+    // few tiles instead of blowing one domino up to fill the table. It is
+    // the BASE BOX's tile rather than the table card's: a short chain is the
+    // whole board, and it used to be drawn smaller than the tiles you hold
+    // (docs/table-layout-rethink.md). The base box is what pieces render at
+    // (the hand's own card on a phone, a little more on a laptop), so a
+    // bigger tile would be an upscaled, blurred one.
     for (const vp of VIEWPORTS) {
       for (const density of DENSITIES) {
         const g = resolveTable({ seats: 3, width: vp.w, height: vp.h, density });
-        const maxUnit = Math.min(g.card.w, g.card.h / 2);
+        const maxUnit = Math.min(g.pieceBox.w, g.pieceBox.h / 2);
         for (const chain of chainSnapshots(3, 1234)) {
           const cam = boardCamera(g, boundsOf(chain));
           expect(cam.unit).toBeLessThanOrEqual(maxUnit + 1e-9);
@@ -236,6 +252,12 @@ describe("domino line — camera framing", () => {
         }
       }
     }
+  });
+
+  it("draws the opening tile as big as a tile in the hand wherever the line has room", () => {
+    const g = resolveTable({ seats: 4, width: 390, height: 844 });
+    const opening = boardCamera(g, { minX: -0.5, minY: -1, maxX: 0.5, maxY: 1 });
+    expect(opening.unit).toBeCloseTo(Math.min(g.pieceBox.w, g.pieceBox.h / 2), 6);
   });
 
   it("never shrinks the board as the chain grows", () => {
@@ -369,6 +391,9 @@ describe("opponent tile hand — stays clear of the domino line", () => {
       for (const seats of [2, 3, 4]) {
         for (const density of DENSITIES) {
           const g = resolveTable({ seats, width: vp.w, height: vp.h, density });
+          // A TUCKED hand sits behind its pod by design — see the tucked
+          // hands' own tests below. This is about a fanned rack.
+          if (g.tuck) continue;
           for (const slot of g.seats) {
             if (slot.isHero) continue;
             const pod = podBox(slot, density);
@@ -560,14 +585,16 @@ describe("hero hand — never draws a card outside the hand zone", () => {
     const t = layoutPiece(placement, g, { kind: "card", handScroll: pan, handIndex: index });
     const base = baseSize(g);
     const cx = t.x + base.w / 2;
-    return { opacity: t.opacity, left: cx - base.w / 2, right: cx + base.w / 2 };
+    // As drawn: the hand is scaled below the base box on a laptop.
+    const half = (base.w * t.scale) / 2;
+    return { opacity: t.opacity, left: cx - half, right: cx + half };
   }
 
   it("draws nothing once a card's centre has left the zone", () => {
     let gone = 0;
     for (const vp of VIEWPORTS) {
       const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
-      for (const count of [24, 34, 45]) {
+      for (const count of [24, 34, 48]) {
         const range = handFanMaxScroll(g, count);
         for (const pan of [range / 2, 0, -range / 2]) {
           for (let i = 0; i < count; i++) {
@@ -825,31 +852,37 @@ describe("the band above the hand — nothing on the table sits under it", () =>
    * betting). It used to reserve nothing — the row was drawn over the
    * bottom of the ring and the decisions floated over the table on a
    * `calc()`, over the flop and the lowest pods. The surface now reserves
-   * the band's measured height (`ResolveOptions.bandZone`), and this holds
-   * the table to it — each game with the band it really shows, and the
-   * zones it really uses.
+   * the band's ONE ROW (`ResolveOptions.bandZone`), and this holds the table
+   * to it — each game with the zones it really uses. A decision panel above
+   * the row (a bid, a bet) is drawn over the felt and never reserved:
+   * reserving it re-laid the table out every time one opened (the user's
+   * call, 2026-09-28).
    *
    * The one allowance is the documented one: a centre chain that has
    * already shrunk to the smallest legible card (`zoneScale` at its floor)
    * may overhang rather than shrink into illegibility.
    */
-  const POKER_BAR = 80; // the laptop's one-row betting bar
-  const POKER_FOLDED = 150; // a phone's folded panel, sizing open
   const GAMES: Array<{
     game: string;
     seats: number[];
     /** Cards in an opponent's hand — the most the game deals. */
     hand: number;
     zones: readonly ZoneName[];
-    panel: (vp: { w: number; h: number }) => number;
     bottomZone?: number;
+    /** A panel reserved always (`panelReserve`) — Poker's betting. */
+    reserve?: (vp: { w: number; h: number }) => number;
   }> = [
-    { game: "poker", seats: [2, 4, 6, 8, 10], hand: 2, zones: ["community", "pot", "stub", "burnt"], panel: (vp) => (vp.w >= 1024 ? POKER_BAR : POKER_FOLDED) },
-    { game: "bs", seats: [2, 4, 6], hand: 13, zones: ["reveal", "pile"], panel: () => 0 },
-    // The bid: one row on a short screen, the full panel otherwise.
-    { game: "spades", seats: [4], hand: 13, zones: ["trick"], panel: (vp) => (vp.h < 560 ? 56 : 250) },
-    { game: "rummy", seats: [2, 4, 6], hand: 10, zones: ["deck", "discard"], panel: () => 0, bottomZone: 140 },
-    { game: "dominoes", seats: [2, 3, 4], hand: 7, zones: ["line"], panel: () => 0 },
+    {
+      game: "poker",
+      seats: [2, 4, 6, 8, 10],
+      hand: 2,
+      zones: ["community", "pot", "stub", "burnt"],
+      reserve: (vp) => (vp.w >= 1024 ? 104 : vp.h < 560 && vp.w >= 640 ? 84 : 114),
+    },
+    { game: "bs", seats: [2, 4, 6], hand: 13, zones: ["reveal", "pile"] },
+    { game: "spades", seats: [4], hand: 13, zones: ["trick"] },
+    { game: "rummy", seats: [2, 4, 6], hand: 10, zones: ["deck", "discard"], bottomZone: 140 },
+    { game: "dominoes", seats: [2, 3, 4], hand: 7, zones: ["line"] },
   ];
 
   it("grants at least the band's own row, on every screen", () => {
@@ -871,7 +904,7 @@ describe("the band above the hand — nothing on the table sits under it", () =>
             seats,
             width: vp.w,
             height: vp.h,
-            bandZone: row + game.panel(vp),
+            bandZone: row + (game.reserve?.(vp) ?? 0),
             bottomZone: game.bottomZone,
           });
           const label = `${vp.name}, ${game.game} at ${seats}`;
@@ -901,19 +934,17 @@ describe("the band above the hand — nothing on the table sits under it", () =>
 
 describe("the toast lane", () => {
   /**
-   * Toasts sit bottom right (the user's call, 2026-09-27) — but the corner
-   * itself is the viewer's hand, where a toast would swallow the tap on a
-   * card. `toastLane` is measured from the bottom, and clears the band.
+   * Toasts sit top left (the user's call, 2026-09-28): below the corner
+   * buttons, which a toast would otherwise cover and swallow the tap on, and
+   * nowhere near the band or the hand at the bottom.
    */
-  it("sits above the band, and so above the hand", () => {
+  it("sits below the corner buttons, far above the band", () => {
     for (const vp of TABLE_VIEWPORTS) {
       for (const seats of [2, 4, 6, 10]) {
-        for (const band of [handHeaderHeight(vp.h), 140]) {
-          const g = resolveTable({ seats, width: vp.w, height: vp.h, bandZone: band });
-          const toastBottom = g.box.y + g.box.h - toastLane(g);
-          expect(toastBottom, `${vp.name}, ${seats} seats`).toBeLessThanOrEqual(g.band.y);
-          expect(toastBottom, `${vp.name}, ${seats} seats`).toBeLessThanOrEqual(g.zones.hand.y);
-        }
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, bandZone: handHeaderHeight(vp.h) });
+        const lane = toastLane(g);
+        expect(lane, `${vp.name}, ${seats} seats`).toBeGreaterThanOrEqual(CORNER_CLEAR);
+        expect(lane + 40, `${vp.name}, ${seats} seats`).toBeLessThanOrEqual(g.band.y);
       }
     }
   });
@@ -935,5 +966,312 @@ describe("the toast lane", () => {
         expect(lane, `${vp.name}, ${seats} seats`).toBeLessThan(g.band.y);
       }
     }
+  });
+});
+
+/**
+ * Board zones are fitted to the room they have, and may grow past the
+ * table card (see `stageCeiling`) — but never past the base box every
+ * piece renders at. Pieces are `will-change: transform`, so the browser
+ * rasterises them at the base size and scales the bitmap: a scale above 1
+ * is a blurred card.
+ */
+describe("board zones — grow to fit, never past the base box", () => {
+  const BOARD: Placement[] = [
+    { zone: "trick", seat: 1, index: 0, count: 4, faceUp: true },
+    { zone: "deck", index: 0, count: 1, faceUp: true },
+    { zone: "discard", index: 0, count: 1, faceUp: true },
+    { zone: "board", index: 0, count: 3, faceUp: true, group: 0 },
+    { zone: "community", index: 0, count: 5, faceUp: true },
+    { zone: "reveal", index: 0, count: 4, faceUp: true },
+    { zone: "pile", index: 0, count: 1, faceUp: false },
+  ];
+
+  it("draws every board piece at a scale of at most 1, everywhere", () => {
+    for (const vp of [...VIEWPORTS, { name: "tablet", w: 768, h: 1024 }]) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        for (const p of BOARD) {
+          const t = layoutPiece(p, g, { kind: "card" });
+          expect(t.scale, `${vp.name}, ${seats} seats, ${p.zone}`).toBeLessThanOrEqual(1 + 1e-9);
+        }
+      }
+    }
+  });
+
+  it("draws the trick no smaller than the table card it used to be", () => {
+    for (const vp of [...VIEWPORTS, { name: "tablet", w: 768, h: 1024 }]) {
+      for (const seats of [2, 3, 4]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        const t = layoutPiece(BOARD[0]!, g, { kind: "card" });
+        expect(t.scale * baseSize(g).w, `${vp.name}, ${seats} seats`).toBeGreaterThanOrEqual(
+          g.card.w - 1e-6,
+        );
+      }
+    }
+  });
+});
+
+/**
+ * On a phone an opponent's face-down hand tucks behind their pod (the
+ * user's call, 2026-09-27). It may peek a few px past the pod's inner edge
+ * — that is what makes it read as a hand — but it must cost the board
+ * nothing: never into the domino line, never into the pile region, never
+ * far from the pod it belongs to. Measured on the real laid-out pieces, so
+ * no second model of where a hand "should" reach can drift from layout.ts.
+ */
+describe("tucked hands — behind the pod, never on the board", () => {
+  const PHONES = [
+    { name: "phone 390", w: 390, h: 844 },
+    { name: "phone 360", w: 360, h: 780 },
+    { name: "phone 430", w: 430, h: 932 },
+  ];
+
+  function drawn(g: ReturnType<typeof resolveTable>, p: Placement, kind: "card" | "tile"): Box {
+    const t = layoutPiece(p, g, { kind });
+    const base = baseSize(g);
+    const w = (kind === "tile" ? Math.min(base.w, base.h / 2) : base.w) * t.scale;
+    const h = (kind === "tile" ? w * 2 : base.h * t.scale);
+    const turned = Math.round((((t.rotate % 180) + 180) % 180) / 90) === 1;
+    // A small tilt reaches a little further than the upright box; pad for it.
+    const [bw, bh] = turned ? [h, w] : [w, h];
+    const cx = t.x + base.w / 2;
+    const cy = t.y + base.h / 2;
+    return { x: cx - bw / 2 - 2, y: cy - bh / 2 - 2, w: bw + 4, h: bh + 4 };
+  }
+
+  it("is the phone profile's choice, and only its", () => {
+    expect(resolveTable({ seats: 4, width: 390, height: 844 }).tuck).toBe(true);
+    expect(resolveTable({ seats: 4, width: 1440, height: 900 }).tuck).toBe(false);
+    expect(resolveTable({ seats: 4, width: 768, height: 1024 }).tuck).toBe(false);
+  });
+
+  it("stays within a peek of its own pod, and off the board, for every hand", () => {
+    for (const vp of PHONES) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h });
+        for (const slot of g.seats) {
+          if (slot.isHero) continue;
+          const pod = podBox(slot, g.density);
+          // The peek past its inner edge, the wider-than-the-pod spread along
+          // its edge, and a tilt's corners.
+          const m = g.miniCard.h * TUCK_PEEK_FRACTION + 8;
+          const near: Box = { x: pod.x - m, y: pod.y - m, w: pod.w + 2 * m, h: pod.h + 2 * m };
+          for (const kind of ["card", "tile"] as const) {
+            if (kind === "tile" && seats > 4) continue;
+            const max = kind === "tile" ? 7 : 13;
+            for (let count = 1; count <= max; count++) {
+              for (let index = 0; index < count; index++) {
+                const p: Placement = { zone: "hand", seat: slot.seat, index, count, faceUp: false };
+                const r = drawn(g, p, kind);
+                const label = `${vp.name}/${seats} seats/seat ${slot.seat}/${kind} ${index + 1} of ${count}`;
+                expect(r.x >= near.x && r.y >= near.y, label).toBe(true);
+                expect(r.x + r.w <= near.x + near.w && r.y + r.h <= near.y + near.h, label).toBe(true);
+                if (kind === "tile") expect(overlapsBox(r, g.zones.line), `${label}: line`).toBe(false);
+                else expect(overlapsBox(r, g.pileRegion), `${label}: pile region`).toBe(false);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("draws a face-up (shown) hand over its pod, upright and readable", () => {
+    const g = resolveTable({ seats: 6, width: 390, height: 844 });
+    for (const slot of g.seats) {
+      if (slot.isHero) continue;
+      const pod = podBox(slot, g.density);
+      for (let index = 0; index < 2; index++) {
+        const p: Placement = { zone: "hand", seat: slot.seat, index, count: 2, faceUp: true };
+        const t = layoutPiece(p, g, { kind: "card" });
+        expect(Math.abs(t.rotate), `seat ${slot.seat}`).toBeLessThanOrEqual(6);
+        const r = drawn(g, p, "card");
+        expect(overlapsBox(r, pod), `seat ${slot.seat}`).toBe(true);
+        expect(r.h, "legible").toBeGreaterThanOrEqual(40);
+      }
+    }
+  });
+});
+
+/**
+ * LRC dealt Sam's chips onto Mia's avatar: with two seats stacked high down
+ * a phone's side, a chip pile aimed at the board's centre ran straight down
+ * through the pod below its own. Face-up piles hang off their pod's inner
+ * EDGE on the rim, and must never land on anybody else's pod.
+ */
+describe("chip piles on the rim — never on another seat's pod", () => {
+  it("keeps every face-up pile off every other pod, on every phone", () => {
+    for (const vp of [
+      { w: 360, h: 780 },
+      { w: 390, h: 844 },
+      { w: 430, h: 932 },
+      { w: 844, h: 390 },
+    ]) {
+      for (const seats of [3, 4, 5, 6, 7, 8, 9, 10]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, handZone: 64, bandZone: 64 });
+        for (const slot of g.seats) {
+          if (slot.isHero) continue;
+          for (let count = 1; count <= 9; count++) {
+            for (let index = 0; index < count; index++) {
+              const chip = pieceOnScreen("collected", slot.seat, index, count, g);
+              // The chip's drawn disc, not its card-shaped base box.
+              const d = g.miniCard.w;
+              const cx = (chip.left + chip.right) / 2;
+              const cy = (chip.top + chip.bottom) / 2;
+              const disc: Box = { x: cx - d / 2, y: cy - d / 2, w: d, h: d };
+              for (const other of g.seats) {
+                if (other.isHero || other.seat === slot.seat) continue;
+                expect(
+                  overlapsBox(disc, podBox(other, g.density)),
+                  `${vp.w}x${vp.h}/${seats} seats: seat ${slot.seat}'s chip ${index + 1}/${count} on seat ${other.seat}'s pod`,
+                ).toBe(false);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+});
+
+/**
+ * Past what its room shows one by one, a chip pile becomes ONE stack with
+ * its count written on top (the user's call, 2026-09-28): the pot's grid
+ * sat on the dice on a phone, and fifteen chips beside a pod stopped being
+ * a count anyone could read.
+ */
+describe("chip piles that become one stack", () => {
+  const phone = () => resolveTable({ seats: 9, width: 390, height: 844, handZone: 16, bandZone: 64 });
+  const laptop = () => resolveTable({ seats: 9, width: 1280, height: 800, handZone: 16, bandZone: 64 });
+  const centre = (zone: "center" | "collected", seat: number | undefined, index: number, count: number, g: ReturnType<typeof resolveTable>) => {
+    const b = pieceOnScreen(zone, seat, index, count, g);
+    return { x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 };
+  };
+
+  it("stacks a phone's pot from two chips, and a larger screen's past ten", () => {
+    expect(chipPileStacks(phone(), { zone: "center", count: 1 })).toBe(false);
+    expect(chipPileStacks(phone(), { zone: "center", count: 2 })).toBe(true);
+    expect(chipPileStacks(laptop(), { zone: "center", count: 10 })).toBe(false);
+    expect(chipPileStacks(laptop(), { zone: "center", count: 11 })).toBe(true);
+  });
+
+  it("stacks a seat's pile past three rows", () => {
+    const top = (g: ReturnType<typeof resolveTable>) => g.seats.find((s) => s.anchor === "top")!.seat;
+    const g = phone();
+    expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 6 })).toBe(false);
+    expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 7 })).toBe(true);
+    const l = laptop();
+    expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 9 })).toBe(false);
+    expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 10 })).toBe(true);
+  });
+
+  it("stacks sooner where a third row would reach the pot", () => {
+    // On a landscape phone the viewer's pile rises from the band toward the
+    // pot, and its second row ran into it — with the three chips a round
+    // starts with.
+    const g = resolveTable({ seats: 8, width: 844, height: 390, handZone: 16, bandZone: 64 });
+    expect(chipPileStacks(g, { zone: "collected", seat: 0, count: 2 })).toBe(false);
+    expect(chipPileStacks(g, { zone: "collected", seat: 0, count: 3 })).toBe(true);
+  });
+
+  it("puts every chip of a stack on the pile's first spot, each a hair higher", () => {
+    const g = phone();
+    const d = g.miniCard.w;
+    for (const [zone, seat, count] of [
+      ["center", undefined, 15],
+      ["collected", g.seats.find((s) => s.anchor === "left")!.seat, 15],
+    ] as const) {
+      const first = centre(zone, seat, 0, 1, g);
+      let above = Infinity;
+      for (let index = 0; index < count; index++) {
+        const c = centre(zone, seat, index, count, g);
+        expect(Math.abs(c.x - first.x), `${zone} chip ${index}`).toBeLessThan(0.01);
+        expect(first.y - c.y, `${zone} chip ${index}`).toBeLessThanOrEqual(d * 0.4);
+        expect(c.y, `${zone} chip ${index}`).toBeLessThanOrEqual(above);
+        above = c.y;
+      }
+    }
+  });
+
+  it("keeps a phone's stacked pot off the dice", () => {
+    for (const vp of [
+      { w: 360, h: 780 },
+      { w: 390, h: 844 },
+      { w: 844, h: 390 },
+    ]) {
+      for (const seats of [2, 5, 9]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, handZone: 16, bandZone: 64 });
+        const dice = g.zones.dice;
+        const top = pieceOnScreen("center", undefined, seats * 3 - 1, seats * 3, g);
+        // The disc is as wide as the drawn box; its top is that far above its centre.
+        const discTop = (top.top + top.bottom) / 2 - (top.right - top.left) / 2;
+        expect(discTop, `${vp.w}x${vp.h}/${seats} seats`).toBeGreaterThanOrEqual(dice.y + dice.h);
+      }
+    }
+  });
+
+  it("keeps every seat's pile off the dice and the pot", () => {
+    // Nine seats on a 390px phone put a side seat level with the dice, and
+    // the second column of its pile covered the left die.
+    for (const vp of [
+      { w: 360, h: 780 },
+      { w: 390, h: 844 },
+      { w: 430, h: 932 },
+      { w: 844, h: 390 },
+      { w: 932, h: 430 },
+      { w: 1280, h: 800 },
+      { w: 1440, h: 900 },
+    ]) {
+      for (const seats of [3, 5, 7, 8, 9, 10]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, handZone: 16, bandZone: 64 });
+        const dice = g.zones.dice;
+        const d = g.miniCard.w;
+        // The pot at the most it is ever drawn loose.
+        const most = g.profile === "roomy" ? 10 : 7;
+        const pot = Array.from({ length: most }, (_, i) => {
+          const b = pieceOnScreen("center", undefined, i, most, g);
+          const c = { x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 };
+          const w = b.right - b.left;
+          return { x: c.x - w / 2, y: c.y - w / 2, w, h: w };
+        });
+        for (const slot of g.seats) {
+          for (let count = 1; count <= 15; count++) {
+            for (let index = 0; index < count; index++) {
+              const chip = pieceOnScreen("collected", slot.seat, index, count, g);
+              const cx = (chip.left + chip.right) / 2;
+              const cy = (chip.top + chip.bottom) / 2;
+              const disc: Box = { x: cx - d / 2, y: cy - d / 2, w: d, h: d };
+              expect(
+                overlapsBox(disc, dice),
+                `${vp.w}x${vp.h}/${seats} seats: seat ${slot.seat}'s chip ${index + 1}/${count} on the dice`,
+              ).toBe(false);
+              for (const chip of pot) {
+                expect(
+                  overlapsBox(disc, chip),
+                  `${vp.w}x${vp.h}/${seats} seats: seat ${slot.seat}'s chip ${index + 1}/${count} on the pot`,
+                ).toBe(false);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("writes one count per stack, on its top chip", () => {
+    const g = phone();
+    const left = g.seats.find((s) => s.anchor === "left")!.seat;
+    const placements: Record<string, Placement> = {};
+    for (let i = 0; i < 4; i++) placements[`p${i}`] = { zone: "center", index: i, count: 4, faceUp: true };
+    for (let i = 0; i < 8; i++) placements[`s${i}`] = { zone: "collected", seat: left, index: i, count: 8, faceUp: true };
+    for (let i = 0; i < 3; i++) placements[`h${i}`] = { zone: "collected", seat: 0, index: i, count: 3, faceUp: true };
+
+    const badges = chipStackBadges(g, placements);
+    expect(badges.map((b) => b.count).sort((a, b) => a - b)).toEqual([4, 8]);
+    const pot = badges.find((b) => b.count === 4)!;
+    const top = centre("center", undefined, 3, 4, g);
+    expect(pot.cx).toBeCloseTo(top.x, 5);
+    expect(pot.cy).toBeCloseTo(top.y, 5);
   });
 });

@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef, useState } from "react";
+
 /**
  * A big centred number with +/- either side, rather than a wall of
  * buttons — one number to read, not thirteen.
@@ -44,6 +46,19 @@ export interface NumberStepperProps {
    * must fit between the board and the hand does not.
    */
   size?: "md" | "sm";
+  /**
+   * Tapping the number turns it into a field to type any value in range.
+   * For a figure the buttons cannot reach every value of in sensible time:
+   * a poker raise steps by the big blind, and without this $160 was simply
+   * not a raise anyone could make (reported 2026-09-28).
+   */
+  editable?: boolean;
+  /**
+   * Step to multiples of `step` rather than by `step` from wherever the
+   * value is: $154 goes up to $160, then $180, instead of $174 and $194.
+   * The range's own ends are still reachable, clamped as always.
+   */
+  snap?: boolean;
 }
 
 export function NumberStepper({
@@ -57,8 +72,26 @@ export function NumberStepper({
   title,
   format,
   size = "md",
+  editable = false,
+  snap = false,
 }: NumberStepperProps) {
   const small = size === "sm";
+  const lower = snap ? Math.ceil(value / step) * step - step : value - step;
+  const higher = snap ? Math.floor(value / step) * step + step : value + step;
+  // What is being typed, while the number is a field; null when it is not.
+  const [draft, setDraft] = useState<string | null>(null);
+  // Escape closes the field without its value. The field's removal can
+  // still fire a blur, and that blur must not commit what Escape dropped.
+  const cancelled = useRef(false);
+  const commit = () => {
+    if (draft === null || cancelled.current) return;
+    const typed = Number.parseInt(draft.replace(/[^0-9]/g, ""), 10);
+    // Out of range is clamped to it rather than refused: a player who types
+    // more than they have means all of it.
+    if (Number.isFinite(typed)) onChange(Math.min(max, Math.max(min, typed)));
+    setDraft(null);
+  };
+  const figure = `tnum min-w-[2ch] px-1 text-center font-display ${small ? "text-2xl" : "text-4xl"} font-extrabold text-brass-300`;
   const button =
     `flex ${small ? "h-9 w-9" : "h-11 w-11"} shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30`;
 
@@ -66,7 +99,7 @@ export function NumberStepper({
     <div className="flex items-center justify-center gap-3">
       <button
         type="button"
-        onClick={() => onChange(Math.max(min, value - step))}
+        onClick={() => onChange(Math.max(min, lower))}
         disabled={disabled || value <= min}
         title={title}
         aria-label={`Fewer ${label}`}
@@ -81,14 +114,48 @@ export function NumberStepper({
           is what it did. `min-w` keeps a one-digit value from collapsing
           the row, and `tnum` keeps digits equal width so the number does
           not jitter as it counts. */}
-      <span
-        className={`tnum min-w-[2ch] px-1 text-center font-display ${small ? "text-2xl" : "text-4xl"} font-extrabold text-brass-300`}
-      >
-        {format ? format(value) : value}
-      </span>
+      {draft !== null ? (
+        <input
+          // Focused the moment it appears: the tap that opened it was the
+          // request to type.
+          autoFocus
+          type="text"
+          inputMode="numeric"
+          enterKeyHint="done"
+          aria-label={`Type the number of ${label}`}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              cancelled.current = true;
+              setDraft(null);
+            }
+          }}
+          className={`${figure} rounded-lg bg-felt-950/60 ring-1 ring-brass-400/50 outline-none`}
+          style={{ width: `${Math.max(3, String(max).length + 1)}ch` }}
+        />
+      ) : editable && !disabled ? (
+        // Dotted underline: the number is also a control, and says so.
+        <button
+          type="button"
+          onClick={() => {
+            cancelled.current = false;
+            setDraft(String(value));
+          }}
+          aria-label={`${format ? format(value) : value} — tap to type the number of ${label}`}
+          className={`${figure} underline decoration-brass-400/45 decoration-dotted decoration-2 underline-offset-4`}
+        >
+          {format ? format(value) : value}
+        </button>
+      ) : (
+        <span className={figure}>{format ? format(value) : value}</span>
+      )}
       <button
         type="button"
-        onClick={() => onChange(Math.min(max, value + step))}
+        onClick={() => onChange(Math.min(max, higher))}
         disabled={disabled || value >= max}
         title={title}
         aria-label={`More ${label}`}

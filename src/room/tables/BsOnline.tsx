@@ -38,6 +38,7 @@ import {
   standings,
   statsFor,
   togglePlayCard,
+  turnSeat,
   type BsView,
 } from "@/app/play/bs/table";
 import { tintFor } from "../Roster";
@@ -119,6 +120,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         // Your hand is live only when you may PLAY — not merely when the
         // table is waiting on your answer to a window.
         handActive={(l) => canPlay(view, l)}
+        turnSeat={turnSeat}
         onLobby={() => {
           putDown();
           api.exitGame();

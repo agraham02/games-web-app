@@ -78,7 +78,14 @@ export type ZoneName =
   | "pile"
   /** The face-up row a challenged play is turned over into, above
    * `pile` — see `engine/types.ts`'s `ZoneId` doc. */
-  | "reveal";
+  | "reveal"
+  /**
+   * Where LRC's dice are drawn: a row directly above the point the pot
+   * (`center`) grows down from, its height being one die's size. Not a
+   * piece zone — the dice are an overlay (see lrc/table.tsx) — but sized
+   * here with the rest of the board so they grow with it.
+   */
+  | "dice";
 
 /**
  * Where a given SEAT is sitting, from this viewer's chair.
@@ -102,6 +109,27 @@ export function slotForSeat(geometry: TableGeometry, seat: SeatId): SeatSlot | u
 export interface TableGeometry {
   box: Box;
   density: Density;
+  /** Which composition this table is laid out in — see `tableProfile`. */
+  profile: TableProfile;
+  /**
+   * Opponents' face-down hands (and face-down won piles) sit TUCKED behind
+   * their pods rather than fanned inward from them — see `RIM`. A face-up
+   * opponent hand (a showdown) is drawn over its pod instead. Layout reads
+   * this; nothing else needs to.
+   */
+  tuck: boolean;
+  /**
+   * How far a tucked hand shows past its pod's inner edge, in px — on the
+   * top edge, and on the sides. The board keeps clear of exactly this.
+   */
+  tuckPeek: { top: number; side: number };
+  /**
+   * The viewer's hand runs off the bottom of the screen: the hand strip is
+   * shorter than a card, and layout hangs the cards from its TOP edge so
+   * the part below the screen's edge is the part that is not needed (see
+   * `ResolveOptions.handBleed`).
+   */
+  handBleed: boolean;
   seats: SeatSlot[];
   /** See `ResolveOptions.viewerSeat`. Echoed so layout needs no second source. */
   viewerSeat: SeatId | null;
@@ -157,18 +185,28 @@ export interface TableGeometry {
    */
   band: Box;
   /**
-   * The scale a zone's pieces draw at where the zone had to shrink to fit
-   * the table — absent means full size. Pieces shrink; the region does not
-   * grow. Poker's centre (community, pot, stub, burn) and BS's reveal and
-   * pile are chains of full-size cards, and on a laptop or a landscape
-   * phone they used to run straight past the bottom of the ring, under the
-   * band's buttons. Each chain now draws at the largest scale that fits
-   * between the top seats' cards and the ring's bottom edge.
+   * The scale of `card` a board zone's pieces draw at — absent means 1.
+   *
+   * Fitted to the room the zone has, in BOTH directions: down to a legible
+   * floor where the table is tight, and up to `stageCeiling` (the hand's own
+   * card) where it is not. The board used to be drawn at `card` however much
+   * felt it had, which made it the smallest thing on a phone's table.
+   *
+   * Poker's centre (community, pot, stub, burn) and BS's reveal and pile are
+   * chains fitted between the top seats' cards and the ring's bottom edge,
+   * so they cannot run under the band. The trick, and the deck/discard pair
+   * with its meld landing spot (`board`), are fitted to `pileRegion`.
    */
   zoneScale: Partial<Record<ZoneName, number>>;
   /** Cards lying on the table. */
   card: PieceSize;
-  /** Cards in the hero's hand — always the largest. */
+  /**
+   * The box every piece renders at — the largest any piece is drawn (see
+   * `DensitySpec.pieceBox`). The hand card on a phone; bigger on a laptop,
+   * where the board may outgrow the hand.
+   */
+  pieceBox: PieceSize;
+  /** Cards in the hero's hand, as drawn. */
   handCard: PieceSize;
   /** Opponent hand cards, usually face-down. */
   miniCard: PieceSize;
@@ -212,12 +250,129 @@ export function handHeaderHeight(viewportH: number): number {
 }
 
 export function resolveDensity(w: number, h: number): Density {
-  // Width drives the tier, but a short landscape phone (e.g. 844x390)
-  // has no vertical room for `wide` piece sizes, so height demotes it.
-  if (w < 640) return "compact";
-  if (w < 1024 || h < SHORT_VIEWPORT_H) return "regular";
+  // Width drives the tier, but a short landscape phone (e.g. 844x390) has
+  // no vertical room for anything but the phone's own piece sizes: every
+  // band on that axis — the hand, the controls above it, the seats along
+  // the top — is sized from them, and the board gets what they leave. It
+  // used to be demoted only to `regular`, whose 103px hand cards took a
+  // third of a 390px screen before the board got any of it.
+  if (w < 640 || h < SHORT_VIEWPORT_H) return "compact";
+  if (w < 1024) return "regular";
   return "wide";
 }
+
+/**
+ * How much of a hand card a short viewport shows when the hand is allowed
+ * to run off the bottom of the screen (`ResolveOptions.handBleed`): the
+ * top two thirds, which is where a card's index is. The rest is below the
+ * edge, the way a hand held low looks from above.
+ */
+export const HAND_PEEK = 0.66;
+
+/**
+ * The room left above a bleeding hand for a card to be lifted into when it
+ * is picked up — the same 18px the hand's selection lift uses.
+ */
+export const HAND_LIFT_ROOM = 18;
+
+/** Vertical clearance at the screen's edges on a short viewport. */
+const SHORT_RING_PAD = 8;
+
+/**
+ * Which composition a table is laid out in. One engine, one pipeline; a
+ * profile only sets its parameters (`RIM`). Width and height are judged
+ * separately — Material 3's window size classes do the same, for the same
+ * reason: a landscape phone is wide AND short, and it is the shortness that
+ * decides what fits.
+ *
+ * - `phonePortrait`: narrow (< 600px, Material's compact width).
+ * - `phoneLandscape`: short (< `SHORT_VIEWPORT_H`), whatever the width.
+ * - `roomy`: tablets and desktops — the ring as it has always been.
+ */
+export type TableProfile = "phonePortrait" | "phoneLandscape" | "roomy";
+
+export const COMPACT_WIDTH = 600;
+
+export function tableProfile(w: number, h: number): TableProfile {
+  if (h < SHORT_VIEWPORT_H) return "phoneLandscape";
+  if (w < COMPACT_WIDTH) return "phonePortrait";
+  return "roomy";
+}
+
+interface RimSpec {
+  /**
+   * Opponents' face-down hands tuck behind their pods instead of fanning
+   * inward from them.
+   *
+   * On a phone the fans cost more than the board: a side seat's cards
+   * reached ~70px into a 390px table, twice, and the domino line was left
+   * 150px wide. They say one number, which the pod already says, so on a
+   * phone they become texture — a few backs peeking out from behind the
+   * nameplate, along the rim — and the board gets the felt. (The user's
+   * call, 2026-09-27, reversing "keep the piles" on phones only.) The
+   * deal still flies each card to its player; it just lands behind them.
+   */
+  tuck: boolean;
+  /**
+   * An edge holding a single side seat puts it HIGH — just below the
+   * corner buttons — rather than halfway down, so the board can take the
+   * full width of the screen beneath it. Direction still reads: that seat
+   * is still on the left.
+   */
+  highSides: boolean;
+  /**
+   * A top seat's tucked hand peeks DOWN past its pod, toward the board.
+   * Off on a landscape phone, where height is the one thing the table is
+   * short of: there it fans wider along the pod instead and shows at the
+   * pod's sides.
+   */
+  topPeek: boolean;
+}
+
+const RIM: Record<TableProfile, RimSpec> = {
+  phonePortrait: { tuck: true, highSides: true, topPeek: true },
+  // A landscape phone's side edges are short, so a side seat stays halfway
+  // down its own — width is the one thing that table has to spare.
+  phoneLandscape: { tuck: true, highSides: false, topPeek: false },
+  roomy: { tuck: false, highSides: false, topPeek: true },
+};
+
+/**
+ * How far down the screen the corner buttons reach — Settings top right,
+ * the dev panel top left (`GameHost`: `top-2`, a small button). A high side
+ * seat's pod starts below this.
+ */
+export const CORNER_CLEAR = 48;
+
+/**
+ * Air between a tucked hand's peek and the board, on top of the peek
+ * itself (see `stageGap` in `resolveTable`).
+ */
+const STAGE_AIR = 6;
+
+/** The least air between a side pod and the screen's edge. */
+const POD_EDGE = 4;
+
+/**
+ * How much of an opponent's tucked hand shows past their pod's inner
+ * edge, as a fraction of the (mini) card's height. A few px of it (9, at
+ * first) read as a sliver rather than as cards (the user, 2026-09-28).
+ * Shared with layout.ts, which draws it, and the board keeps clear of it.
+ */
+export const TUCK_PEEK_FRACTION = 0.42;
+
+/**
+ * The least height a full-width board below a stack of high side seats may
+ * be left with. Below it the stack gives way and the seats spread down the
+ * sides again — a wide board too short to hold a card is not a board.
+ */
+const HIGH_STACK_MIN_STAGE = 170;
+
+/**
+ * Room for poker's "Pot $12,345" badge when the centre runs in a row (see
+ * `pokerRow`) — the badge's own width at its text size, with a little air.
+ */
+const POT_BADGE_W = 104;
 
 /**
  * Is this viewport too short to lay a full table out on?
@@ -240,6 +395,15 @@ export function isShortViewport(box: { h: number }): boolean {
 }
 
 interface DensitySpec {
+  /**
+   * The box every piece RENDERS at before `scale` (see layout.ts's
+   * `baseSize`) — the largest a piece is ever drawn, since a
+   * `will-change: transform` piece scaled past its box blurs. The board's
+   * ceiling (`stageCeiling`). On a phone it is the hand card; on a laptop
+   * it is bigger than the hand, so the board may grow past the hand.
+   */
+  pieceBox: PieceSize;
+  /** The viewer's hand, as drawn. Never larger than `pieceBox`. */
   handCard: PieceSize;
   card: PieceSize;
   miniCard: PieceSize;
@@ -261,14 +425,18 @@ const DENSITY: Record<Density, DensitySpec> = {
   // `wide` is unchanged — a desktop already had the room and never had
   // the problem.
   compact: {
+    pieceBox: { w: 64, h: 90 },
     handCard: { w: 64, h: 90 },
     card: { w: 48, h: 67 },
-    miniCard: { w: 28, h: 39 },
+    // An opponent's tucked hand peeks from behind their pod in these; at
+    // 28×39 it read as a sliver (the user, 2026-09-28).
+    miniCard: { w: 32, h: 45 },
     handZone: 150,
     ringPad: 14,
     podInset: 46,
   },
   regular: {
+    pieceBox: { w: 74, h: 103 },
     handCard: { w: 74, h: 103 },
     card: { w: 56, h: 78 },
     miniCard: { w: 32, h: 45 },
@@ -277,21 +445,20 @@ const DENSITY: Record<Density, DensitySpec> = {
     podInset: 54,
   },
   wide: {
-    // A first pass at this (96/76/42) still read as small on an
-    // ordinary 1440x900 window — confirmed live, not guessed. This tier
-    // covers everything from a 1024px laptop to a big desktop monitor,
-    // and pieces sized for the former leave a lot of dead felt around
-    // them on the latter. Pushed substantially further this time, not
-    // another token step: there is real headroom (a 7-tile hand at
-    // these sizes still uses well under half the hand zone's width on a
-    // 1440px window), so the earlier pass was too conservative, not
-    // wrong in kind.
-    handCard: { w: 118, h: 165 },
+    // Laptops and desktops. The hand, the opponents' cards and the pods
+    // were sized up once because they read small on a 1440×900 window —
+    // and then, beside a board fitted to its room, they read as the
+    // biggest things on the table (the user, 2026-09-28: "my tiles, and
+    // the other player's pods and tiles are still big, compared to the game
+    // center"). They come back down; the render box stays where the hand
+    // was, so the BOARD can now be drawn bigger than the hand.
+    pieceBox: { w: 118, h: 165 },
+    handCard: { w: 96, h: 134 },
     card: { w: 92, h: 129 },
-    miniCard: { w: 50, h: 70 },
-    handZone: 250,
-    ringPad: 28,
-    podInset: 88,
+    miniCard: { w: 40, h: 56 },
+    handZone: 196,
+    ringPad: 20,
+    podInset: 76,
   },
 };
 
@@ -357,10 +524,16 @@ const EDGES: Record<Density, Record<number, EdgeAlloc>> = {
  * placement, the domino line's inset) quietly stops being generous
  * enough.
  */
+//
+// Measured in Chrome on a pod carrying its full two lines of stats, rounded
+// up. 2026-09-27: 64×71 / 64×75 / 96×113 (the figures before THAT were each
+// 7–13px short, which a tucked hand made visible). 2026-09-28, after the
+// pods were retuned in SeatRing (bigger on a phone, smaller on a laptop):
+// 76×78 on a phone or tablet, 80×91 on a laptop.
 export const POD_SIZE: Record<Density, PieceSize> = {
-  compact: { w: 60, h: 62 },
-  regular: { w: 64, h: 68 },
-  wide: { w: 96, h: 100 },
+  compact: { w: 76, h: 80 },
+  regular: { w: 76, h: 80 },
+  wide: { w: 80, h: 92 },
 };
 
 /** Clearance between the domino line's box and anything around it. */
@@ -383,11 +556,75 @@ const PILE_BREATHING = 16;
  */
 const LEGIBLE_CARD_H = 40;
 
-/** The largest scale ≤ 1 at which `need` px fits in `room`, never below legible. */
-function fitScale(room: number, need: number, cardH: number): number {
+/**
+ * The largest scale of the table card at which `need` px fits in `room`,
+ * never below legible and never above `ceiling`.
+ *
+ * The ceiling is 1 for a zone that may only shrink. A board zone passes
+ * `stageCeiling`, which lets it GROW into the room it has — up to the size
+ * of the viewer's own cards and no further (see `stageCeiling`).
+ */
+function fitScale(room: number, need: number, cardH: number, ceiling = 1): number {
+  return fitRatio(need > 0 ? room / need : ceiling, cardH, ceiling);
+}
+
+/** `fitScale` for a ratio already worked out — the tightest of several axes. */
+function fitRatio(ratio: number, cardH: number, ceiling: number): number {
   const floor = Math.min(1, LEGIBLE_CARD_H / cardH);
-  if (need <= 0) return 1;
-  return Math.max(floor, Math.min(1, room / need));
+  return Math.max(floor, Math.min(ceiling, ratio));
+}
+
+/**
+ * The most a board zone may scale the table card by: to the render box
+ * (`pieceBox`) — the hand's own card on a phone, a little more on a laptop.
+ *
+ * Board pieces used to be drawn at the table card whatever room the board
+ * had — 48×67 on every phone, next to a 64×90 hand — so the shared board,
+ * which is what everybody is watching, was the smallest thing on the table
+ * (docs/table-layout-rethink.md). Every commercial table measured for that
+ * doc draws its board at least as big as the hand.
+ *
+ * The render box is the ceiling for a reason that is not taste: it is the
+ * BASE box every piece is rendered at (`baseSize` in layout.ts), and
+ * pieces are `will-change: transform`, so the browser rasterises them at
+ * that size and scales the bitmap. A piece drawn past its base box blurs.
+ */
+export function stageCeiling(g: Pick<TableGeometry, "card" | "pieceBox">): number {
+  // The tighter of the two axes: the table and hand cards are not quite the
+  // same shape (48×67 against 64×90 on a phone), and layout scales a card by
+  // its WIDTH, so a ceiling taken from the heights drew it 0.7% past the box.
+  return Math.max(1, Math.min(g.pieceBox.w / g.card.w, g.pieceBox.h / g.card.h));
+}
+
+/**
+ * The largest scale in `[lo, hi]` for which `fits` holds, to within a
+ * hundredth — `lo` when even that does not fit, since `lo` is the size the
+ * zone was drawn at before it could grow. `fits` must be monotone: true up
+ * to some scale and false past it, which is what "a bigger card needs more
+ * room" means for every zone that uses this.
+ */
+function largestFitting(lo: number, hi: number, fits: (s: number) => boolean): number {
+  if (hi <= lo || !fits(lo)) return lo;
+  if (fits(hi)) return hi;
+  let a = lo;
+  let b = hi;
+  while (b - a > 0.01) {
+    const mid = (a + b) / 2;
+    if (fits(mid)) a = mid;
+    else b = mid;
+  }
+  return a;
+}
+
+/**
+ * The size LRC's pot chips are drawn at (layout's "center" case). They used
+ * to be drawn at the table card — 92px discs on a laptop, which read as the
+ * biggest things on the table (the user, 2026-09-28) — while being spaced
+ * for a mini card. One and a half mini cards, never more than the table
+ * card: unchanged on a phone (48px), 60px on a laptop.
+ */
+export function potChip(g: Pick<TableGeometry, "card" | "miniCard">): number {
+  return Math.min(g.card.w, g.miniCard.w * 1.5);
 }
 
 /**
@@ -428,12 +665,10 @@ export function axisReach(ux: number, uy: number, size: PieceSize): number {
  * collide on screen. Enforced by geometry.test.ts.
  */
 export const POD_GAP: Record<Density, number> = {
-  compact: 58,
-  regular: 66,
-  // Tracks POD_SIZE.wide's footprint (96px wide) with the same margin
-  // `regular` already keeps over ITS pod width — left too small here
-  // would let two pods sit closer together than they now are wide.
-  wide: 104,
+  // A pod's own width plus a hair (see POD_SIZE).
+  compact: 80,
+  regular: 80,
+  wide: 88,
 };
 
 /**
@@ -473,6 +708,10 @@ export function allocateEdges(
   const base =
     EDGES[density][opponents] ?? allocateByPerimeter(opponents, ringW, ringH);
   const gap = POD_GAP[density];
+  // Pods stack DOWN a side edge, so a side's capacity is counted in pod
+  // heights; across the top, in pod widths. One gap for both let three
+  // 72px-tall pods onto a side with 58px each on a landscape phone.
+  const sideGap = Math.max(gap, POD_SIZE[density].h + 4);
 
   // Sides lose the top corner once anything sits on the top edge, and
   // the top edge loses both corners once anything sits on the sides.
@@ -482,7 +721,7 @@ export function allocateEdges(
   const sideSpan = ringH - (opponents >= 1 ? podInset : 0);
   const topSpan = ringW - (willUseSides ? podInset * 2 : 0);
 
-  const sideCap = Math.max(0, Math.floor(sideSpan / gap));
+  const sideCap = Math.max(0, Math.floor(sideSpan / sideGap));
   const topCap = Math.max(1, Math.floor(topSpan / gap));
 
   let perSide = Math.min(base[0], sideCap);
@@ -566,6 +805,16 @@ export interface ResolveOptions {
    * viewer, and every seat gets a pod.
    */
   viewerSeat?: SeatId | null;
+  /** Override the composition — see `tableProfile`. Tests and the lab. */
+  profile?: TableProfile;
+  /**
+   * The viewer's hand may run off the bottom of a SHORT screen, showing
+   * the top `HAND_PEEK` of each card (see `HAND_PEEK`). Only a card hand
+   * asks: a card is read from its corner, a domino needs both of its halves.
+   * `GameHost` works this out from the game's own pieces. No effect on a
+   * screen with height to spare.
+   */
+  handBleed?: boolean;
 }
 
 export function resolveTable(opts: ResolveOptions): TableGeometry {
@@ -577,6 +826,16 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const watching = viewerSeat === null;
   const density = opts.density ?? resolveDensity(width, height);
   const spec = DENSITY[density];
+  const profile = opts.profile ?? tableProfile(width, height);
+  const rim = RIM[profile];
+  const podSize = POD_SIZE[density];
+  // Between a pod and the board where hands are tucked: the part of the
+  // hand that peeks past the pod, and a little air. A top seat's peek may
+  // be off (`RimSpec.topPeek`).
+  const sidePeek = spec.miniCard.h * TUCK_PEEK_FRACTION;
+  const topPeek = rim.topPeek ? sidePeek : 0;
+  const stageGap = sidePeek + STAGE_AIR;
+  const topStageGap = topPeek + STAGE_AIR;
 
   // Both clamped against the ACTUAL viewport, not just the density spec.
   // `density` can be forced (the lab previews other devices at a chosen
@@ -596,11 +855,17 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // the ~18px a selected card lifts, and no more. Measured: 165px down
   // to 129px on a 1052x486 landscape phone, all of it handed back to the
   // table. Full-height viewports are untouched.
+  //
+  // A card hand may go further and run off the bottom edge (`handBleed`):
+  // the strip then holds the top `HAND_PEEK` of a card, where its index is,
+  // plus the room a picked-up card lifts into.
   const short = height < SHORT_VIEWPORT_H;
+  const handBleed = short && opts.handBleed === true;
   const handZone = Math.min(
     opts.handZone ?? spec.handZone,
     height * 0.34,
     short ? spec.handCard.h * 1.25 : Infinity,
+    handBleed ? spec.handCard.h * HAND_PEEK + HAND_LIFT_ROOM : Infinity,
   );
 
   const box: Box = { x: 0, y: 0, w: width, h: height };
@@ -641,8 +906,11 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const bottomZone = wantBottom * scale;
   const ringLeft = spec.ringPad;
   const ringRight = width - spec.ringPad;
-  const ringTop = spec.ringPad + topZone;
-  const ringBottom = height - handZone - bandZone - bottomZone - spec.ringPad;
+  // A short screen keeps less air above and below the ring: vertically,
+  // every pixel it keeps is one the board does not get.
+  const vPad = short ? Math.min(spec.ringPad, SHORT_RING_PAD) : spec.ringPad;
+  const ringTop = vPad + topZone;
+  const ringBottom = height - handZone - bandZone - bottomZone - vPad;
   const ringW = Math.max(0, ringRight - ringLeft);
   const ringH = Math.max(0, ringBottom - ringTop);
 
@@ -660,10 +928,6 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // within a pod's width of each other.
   const sideTop = ringTop + (nTop > 0 ? podInset : 0);
   const sideH = Math.max(0, ringBottom - sideTop);
-  const topLeft = ringLeft + (nLeft > 0 ? podInset : 0);
-  const topRight = ringRight - (nRight > 0 ? podInset : 0);
-  const topW = Math.max(0, topRight - topLeft);
-
   const seats: SeatSlot[] = [
     {
       seat: seatBase,
@@ -671,7 +935,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
       // A spectator has no hand strip to sit above, so the bottom pod
       // would be centred on the very edge of the viewport and half of it
       // would be off screen. It gets the same inset every other edge uses.
-      y: watching ? height - podInset / 2 : height - handZone / 2,
+      y: watching ? height - Math.max(podInset / 2, podSize.h / 2 + 4) : height - handZone / 2,
       anchor: "bottom",
       rotation: 0,
       isHero: !watching,
@@ -686,12 +950,64 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   let position = 1;
   const seatAt = (i: number): SeatId => (i + seatBase) % seatCount;
 
+  // A top seat's pod sits inside the screen whole. Centred half an inset
+  // below the ring, as it always was, a pod taller than that inset put its
+  // top edge above the screen's — 5px off it on a landscape phone.
+  const topSeatY = Math.max(ringTop + podInset / 2, topZone + podSize.h / 2 + 4);
+  // How far below where the ring's inset would have put it: the fanned-hand
+  // clearances further down (`topBleed`, `cardTopReach`) measure from there.
+  const topShift = topSeatY - (ringTop + podInset / 2);
+
+  // A lone side seat sits HIGH on a phone held upright — just below the
+  // corner buttons — so the board can have the full width beneath it (see
+  // `RimSpec.highSides`). Up to two per side stack there, one under the other, when that still
+  // leaves the board a real height (`HIGH_STACK_MIN_STAGE`) — six-seat poker
+  // then gets the full width for its flop instead of the gap between two
+  // columns of pods. More than two, or too short a screen, and they spread
+  // down the side as before.
+  const highY = Math.min(
+    Math.max(ringTop, CORNER_CLEAR) + podSize.h / 2,
+    ringBottom - podSize.h / 2,
+  );
+  const stackStep = podSize.h + 4;
+  const stacksHigh = (n: number) =>
+    rim.highSides &&
+    n >= 1 &&
+    n <= 2 &&
+    highY + (n - 1) * stackStep + podSize.h / 2 + stageGap + HIGH_STACK_MIN_STAGE <= ringBottom;
+  // A side pod sits half an inset in from the ring, as it always has — but
+  // never so close to the edge that a pod wider than that inset hangs off
+  // the screen (phone pods grew to 76px, 2026-09-28).
+  const sideX = Math.max(ringLeft + podInset / 2, POD_EDGE + podSize.w / 2);
+
+  const highLeft = stacksHigh(nLeft);
+  const highRight = stacksHigh(nRight);
+
+  // The top edge stops short of the corners the side seats occupy. Where a
+  // side seat sits HIGH it takes the whole column below the corner, so the
+  // top seats keep clear of that column itself — with pods grown to 76px on
+  // a phone, a top seat's chips reached a high side seat's pod. There, two
+  // or more top seats sit edge to edge across the gap between the columns
+  // rather than spread over the full width.
+  const topLeft = highLeft ? sideX + podSize.w / 2 + 8 : ringLeft + (nLeft > 0 ? podInset : 0);
+  const topRight = highRight
+    ? width - sideX - podSize.w / 2 - 8
+    : ringRight - (nRight > 0 ? podInset : 0);
+  const topW = Math.max(0, topRight - topLeft);
+  const topX = (i: number): number => {
+    if (!(highLeft || highRight) || nTop < 2) return topLeft + ((i + 0.5) / nTop) * topW;
+    const first = topLeft + podSize.w / 2;
+    const last = topRight - podSize.w / 2;
+    return first + (i / (nTop - 1)) * Math.max(0, last - first);
+  };
+
   // Left edge, bottom to top — the hero's immediate left comes first.
   for (let i = 0; i < nLeft; i++) {
     seats.push({
       seat: seatAt(position++),
-      x: ringLeft + podInset / 2,
-      y: ringBottom - ((i + 0.5) / nLeft) * sideH,
+      x: sideX,
+      // Stacked from the top, the lowest being the hero's immediate left.
+      y: highLeft ? highY + (nLeft - 1 - i) * stackStep : ringBottom - ((i + 0.5) / nLeft) * sideH,
       anchor: "left",
       rotation: 90,
       isHero: false,
@@ -702,8 +1018,8 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   for (let i = 0; i < nTop; i++) {
     seats.push({
       seat: seatAt(position++),
-      x: topLeft + ((i + 0.5) / nTop) * topW,
-      y: ringTop + podInset / 2,
+      x: topX(i),
+      y: topSeatY,
       anchor: "top",
       rotation: 180,
       isHero: false,
@@ -714,8 +1030,8 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   for (let i = 0; i < nRight; i++) {
     seats.push({
       seat: seatAt(position++),
-      x: ringRight - podInset / 2,
-      y: sideTop + ((i + 0.5) / nRight) * sideH,
+      x: width - sideX,
+      y: highRight ? highY + i * stackStep : sideTop + ((i + 0.5) / nRight) * sideH,
       anchor: "right",
       rotation: -90,
       isHero: false,
@@ -723,20 +1039,42 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   }
 
   // The play area is the ring pulled in past whichever edges hold seats.
-  const play: Box = {
-    x: ringLeft + (nLeft > 0 ? podInset : 0),
-    y: ringTop + (nTop > 0 ? podInset : 0),
-    w: ringW - (nLeft > 0 ? podInset : 0) - (nRight > 0 ? podInset : 0),
-    h: ringH - (nTop > 0 ? podInset : 0),
-  };
+  //
+  // With hands tucked (see `RimSpec.tuck`) nothing reaches inward from a
+  // pod, so the board starts at the pod's own real footprint: the stage is
+  // everything inside the rim of pods. A high side seat takes no column at
+  // all — the stage runs the full width below it instead.
+  const podRight = sideX + podSize.w / 2;
+  const podLeft = width - sideX - podSize.w / 2;
+  const topPodsBottom = topSeatY + podSize.h / 2;
+  const highRows = Math.max(highLeft ? nLeft : 0, highRight ? nRight : 0);
+  const highBottom = highY + Math.max(0, highRows - 1) * stackStep + podSize.h / 2;
+  const stageLeft = nLeft > 0 && !highLeft ? podRight + stageGap : ringLeft;
+  const stageRight = nRight > 0 && !highRight ? podLeft - stageGap : ringRight;
+  const stageTop = Math.max(
+    nTop > 0 ? topPodsBottom + topStageGap : ringTop,
+    highLeft || highRight ? highBottom + stageGap : ringTop,
+  );
+  const play: Box = rim.tuck
+    ? {
+        x: stageLeft,
+        y: stageTop,
+        w: Math.max(0, stageRight - stageLeft),
+        h: Math.max(0, ringBottom - stageTop),
+      }
+    : {
+        x: ringLeft + (nLeft > 0 ? podInset : 0),
+        y: ringTop + (nTop > 0 ? podInset : 0),
+        w: ringW - (nLeft > 0 ? podInset : 0) - (nRight > 0 ? podInset : 0),
+        h: ringH - (nTop > 0 ? podInset : 0),
+      };
 
   const cx = play.x + play.w / 2;
   const cy = play.y + play.h / 2;
 
-  // Trick: a square-ish cluster, sized to hold a fanned pile of table
-  // cards. Placed and bounded by `pileRegion` further down, not by `play`.
-  const trickW = Math.min(play.w * 0.72, spec.card.w * 3.4);
-  const trickH = Math.min(play.h * 0.62, spec.card.h * 2.6);
+  // The trick and the deck/discard pair are fitted to `pileRegion`, so they
+  // are laid out once it is known, further down.
+  const ceiling = stageCeiling(spec);
 
   // BS: one central face-down pile with the face-up `reveal` row directly
   // above it. Laid out as a PAIR centred on `cy` rather than as two
@@ -746,11 +1084,6 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // each from its own fraction of `cy` (see `engine/types.ts`'s `ZoneId`).
   // Laid out below, once `pileRegion`'s clearances are known: the pair has
   // to fit between the top seats' cards and the ring's bottom edge.
-
-  const pileGap = spec.card.w * 0.45;
-  const deckX = cx - spec.card.w / 2 - pileGap;
-  const discardX = cx + spec.card.w / 2 + pileGap;
-  const pileY = cy - spec.card.h / 2;
 
   const hand: Box = {
     x: spec.ringPad,
@@ -796,13 +1129,18 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // seat. `podInset / 2` converts a pod-CENTRE-relative distance (what
   // layout.ts computes) into a `play`-EDGE-relative one (what `line`
   // needs), since a seat's own centre sits `podInset / 2` inside `play`.
-  const podSize = POD_SIZE[density];
+  //
+  // None of that applies with hands tucked: `play` already starts clear of
+  // the pods' real footprint and nothing reaches past them, so `line` is
+  // `play` less a breath, and every bleed below is that breath.
   const miniW = tileShortSide(spec.miniCard);
   const miniH = miniW * 2;
-  const topBleed = Math.max(
-    LINE_BREATHING,
-    Math.max(0, podSize.h / 2 - podInset / 2) + miniH + TILE_HAND_GAP + LINE_BREATHING,
-  );
+  const topBleed = rim.tuck
+    ? LINE_BREATHING
+    : Math.max(
+        LINE_BREATHING,
+        Math.max(0, topShift + podSize.h / 2 - podInset / 2) + miniH + TILE_HAND_GAP + LINE_BREATHING,
+      );
   // A side seat's rack now stands on its short side and stacks in a
   // COLUMN along the pod's own edge (layout.ts's "hand" case), the same
   // redesign [[domino-side-seat-hand-overlap]] tracked — so, exactly
@@ -812,10 +1150,9 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // the pod; only the column's LENGTH grows with the hand, and that runs
   // parallel to the felt's edge, not into it.
   const sideReach = Math.max(0, podSize.w / 2 - podInset / 2) + miniH + TILE_HAND_GAP;
-  const sideBleed = Math.max(
-    LINE_BREATHING,
-    Math.min(sideReach + LINE_BREATHING, play.w * 0.3),
-  );
+  const sideBleed = rim.tuck
+    ? LINE_BREATHING
+    : Math.max(LINE_BREATHING, Math.min(sideReach + LINE_BREATHING, play.w * 0.3));
   const line: Box = {
     x: play.x + (nLeft > 0 ? sideBleed : LINE_BREATHING),
     y: play.y + (nTop > 0 ? topBleed : LINE_BREATHING),
@@ -841,14 +1178,23 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // As with `line`, `podInset / 2` converts a pod-CENTRE-relative reach
   // (what layout.ts computes) into a `play`-EDGE-relative one.
   const cardTopReach =
-    Math.max(0, podSize.h / 2 - podInset / 2) + spec.miniCard.h + TILE_HAND_GAP;
+    Math.max(0, topShift + podSize.h / 2 - podInset / 2) + spec.miniCard.h + TILE_HAND_GAP;
   // A left/right seat's cards are rotated a quarter turn, so the
   // footprint facing the table is the card's HEIGHT, not its width —
   // matching `cardFootprint` in layout.ts's own opponent-card branch.
   const cardSideReach =
     Math.max(0, podSize.w / 2 - podInset / 2) + spec.miniCard.h + TILE_HAND_GAP;
-  const pileTop = nTop > 0 ? cardTopReach + PILE_BREATHING : PILE_BREATHING;
-  const pileSide = nLeft > 0 || nRight > 0 ? cardSideReach + PILE_BREATHING : PILE_BREATHING;
+  // Tucked hands reach nothing, and `play` already clears the pods.
+  const pileTop = rim.tuck
+    ? LINE_BREATHING
+    : nTop > 0
+      ? cardTopReach + PILE_BREATHING
+      : PILE_BREATHING;
+  const pileSide = rim.tuck
+    ? LINE_BREATHING
+    : nLeft > 0 || nRight > 0
+      ? cardSideReach + PILE_BREATHING
+      : PILE_BREATHING;
   const rawPile: Box = {
     x: play.x + (nLeft > 0 ? pileSide : PILE_BREATHING),
     y: play.y + pileTop,
@@ -879,9 +1225,9 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
 
   // The centre's vertical budget: from below the top seats' fanned cards
   // (`rawPile`'s top) to a breath above the ring's bottom edge, below
-  // which is the band. Every centre chain fits in this by SHRINKING
-  // (`zoneScale`), because the region cannot grow — past its bottom is
-  // the viewer's own controls.
+  // which is the band. Every centre chain is fitted to this (`zoneScale`):
+  // it shrinks where the budget is tight, because past its bottom is the
+  // viewer's own controls, and it grows where the budget is generous.
   const centreTop = rawPile.y;
   const centreBottom = rawPile.y + rawPile.h;
   const centreH = Math.max(0, rawPile.h);
@@ -889,8 +1235,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // BS: the reveal row directly above the one face-down pile, laid out as
   // a PAIR centred on `cy` — the only arrangement in which the two cannot
   // overlap. The gap between them gives ground first; past that, both
-  // cards shrink together.
-  const bsScale = fitScale(centreH, spec.card.h * 2, spec.card.h);
+  // cards shrink together. Grows until either the pair's height or the
+  // four-card row's width runs out — but never below the shrink-only fit
+  // it had before it could grow, because that one is what the row's own
+  // gap compression is tuned against.
+  const bsShrunk = fitScale(centreH, spec.card.h * 2, spec.card.h);
+  const bsScale = Math.max(
+    bsShrunk,
+    fitRatio(
+      Math.min(centreH / (spec.card.h * 2), (play.w * 0.94) / (spec.card.w * 4.48)),
+      spec.card.h,
+      ceiling,
+    ),
+  );
   const bsCardW = spec.card.w * bsScale;
   const bsCardH = spec.card.h * bsScale;
   const bsGap = Math.max(0, Math.min(bsCardH * 0.3, centreH - bsCardH * 2));
@@ -904,9 +1261,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const bsRevealW = Math.min(play.w * 0.94, bsCardW * 4 + bsRevealGap * 3);
 
   // Poker's chain — community, pot, stub + burn — at the largest scale
-  // whose SHORTEST form (every part at its floor) fits the budget.
+  // whose SHORTEST form (every part at its floor) fits the budget, and
+  // whose five-card row (5 cards + 4 gaps of 0.15) fits `pileRegion`'s
+  // width. The width only limits GROWTH: shrinking to fit a narrow row is
+  // the community layout's own job (it closes the gaps first).
   const pokerNeed = spec.card.h + spec.miniCard.h * 1.2 + spec.miniCard.w;
-  const ps = fitScale(centreH, pokerNeed, spec.card.h);
+  const ps = Math.max(
+    fitScale(centreH, pokerNeed, spec.card.h),
+    fitRatio(
+      Math.min(centreH / pokerNeed, pileRegion.w / (spec.card.w * 5.6)),
+      spec.card.h,
+      ceiling,
+    ),
+  );
 
   // Community: a fixed row of 5 slots — poker's flop/turn/river. Unlike
   // `trick`'s fanned cluster, these never overlap, so the row wants its
@@ -957,8 +1324,11 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const potHWanted = spec.miniCard.w * ps * (1 + 0.85 * (potRows - 1));
   // The stub's own floor is kept back for it: the pot used to take every
   // pixel down to the ring, and the stub then had to hang below it.
-  const stubGap = spec.miniCard.h * 0.3 * ps;
-  const stubMin = spec.miniCard.h * 0.6 * ps;
+  // The stub and burn pile say "some cards are set aside" and nothing more, so
+  // they never grow with the board (`ss`); they only shrink with it.
+  const ss = Math.min(ps, 1);
+  const stubGap = spec.miniCard.h * 0.3 * ss;
+  const stubMin = spec.miniCard.h * 0.6 * ss;
   const potRoom = Math.max(0, centreBottom - (communityBottom + potGap) - stubGap - stubMin);
   // At least one row tall even on the rare viewport where `potRoom`
   // undershoots that — same "being drawable beats being perfectly
@@ -978,12 +1348,37 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // reaches back up into `pot`) on a viewport too short to fit its
   // wanted size, the same floor-then-shrink trade every zone below
   // `community` already makes.
-  const stubHWanted = spec.miniCard.h * 1.3 * ps;
+  const stubHWanted = spec.miniCard.h * 1.3 * ss;
   const stubRoom = Math.max(0, centreBottom - (potY + potH + stubGap));
   const stubH = Math.max(stubMin, Math.min(stubHWanted, stubRoom));
   const stubY = potY + potH + stubGap;
-  const stubCardW = spec.miniCard.w * 1.3 * ps;
-  const stubPairGap = spec.miniCard.w * 0.3 * ps;
+  const stubCardW = spec.miniCard.w * 1.3 * ss;
+  const stubPairGap = spec.miniCard.w * 0.3 * ss;
+
+  // The trick: a square-ish cluster of cards, each offset from the middle
+  // toward whoever played it. Sized by FIT — the largest card scale, up to
+  // the hand's own, at which the cluster still fits in `pileRegion` — where
+  // it used to be drawn at the table card whatever room it had. The fit
+  // follows layout.ts's own arithmetic: each card sits 0.26 of the box's
+  // shorter side from the middle, so the cluster spans that twice plus one
+  // card. Never smaller than it used to be.
+  //
+  // On a tall table the cluster is kept square-ish (to 72% / 62% of the
+  // play area); on a short one that fraction of an already short board is
+  // what squashed the four cards onto each other, so it may use the whole
+  // pile region's height — the layout's offsets follow the box's SHORTER
+  // side, which keeps the cross compact rather than stretched.
+  const trickShare = short ? 1 : 0.62;
+  const trickBox = (s: number) => ({
+    w: Math.min(play.w * 0.72, spec.card.w * 3.4 * s, pileRegion.w),
+    h: Math.min(play.h * trickShare, spec.card.h * 2.6 * s, pileRegion.h),
+  });
+  const trickFits = (s: number) => {
+    const { w, h } = trickBox(s);
+    const spread = Math.min(w, h) * 0.52;
+    return spread + spec.card.w * s <= w + 0.5 && spread + spec.card.h * s <= h + 0.5;
+  };
+  const ts = largestFitting(1, ceiling, trickFits);
 
   // Centred on `pileRegion` rather than on `play`, and never larger than
   // it. `play` clears the top pod but not the cards fanned below it, so a
@@ -991,8 +1386,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // partner's card up into the top seat's hand on a laptop. `pileRegion`
   // is already cleared of both — the same "a zone is cheaper than a
   // collision" answer poker's centre needed.
-  const trickBoxW = Math.min(trickW, pileRegion.w);
-  const trickBoxH = Math.min(trickH, pileRegion.h);
+  const { w: trickBoxW, h: trickBoxH } = trickBox(ts);
   const trick: Box = {
     x: pileRegion.x + (pileRegion.w - trickBoxW) / 2,
     y: pileRegion.y + (pileRegion.h - trickBoxH) / 2,
@@ -1000,24 +1394,100 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     h: trickBoxH,
   };
 
+  // The deck and discard pair — and Rummy's meld landing spot, which is
+  // drawn with the same cards — fitted to `pileRegion` the same way: as big
+  // as the region allows, up to the hand's cards, never smaller than before.
+  // Portrait lays the two side by side with the fan running DOWN, so the
+  // pair's width is what binds; landscape lays them in one row with the fan
+  // running along it, so the height and a few cards' run bind (see
+  // `pileAssembly`).
+  const pileFit = isPortraitTable(pileRegion)
+    ? Math.min(
+        pileRegion.w / (spec.card.w * (2 + PILE_GAP_FRACTION)),
+        pileRegion.h / (spec.card.h * 1.2),
+      )
+    : Math.min(
+        pileRegion.h / (spec.card.h * 1.05),
+        pileRegion.w /
+          (spec.card.w * (2 + PILE_GAP_FRACTION + MIN_USABLE_RUN * MIN_DISCARD_STEP_FRACTION)),
+      );
+  const pileScale = Math.max(1, Math.min(ceiling, pileFit));
+  const pileCardW = spec.card.w * pileScale;
+  const pileCardH = spec.card.h * pileScale;
+  const pileGap = pileCardW * 0.45;
+  const deckX = cx - pileCardW / 2 - pileGap;
+  const discardX = cx + pileCardW / 2 + pileGap;
+  const pileY = cy - pileCardH / 2;
+
+  // LRC's dice: a row of three, ending just above the point the pot grows
+  // down from (layout's "center" zone puts its first row 0.6 of a mini card
+  // below the centre, drawn at table size). A die grows with the room, to
+  // about the hand's card width.
+  const die = Math.max(44, Math.min(72, spec.handCard.w * 0.85, play.w / 4.5, play.h / 5));
+  const diceGap = die * 0.18;
+  const diceW = die * 3 + diceGap * 2;
+  // The pot's first row is centred 0.6 of a chip below the centre (layout's
+  // "center" case), so its top edge is 0.1 of a chip below it.
+  const potTop = cy + potChip(spec) * 0.1;
+  const dice: Box = { x: cx - diceW / 2, y: potTop - die * 0.3 - die, w: diceW, h: die };
+
+  // Poker's chain SIDEWAYS on a short, wide board — flop, then the pot's
+  // badge, then the stub and burn pile, in one row — instead of stacked.
+  // Stacked, the three had to share a landscape phone's ~95px of height
+  // and the flop sat at the legible floor with 600px of width unused
+  // beside it. In a row they share the width the board has, and the flop
+  // gets the height. The same boxes, so the rest follows unchanged.
+  const pokerRow = short && pileRegion.w >= pileRegion.h * 2.5;
+  const rowGap = spec.card.w * 0.4;
+  const rowStubPair = spec.miniCard.w * (1.3 * 2 + 0.3);
+  const rs = fitRatio(
+    Math.min(
+      centreH / spec.card.h,
+      (pileRegion.w - POT_BADGE_W - rowStubPair - rowGap * 2) / (spec.card.w * 5.6),
+    ),
+    spec.card.h,
+    ceiling,
+  );
+  const rowSS = Math.min(rs, 1);
+  const rowCommW = spec.card.w * 5.6 * rs;
+  const rowCommH = spec.card.h * rs;
+  const rowStubW = spec.miniCard.w * 1.3 * rowSS;
+  const rowStubH = spec.miniCard.h * 1.3 * rowSS;
+  const rowPairGap = spec.miniCard.w * 0.3 * rowSS;
+  const rowPotH = Math.max(32, spec.miniCard.w);
+  const rowW = rowCommW + rowGap + POT_BADGE_W + rowGap + rowStubW * 2 + rowPairGap;
+  const rowX = pileRegion.x + Math.max(0, (pileRegion.w - rowW) / 2);
+  const rowY = centreTop + centreH / 2;
+  const rowPotX = rowX + rowCommW + rowGap;
+  const rowStubX = rowPotX + POT_BADGE_W + rowGap;
+
   const zones: Record<ZoneName, Box> = {
     play,
     trick,
-    deck: { x: deckX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
-    discard: { x: discardX - spec.card.w / 2, y: pileY, w: spec.card.w, h: spec.card.h },
+    deck: { x: deckX - pileCardW / 2, y: pileY, w: pileCardW, h: pileCardH },
+    discard: { x: discardX - pileCardW / 2, y: pileY, w: pileCardW, h: pileCardH },
+    dice,
     board: play,
     line,
     boneyard: bone,
     hand,
-    community: {
-      x: pileRegion.x + pileRegion.w / 2 - communityW / 2,
-      y: communityTop,
-      w: communityW,
-      h: communityH,
-    },
-    pot: { x: cx - potW / 2, y: potY, w: potW, h: potH },
-    stub: { x: cx - stubPairGap / 2 - stubCardW, y: stubY, w: stubCardW, h: stubH },
-    burnt: { x: cx + stubPairGap / 2, y: stubY, w: stubCardW, h: stubH },
+    community: pokerRow
+      ? { x: rowX, y: rowY - rowCommH / 2, w: rowCommW, h: rowCommH }
+      : {
+          x: pileRegion.x + pileRegion.w / 2 - communityW / 2,
+          y: communityTop,
+          w: communityW,
+          h: communityH,
+        },
+    pot: pokerRow
+      ? { x: rowPotX, y: rowY - rowPotH / 2, w: POT_BADGE_W, h: rowPotH }
+      : { x: cx - potW / 2, y: potY, w: potW, h: potH },
+    stub: pokerRow
+      ? { x: rowStubX, y: rowY - rowStubH / 2, w: rowStubW, h: rowStubH }
+      : { x: cx - stubPairGap / 2 - stubCardW, y: stubY, w: stubCardW, h: stubH },
+    burnt: pokerRow
+      ? { x: rowStubX + rowStubW + rowPairGap, y: rowY - rowStubH / 2, w: rowStubW, h: rowStubH }
+      : { x: cx + stubPairGap / 2, y: stubY, w: stubCardW, h: stubH },
     pile: {
       x: cx - bsCardW / 2,
       y: bsTop + bsCardH + bsGap,
@@ -1042,16 +1512,20 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   // deck stayed level with the pods while every extra discard dragged the
   // fan's own centre further below it. `pileRegion` is left whole, and
   // `pileAssembly` grows the fan symmetrically about this line.
+  //
+  // Not with hands tucked, though: the pods are then only the rim around
+  // the board — a high side seat sits at the very top of the screen — and
+  // the board's own middle is where the piles belong.
   const sideSeats = seats.filter((s) => s.anchor === "left" || s.anchor === "right");
   const wantedAxis =
     opts.pileAnchor === undefined
-      ? sideSeats.length > 0
+      ? sideSeats.length > 0 && !rim.tuck
         ? sideSeats.reduce((sum, s) => sum + s.y, 0) / sideSeats.length
         : pileRegion.y + pileRegion.h / 2
       : pileRegion.y + pileRegion.h * Math.min(1, Math.max(0, opts.pileAnchor));
   // Clamped so a single card on that line still fits the region it was
   // cleared for, whatever the seats happen to be doing.
-  const halfCard = spec.card.h / 2;
+  const halfCard = pileCardH / 2;
   const pileAxis = Math.min(
     Math.max(pileRegion.y + halfCard, wantedAxis),
     Math.max(pileRegion.y + halfCard, pileRegion.y + pileRegion.h - halfCard),
@@ -1060,6 +1534,10 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   return {
     box,
     density,
+    profile,
+    tuck: rim.tuck,
+    tuckPeek: { top: topPeek, side: sidePeek },
+    handBleed,
     seats,
     viewerSeat,
     zones,
@@ -1068,14 +1546,19 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     reserved: { top: topZone, bottom: bottomZone },
     band: { x: hand.x, y: hand.y - bandZone, w: hand.w, h: bandZone },
     zoneScale: {
-      community: ps,
-      pot: ps,
-      stub: ps,
-      burnt: ps,
+      trick: ts,
+      deck: pileScale,
+      discard: pileScale,
+      board: pileScale,
+      community: pokerRow ? rs : ps,
+      pot: pokerRow ? rowSS : ps,
+      stub: pokerRow ? rowSS : ss,
+      burnt: pokerRow ? rowSS : ss,
       pile: bsScale,
       reveal: bsScale,
     },
     card: spec.card,
+    pieceBox: spec.pieceBox,
     handCard: spec.handCard,
     miniCard: spec.miniCard,
   };
@@ -1116,19 +1599,15 @@ export function cellHalfExtent(rot: number): { hw: number; hh: number } {
 }
 
 /**
- * Where a toast goes on a table, in px from the BOTTOM of the table's box:
- * bottom right, just above the band (the user's call, 2026-09-27).
+ * Where a toast goes on a table, in px from the TOP of the table's box: top
+ * left, just below the corner buttons (the user's call, 2026-09-28).
  *
- * Not the corner itself, which is the viewer's hand: a toast there sits on
- * the cards they are about to tap, and swallows the tap. Above the band it
- * covers at most the foot of a side seat's fan, for a few seconds. The
- * band is measured, so the lane rises with a bid or betting panel.
- *
- * Toasts used to go top centre, below the top seat's pod (see
- * `statusLane`), which put every bot's move over the board.
+ * Toasts have been top centre (over the board — every bot's move), then
+ * bottom right above the band; they are now out of the way of both the
+ * board and the viewer's own hand and controls.
  */
 export function toastLane(g: TableGeometry): number {
-  return Math.max(12, g.box.y + g.box.h - g.band.y + 6);
+  return g.box.y + CORNER_CLEAR;
 }
 
 /**
@@ -1591,9 +2070,20 @@ export interface PileAssembly {
   deckMinX: number;
 }
 
+/**
+ * The card the deck/discard pair is drawn with: the table card, fitted to
+ * `pileRegion` (see `zoneScale`). Everything that lays the pair out or sits
+ * beside it reads this, so the fan's clamp, the deck's slot and a badge
+ * under the deck all agree on one size.
+ */
+export function pileCard(g: Pick<TableGeometry, "card" | "zoneScale">): PieceSize {
+  const s = g.zoneScale.discard ?? 1;
+  return { w: g.card.w * s, h: g.card.h * s };
+}
+
 export function pileAssembly(g: TableGeometry, discardCount: number): PileAssembly {
   const region = g.pileRegion;
-  const card = g.card;
+  const card = pileCard(g);
   const axis = g.pileAxis;
   const portrait = isPortraitTable(region);
   const minStep = card.w * MIN_DISCARD_STEP_FRACTION;
