@@ -151,7 +151,11 @@ export interface SettlementView {
   stake: string;
   /** Played to a winner, or ended by the leader partway through. */
   finished: boolean;
-  /** Everyone at the table, most up first. Cents; negative owes. */
+  /**
+   * Everyone who sat at the table, most up first — including anybody who
+   * has since left the room, who still owes or is owed for the time the
+   * seat was theirs. Cents; negative owes.
+   */
   results: Array<{ session: SessionId; name: string; cents: number }>;
   /** The fewest payments that square everyone up. */
   payments: Array<{ from: SessionId; fromName: string; to: SessionId; toName: string; cents: number }>;

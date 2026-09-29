@@ -10,17 +10,19 @@
 
 import type { SeatId } from "@/engine/types";
 
+/** Ten, one per seat of the biggest table (Poker and LRC seat ten). */
 const BOT_NAMES = [
-  "Mia", "Sam", "Kofi", "Jo", "Ada", "Rui", "Nia", "Tomas", "Elle",
+  "Mia", "Sam", "Kofi", "Jo", "Ada", "Rui", "Nia", "Tomas", "Elle", "Yuki",
 ] as const;
 
 const BOT_COLOURS = [
   "#c9a0a0", "#a0a8c9", "#c9bfa0", "#8fb8a0", "#b9a0c9",
-  "#a0c9c4", "#c9b0a0", "#aab8a0", "#c0a8b8",
+  "#a0c9c4", "#c9b0a0", "#aab8a0", "#c0a8b8", "#a0b9c9",
 ] as const;
 
 /** Seat 1 is the first name, as offline, where seat 0 is always the player.
- * In a room a bot can hold seat 0 too, and it wraps to the last name. */
+ * In a room a bot can hold seat 0 too, and it wraps to the last name — one
+ * no other seat of a ten-seat table has, so two bots never share one. */
 const slot = (seat: SeatId, n: number) => (((seat - 1) % n) + n) % n;
 
 export function botName(seat: SeatId): string {

@@ -493,6 +493,17 @@ describe("the seating plan", () => {
     expect(shuffle(3).filter((s) => s === null)).toHaveLength(2);
   });
 
+  it("shuffles the people a full table leaves watching in with everybody else", () => {
+    // Five people, four seats: whoever watches is only watching because
+    // the table is full, so a shuffle has to be able to seat them.
+    const r = poker(withMembers(["Sam", "Kofi", "Jo", "Rui"]), 4);
+    const watching = (seed: number) =>
+      seatingPlan(ok(r, { t: "shuffleSeats" }, { actor: LEADER, rng: createRng(seed) }))[4];
+    const seen = new Set(Array.from({ length: 20 }, (_, seed) => watching(seed)));
+    expect(seen.size).toBeGreaterThan(1);
+    expect(seatingPlan(r)).toHaveLength(5);
+  });
+
   it("has teams only in a partnership game", () => {
     const r = poker(withMembers(["Sam"]), 4);
     expect(teamOfSeat(r, 0)).toBeNull();

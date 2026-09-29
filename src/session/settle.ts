@@ -247,37 +247,89 @@ export function stakeOf(gameId: string, settings: Readonly<Record<string, unknow
   return null;
 }
 
-export interface Settlement {
+/**
+ * What each seat is up or down this moment, in cents at the room's stake,
+ * or null when the game is not played for money. Step 1 for whichever game
+ * it is — and what a stint is measured with (see `Stint`).
+ */
+export function seatNets(
+  gameId: string,
+  state: unknown,
+  settings: Readonly<Record<string, unknown>>,
+): Record<SeatId, number> | null {
+  const stake = stakeOf(gameId, settings);
+  if (!stake) return null;
+  return gameId === "poker"
+    ? pokerNets(state as PokerState, stake.cents, Number(settings.startingStack))
+    : lrcNets(state as LrcState, stake.cents);
+}
+
+/**
+ * One person's time in one seat: where the seat stood (`seatNets`) when
+ * they sat down, and when they got up — or null while it is still theirs.
+ *
+ * Money is owed by PEOPLE, not by seats (the user, 2026-09-28). Settled by
+ * seat, somebody who took over a losing bot's seat halfway owed what the
+ * bot had lost before they sat down, and somebody who left the room — or
+ * was kicked from it — halfway dropped out of the money as if they had been
+ * a bot all along. So each person answers for what their seat did while it
+ * was theirs, and what a seat did under a bot is the bots' part, left out
+ * like any other (see `amongPeople`).
+ */
+export interface Stint<Who> {
+  who: Who;
+  seat: SeatId;
+  from: number;
+  to: number | null;
+}
+
+export interface Settlement<Who> {
   /** "$20 buy-in", "25¢ a chip". */
   stake: string;
   /** Each person's result in cents, bots left out (see `amongPeople`). */
-  nets: Record<SeatId, number>;
-  payments: Payment[];
+  results: Array<{ who: Who; cents: number }>;
+  payments: Array<{ from: Who; to: Who; cents: number }>;
   /** Whether bots won or lost some of the money, so people's is scaled. */
   botsLeftOut: boolean;
 }
 
 /**
- * Everything above, for a game's final position. Null when the game is not
- * played for money, or when there is nobody to pay.
+ * Everything above, for the people who sat at the table and the position
+ * now: a person's result is what their seats did during their stints, added
+ * up if they sat down more than once. Null when the game is not played for
+ * money, or when nobody played it.
  */
-export function settleUp(
+export function settleUp<Who>(
   gameId: string,
   state: unknown,
   settings: Readonly<Record<string, unknown>>,
-  people: readonly SeatId[],
-): Settlement | null {
+  stints: ReadonlyArray<Stint<Who>>,
+): Settlement<Who> | null {
   const stake = stakeOf(gameId, settings);
-  if (!stake || people.length === 0) return null;
-  const nets =
-    gameId === "poker"
-      ? pokerNets(state as PokerState, stake.cents, Number(settings.startingStack))
-      : lrcNets(state as LrcState, stake.cents);
-  const settled = amongPeople(nets, people);
+  const now = seatNets(gameId, state, settings);
+  if (!stake || !now || stints.length === 0) return null;
+
+  // People by their first stint, so everything below can key them by index.
+  const people: Who[] = [];
+  const cents: Record<number, number> = {};
+  for (const stint of stints) {
+    let i = people.indexOf(stint.who);
+    if (i === -1) i = people.push(stint.who) - 1;
+    cents[i] = (cents[i] ?? 0) + (stint.to ?? now[stint.seat] ?? 0) - stint.from;
+  }
+
+  const settled = amongPeople(
+    cents,
+    people.map((_, i) => i),
+  );
   return {
     stake: stake.label,
-    nets: settled.nets,
-    payments: fewestPayments(settled.nets),
+    results: people.map((who, i) => ({ who, cents: settled.nets[i] ?? 0 })),
+    payments: fewestPayments(settled.nets).map((p) => ({
+      from: people[p.from]!,
+      to: people[p.to]!,
+      cents: p.cents,
+    })),
     botsLeftOut: settled.scaled,
   };
 }

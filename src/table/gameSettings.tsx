@@ -172,18 +172,45 @@ export function useGameSettings(
  * finishing it or by the browser's back button. Asked twice, because
  * nothing is saved; the first press says what the second one does. The
  * question closes with the sheet, which unmounts what is in it.
+ *
+ * A room's leader ends the game for EVERYONE, and settles up a game played
+ * for money, so their button asks too — in the Settings sheet and in the
+ * lobby — with its own words (`label`, `question`, `note`) and look (`tone`,
+ * `size`).
  */
-export function EndGameAction({ onEnd }: { onEnd: () => void }) {
+export function EndGameAction({
+  onEnd,
+  label = "End game",
+  question = "End this game?",
+  note = "It is not saved.",
+  tone,
+  size,
+}: {
+  onEnd: () => void;
+  label?: string;
+  question?: string;
+  note?: string;
+  tone?: "danger";
+  size?: "sm";
+}) {
   const [asking, setAsking] = useState(false);
-  if (!asking) return <Button onClick={() => setAsking(true)}>End game</Button>;
+  if (!asking) {
+    return (
+      <Button tone={tone} size={size} onClick={() => setAsking(true)}>
+        {label}
+      </Button>
+    );
+  }
   return (
-    <div role="group" aria-label="End this game?" className="flex flex-col gap-2">
-      <p className="text-center text-xs text-bone-300">End this game? It is not saved.</p>
+    <div role="group" aria-label={question} className="flex flex-col gap-2">
+      <p className="text-center text-xs text-bone-300">
+        {question} {note}
+      </p>
       <div className="flex gap-2">
-        <Button className="flex-1" onClick={() => setAsking(false)}>
+        <Button size={size} className="flex-1" onClick={() => setAsking(false)}>
           Keep playing
         </Button>
-        <Button tone="danger" className="flex-1" onClick={onEnd}>
+        <Button tone="danger" size={size} className="flex-1" onClick={onEnd}>
           End game
         </Button>
       </div>

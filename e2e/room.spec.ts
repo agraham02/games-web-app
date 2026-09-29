@@ -53,10 +53,14 @@ async function stepAway(page: Page): Promise<void> {
   await page.getByRole("button", { name: /return to the lobby/i }).click();
 }
 
-/** The leader ends the game for everyone, through the Settings sheet. */
+/** The leader ends the game for everyone, through the Settings sheet — asked twice. */
 async function endGame(page: Page): Promise<void> {
   await page.getByRole("button", { name: /settings/i }).click();
   await page.getByRole("button", { name: /end the game for everyone/i }).click();
+  await page
+    .getByRole("group", { name: "End the game for everyone?" })
+    .getByRole("button", { name: "End game", exact: true })
+    .click();
 }
 
 test.describe("a room, in real browsers", () => {
@@ -78,8 +82,9 @@ test.describe("a room, in real browsers", () => {
     for (const page of [ada, bo]) {
       // Scoped to the roster: a sonner toast is also an <li>, so "Bo"
       // matches both the row and the "Bo joined" notice otherwise.
-      // Between games the roster is the seating plan (one row per seat).
-      const roster = page.getByRole("list", { name: "Seating plan" });
+      // Before a game is picked there are no seats yet, so the roster is
+      // the plain member list (the seating plan arrives with a game).
+      const roster = page.getByRole("list", { name: "Room members" });
       await expect(roster.getByRole("listitem").filter({ hasText: "Ada" })).toBeVisible();
       await expect(roster.getByRole("listitem").filter({ hasText: "Bo" })).toBeVisible();
     }
@@ -319,9 +324,10 @@ test.describe("a room, in real browsers", () => {
 
     await endGame(ada);
 
-    for (const page of [ada, bo]) {
-      await expect(page.getByRole("button", { name: /start spades/i })).toBeVisible();
-    }
+    // Back in the lobby: Start is the leader's alone, and everyone else is
+    // told who they are waiting for.
+    await expect(ada.getByRole("button", { name: /start spades/i })).toBeVisible();
+    await expect(bo.getByText("Waiting for Ada to start")).toBeVisible();
 
     await one.close();
     await two.close();
@@ -545,8 +551,10 @@ test.describe("a room, in real browsers", () => {
     const ada = await player(one, "Ada");
     const code = await hostRoom(ada);
 
-    await ada.getByRole("button", { name: /anyone with the code/i }).click();
-    await expect(ada.getByRole("button", { name: /approval needed/i })).toBeVisible();
+    // Two choices side by side, the one in force pressed.
+    const private_ = ada.getByRole("button", { name: /only people i let in/i });
+    await private_.click();
+    await expect(private_).toHaveAttribute("aria-pressed", "true");
 
     const bo = await player(two, "Bo");
     await bo.getByLabel(/room code/i).fill(code);
@@ -555,7 +563,7 @@ test.describe("a room, in real browsers", () => {
     await expect(bo.getByText(/waiting to be let in/i)).toBeVisible();
     await expect(ada.getByText(/asking to join/i)).toBeVisible();
 
-    await ada.getByRole("button", { name: /let in/i }).click();
+    await ada.getByRole("button", { name: "Let in", exact: true }).click();
     // Admitted, and the lobby appears without them doing anything else.
     await expect(bo.getByText(code, { exact: true })).toBeVisible();
 
@@ -763,7 +771,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "BS", exact: true }).click();
+    await ada.getByRole("button", { name: /^BS,/ }).click();
     await ada.getByRole("button", { name: /start bs/i }).click();
 
     for (const page of [ada, bo]) {
@@ -818,7 +826,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "BS", exact: true }).click();
+    await ada.getByRole("button", { name: /^BS,/ }).click();
     await ada.getByRole("button", { name: /start bs/i }).click();
     for (const page of [ada, bo]) {
       await atTable(page);

@@ -11,6 +11,7 @@
  * the cards.
  */
 
+import { EndGameAction } from "@/table/gameSettings";
 import { Button } from "@/ui/primitives/Button";
 import { InviteCard } from "../InviteCard";
 
@@ -40,9 +41,13 @@ export function TableMenu({
         </p>
       )}
       {leader ? (
-        <Button tone="danger" onClick={onEndGame}>
-          End the game for everyone
-        </Button>
+        <EndGameAction
+          onEnd={onEndGame}
+          tone="danger"
+          label="End the game for everyone"
+          question="End the game for everyone?"
+          note="Everyone goes back to the lobby."
+        />
       ) : null}
     </>
   );

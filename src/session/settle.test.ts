@@ -3,7 +3,7 @@ import { createRng } from "@/engine/rng";
 import type { SeatId } from "@/engine/types";
 import type { LrcState } from "@/games/lrc/types";
 import type { PokerState } from "@/games/poker/types";
-import { amongPeople, fewestPayments, formatMoney, lrcNets, pokerNets, settleUp, type Payment } from "./settle";
+import { amongPeople, fewestPayments, formatMoney, lrcNets, pokerNets, settleUp, type Payment, type Stint } from "./settle";
 
 /** What the payments leave each seat with: must be exactly zero for all. */
 function after(nets: Record<SeatId, number>, payments: Payment[]): Record<SeatId, number> {
@@ -160,19 +160,59 @@ describe("what each seat is up or down", () => {
 });
 
 describe("settling a game", () => {
+  /** Sat down at the deal and still there. */
+  const whole = (who: string, seat: SeatId): Stint<string> => ({ who, seat, from: 0, to: null });
+  /** Two seats, one LRC round won by seat 0: at 150¢ a chip, seat 0 is up 450¢ and seat 1 down 450¢. */
+  const headsUp = { seats: 2, scores: { 0: 1, 1: 0 } } as unknown as LrcState;
+
   it("is nothing at all without a stake", () => {
     const state = { seats: 3, scores: { 0: 1, 1: 0, 2: 0 } } as unknown as LrcState;
-    expect(settleUp("lrc", state, { chipValue: 0 }, [0, 1, 2])).toBeNull();
-    expect(settleUp("spades", {}, {}, [0, 1])).toBeNull();
+    expect(settleUp("lrc", state, { chipValue: 0 }, [whole("a", 0)])).toBeNull();
+    expect(settleUp("spades", {}, {}, [whole("a", 0), whole("b", 1)])).toBeNull();
   });
 
   it("names the stake, and pays only between people", () => {
     const state = { seats: 3, scores: { 0: 1, 1: 0, 2: 0 } } as unknown as LrcState;
     // Seat 2 is a bot: its 3 chips are left out, and seat 1 pays seat 0 its 3.
-    const s = settleUp("lrc", state, { chipValue: 50 }, [0, 1])!;
+    const s = settleUp("lrc", state, { chipValue: 50 }, [whole("ada", 0), whole("bo", 1)])!;
     expect(s.stake).toBe("50¢ a chip");
-    expect(s.payments).toEqual([{ from: 1, to: 0, cents: 150 }]);
+    expect(s.payments).toEqual([{ from: "bo", to: "ada", cents: 150 }]);
     expect(s.botsLeftOut).toBe(true);
+  });
+
+  it("does not charge a newcomer for what the bot lost before they sat down", () => {
+    // Bo took seat 1 over from a bot that had already lost 450¢ to Ada, and
+    // nothing has happened since. By seat, Bo owed Ada the bot's 450¢.
+    const s = settleUp("lrc", headsUp, { chipValue: 150 }, [
+      whole("ada", 0),
+      { who: "bo", seat: 1, from: -450, to: null },
+    ])!;
+    expect(s.results).toContainEqual({ who: "bo", cents: 0 });
+    expect(s.payments).toEqual([]);
+    expect(s.botsLeftOut).toBe(true);
+  });
+
+  it("keeps somebody who walked out on what they had lost by then", () => {
+    // Bo lost 450¢ to Ada, then left the room; a bot played the seat on. By
+    // seat, Bo counted as a bot and owed nothing.
+    const s = settleUp("lrc", headsUp, { chipValue: 150 }, [
+      whole("ada", 0),
+      { who: "bo", seat: 1, from: 0, to: -450 },
+    ])!;
+    expect(s.payments).toEqual([{ from: "bo", to: "ada", cents: 450 }]);
+    expect(s.botsLeftOut).toBe(false);
+  });
+
+  it("adds up everything a person did, in every seat they sat in", () => {
+    // Ada held seat 0 while it won 450¢, walked out, and came back to seat 1
+    // after it had lost those 450¢ — and it has not moved since.
+    const s = settleUp("lrc", headsUp, { chipValue: 150 }, [
+      { who: "ada", seat: 0, from: 0, to: 450 },
+      { who: "bo", seat: 1, from: 0, to: -450 },
+      { who: "ada", seat: 1, from: -450, to: null },
+    ])!;
+    expect(s.results).toHaveLength(2);
+    expect(s.payments).toEqual([{ from: "bo", to: "ada", cents: 450 }]);
   });
 
   it("writes money the way people say it", () => {

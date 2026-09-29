@@ -1037,17 +1037,16 @@ describe("the server, in process", () => {
       expect(h.conn.last("room")!.room.settlement).toBeNull();
     });
 
-    it("settles a match played to its winner, while everyone is still at the table", () => {
-      const { h, p2 } = room("lrc", { target: 1, chipValue: 25 });
-      const players = [h, p2];
+    /** Plays a one-round LRC match to its winner, every person taking the first legal action. */
+    function playToWinner(code: string, players: ReadonlyArray<{ peer: Peer; conn: FakeConnection }>) {
       const rules = GAMES.lrc.create(GAMES.lrc.parse({ target: 1 }));
       for (let turn = 0; turn < 2000; turn++) {
         clock.drain();
-        const table = registry.get(h.code)!.debugDump().table as {
+        const table = registry.get(code)!.debugDump().table as {
           currentSeat: number | null;
           isOver: boolean;
         } | null;
-        if (!table || table.isOver) break;
+        if (!table || table.isOver) return;
         if (table.currentSeat === null) continue;
         const who = players.find((p) => p.conn.last("frame")?.frame.seat === table.currentSeat);
         if (!who) continue;
@@ -1055,6 +1054,69 @@ describe("the server, in process", () => {
         if (legal[0] === undefined) continue;
         send(who.peer, { t: "action", action: legal[0] });
       }
+    }
+
+    it("still counts somebody who lost and walked out halfway, by name", () => {
+      // Money is owed by people, not seats (the user, 2026-09-28): leaving the
+      // room hands the seat to a bot, but what they lost while it was theirs
+      // is still theirs to pay. Three people, no bots, so nothing is scaled.
+      const h = host("p1");
+      const p2 = peerFor("p2");
+      const p3 = peerFor("p3");
+      send(p2.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      send(p3.peer, { t: "joinRoom", code: h.code, name: "Cy" });
+      send(h.peer, { t: "selectGame", gameId: "lrc", settings: { target: 2, chipValue: 25 }, seats: 3, difficulty: "steady" });
+      send(h.peer, { t: "startGame" });
+
+      const players = [h, p2, p3];
+      const rules = GAMES.lrc.create(GAMES.lrc.parse({ target: 2 }));
+      for (let turn = 0; turn < 2000 && !h.conn.last("frame")?.frame.isRoundOver; turn++) {
+        clock.drain();
+        const current = h.conn.last("frame")?.frame.currentSeat;
+        const who = players.find((p) => p.conn.last("frame")?.frame.seat === current);
+        if (current == null || !who) continue;
+        const legal = rules.legalActions(who.conn.last("frame")!.frame.state, current);
+        if (legal[0] !== undefined) send(who.peer, { t: "action", action: legal[0] });
+      }
+      const won = h.conn.last("frame")!.frame.roundWinner;
+      expect(won, "the first round should have been played out").not.toBeNull();
+
+      // A guest who lost it walks out; the leader then calls the game off.
+      const leaver = [p2, p3].find((p) => p.conn.last("frame")!.frame.seat !== won)!;
+      const leaverName = leaver === p2 ? "Bo" : "Cy";
+      send(leaver.peer, { t: "leaveRoom" });
+      send(h.peer, { t: "endGame" });
+
+      const settled = h.conn.last("room")!.room.settlement!;
+      expect(settled.results.find((r) => r.name === leaverName)?.cents).toBe(-75);
+      expect(settled.payments.filter((p) => p.fromName === leaverName)).toHaveLength(1);
+      expect(settled.payments.reduce((n, p) => n + p.cents, 0)).toBe(150);
+      expect(settled.botsLeftOut).toBe(false);
+    });
+
+    it("keeps a finished match's payments when a loser walks out before the table empties", () => {
+      // The settlement is made on the winner's sheet. Leaving the room
+      // afterwards releases the seat, and the last person leaving the
+      // table ends the session — which must not settle again, or the one
+      // who walked out counts as a bot and their debt disappears.
+      const { h, p2 } = room("lrc", { target: 1, chipValue: 25 });
+      playToWinner(h.code, [h, p2]);
+      const onTheSheet = h.conn.last("room")!.room.settlement!;
+      expect(onTheSheet.payments).toHaveLength(1);
+
+      const loser = onTheSheet.payments[0]!.from;
+      const [leaving, staying] = loser === registry.sessionFor("p2") ? [p2, h] : [h, p2];
+      send(leaving.peer, { t: "leaveRoom" });
+      send(staying.peer, { t: "exitGame" });
+
+      const after = staying.conn.last("room")!.room;
+      expect(after.gameRunning).toBe(false);
+      expect(after.settlement).toEqual(onTheSheet);
+    });
+
+    it("settles a match played to its winner, while everyone is still at the table", () => {
+      const { h, p2 } = room("lrc", { target: 1, chipValue: 25 });
+      playToWinner(h.code, [h, p2]);
 
       const view = h.conn.last("room")!.room;
       expect(view.gameRunning, "the match is over, but nobody has left the table").toBe(true);

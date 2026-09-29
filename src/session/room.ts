@@ -731,8 +731,13 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       if (room.game) return fail("game-already-running");
       const rng = ctx.rng;
       if (!rng) return fail("no-game-selected");
-      // The bot seats shuffle too, so people and bots end up mixed.
-      const shuffled = rng.shuffle(seatingPlan(room).slice(0, Math.max(0, room.seats)));
+      // The bot seats shuffle too, so people and bots end up mixed. So do
+      // the people past the last seat: they are only watching because the
+      // table is full, and a shuffle that always left the same latecomers
+      // out would be no shuffle for them. (Either there are bot seats or
+      // there are people waiting, never both — `seatingPlan` fills one
+      // from the other — so the whole plan is one pool.)
+      const shuffled = rng.shuffle(seatingPlan(room));
       return {
         ok: true,
         room: { ...room, seatPlan: seatingPlan({ ...room, seatPlan: shuffled }) },

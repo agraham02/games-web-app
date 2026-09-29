@@ -34,6 +34,7 @@ import { defaultSettings, summarizeSetup, textOf } from "@/session/gameSetup";
 import type { RoomView } from "@/session/protocol";
 import { GAMES, GAME_IDS, isGameId, onlineGames, type GameId } from "@/session/registry";
 import { MIN_ROOM_PLAYERS } from "@/session/room";
+import { EndGameAction } from "@/table/gameSettings";
 import { motion } from "motion/react";
 import { Collapse, Swap, listItemMotion } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
@@ -120,9 +121,14 @@ function LobbyFooter({ api }: { api: RoomApi }) {
       ) : null}
       <div className="flex w-full items-center justify-between gap-3">
         {room.gameRunning && leader ? (
-          <Button size="sm" tone="danger" onClick={api.endGame}>
-            End the game for everyone
-          </Button>
+          <EndGameAction
+            onEnd={api.endGame}
+            size="sm"
+            tone="danger"
+            label="End the game for everyone"
+            question="End the game for everyone?"
+            note="Everyone comes back here."
+          />
         ) : (
           <span />
         )}

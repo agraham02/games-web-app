@@ -40,7 +40,6 @@ import {
   seatingOrder,
   seatingPlan,
   teamOfSeat,
-  type GameParticipation,
   type Room,
   type RoomCommand,
   type RoomEffect,
@@ -55,7 +54,7 @@ import {
   resolveWinningSeats,
 } from "@/session/structural";
 import type { FrameView, MemberView, RoomView, ServerMessage, SettlementView } from "@/session/protocol";
-import { settleUp } from "@/session/settle";
+import { seatNets, settleUp, type Stint } from "@/session/settle";
 import type { Clock } from "@/session/clock";
 import { log } from "./log";
 
@@ -123,7 +122,24 @@ export class RoomRuntime {
    * lobby for anyone who backed out to it first.
    */
   private settlement: SettlementView | null = null;
-  /** The running game's settings, parsed — the stake is read from them. */
+  /**
+   * Whether the game has been played to a winner and settled on it. From
+   * then on the settlement is final: leaving the winner's sheet ends the
+   * session, and settling again there would read seats that people have
+   * since left — a loser who walked out would count as a bot and owe
+   * nothing, and the lobby would disagree with the sheet everyone saw.
+   */
+  private settledAtEnd = false;
+  /**
+   * Who has sat in which seat of the running game, and where the seat stood
+   * when they sat down and got up (see `Stint`): a game played for money is
+   * settled between people, each for the time the seat was theirs.
+   */
+  private stints: Stint<SessionId>[] = [];
+  /** The name of everyone with a stint, as last seen — some will have left. */
+  private stintNames = new Map<SessionId, string>();
+  /** The running game, and its settings parsed — the stake is read from them. */
+  private sessionGameId: GameId | null = null;
   private sessionSettings: RawSettings = {};
 
   constructor(opts: RoomRuntimeOptions) {
@@ -224,11 +240,12 @@ export class RoomRuntime {
       return result;
     }
 
-    // Who held each seat before the command, for a game it ends: ending a
-    // game clears the participation, and the payments are worked out from it.
-    const gameBefore = this.room.game;
+    // Before the effects, which may end the session: a seat that has just
+    // changed hands is measured against the position it changed hands at.
+    const before = this.room;
     this.room = result.room;
-    for (const effect of result.effects) this.runEffect(effect, gameBefore);
+    this.trackStints(before, this.room);
+    for (const effect of result.effects) this.runEffect(effect);
 
     // A seat changing hands between a person and a bot is a change to the
     // TABLE, not merely to the roster — every pod says whether a bot is
@@ -284,7 +301,7 @@ export class RoomRuntime {
     for (const viewer of this.room.game.present) this.sendCurrentFrame(viewer);
   }
 
-  private runEffect(effect: RoomEffect, gameBefore: GameParticipation | null): void {
+  private runEffect(effect: RoomEffect): void {
     switch (effect.t) {
       case "startSession":
         this.startSession(effect.gameId, effect.settings, effect.seats, effect.difficulty);
@@ -292,9 +309,9 @@ export class RoomRuntime {
       case "stopSession":
         log.info("session stopped", { room: this.code, event: effect.reason });
         // Before the session goes: this is the last look at the position.
-        // The seats are read off the participation the command has just
-        // cleared, so from the room as it stood a moment ago.
-        this.settle(gameBefore);
+        // Not for a game already played to a winner, whose settlement is
+        // final.
+        if (!this.settledAtEnd) this.settle();
         this.stopSession();
         break;
       case "notice":
@@ -314,8 +331,18 @@ export class RoomRuntime {
     this.stopSession();
     const definition = gameEntry(gameId).create(settings);
     this.previous = null;
+    this.sessionGameId = gameId;
     this.sessionSettings = gameEntry(gameId).parse(settings);
     this.settlement = null;
+    this.settledAtEnd = false;
+    // Everybody dealt in starts square: nothing is won or lost before the
+    // first card. (The room's game is already the new one — the command's
+    // result is in place before its effects run.)
+    this.stints = [];
+    this.stintNames.clear();
+    this.room.game?.seatOwner.forEach((who, seat) => {
+      if (who !== null) this.openStint(who, seat, 0);
+    });
 
     const session: AnySession = new GameSession({
       definition,
@@ -397,45 +424,81 @@ export class RoomRuntime {
     // Before `settled()`, which is what reads it to schedule the next turn.
     this.lastFramePlaybackMs = playbackMs(frame.events);
     // Played to a winner: settle up now, while everyone is still at the
-    // table to see it on the winner's sheet.
-    if (!this.settlement && session.definition.isOver(after) && this.room.game) {
-      this.settle(this.room.game);
+    // table to see it on the winner's sheet. Once — frames after the end
+    // (a show or muck) must not settle, or broadcast, all over again.
+    if (!this.settledAtEnd && session.definition.isOver(after) && this.room.game) {
+      this.settledAtEnd = true;
+      this.settle();
       this.broadcastRoom();
     }
     session.settled();
   }
 
   /**
-   * The payments for the game now ending, from its position this moment.
-   * `game` is who held each seat: a seat with no owner is a bot's, and
-   * nobody pays a bot (see `amongPeople`).
+   * Closes the stint of anybody who has just given up a seat, and opens one
+   * for anybody who has just taken one, at the position this moment. Mid-game
+   * that is `enterGame` into an open seat and leaving (or being removed from)
+   * the room — compared rather than switched on, like `liveSignature`, so a
+   * route added later is covered too. A command that ends the game leaves
+   * the stints open, and `settle` measures them to the final position.
    */
-  private settle(game: GameParticipation | null): void {
+  private trackStints(before: Room, after: Room): void {
     const session = this.session;
-    if (!session || !game) return;
-    const state = session.snapshot();
-    const people: SeatId[] = [];
-    game.seatOwner.forEach((owner, seat) => {
-      if (owner !== null) people.push(seat);
+    const was = before.game;
+    const is = after.game;
+    if (!session || !was || !is || this.settledAtEnd || !this.sessionGameId) return;
+    if (was.seatOwner.every((owner, seat) => owner === is.seatOwner[seat])) return;
+    const now = seatNets(this.sessionGameId, session.snapshot(), this.sessionSettings);
+    if (!now) return;
+    was.seatOwner.forEach((left, seat) => {
+      const came = is.seatOwner[seat] ?? null;
+      if (left === came) return;
+      if (left !== null) {
+        const stint = this.stints.find((s) => s.who === left && s.seat === seat && s.to === null);
+        if (stint) stint.to = now[seat] ?? 0;
+        // Read from the room they were still in, since they may be gone now.
+        const name = before.members[left]?.name;
+        if (name) this.stintNames.set(left, name);
+      }
+      if (came !== null) this.openStint(came, seat, now[seat] ?? 0);
     });
-    const settled = settleUp(game.gameId, state, this.sessionSettings, people);
+  }
+
+  private openStint(who: SessionId, seat: SeatId, from: number): void {
+    this.stints.push({ who, seat, from, to: null });
+    const name = this.room.members[who]?.name;
+    if (name) this.stintNames.set(who, name);
+  }
+
+  /**
+   * The payments for the game now ending, from its position this moment:
+   * between everybody who sat at the table, each for the time their seat was
+   * theirs, and never with a bot (see `Stint` and `amongPeople`).
+   */
+  private settle(): void {
+    const session = this.session;
+    const gameId = this.sessionGameId;
+    if (!session || !gameId) return;
+    const state = session.snapshot();
+    const settled = settleUp(gameId, state, this.sessionSettings, this.stints);
     if (!settled) {
       this.settlement = null;
       return;
     }
-    const nameOf = (seat: SeatId) => this.room.members[game.seatOwner[seat]!]?.name ?? "Someone";
-    const sessionOf = (seat: SeatId) => game.seatOwner[seat]!;
+    // A current member by their name now, in case they renamed; somebody who
+    // has left by the name they had when they did.
+    const nameOf = (who: SessionId) => this.room.members[who]?.name ?? this.stintNames.get(who) ?? "Someone";
     this.settlement = {
-      gameId: game.gameId,
+      gameId,
       stake: settled.stake,
       finished: session.definition.isOver(state),
-      results: people
-        .map((seat) => ({ session: sessionOf(seat), name: nameOf(seat), cents: settled.nets[seat] ?? 0 }))
+      results: settled.results
+        .map((r) => ({ session: r.who, name: nameOf(r.who), cents: r.cents }))
         .sort((a, b) => b.cents - a.cents),
       payments: settled.payments.map((p) => ({
-        from: sessionOf(p.from),
+        from: p.from,
         fromName: nameOf(p.from),
-        to: sessionOf(p.to),
+        to: p.to,
         toName: nameOf(p.to),
         cents: p.cents,
       })),
