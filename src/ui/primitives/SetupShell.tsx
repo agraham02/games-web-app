@@ -31,6 +31,8 @@
  * sticky inside the centred block, not pinned to the window's edge.
  */
 
+import { Credit } from "./Credit";
+
 export interface SetupShellProps {
   children: React.ReactNode;
   /** Widen for content that is a list rather than a form. */
@@ -53,6 +55,7 @@ export function SetupShell({ children, maxWidth = "max-w-sm", footer }: SetupShe
             </div>
           ) : null}
         </div>
+        <Credit />
       </div>
     </main>
   );
