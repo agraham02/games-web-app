@@ -1992,17 +1992,21 @@ export function radialFanSlot(o: RadialFanOptions): FanSlot {
 export const MIN_DISCARD_STEP_FRACTION = 0.46;
 
 /**
- * The hero hand's own compression floor. See MIN_DISCARD_STEP_FRACTION.
+ * The hero hand's own compression floor: how little of each card a fan may
+ * show before it pans instead (see `HandPan`). See also
+ * MIN_DISCARD_STEP_FRACTION.
  *
- * Raised far less than the pile's, and the ceiling is a real one: a full
- * 13-card Rummy hand has to keep fitting a 390px phone without panning,
- * because dragging to see your own cards while planning a meld is a much
- * worse trade than a slightly tighter fan. At 0.38 with the current
- * `compact` card it fits with a little to spare; past that it does not.
- * The smallest phones (360px) do pan a 13-card hand, which is the
- * accepted cost of the bigger cards.
+ * Half a card. It was 0.38, chosen so a 13-card hand still fitted a 390px
+ * phone without panning — and on an iPhone that left about 25px of each
+ * card showing, which the user found too thin to read at a glance or to
+ * hit reliably with a thumb (2026-09-28: "space them out a little more,
+ * and if anything, we also have that scroll feature"). At half a card a
+ * 64px card shows 32px, and a 13-card hand pans on every phone: about
+ * 86px of drag on a 390px screen, 46px on a 430px one. Every card game
+ * with a hand that can reach that size mounts `HandPan`; one that did not
+ * would get no floor at all and squeeze regardless.
  */
-export const MIN_HAND_GAP_FRACTION = 0.38;
+export const MIN_HAND_GAP_FRACTION = 0.5;
 
 /**
  * The WIDEST the discard fan spreads, as a fraction of the card's extent

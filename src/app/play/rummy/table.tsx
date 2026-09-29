@@ -71,6 +71,7 @@ import type { RummyAction, RummyState } from "@/games/rummy/types";
 import type { RoundNote } from "@/table/GameHost";
 import { BandNote, HandZone } from "@/table/HandZone";
 import { Button } from "@/ui/primitives/Button";
+import { useHandPanStart } from "@/table/HandPan";
 import { PanSurface } from "@/table/PanSurface";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -846,10 +847,15 @@ function PanSurfaces({ state, seat }: { state: RummyState; seat: SeatId }) {
     if (wired) setDiscardScroll(newestEnd);
   }, [wired, newestEnd, setDiscardScroll]);
 
+  // The hand starts flush at its near edge, like Spades' and BS's (see
+  // `useHandPanStart`): centred, it hid a card off each end.
+  const handCount = (state.hands[seat] ?? []).length;
+  const handRange = geometry ? handFanMaxScroll(geometry, handCount) : 0;
+  useHandPanStart(handRange);
+
   if (!geometry || discardScroll === null || handScroll === null) return null;
 
   const assembly = pileAssembly(geometry, pileCount);
-  const handCount = (state.hands[seat] ?? []).length;
 
   return (
     <>
@@ -863,7 +869,7 @@ function PanSurfaces({ state, seat }: { state: RummyState; seat: SeatId }) {
       <PanSurface
         within={geometry.zones.hand}
         axis="x"
-        range={handFanMaxScroll(geometry, handCount)}
+        range={handRange}
         value={handScroll}
         onChange={setHandScroll}
       />

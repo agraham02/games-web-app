@@ -620,15 +620,32 @@ describe("hero hand — never draws a card outside the hand zone", () => {
   });
 
   it("leaves an ordinary hand completely untouched", () => {
-    // The overwhelmingly common case, and the one every other game is
-    // in permanently: a hand that fits must be drawn exactly as before.
+    // The common case: a hand that fits must be drawn exactly as before.
+    // Thirteen cards no longer fit a portrait phone at half a card each
+    // (the next test), but they still fit everywhere wider.
     for (const vp of VIEWPORTS) {
       const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
-      for (const count of [1, 7, 13]) {
+      const counts = vp.w < 600 ? [1, 7, 10] : [1, 7, 10, 13];
+      for (const count of counts) {
         for (let i = 0; i < count; i++) {
           expect(handCard(i, count, g, 0).opacity, `${vp.name}/${count}/card${i}`).toBe(1);
         }
       }
+    }
+  });
+
+  it("shows half of every card in a 13-card hand on a phone, and pans the rest", () => {
+    // The user, 2026-09-28: on an iPhone a 13-card Spades hand showed about
+    // 25px of each card, too thin to read or to tap. The floor is half a
+    // card; what no longer fits pans, starting flush at the near edge.
+    for (const w of [360, 375, 390, 430]) {
+      const g = resolveTable({ seats: 4, width: w, height: Math.round(w * 2.16) });
+      const range = handFanMaxScroll(g, 13);
+      expect(range, `${w}px: 13 cards should pan`).toBeGreaterThan(0);
+      const start = [0, 1, 2].map((i) => handCard(i, 13, g, range / 2));
+      const cardW = start[0]!.right - start[0]!.left;
+      expect(start[1]!.left - start[0]!.left, `${w}px: step`).toBeGreaterThanOrEqual(cardW * 0.5 - 0.01);
+      expect(start[0]!.opacity, `${w}px: the first card at the near edge`).toBe(1);
     }
   });
 });

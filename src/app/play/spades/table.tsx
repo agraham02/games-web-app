@@ -36,6 +36,7 @@ import { Button } from "@/ui/primitives/Button";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { TRANSITIONS } from "@/motion/presets";
 import { BandNote, HandZone } from "@/table/HandZone";
+import { HandPan } from "@/table/HandPan";
 import { useGeometry, useTableStore } from "@/table/store";
 import { isShortViewport } from "@/table/geometry";
 import { cn } from "@/lib/utils";
@@ -162,6 +163,9 @@ export function SpadesTable({
 
   return (
     <>
+      {/* Thirteen cards on a phone: past half a card each they pan rather
+          than squeezing into slivers too thin to read or to tap. */}
+      {view.viewerSeat >= 0 ? <HandPan count={(state.hands[view.viewerSeat] ?? []).length} /> : null}
       {/* One band owns the space above the hand — see HandZone for why
           independently positioned badges and panels up here are the thing
           being fixed, not a style preference. */}
