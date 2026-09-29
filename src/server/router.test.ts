@@ -994,6 +994,82 @@ describe("the server, in process", () => {
   });
 
   /**
+   * Poker and LRC played for money end with who pays whom (the user,
+   * 2026-09-28). Worked out by the server, because when the leader ends a
+   * game only the server still holds the position — the table is gone from
+   * every screen.
+   */
+  describe("settling up a game played for money", () => {
+    function room(gameId: "poker" | "lrc", settings: Record<string, unknown>) {
+      const h = host("p1");
+      const p2 = peerFor("p2");
+      send(p2.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      send(h.peer, { t: "selectGame", gameId, settings, seats: 3, difficulty: "steady" });
+      send(h.peer, { t: "startGame" });
+      return { h, p2 };
+    }
+
+    it("tells everyone who pays whom when the leader ends the game", () => {
+      const { h, p2 } = room("poker", { buyIn: 2000 });
+      send(h.peer, { t: "endGame" });
+      const settled = p2.conn.last("room")!.room.settlement!;
+      expect(settled.stake).toBe("$20 buy-in");
+      expect(settled.finished).toBe(false);
+      // The two people, never the bot in the third seat.
+      expect(settled.results.map((r) => r.name).sort()).toEqual(["Ada", "Bo"]);
+      // The first hand was still being played, so it is called off: the
+      // blinds go back and nobody owes anybody.
+      expect(settled.results.every((r) => r.cents === 0)).toBe(true);
+      expect(settled.payments).toEqual([]);
+    });
+
+    it("forgets the last game's payments once the next one starts", () => {
+      const { h } = room("poker", { buyIn: 2000 });
+      send(h.peer, { t: "endGame" });
+      expect(h.conn.last("room")!.room.settlement).not.toBeNull();
+      send(h.peer, { t: "startGame" });
+      expect(h.conn.last("room")!.room.settlement).toBeNull();
+    });
+
+    it("says nothing for a game with no stake", () => {
+      const { h } = room("poker", {});
+      send(h.peer, { t: "endGame" });
+      expect(h.conn.last("room")!.room.settlement).toBeNull();
+    });
+
+    it("settles a match played to its winner, while everyone is still at the table", () => {
+      const { h, p2 } = room("lrc", { target: 1, chipValue: 25 });
+      const players = [h, p2];
+      const rules = GAMES.lrc.create(GAMES.lrc.parse({ target: 1 }));
+      for (let turn = 0; turn < 2000; turn++) {
+        clock.drain();
+        const table = registry.get(h.code)!.debugDump().table as {
+          currentSeat: number | null;
+          isOver: boolean;
+        } | null;
+        if (!table || table.isOver) break;
+        if (table.currentSeat === null) continue;
+        const who = players.find((p) => p.conn.last("frame")?.frame.seat === table.currentSeat);
+        if (!who) continue;
+        const legal = rules.legalActions(who.conn.last("frame")!.frame.state, table.currentSeat);
+        if (legal[0] === undefined) continue;
+        send(who.peer, { t: "action", action: legal[0] });
+      }
+
+      const view = h.conn.last("room")!.room;
+      expect(view.gameRunning, "the match is over, but nobody has left the table").toBe(true);
+      const settled = view.settlement!;
+      expect(settled.finished).toBe(true);
+      expect(settled.stake).toBe("25¢ a chip");
+      // One round, three chips each at 25¢: a person who won it is up the
+      // other person's 75¢ (the bot's is left out); one who lost is down 75¢.
+      const net = settled.results.reduce((n, r) => n + r.cents, 0);
+      expect(net).toBe(0);
+      for (const p of settled.payments) expect(p.cents).toBe(75);
+    });
+  });
+
+  /**
    * Bookkeeping that nothing visible depends on until it does.
    */
   describe("not growing without end", () => {

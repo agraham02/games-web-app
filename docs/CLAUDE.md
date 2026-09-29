@@ -519,6 +519,28 @@ kicked, a socket dropping and coming back, and whatever is added next.
 Found in a browser with two windows open. Every unit test asserted on a
 frame that in practice never arrived.
 
+### Settling up is the server's, because only it still has the game
+
+Poker and LRC may be played for money in a room (a buy-in; a chip value —
+room-only options, off by default). At the end everybody sees the FEWEST
+payments that square them up (`settle.ts`, the user's call, 2026-09-28):
+exact, not greedy — people not already even, less the most groups that
+each sum to zero, found by a search over subsets (≤ 1,024 at ten seats).
+Nobody pays a bot: money won from or lost to bots is left out and people's
+results scaled down to what people can pay each other (`amongPeople`).
+
+It is worked out by `RoomRuntime`, not a client, because the leader's End
+game clears the room's game in the same command — every table unmounts,
+and the only copy of the final position is the server's session. So the
+stop effect settles from the participation as it stood BEFORE the command
+(`gameBefore`), a match played to its winner settles on the frame that
+ends it, and the result rides on `RoomView.settlement` until the next game
+starts: on the winner's sheet (`summaryExtra`) and at the top of the lobby
+(`SettleUp`). Ended early, Poker calls off a hand in play (a hand at its
+showdown is already won, and is paid); LRC counts only finished rounds.
+`SettleUp` says what changes HANDS, never "you're even" — a person who lost
+to a bot is not even, they just owe no person.
+
 ### Two questions, not one: who moved, and who are we waiting on
 
 A seat pod lights from **`seatCue`** ([turnCue.ts](src/table/turnCue.ts)),

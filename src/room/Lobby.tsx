@@ -45,12 +45,17 @@ import { GameOptions } from "@/ui/setup/GameOptions";
 import { useMediaQuery } from "@/ui/useMediaQuery";
 import { InviteCard } from "./InviteCard";
 import { Roster } from "./Roster";
+import { SettleUp } from "./SettleUp";
 import type { RoomApi } from "./useRoom";
 
 export function Lobby({ api }: { api: RoomApi }) {
   const room = api.room!;
   return (
     <SetupShell maxWidth="max-w-md lg:max-w-4xl" footer={<LobbyFooter api={api} />}>
+      {/* First, while there is one: after a game played for money this is
+          what everybody came back to the lobby needing. It stays until the
+          next game starts. */}
+      {room.settlement ? <SettleUp settlement={room.settlement} you={room.you} className="max-w-md" /> : null}
       <InviteCard code={room.code} />
       <div className="grid w-full gap-9 lg:grid-cols-2 lg:items-start lg:gap-12">
         <GamePanel api={api} />

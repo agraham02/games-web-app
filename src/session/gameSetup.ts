@@ -38,6 +38,7 @@ import {
   MIN_STARTING_STACK,
 } from "@/games/poker/rules";
 import { DEFAULT_TARGET as RUMMY_DEFAULT_TARGET } from "@/games/rummy/state";
+import { formatMoney } from "./settle";
 
 export type OptionValue = string | number | boolean;
 /** A game's settings as the form holds them — before `parseSettings`. */
@@ -354,6 +355,32 @@ const POKER: GameSetupSpec = {
       default: DEFAULT_BIG_BLIND,
       unit: plural("chip", "chips"),
     },
+    {
+      // What the chips are worth in real money, for the payments shown at
+      // the end (`settle.ts`). A room setting only: against bots nobody pays
+      // anybody (the user's call, 2026-09-28).
+      kind: "choice",
+      key: "buyIn",
+      label: "Buy-in",
+      hint: (s) => {
+        const cents = (s.buyIn as number) ?? 0;
+        const stack = (s.startingStack as number) ?? DEFAULT_STARTING_STACK;
+        return cents > 0
+          ? `Everyone pays ${formatMoney(cents)} for ${stack} chips. At the end, the table shows who pays whom.`
+          : "Off: the chips are not worth money.";
+      },
+      choices: [
+        { value: 0, label: "Off" },
+        { value: 500, label: "$5" },
+        { value: 1000, label: "$10" },
+        { value: 2000, label: "$20" },
+        { value: 2500, label: "$25" },
+        { value: 5000, label: "$50" },
+        { value: 10000, label: "$100" },
+      ],
+      default: 0,
+      mode: "room",
+    },
   ],
   // Grounded in bots.ts's own tables (`CALL_MARGIN`, `RAISE_EDGE`,
   // `LIMPS_PREFLOP`, `BLUFF_CHANCE`), not generic copy.
@@ -378,6 +405,28 @@ const LRC: GameSetupSpec = {
       step: 1,
       default: LRC_DEFAULT_TARGET,
       unit: plural("round", "rounds"),
+    },
+    {
+      // See Poker's buy-in: money for the payments at the end, rooms only.
+      kind: "choice",
+      key: "chipValue",
+      label: "Chip value",
+      hint: (s) => {
+        const cents = (s.chipValue as number) ?? 0;
+        return cents > 0
+          ? `Each chip is worth ${formatMoney(cents)}. At the end, the table shows who pays whom.`
+          : "Off: the chips are not worth money.";
+      },
+      choices: [
+        { value: 0, label: "Off" },
+        { value: 5, label: "5¢" },
+        { value: 10, label: "10¢" },
+        { value: 25, label: "25¢" },
+        { value: 50, label: "50¢" },
+        { value: 100, label: "$1" },
+      ],
+      default: 0,
+      mode: "room",
     },
   ],
   // Rolling is the only legal action and the dice are random, so a tier

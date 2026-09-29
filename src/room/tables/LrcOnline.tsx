@@ -37,6 +37,7 @@ import {
 import { tintFor } from "../Roster";
 import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { SettleUp } from "../SettleUp";
 import { TableMenu } from "./TableMenu";
 
 export function LrcOnline({ api, room, frame }: OnlineTableProps) {
@@ -90,6 +91,7 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        summaryExtra={room.settlement ? <SettleUp settlement={room.settlement} you={room.you} /> : undefined}
         menuActions={
           <TableMenu
             code={room.code}

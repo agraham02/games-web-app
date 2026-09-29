@@ -37,6 +37,7 @@ import {
 import { tintFor } from "../Roster";
 import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { SettleUp } from "../SettleUp";
 import { TableMenu } from "./TableMenu";
 
 export function PokerOnline({ api, room, frame }: OnlineTableProps) {
@@ -95,6 +96,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        summaryExtra={room.settlement ? <SettleUp settlement={room.settlement} you={room.you} /> : undefined}
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}

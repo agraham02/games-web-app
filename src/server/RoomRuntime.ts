@@ -40,6 +40,7 @@ import {
   seatingOrder,
   seatingPlan,
   teamOfSeat,
+  type GameParticipation,
   type Room,
   type RoomCommand,
   type RoomEffect,
@@ -53,7 +54,8 @@ import {
   resolveRoundWinningSeats,
   resolveWinningSeats,
 } from "@/session/structural";
-import type { FrameView, MemberView, RoomView, ServerMessage } from "@/session/protocol";
+import type { FrameView, MemberView, RoomView, ServerMessage, SettlementView } from "@/session/protocol";
+import { settleUp } from "@/session/settle";
 import type { Clock } from "@/session/clock";
 import { log } from "./log";
 
@@ -113,6 +115,16 @@ export class RoomRuntime {
    * `startSession` for why the next bot turn is spaced by it.
    */
   private lastFramePlaybackMs = 0;
+  /**
+   * Who pays whom for the last game played for money (see `settle.ts`).
+   * Worked out here because only the server still holds the position when
+   * the leader ends a game — the table is gone from every screen the
+   * moment it does. Kept until the next game starts, so it is still in the
+   * lobby for anyone who backed out to it first.
+   */
+  private settlement: SettlementView | null = null;
+  /** The running game's settings, parsed — the stake is read from them. */
+  private sessionSettings: RawSettings = {};
 
   constructor(opts: RoomRuntimeOptions) {
     this.room = opts.room;
@@ -212,8 +224,11 @@ export class RoomRuntime {
       return result;
     }
 
+    // Who held each seat before the command, for a game it ends: ending a
+    // game clears the participation, and the payments are worked out from it.
+    const gameBefore = this.room.game;
     this.room = result.room;
-    for (const effect of result.effects) this.runEffect(effect);
+    for (const effect of result.effects) this.runEffect(effect, gameBefore);
 
     // A seat changing hands between a person and a bot is a change to the
     // TABLE, not merely to the roster — every pod says whether a bot is
@@ -269,13 +284,17 @@ export class RoomRuntime {
     for (const viewer of this.room.game.present) this.sendCurrentFrame(viewer);
   }
 
-  private runEffect(effect: RoomEffect): void {
+  private runEffect(effect: RoomEffect, gameBefore: GameParticipation | null): void {
     switch (effect.t) {
       case "startSession":
         this.startSession(effect.gameId, effect.settings, effect.seats, effect.difficulty);
         break;
       case "stopSession":
         log.info("session stopped", { room: this.code, event: effect.reason });
+        // Before the session goes: this is the last look at the position.
+        // The seats are read off the participation the command has just
+        // cleared, so from the room as it stood a moment ago.
+        this.settle(gameBefore);
         this.stopSession();
         break;
       case "notice":
@@ -295,6 +314,8 @@ export class RoomRuntime {
     this.stopSession();
     const definition = gameEntry(gameId).create(settings);
     this.previous = null;
+    this.sessionSettings = gameEntry(gameId).parse(settings);
+    this.settlement = null;
 
     const session: AnySession = new GameSession({
       definition,
@@ -375,7 +396,51 @@ export class RoomRuntime {
     this.previous = after;
     // Before `settled()`, which is what reads it to schedule the next turn.
     this.lastFramePlaybackMs = playbackMs(frame.events);
+    // Played to a winner: settle up now, while everyone is still at the
+    // table to see it on the winner's sheet.
+    if (!this.settlement && session.definition.isOver(after) && this.room.game) {
+      this.settle(this.room.game);
+      this.broadcastRoom();
+    }
     session.settled();
+  }
+
+  /**
+   * The payments for the game now ending, from its position this moment.
+   * `game` is who held each seat: a seat with no owner is a bot's, and
+   * nobody pays a bot (see `amongPeople`).
+   */
+  private settle(game: GameParticipation | null): void {
+    const session = this.session;
+    if (!session || !game) return;
+    const state = session.snapshot();
+    const people: SeatId[] = [];
+    game.seatOwner.forEach((owner, seat) => {
+      if (owner !== null) people.push(seat);
+    });
+    const settled = settleUp(game.gameId, state, this.sessionSettings, people);
+    if (!settled) {
+      this.settlement = null;
+      return;
+    }
+    const nameOf = (seat: SeatId) => this.room.members[game.seatOwner[seat]!]?.name ?? "Someone";
+    const sessionOf = (seat: SeatId) => game.seatOwner[seat]!;
+    this.settlement = {
+      gameId: game.gameId,
+      stake: settled.stake,
+      finished: session.definition.isOver(state),
+      results: people
+        .map((seat) => ({ session: sessionOf(seat), name: nameOf(seat), cents: settled.nets[seat] ?? 0 }))
+        .sort((a, b) => b.cents - a.cents),
+      payments: settled.payments.map((p) => ({
+        from: sessionOf(p.from),
+        fromName: nameOf(p.from),
+        to: sessionOf(p.to),
+        toName: nameOf(p.to),
+        cents: p.cents,
+      })),
+      botsLeftOut: settled.botsLeftOut,
+    };
   }
 
   private buildFrame(
@@ -570,6 +635,7 @@ export class RoomRuntime {
       openSeats: openSeats(room),
       inGame: Boolean(game?.present.includes(session)),
       youMayContinue: mayContinueRound(room, session),
+      settlement: this.settlement,
     };
   }
 

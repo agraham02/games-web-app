@@ -167,6 +167,11 @@ export interface GameHostProps<S, A> {
    * offline, where the only person at the table always continues.
    */
   continueWaiting?: string;
+  /**
+   * Under the standings on the winner's sheet — a room's settle-up, for a
+   * game played for money (`SettleUp`).
+   */
+  summaryExtra?: React.ReactNode;
   children: (live: GameRuntime<S, A>, settings: SettingValues) => React.ReactNode;
 }
 
@@ -239,6 +244,7 @@ export function GameHostView<S, A>({
   handActive,
   turnSeat,
   continueWaiting,
+  summaryExtra,
   roundNoun = "Round",
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
@@ -403,7 +409,9 @@ export function GameHostView<S, A>({
         stats={stats?.(live.state, live)}
         onRematch={onRematch}
         onLobby={onLobby}
-      />
+      >
+        {summaryExtra}
+      </GameEndSummary>
 
       {serverDriven ? null : (
       <DevPanel

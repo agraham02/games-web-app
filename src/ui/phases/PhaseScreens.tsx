@@ -454,6 +454,7 @@ export function GameEndSummary({
   stats,
   onRematch,
   onLobby,
+  children,
 }: {
   show: boolean;
   winnerName: string;
@@ -463,6 +464,8 @@ export function GameEndSummary({
   stats?: ReadonlyArray<{ label: string; value: string }>;
   onRematch?: () => void;
   onLobby?: () => void;
+  /** Under the standings: a room's settle-up, for a game played for money. */
+  children?: React.ReactNode;
 }) {
   return (
     <PhaseSheet show={show}>
@@ -537,6 +540,13 @@ export function GameEndSummary({
               </div>
             ))}
           </div>
+        </>
+      ) : null}
+
+      {children ? (
+        <>
+          <span className="rule-brass my-5 block" />
+          {children}
         </>
       ) : null}
 

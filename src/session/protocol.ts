@@ -132,6 +132,31 @@ export interface RoomView {
    * or anyone seated while the leader is not. See `mayContinueRound`.
    */
   youMayContinue: boolean;
+  /**
+   * Who pays whom for the last game played for money, from the moment it
+   * finished or was ended until the next one starts (`settle.ts`). Null for
+   * a game with no stake set, and before any game.
+   */
+  settlement: SettlementView | null;
+}
+
+/**
+ * The payments that square up a game played for money, with the names they
+ * had when it ended — the lobby shows it after the table has gone, and the
+ * seats it was worked out from may have changed hands by then.
+ */
+export interface SettlementView {
+  gameId: GameId;
+  /** "$20 buy-in", "25¢ a chip". */
+  stake: string;
+  /** Played to a winner, or ended by the leader partway through. */
+  finished: boolean;
+  /** Everyone at the table, most up first. Cents; negative owes. */
+  results: Array<{ session: SessionId; name: string; cents: number }>;
+  /** The fewest payments that square everyone up. */
+  payments: Array<{ from: SessionId; fromName: string; to: SessionId; toName: string; cents: number }>;
+  /** Some of the money was won from or lost to bots, and is left out. */
+  botsLeftOut: boolean;
 }
 
 /**
