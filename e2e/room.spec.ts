@@ -372,13 +372,18 @@ test.describe("a room, in real browsers", () => {
           .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-fx") ?? ""))
       ).some((id) => !id.startsWith("#"));
 
+    // The button names the hand size ("Deal 7"). Matched as a bare "Deal"
+    // it was never pressed, so the test passed only when a bot dealt.
     for (let tick = 0; tick < 40; tick++) {
       if (await dealt(ada)) break;
       for (const page of [ada, bo]) {
-        const deal = page.getByRole("button", { name: /^Deal$/ });
+        const deal = page.getByRole("button", { name: /^Deal \d+$/ });
         if (await deal.isVisible().catch(() => false)) await deal.click();
       }
       await ada.waitForTimeout(500);
+    }
+    for (const page of [ada, bo]) {
+      await expect.poll(() => dealt(page), { message: "the hand was never dealt", timeout: 15_000 }).toBe(true);
     }
 
     for (const page of [ada, bo]) {
