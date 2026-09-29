@@ -682,6 +682,15 @@ export function awayFrom(frame: FrameView): (seat: SeatId) => boolean {
 }
 
 /**
+ * A seat nobody owns, which a bot plays: the table says so ("Bot"), since a
+ * real person's table cannot otherwise tell it from one of the players.
+ */
+export function botFrom(frame: FrameView): (seat: SeatId) => boolean {
+  const bots = new Set(frame.botSeats);
+  return (seat) => bots.has(seat) && frame.seatNames[seat] == null;
+}
+
+/**
  * What a round's end says to somebody who is not the one to continue it —
  * or nothing, for the person who is. See `mayContinueRound`.
  */

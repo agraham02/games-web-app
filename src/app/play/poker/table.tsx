@@ -53,6 +53,8 @@ export interface PokerView {
    * nobody to step away. Supplied by `awayFrom(frame)`.
    */
   awayFor?: (seat: SeatId) => boolean;
+  /** Supplied by `botFrom(frame)`: a seat nobody owns, which a bot plays. */
+  botFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -238,6 +240,7 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
       eliminated: busted,
       badge: positionBadge(state, seat) ?? undefined,
       away: view.awayFor?.(seat) ?? false,
+      bot: view.botFor?.(seat) ?? false,
     });
   }
   return out;

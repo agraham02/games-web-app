@@ -91,6 +91,14 @@ export interface SeatView {
    * always-visible ambient weight as `partner`.
    */
   away?: boolean;
+  /**
+   * Nobody owns this seat: a bot plays it, and from a person's table a
+   * bot named Kofi looks like a friend named Kofi (reported 2026-09-29,
+   * three friends at a Dominoes table). Only online, where the seat has
+   * no name of a person's; solo, every opponent is a bot and saying so
+   * on every pod would be noise. Never true together with `away`.
+   */
+  bot?: boolean;
 }
 
 /**
@@ -170,7 +178,7 @@ const SeatPod = memo(function SeatPod({
 }) {
   const highlighted = view.active || view.winning;
   const s = POD_STYLES[density];
-  const said = (view.away ? 1 : 0) + (view.partner ? 1 : 0) + (view.status ? 1 : 0);
+  const said = (view.away || view.bot ? 1 : 0) + (view.partner ? 1 : 0) + (view.status ? 1 : 0);
   return (
     <motion.div
       initial={false}
@@ -193,7 +201,7 @@ const SeatPod = memo(function SeatPod({
         />
         {view.thinking ? <ThinkingRing /> : null}
         {view.badge ? <PositionBadge label={view.badge} /> : null}
-        {view.away ? <AwayBadge name={view.name} /> : null}
+        {view.away ? <AwayBadge name={view.name} /> : view.bot ? <BotBadge name={view.name} /> : null}
       </div>
 
       <div
@@ -219,6 +227,10 @@ const SeatPod = memo(function SeatPod({
         >
           Away
         </div>
+      ) : null}
+
+      {view.bot ? (
+        <div className={`max-w-full truncate ${s.meta} leading-none font-bold text-bone-300`}>Bot</div>
       ) : null}
 
       {view.partner ? (
@@ -274,6 +286,20 @@ function PositionBadge({ label }: { label: "D" | "SB" | "BB" }) {
  */
 function AwayBadge({ name }: { name: string }) {
   const title = `${name} stepped away — a bot is playing this seat`;
+  return (
+    <div
+      aria-label={title}
+      title={title}
+      className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded-full bg-bone-200 text-felt-950 ring-1 ring-felt-950/60"
+    >
+      <Bot size={10} strokeWidth={2.5} aria-hidden />
+    </div>
+  );
+}
+
+/** The same marker for a seat with no person in it: this one is a bot. */
+function BotBadge({ name }: { name: string }) {
+  const title = `${name} is a bot`;
   return (
     <div
       aria-label={title}

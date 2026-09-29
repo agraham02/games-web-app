@@ -43,7 +43,7 @@ import {
   BS_SETTINGS,
 } from "@/app/play/bs/table";
 import { tintFor } from "../Roster";
-import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 
@@ -84,6 +84,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
       },
       // A seat somebody owns but is not currently in — see `awayFrom`.
       awayFor: awayFrom(frame),
+      botFor: botFrom(frame),
     }),
     [frame, room.members],
   );
