@@ -2005,8 +2005,32 @@ export const MIN_DISCARD_STEP_FRACTION = 0.46;
  * 86px of drag on a 390px screen, 46px on a 430px one. Every card game
  * with a hand that can reach that size mounts `HandPan`; one that did not
  * would get no floor at all and squeeze regardless.
+ *
+ * The DEFAULT: the player can choose another in Settings (`HAND_FLOORS`).
  */
 export const MIN_HAND_GAP_FRACTION = 0.5;
+
+/**
+ * The hand's floor for each of the Card spacing setting's choices (the
+ * user's call, 2026-09-29: let each player decide how condensed their hand
+ * is). "Fit all" is no floor, the fan squeezing to fit the screen however
+ * tight that gets and never panning; "Roomy" shows two thirds of a card and
+ * pans the most.
+ */
+export const HAND_FLOORS = {
+  fit: 0,
+  comfortable: MIN_HAND_GAP_FRACTION,
+  roomy: 2 / 3,
+} as const;
+
+export type HandSpacing = keyof typeof HAND_FLOORS;
+
+/** The floor for a stored Card spacing value, the default for anything else. */
+export function handFloorOf(spacing: unknown): number {
+  return typeof spacing === "string" && spacing in HAND_FLOORS
+    ? HAND_FLOORS[spacing as HandSpacing]
+    : MIN_HAND_GAP_FRACTION;
+}
 
 /**
  * The WIDEST the discard fan spreads, as a fraction of the card's extent
@@ -2253,14 +2277,20 @@ export function discardMaxScroll(g: TableGeometry, discardCount: number): number
 /**
  * Pan range for the hero's own hand. Same compress-then-pan pattern as
  * the discard pile — a hand that just swallowed six cards off the pile
- * needs it for exactly the same reason a deep pile does.
+ * needs it for exactly the same reason a deep pile does. `floor` is the
+ * player's Card spacing (`handFloorOf`), and must be the one layout draws
+ * the fan with, or the drag and the fan disagree about what is hidden.
  */
-export function handFanMaxScroll(g: TableGeometry, count: number): number {
+export function handFanMaxScroll(
+  g: TableGeometry,
+  count: number,
+  floor: number = MIN_HAND_GAP_FRACTION,
+): number {
   return fanPanRange({
     count,
     available: g.zones.hand.w,
     size: g.handCard.w,
     maxGap: g.handCard.w * 0.78,
-    minGap: g.handCard.w * MIN_HAND_GAP_FRACTION,
+    minGap: g.handCard.w * floor,
   });
 }

@@ -87,6 +87,7 @@ import {
 } from "@/table/geometry";
 import {
   useGeometry,
+  useHandFloor,
   useSetDiscardScroll,
   useSetHandOrder,
   useSetHandScroll,
@@ -99,6 +100,10 @@ import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { TRANSITIONS } from "@/motion/presets";
+import { HAND_SPACING_SETTING, type GameSetting } from "@/table/gameSettings";
+
+/** Rummy's own Settings: how condensed the hand is (see `HAND_SPACING_SETTING`). */
+export const RUMMY_SETTINGS: readonly GameSetting[] = [HAND_SPACING_SETTING];
 
 
 /* ============================================================
@@ -850,7 +855,8 @@ function PanSurfaces({ state, seat }: { state: RummyState; seat: SeatId }) {
   // The hand starts flush at its near edge, like Spades' and BS's (see
   // `useHandPanStart`): centred, it hid a card off each end.
   const handCount = (state.hands[seat] ?? []).length;
-  const handRange = geometry ? handFanMaxScroll(geometry, handCount) : 0;
+  const handFloor = useHandFloor();
+  const handRange = geometry ? handFanMaxScroll(geometry, handCount, handFloor) : 0;
   useHandPanStart(handRange);
 
   if (!geometry || discardScroll === null || handScroll === null) return null;

@@ -30,7 +30,7 @@ import {
 import { whyNotPlayable } from "@/games/spades/state";
 import type { Bid, SpadesAction, SpadesState } from "@/games/spades/types";
 import { BlockingDialog, announce } from "@/ui/disclosure";
-import { hintsSetting, type GameSetting } from "@/table/gameSettings";
+import { HAND_SPACING_SETTING, hintsSetting, type GameSetting } from "@/table/gameSettings";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { Button } from "@/ui/primitives/Button";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
@@ -136,9 +136,10 @@ export function onPieceTap(
   live.submitAction({ t: "play", card: id });
 }
 
-/** Spades' Hints: the dimming of cards that cannot be played. */
+/** Spades' Hints (the dimming of cards that cannot be played) and Card spacing. */
 export const SPADES_SETTINGS: readonly GameSetting[] = [
   hintsSetting("Dim the cards you cannot play. Off, every card looks playable."),
+  HAND_SPACING_SETTING,
 ];
 
 /* ============================================================

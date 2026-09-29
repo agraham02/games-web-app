@@ -40,6 +40,7 @@ import {
   useRummySelection,
   useViewport,
   type RummyView,
+  RUMMY_SETTINGS,
 } from "@/app/play/rummy/table";
 import { tintFor } from "../Roster";
 import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
@@ -100,6 +101,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
     <div className="relative h-svh">
       <GameHostView<RummyState, RummyAction>
         definition={definition}
+        settings={RUMMY_SETTINGS}
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "rummy"].name}
         viewerSeat={frame.seat}

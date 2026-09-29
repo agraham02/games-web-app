@@ -40,6 +40,7 @@ import {
   togglePlayCard,
   turnSeat,
   type BsView,
+  BS_SETTINGS,
 } from "@/app/play/bs/table";
 import { tintFor } from "../Roster";
 import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
@@ -96,6 +97,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
     <div className="relative h-svh">
       <GameHostView<BsState, BsAction>
         definition={definition}
+        settings={BS_SETTINGS}
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "bs"].name}
         viewerSeat={frame.seat}

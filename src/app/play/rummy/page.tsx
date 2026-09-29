@@ -32,6 +32,7 @@ import {
   standings,
   useRummySelection,
   useViewport,
+  RUMMY_SETTINGS,
 } from "./table";
 
 export default function RummyPlayPage() {
@@ -56,6 +57,7 @@ export default function RummyPlayPage() {
       <GameHost<RummyState, RummyAction>
         key={gameKey}
         definition={definition}
+        settings={RUMMY_SETTINGS}
         runtime={{ seats, difficulty: botTable(seats, setup.difficulty) }}
         gameTitle="Rummy 500"
         // The table reserves the resting sheet's height above the band (the

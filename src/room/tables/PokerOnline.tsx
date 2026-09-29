@@ -118,7 +118,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
           />
         }
       >
-        {(l, prefs) => <PokerControls view={view} live={l} hints={prefs.hints ?? true} />}
+        {(l, prefs) => <PokerControls view={view} live={l} hints={prefs.hints !== false} />}
       </GameHostView>
     </div>
   );

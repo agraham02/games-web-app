@@ -760,6 +760,11 @@ export interface LayoutContext {
   discardCount?: number;
   handScroll?: number;
   /**
+   * The player's Card spacing for a hand that pans, as a fraction of a
+   * card (see `HAND_FLOORS`). Absent, `MIN_HAND_GAP_FRACTION`.
+   */
+  handFloor?: number;
+  /**
    * Where this piece sits in the hero's hand, overriding the
    * placement's own index — a player-chosen sort. Resolved by
    * PieceLayer, which is the layer that knows a piece's id; layout only
@@ -1097,7 +1102,7 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
           maxRotation: isTile ? 0 : undefined,
           arcLift: isTile ? 0 : undefined,
           maxGap: isTile ? ha.w * 1.14 : undefined,
-          minGap: panned ? ha.w * MIN_HAND_GAP_FRACTION : undefined,
+          minGap: panned ? ha.w * (ctx!.handFloor ?? MIN_HAND_GAP_FRACTION) : undefined,
           pan: panned ? ctx!.handScroll : undefined,
         });
         // Lifted within the hand's own strip, never out of it: a tile stands

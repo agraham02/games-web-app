@@ -35,6 +35,7 @@ import {
   useDiscardScroll,
   useGeometry,
   useHandOrder,
+  useHandFloor,
   useHandScroll,
   useHeroHoverIndex,
   useHeroTurnActive,
@@ -318,6 +319,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   const discardPan = useDiscardPanEnabled();
   const discardCount = useDiscardCount(isDeck && discardPan);
   const handScroll = useHandScroll(isHeroHand);
+  const handFloor = useHandFloor(isHeroHand);
   const handOrder = useHandOrder(isHeroHand);
 
   if (!placement || !geometry || !meta) return null;
@@ -346,6 +348,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
     discardScroll: discardScroll ?? undefined,
     discardCount: isDeck && discardPan ? discardCount : undefined,
     handScroll: handScroll ?? undefined,
+    handFloor,
     handIndex,
   });
   const base = baseSize(geometry);

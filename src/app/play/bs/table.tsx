@@ -54,6 +54,10 @@ import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { HAND_SPACING_SETTING, type GameSetting } from "@/table/gameSettings";
+
+/** BS's own Settings: how condensed the hand is (see `HAND_SPACING_SETTING`). */
+export const BS_SETTINGS: readonly GameSetting[] = [HAND_SPACING_SETTING];
 
 type Live = GameRuntime<BsState, BsAction>;
 

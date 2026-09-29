@@ -67,7 +67,7 @@ export default function PokerPlayPage() {
       onRematch={() => setGameKey((k) => k + 1)}
       onLobby={() => setStarted(false)}
     >
-      {(live, prefs) => <PokerControls view={OFFLINE_VIEW} live={live} hints={prefs.hints ?? true} />}
+      {(live, prefs) => <PokerControls view={OFFLINE_VIEW} live={live} hints={prefs.hints !== false} />}
     </GameHost>
   );
 }

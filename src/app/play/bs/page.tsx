@@ -37,6 +37,7 @@ import {
   statsFor,
   togglePlayCard,
   turnSeat,
+  BS_SETTINGS,
 } from "./table";
 
 type Live = GameRuntime<BsState, BsAction>;
@@ -75,6 +76,7 @@ export default function BsPlayPage() {
     <GameHost<BsState, BsAction>
       key={gameKey}
       definition={definition}
+      settings={BS_SETTINGS}
       runtime={{ seats, difficulty: botTable(seats, setup.difficulty) }}
       gameTitle="BS"
       players={(state, live) => playerViews(view, state, live)}

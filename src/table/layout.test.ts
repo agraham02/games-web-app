@@ -4,6 +4,7 @@ import {
   CORNER_CLEAR,
   TUCK_PEEK_FRACTION,
   discardMaxScroll,
+  HAND_FLOORS,
   handFanMaxScroll,
   handHeaderHeight,
   podBox,
@@ -580,9 +581,15 @@ describe("discard fan — never draws outside the pile region", () => {
  * screen edges. Same fade, checked the same way.
  */
 describe("hero hand — never draws a card outside the hand zone", () => {
-  function handCard(index: number, count: number, g: ReturnType<typeof resolveTable>, pan: number) {
+  function handCard(
+    index: number,
+    count: number,
+    g: ReturnType<typeof resolveTable>,
+    pan: number,
+    handFloor?: number,
+  ) {
     const placement: Placement = { zone: "hand", seat: 0, index, count, faceUp: true };
-    const t = layoutPiece(placement, g, { kind: "card", handScroll: pan, handIndex: index });
+    const t = layoutPiece(placement, g, { kind: "card", handScroll: pan, handIndex: index, handFloor });
     const base = baseSize(g);
     const cx = t.x + base.w / 2;
     // As drawn: the hand is scaled below the base box on a laptop.
@@ -632,6 +639,27 @@ describe("hero hand — never draws a card outside the hand zone", () => {
         }
       }
     }
+  });
+
+  it("spaces the hand as the player chose in Settings", () => {
+    // Card spacing (the user, 2026-09-29): Fit all squeezes the whole hand on
+    // screen and never pans; Roomy shows two thirds of a card and pans more.
+    const g = resolveTable({ seats: 4, width: 390, height: 844 });
+    const spaced = (floor: number) => {
+      const range = handFanMaxScroll(g, 13, floor);
+      const [a, b] = [0, 1].map((i) => handCard(i, 13, g, range / 2, floor));
+      return { range, step: b!.left - a!.left, w: a!.right - a!.left };
+    };
+    const fit = spaced(HAND_FLOORS.fit);
+    const comfortable = spaced(HAND_FLOORS.comfortable);
+    const roomy = spaced(HAND_FLOORS.roomy);
+
+    expect(fit.range, "Fit all never pans").toBe(0);
+    for (let i = 0; i < 13; i++) expect(handCard(i, 13, g, 0, HAND_FLOORS.fit).opacity).toBe(1);
+    expect(fit.step).toBeLessThan(comfortable.step);
+    expect(comfortable.step).toBeCloseTo(comfortable.w / 2, 1);
+    expect(roomy.step).toBeCloseTo((roomy.w * 2) / 3, 1);
+    expect(roomy.range).toBeGreaterThan(comfortable.range);
   });
 
   it("shows half of every card in a 13-card hand on a phone, and pans the rest", () => {

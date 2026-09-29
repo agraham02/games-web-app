@@ -22,7 +22,7 @@ import { SeatRing } from "./SeatRing";
 import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
-import { toastLane } from "./geometry";
+import { handFloorOf, toastLane } from "./geometry";
 import { useGeometry, useTableStore } from "./store";
 import { GameToaster } from "@/ui/disclosure";
 import { Button } from "@/ui/primitives/Button";
@@ -253,15 +253,21 @@ export function GameHostView<S, A>({
   const [settingValues, setSetting] = useGameSettings(definition.id, allSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useSlamFeedback({
-    sound: settingValues.sound ?? true,
-    vibration: settingValues.vibration ?? true,
+    sound: settingValues.sound !== false,
+    vibration: settingValues.vibration !== false,
   });
   // Hints off draws no game's `dimmed` marks — see `TableState.hintsShown`.
   // A game without a Hints setting keeps them, as it always has.
-  const hintsShown = settingValues.hints ?? true;
+  const hintsShown = settingValues.hints !== false;
   useEffect(() => {
     useTableStore.getState().setHintsShown(hintsShown);
   }, [hintsShown]);
+  // Card spacing, for the hand's fan and its pan (`TableState.handFloor`).
+  // A game without the setting gets the default, which is what it had.
+  const handFloor = handFloorOf(settingValues.handSpacing);
+  useEffect(() => {
+    useTableStore.getState().setHandFloor(handFloor);
+  }, [handFloor]);
   // Synced into the shared table store, not read as a prop threaded
   // through PieceLayer — the piece that actually needs this (a hero-hand
   // card, in any game) lives several components below here, and a

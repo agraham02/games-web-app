@@ -5,9 +5,10 @@
  * `GameHost` a list; the player's choices are theirs, per device.
  */
 
-import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  HAND_SPACING_SETTING,
   SOUND_SETTING,
   SettingsSheet,
   TABLE_SETTINGS,
@@ -70,6 +71,24 @@ describe("useGameSettings", () => {
     act(() => a.result.current[1](SOUND_SETTING.key, true));
   });
 
+  it("keeps a choice setting's value, and ignores one it cannot hold", () => {
+    // Card spacing is one of three, shared by every game that offers it.
+    const game = freshGame();
+    const withSpacing = [...SETTINGS, HAND_SPACING_SETTING];
+    const first = renderHook(() => useGameSettings(game, withSpacing));
+    expect(first.result.current[0].handSpacing).toBe("comfortable");
+    act(() => first.result.current[1]("handSpacing", "roomy"));
+    const elsewhere = renderHook(() => useGameSettings(freshGame(), withSpacing));
+    expect(elsewhere.result.current[0].handSpacing).toBe("roomy");
+
+    // A value from some other version of the app, or a hand-edited one,
+    // is not a choice the setting has: the default stands.
+    act(() => first.result.current[1]("handSpacing", "enormous"));
+    const later = renderHook(() => useGameSettings(freshGame(), withSpacing));
+    expect(later.result.current[0].handSpacing).toBe("comfortable");
+    act(() => first.result.current[1]("handSpacing", "comfortable"));
+  });
+
   it("falls back to the defaults when storage refuses", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
@@ -103,6 +122,25 @@ describe("SettingsSheet", () => {
     expect(screen.getByText("Explains things.")).toBeTruthy();
     fireEvent.click(hints);
     expect(onChange).toHaveBeenCalledWith("hints", false);
+  });
+
+  it("draws a choice setting as a row of choices, and reports the one picked", () => {
+    const onChange = vi.fn();
+    render(
+      <SettingsSheet
+        open
+        onClose={() => {}}
+        settings={[HAND_SPACING_SETTING]}
+        values={{ handSpacing: "comfortable" }}
+        onChange={onChange}
+      />,
+    );
+    const row = screen.getByRole("group", { name: "Card spacing" });
+    const comfortable = within(row).getByRole("button", { name: "Comfortable" });
+    expect(comfortable.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(HAND_SPACING_SETTING.description)).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button", { name: "Roomy" }));
+    expect(onChange).toHaveBeenCalledWith("handSpacing", "roomy");
   });
 
   it("puts a table's own buttons under the switches", () => {

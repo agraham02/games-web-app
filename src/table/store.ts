@@ -16,7 +16,7 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { Placement, PlacementMap, PieceId, PieceMeta } from "@/engine/types";
-import { cellHalfExtent, type BoardView, type TableGeometry } from "./geometry";
+import { cellHalfExtent, MIN_HAND_GAP_FRACTION, type BoardView, type TableGeometry } from "./geometry";
 
 // Re-exported for existing call sites — the types themselves live in
 // engine/types.ts now, since every GameDefinition needs to describe its
@@ -113,6 +113,12 @@ interface TableState {
   /** The hero hand's own pan offset. Same null convention as above. */
   handScroll: number | null;
   /**
+   * How little of each card in the hero's hand may show before it pans:
+   * the player's Card spacing setting, as a fraction of a card, synced
+   * in by GameHost (see `HAND_FLOORS`). Only a hand that pans reads it.
+   */
+  handFloor: number;
+  /**
    * Display order override for the hero's hand: piece id -> position.
    * `null` means "use the placement's own index", which is every game
    * but Rummy.
@@ -162,6 +168,7 @@ interface TableState {
   setHintsShown(shown: boolean): void;
   setDiscardScroll(px: number | null): void;
   setHandScroll(px: number | null): void;
+  setHandFloor(floor: number): void;
   setHandOrder(order: Record<PieceId, number> | null): void;
   setTurnLine(line: string | null): void;
 }
@@ -229,6 +236,7 @@ export const useTableStore = create<TableState>((set) => {
     discardScroll: null,
     discardCount: 0,
     handScroll: null,
+    handFloor: MIN_HAND_GAP_FRACTION,
     handOrder: null,
     turnLine: null,
 
@@ -336,6 +344,8 @@ export const useTableStore = create<TableState>((set) => {
 
     setHandScroll: (px) => set((s) => (s.handScroll === px ? s : { handScroll: px })),
 
+    setHandFloor: (floor) => set((s) => (s.handFloor === floor ? s : { handFloor: floor })),
+
     setHandOrder: (order) => set({ handOrder: order }),
 
     setTurnLine: (line) => set((s) => (s.turnLine === line ? s : { turnLine: line })),
@@ -429,6 +439,10 @@ export const useDiscardCount = (enabled: boolean) =>
 export const useHandScroll = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.handScroll : null));
 export const useSetHandScroll = () => useTableStore((s) => s.setHandScroll);
+
+/** The hero hand's floor, for a hero hand piece; the default for anything else. */
+export const useHandFloor = (enabled = true) =>
+  useTableStore((s) => (enabled ? s.handFloor : MIN_HAND_GAP_FRACTION));
 
 export const useHandOrder = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.handOrder : null));

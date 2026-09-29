@@ -20,13 +20,15 @@
 import { useEffect, useRef } from "react";
 import { handFanMaxScroll } from "./geometry";
 import { PanSurface } from "./PanSurface";
-import { useGeometry, useSetHandScroll, useTableStore } from "./store";
+import { useGeometry, useHandFloor, useSetHandScroll, useTableStore } from "./store";
 
 export function HandPan({ count }: { count: number }) {
   const geometry = useGeometry();
   const handScroll = useTableStore((s) => s.handScroll);
   const setHandScroll = useSetHandScroll();
-  const range = geometry ? handFanMaxScroll(geometry, count) : 0;
+  // The player's Card spacing: the same floor layout draws the fan with.
+  const floor = useHandFloor();
+  const range = geometry ? handFanMaxScroll(geometry, count, floor) : 0;
 
   useEffect(() => {
     setHandScroll(0);
