@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+import { labEnabled } from "@/lab/enabled";
 import { LabNav } from "@/lab/LabShell";
 
 export default function LabLayout({
@@ -5,6 +7,8 @@ export default function LabLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Dev only: see `labEnabled`.
+  if (!labEnabled()) notFound();
   return (
     <div className="flex h-svh flex-col bg-felt-950">
       <LabNav />

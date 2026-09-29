@@ -141,6 +141,10 @@ jobs:
           # player. Production must refuse them outright.
           code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/debug/rooms)
           if [ "$code" != 404 ]; then echo "/debug/rooms answered $code in production, not 404"; exit 1; fi
+          # The lab shows every hand at once (its redaction inspector) and
+          # is for building the game, so it is dev-only too.
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/lab/redact)
+          if [ "$code" != 404 ]; then echo "/lab/redact answered $code in production, not 404"; exit 1; fi
       - name: Server log
         if: failure()
         run: cat server.log

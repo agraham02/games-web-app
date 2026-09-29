@@ -3,6 +3,7 @@ import { ArrowRight, Bot, Eye, Users } from "lucide-react";
 import { GAMES, GAME_IDS, type GameId } from "@/session/registry";
 import { GAME_BLURBS, GameThumb, seatRange } from "@/ui/primitives/GameThumb";
 import { PieceStrip } from "@/ui/primitives/PieceStrip";
+import { labEnabled } from "@/lab/enabled";
 import { HomeEntry } from "./HomeEntry";
 import { InstallPrompt } from "./InstallPrompt";
 
@@ -33,7 +34,8 @@ export default function Home() {
         <Hero />
         <PlayTogether />
         <PlayAlone />
-        <Footer />
+        {/* The lab is dev-only (see `labEnabled`), and the footer is only its link. */}
+        {labEnabled() ? <Footer /> : null}
       </div>
       <InstallPrompt />
     </main>
