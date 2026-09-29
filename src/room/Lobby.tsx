@@ -58,7 +58,12 @@ export function Lobby({ api }: { api: RoomApi }) {
           next game starts. */}
       {room.settlement ? <SettleUp settlement={room.settlement} you={room.you} className="max-w-md" /> : null}
       <InviteCard code={room.code} />
-      <div className="grid w-full gap-9 lg:grid-cols-2 lg:items-start lg:gap-12">
+      {/* `grid-cols-1` is `minmax(0, 1fr)`: without it the one column on a
+          phone is `auto`, sized to its widest content that will not wrap —
+          a Spades roster row with its Team chip — and the whole lobby ran
+          past the right-hand padding, off an iPhone's screen. A slider
+          then held it there, measuring its fill from the stretched track. */}
+      <div className="grid w-full grid-cols-1 gap-9 lg:grid-cols-2 lg:items-start lg:gap-12">
         <GamePanel api={api} />
         <TablePanel api={api} />
       </div>

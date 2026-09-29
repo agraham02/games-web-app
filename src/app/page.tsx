@@ -77,7 +77,7 @@ function PlayTogether() {
         sat under four lines of copy, which is a long way to scroll to
         reach the one thing this panel is for.
       */}
-      <div className="grid gap-6 md:grid-cols-[1fr_18rem] md:gap-x-10 md:gap-y-5">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_18rem] md:gap-x-10 md:gap-y-5">
         <div className="md:col-start-1 md:row-start-1">
           <span className="eyebrow">Play together</span>
           <h2 className="mt-1.5 font-display text-2xl tracking-wide text-bone-50">

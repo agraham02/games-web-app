@@ -65,6 +65,45 @@ test.describe("on a phone", () => {
     await two.close();
   });
 
+  test("the lobby stays inside its padding, with a partnership game picked", async ({ browser }) => {
+    // Seen on an iPhone (the user, 2026-09-28): with Spades picked, the
+    // lobby's column was sized to its widest row that would not wrap — a
+    // roster row with its Team chip and the leader's buttons — and ran past
+    // the right-hand padding and off the screen, while the left looked
+    // fine. `scrollWidth` on the document cannot see it: the lobby scrolls
+    // inside its own `main`. So measure the sections against the screen.
+    const phone = { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true };
+    const one = await browser.newContext(phone);
+    const two = await browser.newContext(phone);
+    const ada = await one.newPage();
+    const bo = await two.newPage();
+
+    await player(ada, "Ada");
+    await ada.getByRole("button", { name: /make a room/i }).click();
+    await expect(ada).toHaveURL(/\/room\/[A-Z]{4}$/);
+    const code = new URL(ada.url()).pathname.split("/").pop()!;
+    await player(bo, "Bo");
+    await bo.getByLabel(/room code/i).fill(code);
+    await bo.getByRole("button", { name: /join room/i }).click();
+    await expect(ada.getByText("Bo").first()).toBeVisible({ timeout: 15_000 });
+
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await expect(ada.getByText("Team B").first()).toBeVisible();
+
+    // After the game's options have finished opening: the column is sized
+    // by what is in it, and they arrive animated.
+    await ada.waitForTimeout(1500);
+    const past = await ada.evaluate(() =>
+      [...document.querySelectorAll("main section")]
+        .map((s) => Math.round(s.getBoundingClientRect().right))
+        .filter((right) => right > window.innerWidth - 16),
+    );
+    expect(past, "a lobby section runs into the right-hand padding").toEqual([]);
+
+    await one.close();
+    await two.close();
+  });
+
   test("Rummy asks to be turned rather than laying out badly", async ({ page }) => {
     // The deliberate decision recorded in the architecture notes: a
     // side-rail layout for Rummy was built, measured and scrapped, and a
