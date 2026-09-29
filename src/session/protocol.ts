@@ -64,8 +64,9 @@ export type ClientMessage =
       seats: number;
       difficulty: BotDifficulty;
     } & Addressed)
-  | ({ t: "assignTeam"; session: SessionId; team: number } & Addressed)
-  | ({ t: "randomizeTeams" } & Addressed)
+  /** Leader only: the whole seating plan, `null` for a bot's seat. */
+  | ({ t: "arrangeSeats"; plan: (SessionId | null)[] } & Addressed)
+  | ({ t: "shuffleSeats" } & Addressed)
   | ({ t: "startGame" } & Addressed)
   | ({ t: "enterGame"; as?: "player" | "spectator" } & Addressed)
   | ({ t: "exitGame" } & Addressed)
@@ -88,6 +89,10 @@ export interface MemberView {
   seat: SeatId | null;
   /** In the game and not seated. */
   spectating: boolean;
+  /**
+   * The side they play for in a partnership game, 0 or 1 — decided by the
+   * seat (partners sit across) — or null where there are no teams or no seat.
+   */
   team: number | null;
   isLeader: boolean;
 }
@@ -99,6 +104,13 @@ export interface RoomView {
   you: SessionId;
   youAreLeader: boolean;
   members: MemberView[];
+  /**
+   * Who sits in each seat when the next game is dealt, seat 0 first and
+   * clockwise from there; `null` is a seat a bot plays. Entries past
+   * `seats` are people who will watch because the table is full. See
+   * `seatingPlan`.
+   */
+  seatPlan: (SessionId | null)[];
   /**
    * Only ever populated for the leader. Everyone else gets an empty list:
    * a pending request carries a name the room has not agreed to admit, and
@@ -120,6 +132,35 @@ export interface RoomView {
    * or anyone seated while the leader is not. See `mayContinueRound`.
    */
   youMayContinue: boolean;
+  /**
+   * Who pays whom for the last game played for money, from the moment it
+   * finished or was ended until the next one starts (`settle.ts`). Null for
+   * a game with no stake set, and before any game.
+   */
+  settlement: SettlementView | null;
+}
+
+/**
+ * The payments that square up a game played for money, with the names they
+ * had when it ended — the lobby shows it after the table has gone, and the
+ * seats it was worked out from may have changed hands by then.
+ */
+export interface SettlementView {
+  gameId: GameId;
+  /** "$20 buy-in", "25¢ a chip". */
+  stake: string;
+  /** Played to a winner, or ended by the leader partway through. */
+  finished: boolean;
+  /**
+   * Everyone who sat at the table, most up first — including anybody who
+   * has since left the room, who still owes or is owed for the time the
+   * seat was theirs. Cents; negative owes.
+   */
+  results: Array<{ session: SessionId; name: string; cents: number }>;
+  /** The fewest payments that square everyone up. */
+  payments: Array<{ from: SessionId; fromName: string; to: SessionId; toName: string; cents: number }>;
+  /** Some of the money was won from or lost to bots, and is left out. */
+  botsLeftOut: boolean;
 }
 
 /**
@@ -239,6 +280,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "not-in-game": "you are not at the table",
   "cannot-target-self": "that one only works on somebody else",
   "bad-seat-count": "that seat count does not fit this game",
+  "bad-seat-plan": "that seating plan does not match who is here",
   "room-full": "this room is full",
   "no-room": "you are not in a room",
   "bad-message": "that request could not be handled",
@@ -399,10 +441,11 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       };
     }
 
-    case "assignTeam": {
-      const session = str("session");
-      if (session === null || typeof data.team !== "number") return null;
-      return { t: "assignTeam", session, team: data.team, reqId };
+    case "arrangeSeats": {
+      const plan = data.plan;
+      if (!Array.isArray(plan) || plan.length > 64) return null;
+      if (!plan.every((s) => s === null || typeof s === "string")) return null;
+      return { t: "arrangeSeats", plan: plan as (SessionId | null)[], reqId };
     }
 
     case "action":
@@ -420,7 +463,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
 
     case "leaveRoom":
     case "withdraw":
-    case "randomizeTeams":
+    case "shuffleSeats":
     case "startGame":
     case "exitGame":
     case "endGame":
@@ -430,4 +473,22 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     default:
       return null;
   }
+}
+
+/* ============================================================
+   The rejoin check — plain HTTP, not the socket (see server/rejoin.ts)
+   ============================================================ */
+
+/** `GET` it with the identity token in `TOKEN_HEADER`. */
+export const REJOIN_PATH = "/api/rejoin";
+export const TOKEN_HEADER = "x-table-games-token";
+
+export interface RejoinAnswer {
+  room: {
+    code: string;
+    /** The selected game's name, or null in a lobby with none picked. */
+    game: string | null;
+    /** Whether a game is being played right now. */
+    running: boolean;
+  } | null;
 }

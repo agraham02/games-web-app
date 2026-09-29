@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LrcPlayPage from "./page";
 import { useTableStore } from "@/table/store";
@@ -153,6 +153,24 @@ describe("LRC play page — the game actually starts", () => {
     expect(Object.keys(settled)).toHaveLength(18); // 6 seats * 3 chips
   });
 
+  it("can be ended from the Settings sheet, after being asked twice", async () => {
+    // There was no way out of a solo game but finishing it (the user,
+    // 2026-09-27). Nothing is saved, so the first press only asks.
+    render(<LrcPlayPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Deal in" }));
+    fireEvent.click(screen.getByRole("button", { name: /settings/i }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "End game" }));
+    expect(screen.getByText("End this game? It is not saved.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Keep playing" }));
+    expect(screen.queryByText("End this game? It is not saved.")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "End game" }));
+    const ask = screen.getByRole("group", { name: "End this game?" });
+    fireEvent.click(within(ask).getByRole("button", { name: "End game" }));
+    expect(await screen.findByRole("button", { name: "Deal in" })).toBeTruthy();
+  });
+
   /**
    * A real interactive drive-through: click Roll whenever it is the
    * hero's turn, click "Next round" whenever a round has ended, and
@@ -181,7 +199,9 @@ describe("LRC play page — the game actually starts", () => {
     async () => {
       render(<LrcPlayPage />);
 
-      fireEvent.change(screen.getByRole("slider"), { target: { value: "3" } });
+      // `hidden`: Base UI keeps a slider's thumb invisible until it has
+      // measured the track, and jsdom never lays anything out.
+      fireEvent.change(screen.getByRole("slider", { hidden: true }), { target: { value: "3" } });
       expect((screen.getByLabelText("Players") as HTMLInputElement).value).toBe("3");
 
       const fewer = screen.getAllByRole("button", { name: /Fewer round/i })[0]!;

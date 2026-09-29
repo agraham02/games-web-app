@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { ArrowRight, Bot, Eye, Users } from "lucide-react";
 import { GAMES, GAME_IDS, type GameId } from "@/session/registry";
-import { CardBack, CardFace } from "@/ui/primitives/CardFace";
-import { ChipFace } from "@/ui/primitives/ChipFace";
-import { DiceFace } from "@/ui/primitives/DiceFace";
-import { TileFace } from "@/ui/primitives/TileFace";
+import { GAME_BLURBS, GameThumb, seatRange } from "@/ui/primitives/GameThumb";
+import { PieceStrip } from "@/ui/primitives/PieceStrip";
 import { HomeEntry } from "./HomeEntry";
+import { InstallPrompt } from "./InstallPrompt";
 
 /**
  * The front door.
@@ -17,11 +16,8 @@ import { HomeEntry } from "./HomeEntry";
  * a room you can make or join without leaving this screen, and below it the
  * solo tables for when nobody else is around.
  *
- * The thumbnails are the app's own piece primitives at a small size rather
- * than icons or art. They cost nothing (every one of them is already in the
- * bundle), they cannot drift from what the table actually draws, and a
- * domino that is really a domino says what the game is faster than its name
- * does.
+ * The thumbnails are the app's own piece primitives (`GameThumb`, shared
+ * with the lobby's game picker).
  *
  * The PAGE scrolls, not the body — `body` is `overflow: hidden` on both
  * axes so a table can own its pan gestures (globals.css), and a page that
@@ -33,70 +29,38 @@ import { HomeEntry } from "./HomeEntry";
 export default function Home() {
   return (
     <main className="felt felt-weave h-svh overflow-y-auto overscroll-contain">
-      <div className="relative z-1 mx-auto flex max-w-4xl flex-col gap-10 px-6 py-12 sm:py-16">
+      <div className="relative z-1 mx-auto flex max-w-4xl flex-col gap-10 px-6 py-12 sm:py-16 short:gap-6 short:py-5">
         <Hero />
         <PlayTogether />
         <PlayAlone />
         <Footer />
       </div>
+      <InstallPrompt />
     </main>
   );
 }
 
+/**
+ * On a landscape phone the hero is just its title: the pieces and the
+ * paragraph put "Play together" below the first screen, and a room is
+ * what this page is for.
+ */
 function Hero() {
   return (
-    <header className="flex flex-col gap-4">
-      <PieceStrip />
+    <header className="flex flex-col gap-4 short:gap-1">
+      <PieceStrip className="short:hidden" />
       <div>
         <span className="eyebrow">Six table games</span>
         <h1 className="mt-1.5 font-display text-4xl tracking-wider text-brass-300 sm:text-5xl">
           Table Games
         </h1>
       </div>
-      <p className="max-w-xl text-sm leading-relaxed text-bone-400">
+      <p className="max-w-xl text-sm leading-relaxed text-bone-400 short:hidden">
         Dominoes, Spades, Rummy 500, Poker, Left Right Center and BS — real
         rules, real bots, and a table that moves like a table. Play them
         with people in a room, or on your own against the house.
       </p>
     </header>
-  );
-}
-
-/**
- * One piece from most of the games, overlapping and slightly turned, the
- * way a set looks when somebody has just cleared the table.
- *
- * Purely decorative and hidden from assistive tech: everything it says is
- * said again in words directly below it.
- */
-function PieceStrip() {
-  return (
-    <div aria-hidden className="flex h-16 items-end pl-1 select-none">
-      <div className="rotate-[-10deg] drop-shadow-lg">
-        <TileFace tile="6-3" w={30} h={58} ariaHidden />
-      </div>
-      {/* Only the CARDS overlap each other much — a fanned hand is what
-          that reads as. The domino and the die want their own air or they
-          just look broken. */}
-      <div className="-ml-1 rotate-[6deg] drop-shadow-lg">
-        <CardFace card="SA" w={42} h={60} detail="index" ariaHidden />
-      </div>
-      <div className="-ml-3 rotate-[-3deg] drop-shadow-lg">
-        <CardFace card="HK" w={42} h={60} detail="index" ariaHidden />
-      </div>
-      {/* Face down, for BS — and it sits in the fan rather than beside it,
-          because a card nobody can see is only interesting next to ones
-          they can. */}
-      <div className="-ml-3 rotate-[4deg] drop-shadow-lg">
-        <CardBack w={42} h={60} ariaHidden />
-      </div>
-      <div className="-ml-1 mb-1 rotate-[9deg] drop-shadow-lg">
-        <DiceFace face="C" size={38} />
-      </div>
-      <div className="-ml-2 mb-0.5 drop-shadow-lg">
-        <ChipFace colour="ruby" size={34} />
-      </div>
-    </div>
   );
 }
 
@@ -160,7 +124,9 @@ function PlayAlone() {
         <span className="eyebrow shrink-0">Or play on your own</span>
         <span className="rule-brass flex-1" />
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Two columns of compact tiles on a phone — six full-width cards
+          were most of a phone's scroll for the page's second purpose. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {GAME_IDS.map((id) => (
           <GameCard key={id} id={id} />
         ))}
@@ -169,54 +135,28 @@ function PlayAlone() {
   );
 }
 
-/**
- * Seat counts and names come from the shared registry rather than being
- * written out here, so the one place that already has to be right about
- * them stays the only place that says them.
- */
-const BLURBS: Record<GameId, string> = {
-  dominoes: "Block & Draw, or the Caribbean game with the whole set dealt and no boneyard.",
-  spades: "Partners across the table. Bids, bags, and nil if you are feeling brave.",
-  rummy: "Melds on the table, and a discard anybody at the table can race you for.",
-  poker: "No-limit hold'em, with real side pots and a proper showdown.",
-  lrc: "Three dice, three chips, and not one decision to make.",
-  bs: "Claim the rank, lie about it, and see who doubts you before the next card goes down.",
-};
-
-const THUMBS: Record<GameId, React.ReactNode> = {
-  dominoes: <TileFace tile="5-2" w={26} h={50} ariaHidden />,
-  spades: <CardFace card="SA" w={36} h={50} detail="index" ariaHidden />,
-  rummy: <CardFace card="D10" w={36} h={50} detail="index" ariaHidden />,
-  poker: <ChipFace colour="ruby" size={40} />,
-  lrc: <DiceFace face="L" size={40} />,
-  // A back rather than a face, because the back of a card is the whole game.
-  bs: <CardBack w={36} h={50} ariaHidden />,
-};
-
 function GameCard({ id }: { id: GameId }) {
   const game = GAMES[id];
-  const seats =
-    game.minSeats === game.maxSeats
-      ? `${game.minSeats} players`
-      : `${game.minSeats}–${game.maxSeats} players`;
 
   return (
     <Link
       href={`/play/${id}`}
-      className="group flex flex-col gap-3 rounded-xl bg-bone-50/5 p-4 ring-1 ring-bone-50/12 transition-colors hover:bg-bone-50/10 hover:ring-brass-400/45"
+      className="group flex flex-col gap-2 rounded-xl bg-bone-50/5 p-3 ring-1 ring-bone-50/12 transition-colors hover:bg-bone-50/10 hover:ring-brass-400/45 sm:gap-3 sm:p-4"
     >
-      <div className="flex items-center gap-3">
+      {/* Stacked on a phone: beside the thumbnail, a half-width tile left a
+          name like "Dominoes" about 85px, and it did not fit. */}
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span aria-hidden className="flex h-13 w-11 shrink-0 items-center justify-center">
-          {THUMBS[id]}
+          <GameThumb id={id} />
         </span>
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate font-display text-lg tracking-wide text-bone-50">
+        <span className="flex min-w-0 max-w-full flex-col">
+          <span className="font-display text-base leading-tight tracking-wide text-bone-50 sm:truncate sm:text-lg">
             {game.name}
           </span>
-          <span className="text-[11px] font-semibold text-bone-600">{seats}</span>
+          <span className="text-[11px] font-semibold text-bone-600">{seatRange(id)}</span>
         </span>
       </div>
-      <p className="text-xs leading-relaxed text-bone-400">{BLURBS[id]}</p>
+      <p className="hidden text-xs leading-relaxed text-bone-400 sm:block">{GAME_BLURBS[id]}</p>
       <span className="mt-auto flex items-center gap-1 pt-1 text-xs font-bold text-brass-300">
         Play solo
         <ArrowRight

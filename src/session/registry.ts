@@ -17,12 +17,12 @@
 
 import type { BotDifficulty, GameDefinition } from "@/engine/types";
 import { createBs } from "@/games/bs/rules";
-import { CHALLENGE_MS_ONLINE, DEFAULT_TARGET as BS_DEFAULT_TARGET } from "@/games/bs/state";
 import { createDominoes } from "@/games/dominoes/rules";
 import { createLrc } from "@/games/lrc/rules";
 import { createPoker } from "@/games/poker/rules";
 import { createRummy } from "@/games/rummy/rules";
 import { createSpades } from "@/games/spades/rules";
+import { GAME_SETUPS, parseSettings, type GameSetupSpec } from "./gameSetup";
 
 export type GameId = "spades" | "dominoes" | "poker" | "lrc" | "rummy" | "bs";
 
@@ -46,6 +46,11 @@ export interface GameEntry {
   maxSeats: number;
   defaultSeats: number;
   /**
+   * The options this game asks for — the one description the solo setup
+   * screen, the lobby and `parse` all read (`gameSetup.ts`).
+   */
+  setup: GameSetupSpec;
+  /**
    * Whether this game is playable in a ROOM.
    *
    * `src/room/tables.test.tsx` holds this list and the room's table
@@ -63,32 +68,11 @@ export interface GameEntry {
   online: boolean;
   /** Whether the lobby should offer team assignment for this game. */
   teams: (settings: RawSettings) => boolean;
-  /** Clamps whatever arrived off the wire into something safe to build. */
+  /** Clamps whatever arrived off the wire into something safe to build —
+   * from `setup`'s own ranges and defaults, so the form cannot drift from it. */
   parse: (raw: RawSettings) => RawSettings;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   create: (settings: RawSettings) => GameDefinition<any, any>;
-}
-
-/* ============================================================
-   Coercion helpers — every one of these assumes hostile input.
-   ============================================================ */
-
-function bool(v: unknown, fallback: boolean): boolean {
-  return typeof v === "boolean" ? v : fallback;
-}
-
-/**
- * A finite integer inside [min, max]. `Number.isFinite` is the load-bearing
- * part: `NaN` and `Infinity` both survive a naive `typeof v === "number"`
- * and both turn a target score into a match that never ends.
- */
-function int(v: unknown, min: number, max: number, fallback: number): number {
-  if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(v)));
-}
-
-function pick<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
-  return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 }
 
 export const GAMES: Record<GameId, GameEntry> = {
@@ -98,13 +82,11 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 4,
     maxSeats: 4,
     defaultSeats: 4,
+    setup: GAME_SETUPS.spades,
     online: true,
     // Always partners across; the lobby can assign who sits with whom.
     teams: () => true,
-    parse: (raw) => ({
-      jokers: bool(raw.jokers, false),
-      twoOfSpadesHigh: bool(raw.twoOfSpadesHigh, false),
-    }),
+    parse: (raw) => parseSettings(GAME_SETUPS.spades, raw),
     create: (s) =>
       createSpades({
         jokers: s.jokers as boolean,
@@ -117,23 +99,29 @@ export const GAMES: Record<GameId, GameEntry> = {
     name: "Dominoes",
     minSeats: 2,
     maxSeats: 4,
-    defaultSeats: 4,
+    // Block & Draw's own default; Caribbean is always four (`seatBounds`).
+    defaultSeats: 3,
+    setup: GAME_SETUPS.dominoes,
     online: true,
     teams: (s) => s.mode === "caribbean" && s.teams === true,
-    parse: (raw) => {
-      const mode = pick(raw.mode, ["classic", "caribbean"] as const, "classic");
-      const caribbean = mode === "caribbean";
-      return {
-        mode,
-        // Caribbean is a four-hand partnership game; the team flag is only
-        // meaningful there.
-        teams: caribbean ? bool(raw.teams, true) : false,
-        keyTileBonus: caribbean ? bool(raw.keyTileBonus, true) : false,
-        sixLove: caribbean ? bool(raw.sixLove, false) : false,
-        target: int(raw.target, 1, 500, caribbean ? 6 : 100),
-      };
-    },
-    create: (s) => createDominoes(s),
+    // Caribbean's target is `games` (games won), Block & Draw's is `target`
+    // (pips) — see the spec. A sender from before the split said `target`
+    // for both, so a Caribbean `target` with no `games` still means games.
+    parse: (raw) =>
+      parseSettings(
+        GAME_SETUPS.dominoes,
+        raw.mode === "caribbean" && raw.games === undefined && raw.target !== undefined
+          ? { ...raw, games: raw.target, target: undefined }
+          : raw,
+      ),
+    create: (s) =>
+      createDominoes({
+        mode: s.mode as "classic" | "caribbean",
+        teams: s.teams as boolean,
+        keyTileBonus: s.keyTileBonus as boolean,
+        sixLove: s.sixLove as boolean,
+        target: (s.mode === "caribbean" ? s.games : s.target) as number,
+      }),
   },
 
   poker: {
@@ -142,12 +130,10 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 10,
     defaultSeats: 6,
+    setup: GAME_SETUPS.poker,
     online: true,
     teams: () => false,
-    parse: (raw) => ({
-      startingStack: int(raw.startingStack, 100, 100_000, 5_000),
-      bigBlind: int(raw.bigBlind, 2, 1_000, 50),
-    }),
+    parse: (raw) => parseSettings(GAME_SETUPS.poker, raw),
     create: (s) => createPoker(s.startingStack as number, s.bigBlind as number),
   },
 
@@ -157,9 +143,10 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 3,
     maxSeats: 10,
     defaultSeats: 6,
+    setup: GAME_SETUPS.lrc,
     online: true,
     teams: () => false,
-    parse: (raw) => ({ target: int(raw.target, 1, 20, 3) }),
+    parse: (raw) => parseSettings(GAME_SETUPS.lrc, raw),
     create: (s) => createLrc(s.target as number),
   },
 
@@ -169,9 +156,10 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 6,
     defaultSeats: 4,
+    setup: GAME_SETUPS.rummy,
     online: true,
     teams: () => false,
-    parse: (raw) => ({ target: int(raw.target, 100, 2_000, 500) }),
+    parse: (raw) => parseSettings(GAME_SETUPS.rummy, raw),
     create: (s) => createRummy({ target: s.target as number }),
   },
 
@@ -181,18 +169,13 @@ export const GAMES: Record<GameId, GameEntry> = {
     minSeats: 2,
     maxSeats: 6,
     defaultSeats: 4,
+    setup: GAME_SETUPS.bs,
     online: true,
     teams: () => false,
-    parse: (raw) => ({
-      target: int(raw.target, 1, 9, BS_DEFAULT_TARGET),
-      // A room gets a longer challenge window than a solo table, and this is
-      // where that difference lives. It is generous because online the next
-      // player can cut a window short simply by playing, so the only person
-      // it costs anything is the one who chooses to use all of it. Clamped
-      // hard at both ends: a window of zero makes the game unplayable and one
-      // of an hour parks the table.
-      windowMs: int(raw.windowMs, 2_000, 20_000, CHALLENGE_MS_ONLINE),
-    }),
+    // The challenge window is clamped hard at both ends by the spec: a
+    // window of zero makes the game unplayable and one of an hour parks
+    // the table.
+    parse: (raw) => parseSettings(GAME_SETUPS.bs, raw),
     create: (s) =>
       createBs({ target: s.target as number, windowMs: s.windowMs as number }),
   },
@@ -200,6 +183,31 @@ export const GAMES: Record<GameId, GameEntry> = {
 
 export function gameEntry(id: GameId): GameEntry {
   return GAMES[id];
+}
+
+/**
+ * The seats a game can really be played with under these settings.
+ *
+ * Usually just the entry's bounds, but a ruleset can pin them: Caribbean
+ * dominoes is four-handed, full stop, while the entry says 2–4 because
+ * Block & Draw is. A room set to three seats therefore started a session
+ * the engine dealt FOUR hands into, and the fourth seat played on with no
+ * pod and its tiles stacked in a corner. So the answer comes from the
+ * definition itself — the thing that deals the hands — never from a copy.
+ */
+export function seatBounds(id: GameId, settings: RawSettings): { min: number; max: number } {
+  const entry = GAMES[id];
+  const definition = entry.create(entry.parse(settings));
+  return {
+    min: Math.max(entry.minSeats, definition.minSeats),
+    max: Math.min(entry.maxSeats, definition.maxSeats),
+  };
+}
+
+/** `seats` pulled inside `seatBounds`. `NaN` stays `NaN`, for the caller to refuse. */
+export function clampSeats(id: GameId, settings: RawSettings, seats: number): number {
+  const { min, max } = seatBounds(id, settings);
+  return Math.min(max, Math.max(min, seats));
 }
 
 export function isGameId(v: unknown): v is GameId {

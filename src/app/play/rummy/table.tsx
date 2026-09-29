@@ -69,7 +69,8 @@ import {
 } from "@/games/rummy/state";
 import type { RummyAction, RummyState } from "@/games/rummy/types";
 import type { RoundNote } from "@/table/GameHost";
-import { HandZone, handHeaderHeight } from "@/table/HandZone";
+import { BandNote, HandZone } from "@/table/HandZone";
+import { Button } from "@/ui/primitives/Button";
 import { PanSurface } from "@/table/PanSurface";
 import type { SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -81,6 +82,7 @@ import {
   isShortViewport,
   pileAssembly,
   pileAssemblyHorizontal,
+  pileCard,
 } from "@/table/geometry";
 import {
   useGeometry,
@@ -382,6 +384,20 @@ export function rummyScenarios(live: Live) {
         };
       }),
     },
+    {
+      label: "Deep discard pile",
+      run: build((state) => {
+        // Twenty off the stock onto the pile, keeping one to draw: deep
+        // enough to pan on any screen, so the pile's snap to its newest
+        // card can be watched without playing a dozen turns first.
+        const moved = state.stock.slice(0, Math.min(20, state.stock.length - 1));
+        return {
+          ...state,
+          stock: state.stock.slice(moved.length),
+          discard: [...state.discard, ...moved],
+        };
+      }),
+    },
   ];
 }
 
@@ -616,24 +632,29 @@ export function RummyTable({
     <>
       <HandZone
         bar={bar}
+        // Before the deal nobody holds a card, so the dealer's "cards each"
+        // choice (and everybody else's "choosing…") centres in the whole
+        // player section instead of sitting on top of an empty hand strip.
+        overHand={state.dealSizePending !== null}
         left={<HandStatus state={state} seat={seat} />}
         center={
           !heroTurn && state.dealSizePending !== null ? (
             // Somebody else's decision, and the table is parked on it —
             // without this the other players saw nothing happen at all.
             <HeroStatusBadge
-              inline
               label={view.nameFor(state.dealSizePending)}
               detail="choosing how many cards to deal"
             />
           ) : (
-            <TurnIndicator inline show={heroTurn} label={turnLabel(state, seat)} />
+            <TurnIndicator show={heroTurn} label={turnLabel(state, seat)} />
           )
         }
         right={<SortMenu mode={sortMode} onMode={setSortMode} />}
       />
 
-      <StockBadge state={state} />
+      {/* Not before the deal: while the dealer picks a hand size nothing has
+          been dealt, and "52 in stock" described a pile that is not there. */}
+      {state.dealSizePending !== null ? null : <StockBadge state={state} />}
 
       <PanSurfaces state={state} seat={seat} />
       <StagedRing state={state} depth={pickupDepth} />
@@ -808,10 +829,26 @@ function PanSurfaces({ state, seat }: { state: RummyState; seat: SeatId }) {
   const handScroll = useTableStore((s) => s.handScroll);
   const setDiscardScroll = useSetDiscardScroll();
   const setHandScroll = useSetHandScroll();
+  // The pile as the pieces show it, not as `state` has it: the store's
+  // count moves with each card as it lands, and the range below must agree
+  // with the fan being drawn, or the snap is clamped to a stale range.
+  const pileCount = useTableStore((s) => s.discardCount);
+
+  // Whenever a card joins or leaves the pile, show its newest end. The fan
+  // used to stay wherever it had been dragged, so after every discard and
+  // every pickup the player had to drag it back to see the top card
+  // (reported 2026-09-28). `+range/2` is the oldest end, `-range/2` the
+  // newest (see `fanPanRange`). Written as `0 - x` so an unscrollable pile
+  // stores +0 rather than -0 and does not look like a change.
+  const wired = discardScroll !== null;
+  const newestEnd = geometry ? 0 - discardMaxScroll(geometry, pileCount) / 2 : 0;
+  useEffect(() => {
+    if (wired) setDiscardScroll(newestEnd);
+  }, [wired, newestEnd, setDiscardScroll]);
 
   if (!geometry || discardScroll === null || handScroll === null) return null;
 
-  const assembly = pileAssembly(geometry, state.discard.length);
+  const assembly = pileAssembly(geometry, pileCount);
   const handCount = (state.hands[seat] ?? []).length;
 
   return (
@@ -819,7 +856,7 @@ function PanSurfaces({ state, seat }: { state: RummyState; seat: SeatId }) {
       <PanSurface
         within={assembly.fan}
         axis={isPortraitTable(geometry.pileRegion) ? "y" : "x"}
-        range={discardMaxScroll(geometry, state.discard.length)}
+        range={discardMaxScroll(geometry, pileCount)}
         value={discardScroll}
         onChange={setDiscardScroll}
       />
@@ -852,11 +889,17 @@ function turnLabel(state: RummyState, seat: SeatId): string {
 function HandStatus({ state, seat }: { state: RummyState; seat: SeatId }) {
   const held = handValue(state, seat);
   const board = contributedValue(state, seat);
+  // The round card's words: what you have, what your melds are adding, and
+  // what the cards still in your hand would cost you if the round ended now.
   return (
     <HeroStatusBadge
-      inline
-      label="You"
-      detail={`${state.scores[seat] ?? 0} · +${board} / −${held}`}
+      stats={[
+        [
+          { label: "Score", value: state.scores[seat] ?? 0 },
+          { label: "Board", value: `+${board}` },
+        ],
+        [{ label: "Held", value: `−${held}` }],
+      ]}
     />
   );
 }
@@ -882,12 +925,14 @@ function StockBadge({ state }: { state: RummyState }) {
     geometry,
     discardPan ? state.discard.length : 0,
   );
-  const width = geometry.card.w * 2;
+  // The deck is drawn with the pile's fitted card, not the table card.
+  const card = pileCard(geometry);
+  const width = card.w * 2;
 
   return (
     <div
       className="pointer-events-none absolute z-1200 text-center"
-      style={{ left: deckX - width / 2, top: deckY - geometry.card.h / 2 - 24, width }}
+      style={{ left: deckX - width / 2, top: deckY - card.h / 2 - 24, width }}
     >
       <span className="rounded-full bg-felt-950/80 px-2 py-1 text-[10px] font-bold text-bone-300 ring-1 ring-bone-50/12">
         {state.stock.length > 0 ? `${state.stock.length} in stock` : "stock empty"}
@@ -969,6 +1014,10 @@ function SortMenu({ mode, onMode }: { mode: HandSort; onMode: (m: HandSort) => v
    The band above the hand — action mode
    ============================================================ */
 
+/**
+ * The shared `Button`, small, and allowed to give ground: a Rummy bar can
+ * hold three actions and a meld's name, and the name is what shrinks.
+ */
 function BarButton({
   children,
   onClick,
@@ -981,18 +1030,17 @@ function BarButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      size="xs"
+      tone={tone === "primary" ? "primary" : "ghost"}
+      className="min-w-0 shrink"
       onClick={onClick}
       disabled={disabled}
-      className={`min-w-0 shrink truncate rounded-lg px-3 py-2 text-xs font-extrabold disabled:opacity-40 ${
-        tone === "primary"
-          ? "bg-linear-to-b from-brass-300 to-brass-500 text-felt-950 shadow-e2"
-          : "bg-bone-50/8 text-bone-200 ring-1 ring-bone-50/16"
-      }`}
     >
-      {children}
-    </button>
+      {/* Its own span: an ellipsis needs a block box, and the button is a
+          flex one. */}
+      <span className="truncate">{children}</span>
+    </Button>
   );
 }
 
@@ -1189,9 +1237,10 @@ function ClaimBar({
 function DealSizeBar({ live }: { live: Live }) {
   const sizes = validDealSizes(live.state.seats);
   const [size, setSize] = useState(sizes[Math.floor(sizes.length / 2)] ?? 7);
+  // "Deal [7] Deal" said the verb twice and never what the number was.
   return (
     <>
-      <span className="shrink-0 text-[10px] font-bold text-bone-300">Deal</span>
+      <BandNote>Cards each</BandNote>
       <NumberStepper
         value={size}
         min={sizes[0]!}
@@ -1200,7 +1249,7 @@ function DealSizeBar({ live }: { live: Live }) {
         label="cards"
         onChange={setSize}
       />
-      <BarButton onClick={() => live.submitAction({ t: "chooseDealSize", size })}>Deal</BarButton>
+      <BarButton onClick={() => live.submitAction({ t: "chooseDealSize", size })}>Deal {size}</BarButton>
     </>
   );
 }
@@ -1232,13 +1281,15 @@ function BoardSheet({
   if (!geometry) return null;
 
   const handH = geometry.zones.hand.h;
-  const headerH = handHeaderHeight(geometry.box.h);
+  // The band above the hand as the table GRANTED it (`TableGeometry.band`)
+  // — the surface reserves it now, so this page no longer asks for it.
+  const bandH = geometry.band.h;
   // BOTH numbers come from the identical set of reserved terms. If the
   // tallest snap failed to subtract a band that `offsetBottom` adds, the
   // rail would overshoot the far edge and take its own grab handle with
   // it — the "can't close it" bug. Applies to either edge: a side rail
   // still stops above the hand.
-  const offsetBottom = handH + headerH;
+  const offsetBottom = handH + bandH;
   // The RESTING extent is what geometry actually GRANTED, not what this
   // page asked for. A short phone cannot always give up the full band,
   // and assuming it did is how a rail ends up resting on top of the seat
@@ -1246,7 +1297,7 @@ function BoardSheet({
   const available = Math.max(48, geometry.box.h - offsetBottom - 12);
   const peek = Math.max(
     72,
-    Math.min(available, geometry.reserved.bottom - headerH || SHEET_PEEK_H),
+    Math.min(available, geometry.reserved.bottom || SHEET_PEEK_H),
   );
   // TWO stops only: resting and fully open. A middle stop earns its
   // place when the content is long enough that a half view is a
@@ -1296,7 +1347,7 @@ function BoardSheet({
           <span className="eyebrow">
             {canAttempt
               ? `Lay off ${picked.length} — tap a meld`
-              : `Board · ${state.melds.length} melds`}
+              : `Board · ${state.melds.length} ${state.melds.length === 1 ? "meld" : "melds"}`}
           </span>
           <span className="text-[10px] text-bone-400">
             {snap === 0 ? "drag up ↑" : "drag down ↓"}
@@ -1625,7 +1676,7 @@ function BoardBody({
         // and an `overflow-x` container clips the other axis too (per the
         // CSS Overflow spec, one axis set to a non-visible value promotes
         // the other) — without room to spare, both get sliced.
-        className="flex items-start overflow-x-auto px-1.5 pt-2 pb-2"
+        className="flex items-start overflow-x-auto px-1.5 pt-2 pb-2 [scrollbar-color:var(--color-brass-500)_transparent] [scrollbar-width:thin]"
         style={{ gap: MELD_GAP.betweenOwners }}
       >
         {groups.map((group) => (
@@ -1653,7 +1704,7 @@ function BoardBody({
               guarantees the SHORTEST legal meld fits — a seven-card run
               in a side rail has to be reachable, not clipped. */}
           <div
-            className="flex flex-wrap items-start overflow-x-auto p-1.5"
+            className="flex flex-wrap items-start overflow-x-auto p-1.5 [scrollbar-color:var(--color-brass-500)_transparent] [scrollbar-width:thin]"
             style={{ gap: MELD_GAP.sameOwner }}
           >
             {melds(group)}
@@ -1818,7 +1869,10 @@ export function playerViews(view: RummyView, seats: number) {
         seat: s,
         name: view.nameFor(s),
         colour: view.colourFor(s),
-        meta: `${(state.hands[s] ?? []).length} cards · ${state.scores[s] ?? 0}`,
+        stats: [
+          [{ label: "Cards", value: (state.hands[s] ?? []).length }],
+          [{ label: "Score", value: state.scores[s] ?? 0 }],
+        ],
         active: cue.active,
         thinking: cue.thinking,
         away: view.awayFor?.(s) ?? false,
@@ -1846,7 +1900,7 @@ export function statsFor(state: RummyState) {
 }
 
 export function roundSummary(view: RummyView, seats: number) {
-  return (state: RummyState): { title: string; rows: ScoreRow[]; note?: RoundNote } | null => {
+  return (state: RummyState): { title: string; rows: ScoreRow[]; note?: RoundNote; target?: number } | null => {
     const result = state.result;
     if (!result) return null;
 
@@ -1877,6 +1931,7 @@ export function roundSummary(view: RummyView, seats: number) {
             : `${view.nameFor(result.wentOut)} went out`,
       rows,
       note,
+      target: state.target,
     };
   };
 }

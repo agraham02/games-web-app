@@ -15,7 +15,13 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PieceId, SeatId } from "@/engine/types";
-import { resolveTable, type Density, type TableGeometry, type ZoneName } from "./geometry";
+import {
+  handHeaderHeight,
+  resolveTable,
+  type Density,
+  type TableGeometry,
+  type ZoneName,
+} from "./geometry";
 import { useTableStore } from "./store";
 import { PieceLayer } from "./PieceLayer";
 
@@ -35,6 +41,14 @@ export interface TableSurfaceProps {
   topZone?: number;
   bottomZone?: number;
   pileAnchor?: number;
+  /**
+   * Height to keep reserved above the band's row for a decision panel the
+   * viewer is asked for on EVERY turn (Poker's betting) — reserved always,
+   * open or not, so the table never moves when it opens and the board is
+   * never under it. A panel that comes once a round (Spades' bid) reserves
+   * nothing and is drawn over the felt (see `bandZone` below).
+   */
+  panelReserve?: number;
   onPieceTap?: (id: PieceId) => void;
   /** Debug overlay: seat slots and zone boxes. */
   showGuides?: boolean;
@@ -44,6 +58,13 @@ export interface TableSurfaceProps {
   fill?: "viewport" | "parent";
   /** See `ResolveOptions.viewerSeat`. Omit offline; `null` is a spectator. */
   viewerSeat?: SeatId | null;
+  /**
+   * Reserve the band above the hand that `HandZone` owns. On for every
+   * game table; a lab page drawing bare geometry turns it off.
+   */
+  band?: boolean;
+  /** See `ResolveOptions.handBleed`. `GameHost` works it out per game. */
+  handBleed?: boolean;
 }
 
 export function TableSurface({
@@ -53,16 +74,18 @@ export function TableSurface({
   topZone,
   bottomZone,
   pileAnchor,
+  panelReserve = 0,
   onPieceTap,
   showGuides,
   children,
   className,
   fill = "viewport",
   viewerSeat,
+  band = true,
+  handBleed,
 }: TableSurfaceProps) {
   const ref = useRef<HTMLDivElement>(null);
   const setGeometry = useTableStore((s) => s.setGeometry);
-  const handHeight = useTableStore((s) => s.geometry?.zones.hand.h ?? null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
   // ResizeObserver rather than a window listener: this element can be
@@ -86,6 +109,15 @@ export function TableSurface({
     return () => ro.disconnect();
   }, []);
 
+  // The band's ONE ROW is reserved — never a decision panel above it (a
+  // bid, a bet). A panel is temporary, and reserving it re-laid the whole
+  // table out every time one opened: the side seats and their cards jumped
+  // up for a bid panel that never went near them (the user's call,
+  // 2026-09-28 — "it's fine if they overlap with some of the UI"). So the
+  // table's geometry never changes while a round is played, and a panel
+  // is drawn over the felt for as long as it is open.
+  const bandZone = band && size ? handHeaderHeight(size.h) + panelReserve : 0;
+
   useEffect(() => {
     if (!size || size.w === 0 || size.h === 0) return;
     setGeometry(
@@ -97,11 +129,13 @@ export function TableSurface({
         handZone,
         topZone,
         bottomZone,
+        bandZone,
         pileAnchor,
         viewerSeat,
+        handBleed,
       }),
     );
-  }, [size, seats, density, handZone, topZone, bottomZone, pileAnchor, viewerSeat, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, setGeometry]);
 
   return (
     <div
@@ -133,17 +167,12 @@ export function TableSurface({
           : { width: "100%", height: "100%" }
       }
     >
-      {/* Measured box: everything inside the safe area. `--hand-zone`
-          is published so overlays can sit above the hand without
-          subscribing to geometry themselves. */}
+      {/* Measured box: everything inside the safe area. It used to publish
+          `--hand-zone` for overlays to sit above the hand by `calc()`; the
+          band (`HandZone`) owns that space now, and the table reserves it. */}
       <div
         ref={ref}
         className="relative z-1 h-full w-full"
-        style={
-          {
-            "--hand-zone": handHeight !== null ? `${handHeight}px` : undefined,
-          } as React.CSSProperties
-        }
         // Tapping the bare felt cancels a touch-preview left open by
         // PieceLayer's tap-to-preview/tap-to-confirm (see that file) —
         // `target === currentTarget` means this only fires for a genuine

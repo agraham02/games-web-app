@@ -520,10 +520,10 @@ function toCommand(message: ClientMessage): RoomCommand | null {
             difficulty: message.difficulty,
           }
         : null;
-    case "assignTeam":
-      return { t: "assignTeam", session: message.session, team: message.team };
-    case "randomizeTeams":
-      return { t: "randomizeTeams" };
+    case "arrangeSeats":
+      return { t: "arrangeSeats", plan: message.plan };
+    case "shuffleSeats":
+      return { t: "shuffleSeats" };
     case "startGame":
       return { t: "startGame" };
     case "enterGame":

@@ -25,7 +25,9 @@ import {
   MAX_ROOM_MEMBERS,
   MIN_ROOM_PLAYERS,
   seatOf,
-  teamIndex,
+  seatingOrder,
+  seatingPlan,
+  teamOfSeat,
   type Room,
   type RoomCommand,
   type RoomContext,
@@ -307,24 +309,23 @@ describe("starting a game", () => {
       expect(back.ok).toBe(true);
     });
 
-    it("refuses to move the teams once a game has dealt", () => {
+    it("refuses to move the seats once a game has dealt", () => {
       // The same door again, and the one that looked like it WORKED.
-      // `seatMembers` reads teams once, at `startGame`, and the running
-      // session keeps what it was handed - so reassigning somebody
-      // mid-match updated the roster on every screen while the table's
-      // actual partnerships carried on exactly as before. A change that
-      // appears to take and does nothing is worse than a refusal.
+      // `seatMembers` reads the plan once, at `startGame`, and the running
+      // session keeps what it was handed — so rearranging mid-match would
+      // update the list on every screen while the table carried on exactly
+      // as before. A change that appears to take and does nothing is worse
+      // than a refusal.
       let r = withMembers(["Sam", "Ali", "Kit"]);
       r = spades(r);
-      r = ok(r, { t: "assignTeam", session: "s-0", team: 1 }, { actor: LEADER });
       r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
 
       expect(
-        applyCommand(r, { t: "assignTeam", session: "s-0", team: 0 }, { actor: LEADER, now: 11 }),
-      ).toEqual({ ok: false, error: "game-already-running" });
-
-      expect(
-        applyCommand(r, { t: "randomizeTeams" }, { actor: LEADER, now: 11 }),
+        applyCommand(
+          r,
+          { t: "arrangeSeats", plan: ["s-0", LEADER, "s-1", "s-2"] },
+          { actor: LEADER, now: 11 },
+        ),
       ).toEqual({ ok: false, error: "game-already-running" });
     });
 
@@ -390,36 +391,125 @@ describe("starting a game", () => {
     expect(watching).toHaveLength(2);
   });
 
-  it("seats partners across, not side by side", () => {
-    // Partnership games in this app are seats 0/2 against 1/3. A team
-    // assignment that ignored seat parity would put both partners on the
-    // same side and quietly break the game.
+  it("seats partners across, not side by side — the seat is the team", () => {
+    // Partnership games in this app are seats 0/2 against 1/3, so arranging
+    // somebody into a seat IS putting them on that team.
     let r = withMembers(["Sam", "Kofi", "Jo"]);
     r = spades(r, 4);
-    r = ok(r, { t: "assignTeam", session: LEADER, team: 0 }, { actor: LEADER });
-    r = ok(r, { t: "assignTeam", session: "s-0", team: 1 }, { actor: LEADER });
-    r = ok(r, { t: "assignTeam", session: "s-1", team: 0 }, { actor: LEADER });
-    r = ok(r, { t: "assignTeam", session: "s-2", team: 1 }, { actor: LEADER });
+    r = ok(r, { t: "arrangeSeats", plan: [LEADER, "s-0", "s-1", "s-2"] }, { actor: LEADER });
+    expect([0, 1, 2, 3].map((i) => teamOfSeat(r, i))).toEqual([0, 1, 0, 1]);
     r = ok(r, { t: "startGame" }, { actor: LEADER });
 
     const seats = r.game!.seatOwner;
     expect([seats[0], seats[2]].sort()).toEqual([LEADER, "s-1"].sort());
     expect([seats[1], seats[3]].sort()).toEqual(["s-0", "s-2"].sort());
   });
+});
 
-  it("shuffles teams deterministically from a seed", () => {
-    const build = (seed: number) => {
-      let r = withMembers(["Sam", "Kofi", "Jo"]);
-      r = spades(r);
-      return ok(r, { t: "randomizeTeams" }, { actor: LEADER, rng: createRng(seed) }).teams;
-    };
-    expect(build(7)).toEqual(build(7));
-    // Both sides get two of the four.
-    const counts = Object.values(build(7)!).reduce<Record<number, number>>(
-      (acc, t) => ({ ...acc, [t]: (acc[t] ?? 0) + 1 }),
-      {},
+describe("the seating plan", () => {
+  /** Poker: no partnerships, so seats follow the plan exactly. */
+  function poker(r: Room, seats = 6): Room {
+    return ok(
+      r,
+      { t: "selectGame", gameId: "poker", settings: {}, seats, difficulty: "steady" },
+      { actor: LEADER },
     );
-    expect(counts).toEqual({ 0: 2, 1: 2 });
+  }
+
+  it("starts from join order, with bots in the seats nobody fills", () => {
+    const r = poker(withMembers(["Sam", "Kofi"]), 4);
+    expect(seatingPlan(r)).toEqual([LEADER, "s-0", "s-1", null]);
+    expect(seatingOrder(r).map((m) => m.name)).toEqual(["Ada", "Sam", "Kofi"]);
+  });
+
+  it("deals the seats as the leader arranged them, bots between people included", () => {
+    let r = poker(withMembers(["Sam", "Kofi"]), 4);
+    r = ok(r, { t: "arrangeSeats", plan: ["s-1", null, LEADER, "s-0"] }, { actor: LEADER });
+    expect(seatingPlan(r)).toEqual(["s-1", null, LEADER, "s-0"]);
+
+    r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+    expect(r.game!.seatOwner).toEqual(["s-1", null, LEADER, "s-0"]);
+  });
+
+  it("gives somebody who joins later the first bot seat", () => {
+    let r = poker(withMembers(["Sam"]), 4);
+    r = ok(r, { t: "arrangeSeats", plan: [null, "s-0", null, LEADER] }, { actor: LEADER });
+    r = ok(r, { t: "join", name: "Jo" }, { actor: "s-jo", now: 5 });
+    expect(seatingPlan(r)).toEqual(["s-jo", "s-0", null, LEADER]);
+  });
+
+  it("leaves a bot in the arranged seat of somebody who left", () => {
+    let r = poker(withMembers(["Sam", "Kofi"]), 4);
+    r = ok(r, { t: "arrangeSeats", plan: [LEADER, "s-0", "s-1", null] }, { actor: LEADER });
+    r = ok(r, { t: "leave" }, { actor: "s-0", now: 5 });
+    expect(seatingPlan(r)).toEqual([LEADER, null, "s-1", null]);
+  });
+
+  it("follows the game's seat count, and never leaves a person watching while a bot sits", () => {
+    let r = poker(withMembers(["Sam", "Kofi", "Jo"]), 6);
+    r = ok(
+      r,
+      { t: "arrangeSeats", plan: [null, null, null, null, "s-2", LEADER] },
+      { actor: LEADER },
+    );
+    // Down to four seats: the two past the end come up into bot seats.
+    r = poker(r, 4);
+    expect(seatingPlan(r).slice(0, 4).filter(Boolean)).toHaveLength(4);
+    // Three seats for four people: one watches.
+    r = poker(r, 3);
+    const plan = seatingPlan(r);
+    expect(plan.slice(0, 3).every(Boolean)).toBe(true);
+    expect(plan.slice(3)).toHaveLength(1);
+  });
+
+  it("is the leader's to change, and only between games", () => {
+    let r = poker(withMembers(["Sam"]), 4);
+    expect(
+      applyCommand(r, { t: "arrangeSeats", plan: ["s-0", LEADER] }, { actor: "s-0", now: 2 }),
+    ).toEqual({ ok: false, error: "not-leader" });
+
+    r = ok(r, { t: "startGame" }, { actor: LEADER, now: 10 });
+    expect(
+      applyCommand(r, { t: "shuffleSeats" }, { actor: LEADER, now: 11, rng: createRng(1) }),
+    ).toEqual({ ok: false, error: "game-already-running" });
+  });
+
+  it("refuses a plan naming a stranger, or somebody twice", () => {
+    const r = poker(withMembers(["Sam"]), 4);
+    for (const plan of [["s-nobody"], [LEADER, LEADER], [42 as unknown as string]]) {
+      expect(applyCommand(r, { t: "arrangeSeats", plan }, { actor: LEADER, now: 2 })).toEqual({
+        ok: false,
+        error: "bad-seat-plan",
+      });
+    }
+  });
+
+  it("shuffles people and bots together, from the seed, keeping everybody", () => {
+    const r = poker(withMembers(["Sam", "Kofi"]), 5);
+    const shuffle = (seed: number) =>
+      seatingPlan(ok(r, { t: "shuffleSeats" }, { actor: LEADER, rng: createRng(seed) }));
+    expect(shuffle(3)).toEqual(shuffle(3));
+    expect(shuffle(3).filter(Boolean).sort()).toEqual([LEADER, "s-0", "s-1"].sort());
+    expect(shuffle(3).filter((s) => s === null)).toHaveLength(2);
+  });
+
+  it("shuffles the people a full table leaves watching in with everybody else", () => {
+    // Five people, four seats: whoever watches is only watching because
+    // the table is full, so a shuffle has to be able to seat them.
+    const r = poker(withMembers(["Sam", "Kofi", "Jo", "Rui"]), 4);
+    const watching = (seed: number) =>
+      seatingPlan(ok(r, { t: "shuffleSeats" }, { actor: LEADER, rng: createRng(seed) }))[4];
+    const seen = new Set(Array.from({ length: 20 }, (_, seed) => watching(seed)));
+    expect(seen.size).toBeGreaterThan(1);
+    expect(seatingPlan(r)).toHaveLength(5);
+  });
+
+  it("has teams only in a partnership game", () => {
+    const r = poker(withMembers(["Sam"]), 4);
+    expect(teamOfSeat(r, 0)).toBeNull();
+    expect(teamOfSeat(spades(r), 3)).toBe(1);
+    // Past the last seat is nobody's team.
+    expect(teamOfSeat(spades(r), 4)).toBeNull();
   });
 });
 
@@ -567,6 +657,39 @@ describe("settings coming off the wire", () => {
     expect(r.seats).toBe(4); // Spades is exactly four.
   });
 
+  it("clamps to the RULESET's seats — Caribbean dominoes is four-handed", () => {
+    // The entry allows 2–4 because Block & Draw does. A room left on three
+    // started a session the engine dealt four hands into, and the fourth
+    // seat played on with no pod on anybody's table.
+    let r = withMembers([]);
+    r = ok(
+      r,
+      { t: "selectGame", gameId: "dominoes", settings: { mode: "caribbean" }, seats: 3, difficulty: "steady" },
+      { actor: LEADER },
+    );
+    expect(r.seats).toBe(4);
+    r = ok(
+      r,
+      { t: "selectGame", gameId: "dominoes", settings: { mode: "classic" }, seats: 3, difficulty: "steady" },
+      { actor: LEADER },
+    );
+    expect(r.seats).toBe(3);
+  });
+
+  it("starts a Caribbean session with four seats even from a stale three", () => {
+    let r = withMembers(["Bo"]);
+    r = ok(
+      r,
+      { t: "selectGame", gameId: "dominoes", settings: { mode: "caribbean" }, seats: 4, difficulty: "steady" },
+      { actor: LEADER },
+    );
+    const stale: Room = { ...r, seats: 3 };
+    const start = effectsOf(stale, { t: "startGame" }, { actor: LEADER, now: 10 }).find(
+      (e) => e.t === "startSession",
+    );
+    expect(start && start.t === "startSession" ? start.seats : null).toBe(4);
+  });
+
   it("refuses any game the room has no table for", () => {
     // Derived from the registry rather than naming games, so this cannot
     // go stale as they are wired up one at a time — which it did, once.
@@ -585,71 +708,6 @@ describe("settings coming off the wire", () => {
           { actor: LEADER, now: 1 },
         ),
       ).toEqual({ ok: false, error: "game-not-online" });
-    }
-  });
-
-  it("drops team assignments when switching to a game without partnerships", () => {
-    // A pairing nobody chose must not leak into a game that has no teams.
-    // This needed a second online game to exercise at all, and Poker being
-    // wired is what finally supplied one.
-    let r = withMembers(["Sam"]);
-    r = spades(r);
-    r = ok(r, { t: "assignTeam", session: "s-0", team: 1 }, { actor: LEADER });
-    expect(r.teams).not.toBeNull();
-    expect(r.teams!["s-0"]).toBe(1);
-
-    r = ok(
-      r,
-      { t: "selectGame", gameId: "poker", settings: {}, seats: 6, difficulty: "steady" },
-      { actor: LEADER },
-    );
-    expect(r.teams).toBeNull();
-
-    // And back again: choosing a partnership game offers teams once more.
-    r = spades(r);
-    expect(r.teams).not.toBeNull();
-  });
-});
-
-describe("teamIndex", () => {
-  /**
-   * The values that reach this are not all reachable over a socket —
-   * `JSON.stringify` flattens `NaN` and `Infinity` to `null` and the
-   * parser turns those away — but this is a pure function on a public
-   * export, and the seating code calls it on whatever a room happens to
-   * hold. So it is pinned here rather than only where a client can get at
-   * it.
-   */
-  it("turns anything at all into a real team", () => {
-    for (const [input, expected] of [
-      [0, 0],
-      [1, 1],
-      [2, 0],
-      [3, 1],
-      [-1, 1],
-      [-2, 0],
-      [0.5, 1],
-      [-0.4, 0],
-      [NaN, 0],
-      [Infinity, 0],
-      [-Infinity, 0],
-      [Number.MAX_SAFE_INTEGER, 1],
-    ] as const) {
-      expect(teamIndex(input)).toBe(expected);
-    }
-    for (const junk of [undefined, null, "1", {}, []]) {
-      expect(teamIndex(junk)).toBe(0);
-    }
-  });
-
-  it("only ever returns something usable as an array index", () => {
-    // The actual contract: `seatMembers` does `queues[teamIndex(...)]`,
-    // and an index that is negative or fractional is `undefined` there.
-    for (const input of [-1, 0.5, NaN, Infinity, -7.9, 1e21]) {
-      const index = teamIndex(input);
-      expect(Number.isInteger(index)).toBe(true);
-      expect(index).toBeGreaterThanOrEqual(0);
-      expect(index).toBeLessThanOrEqual(1);
     }
   });
 });

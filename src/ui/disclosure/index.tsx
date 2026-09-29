@@ -18,17 +18,27 @@ export { PeekRail } from "./PeekRail";
    Rung 3 — EventToast
    ============================================================ */
 
-/** Mount once inside the table surface. */
-export function GameToaster() {
+/**
+ * Mount once — inside the table surface, or once per screen without one.
+ *
+ * Top left (the user's call, 2026-09-28; it was bottom right before, and
+ * top centre before that, over the board). `top` keeps it below what lives
+ * up there: on a table, the corner buttons (`toastLane`).
+ */
+export function GameToaster({ top = 12 }: { top?: number }) {
   return (
     <Toaster
-      position="top-center"
-      offset={12}
+      position="top-left"
+      offset={{ top, left: 12 }}
+      mobileOffset={{ top, left: 12, right: 12 }}
       toastOptions={{
         unstyled: true,
         classNames: {
-          toast:
-            "flex items-center gap-2 rounded-full bg-felt-950/85 px-3.5 py-2 text-[12px] font-semibold text-bone-50 ring-1 ring-brass-400/30 backdrop-blur-md shadow-e2",
+          // The row is a plain box; the pill is `announce`'s own. Sonner
+          // gives every toast row one fixed width (the whole screen, on a
+          // phone), so each pill is pushed to its left edge — two toasts
+          // of different lengths line up on the left, under each other.
+          toast: "flex w-full justify-start",
         },
       }}
     />

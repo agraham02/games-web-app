@@ -14,22 +14,43 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DURATION } from "@/motion/presets";
+import { createRng } from "@/engine/rng";
+import { createLrc } from "@/games/lrc/rules";
 import { emitDice } from "@/table/fx";
+import { resolveTable } from "@/table/geometry";
+import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
-import { LrcControls } from "./table";
+import { LrcControls, OFFLINE_VIEW } from "./table";
 
+// A real dealt state: the band counts the pot from it.
+const lrc = createLrc();
 const live = {
+  state: lrc.setup({ seats: 3, rng: createRng(1) }),
   isHeroTurn: false,
   busy: true,
   submitAction: () => {},
 } as unknown as GameRuntime<LrcState, LrcAction>;
+
+// A spectator's view: the stub runtime has no state, and a spectator holds
+// no chips for the band to count. The dice are the same for everybody.
+const view = { ...OFFLINE_VIEW, viewerSeat: -1 };
 
 const shown = () => screen.queryAllByLabelText(/^die showing/).map((el) => el.getAttribute("aria-label"));
 
 describe("the dice overlay", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // The dice sit on the table's centre, so there has to be a table.
+    useTableStore.getState().setGeometry(resolveTable({ seats: 3, width: 390, height: 844 }));
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
     vi.stubGlobal("matchMedia", (media: string) => ({
       matches: false,
       media,
@@ -47,12 +68,12 @@ describe("the dice overlay", () => {
   });
 
   it("shows nothing until dice are thrown", () => {
-    render(<LrcControls live={live} />);
+    render(<LrcControls view={view} live={live} />);
     expect(shown()).toEqual([]);
   });
 
   it("tumbles the moment the roll is played, and settles before any chip may move", () => {
-    render(<LrcControls live={live} />);
+    render(<LrcControls view={view} live={live} />);
     act(() => emitDice({ seat: 1, faces: ["L", "C", "R"] }));
     // On screen at once — not waiting behind a previous roll's exit.
     expect(shown()).toHaveLength(3);
@@ -88,7 +109,7 @@ describe("the dice overlay", () => {
       removeListener: () => {},
       dispatchEvent: () => false,
     }));
-    render(<LrcControls live={live} />);
+    render(<LrcControls view={view} live={live} />);
     act(() => emitDice({ seat: 1, faces: ["dot", "L", "dot"] }));
     expect(shown()[1]).toBe("die showing L");
   });

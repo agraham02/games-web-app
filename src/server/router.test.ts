@@ -758,6 +758,67 @@ describe("the server, in process", () => {
       expect(runtime.hasGame).toBe(false);
       expect(Object.keys(runtime.room.members)).toHaveLength(2);
     });
+
+    /**
+     * The user's rule (2026-09-27): when the last real person leaves, the
+     * game is torn down, and "all bots should not be playing, not even for
+     * 1 second".
+     *
+     * Each way out is taken at the worst moment: the person has just moved,
+     * so a bot's turn is already armed and waiting out its hold. Then the
+     * clock is run dry. Not one more frame may reach anybody.
+     */
+    describe("the last real player out ends it, with no bot turn after", () => {
+      type Player = { peer: Peer; conn: FakeConnection };
+
+      /**
+       * `stays` is alone at the table and has just made a move; `other`
+       * stepped away earlier, so a bot plays their seat.
+       */
+      function aloneAtTheTable(who: "host" | "guest") {
+        const t = twoPlayerSpades();
+        const host: Player = { peer: t.peer, conn: t.conn };
+        const guest: Player = t.p2;
+        const stays = who === "host" ? host : guest;
+        const other = who === "host" ? guest : host;
+        send(other.peer, { t: "exitGame" });
+
+        // Bots play up to the person still sitting there, who then moves.
+        clock.drain();
+        const on = (registry.get(t.code)!.debugDump().table as { currentSeat: number }).currentSeat;
+        const frame = stays.conn.last("frame")!.frame;
+        expect(frame.seat, "the table should be waiting on the one still seated").toBe(on);
+        const legal = createSpades().legalActions(frame.state as SpadesState, on);
+        send(stays.peer, { t: "action", action: legal.find((a) => a.t === "bid" && !a.nil) ?? legal[0] });
+        expect(clock.pending, "a bot's turn should be armed").toBeGreaterThan(0);
+        return { code: t.code, stays, other };
+      }
+
+      const WAYS_OUT: Array<[string, "host" | "guest", (s: Player, o: Player) => void]> = [
+        ["walk back to the lobby", "host", (s) => send(s.peer, { t: "exitGame" })],
+        ["leave the room", "host", (s) => send(s.peer, { t: "leaveRoom" })],
+        // Closing the tab, losing signal, and now leaving the room's page.
+        ["drop their connection", "host", (s) => router.onClose(s.peer)],
+        ["are removed by the leader", "guest", (s, leader) => {
+          send(leader.peer, { t: "kick", session: registry.sessionFor("p2") });
+        }],
+      ];
+
+      for (const [how, who, leave] of WAYS_OUT) {
+        it(`when they ${how}`, () => {
+          const { code, stays, other } = aloneAtTheTable(who);
+          stays.conn.clear();
+          other.conn.clear();
+
+          leave(stays, other);
+          clock.drain();
+
+          expect(registry.get(code)?.hasGame ?? false, "the game should be over").toBe(false);
+          expect(stays.conn.all("frame"), "no frame to the one who left").toEqual([]);
+          expect(other.conn.all("frame"), "no frame to anybody else").toEqual([]);
+        });
+      }
+    });
   });
 
   /* ============================================================
@@ -933,6 +994,144 @@ describe("the server, in process", () => {
   });
 
   /**
+   * Poker and LRC played for money end with who pays whom (the user,
+   * 2026-09-28). Worked out by the server, because when the leader ends a
+   * game only the server still holds the position — the table is gone from
+   * every screen.
+   */
+  describe("settling up a game played for money", () => {
+    function room(gameId: "poker" | "lrc", settings: Record<string, unknown>) {
+      const h = host("p1");
+      const p2 = peerFor("p2");
+      send(p2.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      send(h.peer, { t: "selectGame", gameId, settings, seats: 3, difficulty: "steady" });
+      send(h.peer, { t: "startGame" });
+      return { h, p2 };
+    }
+
+    it("tells everyone who pays whom when the leader ends the game", () => {
+      const { h, p2 } = room("poker", { buyIn: 2000 });
+      send(h.peer, { t: "endGame" });
+      const settled = p2.conn.last("room")!.room.settlement!;
+      expect(settled.stake).toBe("$20 buy-in");
+      expect(settled.finished).toBe(false);
+      // The two people, never the bot in the third seat.
+      expect(settled.results.map((r) => r.name).sort()).toEqual(["Ada", "Bo"]);
+      // The first hand was still being played, so it is called off: the
+      // blinds go back and nobody owes anybody.
+      expect(settled.results.every((r) => r.cents === 0)).toBe(true);
+      expect(settled.payments).toEqual([]);
+    });
+
+    it("forgets the last game's payments once the next one starts", () => {
+      const { h } = room("poker", { buyIn: 2000 });
+      send(h.peer, { t: "endGame" });
+      expect(h.conn.last("room")!.room.settlement).not.toBeNull();
+      send(h.peer, { t: "startGame" });
+      expect(h.conn.last("room")!.room.settlement).toBeNull();
+    });
+
+    it("says nothing for a game with no stake", () => {
+      const { h } = room("poker", {});
+      send(h.peer, { t: "endGame" });
+      expect(h.conn.last("room")!.room.settlement).toBeNull();
+    });
+
+    /** Plays a one-round LRC match to its winner, every person taking the first legal action. */
+    function playToWinner(code: string, players: ReadonlyArray<{ peer: Peer; conn: FakeConnection }>) {
+      const rules = GAMES.lrc.create(GAMES.lrc.parse({ target: 1 }));
+      for (let turn = 0; turn < 2000; turn++) {
+        clock.drain();
+        const table = registry.get(code)!.debugDump().table as {
+          currentSeat: number | null;
+          isOver: boolean;
+        } | null;
+        if (!table || table.isOver) return;
+        if (table.currentSeat === null) continue;
+        const who = players.find((p) => p.conn.last("frame")?.frame.seat === table.currentSeat);
+        if (!who) continue;
+        const legal = rules.legalActions(who.conn.last("frame")!.frame.state, table.currentSeat);
+        if (legal[0] === undefined) continue;
+        send(who.peer, { t: "action", action: legal[0] });
+      }
+    }
+
+    it("still counts somebody who lost and walked out halfway, by name", () => {
+      // Money is owed by people, not seats (the user, 2026-09-28): leaving the
+      // room hands the seat to a bot, but what they lost while it was theirs
+      // is still theirs to pay. Three people, no bots, so nothing is scaled.
+      const h = host("p1");
+      const p2 = peerFor("p2");
+      const p3 = peerFor("p3");
+      send(p2.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      send(p3.peer, { t: "joinRoom", code: h.code, name: "Cy" });
+      send(h.peer, { t: "selectGame", gameId: "lrc", settings: { target: 2, chipValue: 25 }, seats: 3, difficulty: "steady" });
+      send(h.peer, { t: "startGame" });
+
+      const players = [h, p2, p3];
+      const rules = GAMES.lrc.create(GAMES.lrc.parse({ target: 2 }));
+      for (let turn = 0; turn < 2000 && !h.conn.last("frame")?.frame.isRoundOver; turn++) {
+        clock.drain();
+        const current = h.conn.last("frame")?.frame.currentSeat;
+        const who = players.find((p) => p.conn.last("frame")?.frame.seat === current);
+        if (current == null || !who) continue;
+        const legal = rules.legalActions(who.conn.last("frame")!.frame.state, current);
+        if (legal[0] !== undefined) send(who.peer, { t: "action", action: legal[0] });
+      }
+      const won = h.conn.last("frame")!.frame.roundWinner;
+      expect(won, "the first round should have been played out").not.toBeNull();
+
+      // A guest who lost it walks out; the leader then calls the game off.
+      const leaver = [p2, p3].find((p) => p.conn.last("frame")!.frame.seat !== won)!;
+      const leaverName = leaver === p2 ? "Bo" : "Cy";
+      send(leaver.peer, { t: "leaveRoom" });
+      send(h.peer, { t: "endGame" });
+
+      const settled = h.conn.last("room")!.room.settlement!;
+      expect(settled.results.find((r) => r.name === leaverName)?.cents).toBe(-75);
+      expect(settled.payments.filter((p) => p.fromName === leaverName)).toHaveLength(1);
+      expect(settled.payments.reduce((n, p) => n + p.cents, 0)).toBe(150);
+      expect(settled.botsLeftOut).toBe(false);
+    });
+
+    it("keeps a finished match's payments when a loser walks out before the table empties", () => {
+      // The settlement is made on the winner's sheet. Leaving the room
+      // afterwards releases the seat, and the last person leaving the
+      // table ends the session — which must not settle again, or the one
+      // who walked out counts as a bot and their debt disappears.
+      const { h, p2 } = room("lrc", { target: 1, chipValue: 25 });
+      playToWinner(h.code, [h, p2]);
+      const onTheSheet = h.conn.last("room")!.room.settlement!;
+      expect(onTheSheet.payments).toHaveLength(1);
+
+      const loser = onTheSheet.payments[0]!.from;
+      const [leaving, staying] = loser === registry.sessionFor("p2") ? [p2, h] : [h, p2];
+      send(leaving.peer, { t: "leaveRoom" });
+      send(staying.peer, { t: "exitGame" });
+
+      const after = staying.conn.last("room")!.room;
+      expect(after.gameRunning).toBe(false);
+      expect(after.settlement).toEqual(onTheSheet);
+    });
+
+    it("settles a match played to its winner, while everyone is still at the table", () => {
+      const { h, p2 } = room("lrc", { target: 1, chipValue: 25 });
+      playToWinner(h.code, [h, p2]);
+
+      const view = h.conn.last("room")!.room;
+      expect(view.gameRunning, "the match is over, but nobody has left the table").toBe(true);
+      const settled = view.settlement!;
+      expect(settled.finished).toBe(true);
+      expect(settled.stake).toBe("25¢ a chip");
+      // One round, three chips each at 25¢: a person who won it is up the
+      // other person's 75¢ (the bot's is left out); one who lost is down 75¢.
+      const net = settled.results.reduce((n, r) => n + r.cents, 0);
+      expect(net).toBe(0);
+      for (const p of settled.payments) expect(p.cents).toBe(75);
+    });
+  });
+
+  /**
    * Bookkeeping that nothing visible depends on until it does.
    */
   describe("not growing without end", () => {
@@ -1024,47 +1223,32 @@ describe("the server, in process", () => {
 
   describe("input nobody sane would send", () => {
     /**
-     * Each value gets its own room, and that matters: assigning a team
-     * overwrites the last one, so a loop that assigned all of them to one
-     * player would only ever start a game with whichever came last — and
-     * `-0 % 2` is `-0`, which is a perfectly good array index. The first
-     * version of this test did exactly that and passed against the bug.
+     * Each plan gets its own room, so every one of them is the plan a game
+     * actually starts from. (The team-index version of this test once sent
+     * every value to one room, where only the last could ever be dealt, and
+     * passed against the bug it was written for.)
      */
-    // NaN and Infinity are absent on purpose: `JSON.stringify` turns both
-    // into `null`, so the parser rejects the message and they can never
-    // arrive this way. They are covered directly on `teamIndex` instead.
-    it.each([-1, 0.5, 1e21, -0, Number.MIN_SAFE_INTEGER])(
-      "does not die on a team index of %p",
-      (team) => {
-        // `team % 2` is `-1` for `-1` and `0.5` for `0.5`, and
-        // `seatMembers` indexed its queue array with the result —
-        // `undefined.shift()`. That threw all the way out through the ws
-        // message listener and took every live room in the process with
-        // it, on a message a leader is perfectly entitled to send.
-        const token = `host-${String(team)}`;
-        const { peer, code } = host(token);
-        const guestToken = `guest-${String(team)}`;
-        const { peer: guest } = peerFor(guestToken);
-        send(guest, { t: "joinRoom", code, name: `Bo${String(team)}` });
-        send(peer, {
-          t: "selectGame",
-          gameId: "spades",
-          settings: {},
-          seats: 4,
-          difficulty: "steady",
-        });
+    it.each([
+      [["?"]],
+      [[null, null, null, null, null, null, null, null, null]],
+      [[1, 2, 3]],
+      [Array.from({ length: 70 }, () => null)],
+    ])("does not die on a seating plan of %j", (plan) => {
+      // A leader may send `arrangeSeats`, so whatever arrives in it has to
+      // be refused or squared with the room — never thrown on. Somebody's
+      // seat must not be lost to it either.
+      const { peer, code } = host(`host-${JSON.stringify(plan).length}`);
+      const { peer: guest } = peerFor(`guest-${JSON.stringify(plan).length}`);
+      send(guest, { t: "joinRoom", code, name: "Bo" });
+      send(peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
 
-        send(peer, { t: "assignTeam", session: registry.sessionFor(guestToken), team });
-        send(peer, { t: "startGame" });
+      send(peer, { t: "arrangeSeats", plan } as never);
+      send(peer, { t: "startGame" });
 
-        const runtime = registry.get(code)!;
-        expect(runtime.hasGame).toBe(true);
-        // Both of them got a seat — a bad index must not cost anybody one.
-        expect(runtime.room.game!.seatOwner.filter(Boolean)).toHaveLength(2);
-        // And what was stored is a real team, not whatever arrived.
-        expect(runtime.room.teams![registry.sessionFor(guestToken)]).toBeOneOf([0, 1]);
-      },
-    );
+      const runtime = registry.get(code)!;
+      expect(runtime.hasGame).toBe(true);
+      expect(runtime.room.game!.seatOwner.filter(Boolean)).toHaveLength(2);
+    });
 
     it("answers a handler that throws instead of taking the process down", () => {
       // The boundary itself, tested by making a command throw on purpose.

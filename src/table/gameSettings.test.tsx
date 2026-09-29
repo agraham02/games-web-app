@@ -7,7 +7,13 @@
 
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SettingsSheet, useGameSettings, type GameSetting } from "./gameSettings";
+import {
+  SOUND_SETTING,
+  SettingsSheet,
+  TABLE_SETTINGS,
+  useGameSettings,
+  type GameSetting,
+} from "./gameSettings";
 
 const SETTINGS: readonly GameSetting[] = [
   { key: "hints", label: "Hints", description: "Explains things.", default: true },
@@ -50,6 +56,20 @@ describe("useGameSettings", () => {
     expect(hookB.result.current[0].sounds).toBe(false);
   });
 
+  it("keeps a SHARED setting once for every game", () => {
+    // Turning the sound off at one table and finding it on at the next
+    // would be a setting that did not stick.
+    const withTable = [...SETTINGS, ...TABLE_SETTINGS];
+    const a = renderHook(() => useGameSettings(freshGame(), withTable));
+    act(() => a.result.current[1](SOUND_SETTING.key, false));
+    const b = renderHook(() => useGameSettings(freshGame(), withTable));
+    expect(b.result.current[0].sound).toBe(false);
+    // ...while a per-game setting beside it still is not shared.
+    act(() => a.result.current[1]("hints", false));
+    expect(b.result.current[0].hints).toBe(true);
+    act(() => a.result.current[1](SOUND_SETTING.key, true));
+  });
+
   it("falls back to the defaults when storage refuses", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
@@ -83,6 +103,20 @@ describe("SettingsSheet", () => {
     expect(screen.getByText("Explains things.")).toBeTruthy();
     fireEvent.click(hints);
     expect(onChange).toHaveBeenCalledWith("hints", false);
+  });
+
+  it("puts a table's own buttons under the switches", () => {
+    render(
+      <SettingsSheet
+        open
+        onClose={() => {}}
+        settings={SETTINGS}
+        values={{ hints: true, sounds: false }}
+        onChange={() => {}}
+        actions={<button type="button">Return to the lobby</button>}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Return to the lobby" })).toBeInTheDocument();
   });
 
   it("dims the rest of the screen, and closes from the dim, the X or Esc", () => {

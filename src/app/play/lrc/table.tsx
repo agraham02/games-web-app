@@ -16,9 +16,13 @@ import { chipsHeld, diceCountFor } from "@/games/lrc/state";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
 import { DURATION, TRANSITIONS, prefersReducedMotion } from "@/motion/presets";
 import { onDice } from "@/table/fx";
+import { BandNote, HandZone } from "@/table/HandZone";
+import { Button } from "@/ui/primitives/Button";
 import { DiceFace } from "@/ui/primitives/DiceFace";
-import { TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
+import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { SeatView } from "@/table/SeatRing";
+import { chipStackBadges } from "@/table/layout";
+import { useGeometry, useTableStore } from "@/table/store";
 import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { potSize } from "@/games/lrc/state";
@@ -46,15 +50,18 @@ export const OFFLINE_VIEW: LrcView = {
 };
 
 /**
- * Vertical room the Roll button needs. There is no hand in LRC — the
- * strip is the button and nothing else.
+ * The strip where a hand would be. LRC has no hand — the viewer's chips
+ * pile up from the band above it, like everybody else's from their pod —
+ * so it only needs to hold the band off the bottom edge. It was 64px, an
+ * empty strip under the Roll button (the user, 2026-09-28: "a lil too
+ * much white space underneath my chips and the roll button").
  *
  * A constant because both shells have to agree, and they did not: the
  * room passed `0` while `LrcControls` went on rendering a fixed 64px
  * bar, so online the button sat on top of whatever the geometry had
  * laid into the bottom band.
  */
-export const LRC_HAND_ZONE = 64;
+export const LRC_HAND_ZONE = 16;
 
 /**
  * The HUD numbers. Shared for the same reason as the hand zone — the two
@@ -114,7 +121,7 @@ export function roundSummary(view: LrcView, state: LrcState) {
   rows.sort((a, b) => b.total - a.total);
 
   const title = `${name(result.winner)} ${result.winner === view.viewerSeat ? "take" : "takes"} the pot`;
-  return { title, rows };
+  return { title, rows, target: state.target };
 }
 
 /** DevPanel's game-specific line — see GameHostProps.pendingLabel. */
@@ -152,7 +159,8 @@ export function playerViews(view: LrcView, state: LrcState, live: Live): SeatVie
       seat,
       name: view.nameFor(seat),
       colour: view.colourFor(seat),
-      meta: eliminated ? "Out" : `${held} chip${held === 1 ? "" : "s"}`,
+      status: eliminated ? "Out" : undefined,
+      stats: eliminated ? undefined : [[{ label: "Chips", value: held }]],
       active: cue.active,
       thinking: cue.thinking,
       eliminated,
@@ -162,8 +170,13 @@ export function playerViews(view: LrcView, state: LrcState, live: Live): SeatVie
   return out;
 }
 
-/** The one game-specific slot: the Roll button and the dice it produces. */
-export function LrcControls({ live }: { live: Live }) {
+/**
+ * The one game-specific slot: the Roll button and the dice it produces.
+ *
+ * Roll is the band's bar, above the viewer's chips; the band's row says
+ * how many chips they hold, since the viewer has no pod to say it.
+ */
+export function LrcControls({ view, live }: { view: LrcView; live: Live }) {
   // The dice are NOT rolled here any more. They used to be — the screen
   // resolved them with `live.rng`, showed the tumble, and held the submit
   // back for its length so the chips would not move under the dice.
@@ -181,36 +194,42 @@ export function LrcControls({ live }: { live: Live }) {
     live.submitAction({ t: "roll", dice: [] });
   };
 
-  const showRoll = live.isHeroTurn;
+  // A spectator holds no chips and rolls nothing.
+  const seated = view.viewerSeat >= 0;
+  const chips = seated ? chipsHeld(live.state, view.viewerSeat) : 0;
 
   return (
     <>
-      <TurnIndicator label="Your turn — roll" show={showRoll} />
-
       {/* Driven by the `dice` event as the queue reaches it, not by
           `lastAction` — see the event's doc. */}
       <DiceOverlay />
+      <ChipStackCounts />
 
-      <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 flex justify-center pb-4"
-        style={{ height: 64 }}
-      >
-        <AnimatePresence>
-          {showRoll ? (
-            <motion.button
-              type="button"
-              onClick={roll}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              transition={TRANSITIONS.ui}
-              className="pointer-events-auto rounded-full bg-linear-to-b from-brass-300 to-brass-500 px-8 py-3 text-sm font-extrabold text-felt-950 shadow-e2"
-            >
-              Roll
-            </motion.button>
-          ) : null}
-        </AnimatePresence>
-      </div>
+      <HandZone
+        bar={
+          live.isHeroTurn ? (
+            <>
+              <BandNote>Your turn</BandNote>
+              <Button shape="pill" tone="primary" onClick={roll}>
+                Roll
+              </Button>
+            </>
+          ) : undefined
+        }
+        left={
+          seated ? (
+            chips === 0 ? (
+              <HeroStatusBadge label="You" detail="out this round" />
+            ) : (
+              <HeroStatusBadge stats={[[{ label: "Chips", value: chips }]]} />
+            )
+          ) : undefined
+        }
+        // Rolling is the bar; everybody else's turn is this line.
+        center={<TurnIndicator label="" show={false} />}
+        // The pot, counted: a pile of identical chips does not say how many.
+        right={<HeroStatusBadge stats={[[{ label: "Pot", value: potSize(live.state) }]]} />}
+      />
     </>
   );
 }
@@ -233,6 +252,39 @@ const TUMBLE_TICK_MS = 100;
 const TUMBLE_TICKS = Math.max(1, Math.round((DURATION.diceTumble * 1000) / TUMBLE_TICK_MS));
 
 /**
+ * The count on every pile that has become one stack (see layout's
+ * `chipPileStacks`): written on its top chip, the way a real stack is
+ * counted, since a stack no longer shows how many it holds. Chrome over the
+ * piece layer rather than a label on a piece: the top chip is the one that
+ * leaves when the pile loses one, and a label on it would fly off with it.
+ */
+function ChipStackCounts() {
+  const geometry = useGeometry();
+  const placements = useTableStore((s) => s.placements);
+  if (!geometry) return null;
+  return (
+    <>
+      {chipStackBadges(geometry, placements).map((b) => (
+        <div
+          key={b.key}
+          aria-hidden
+          className="pointer-events-none absolute z-1100 flex items-center justify-center font-extrabold tnum text-bone-50 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]"
+          style={{
+            left: b.cx - b.diameter / 2,
+            top: b.cy - b.diameter / 2,
+            width: b.diameter,
+            height: b.diameter,
+            fontSize: Math.max(11, b.diameter * 0.4),
+          }}
+        >
+          {b.count}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
  * Transient dice display — not a Piece (see dice.ts / DiceFace.tsx for
  * why), just an overlay that shows the latest roll.
  *
@@ -249,6 +301,7 @@ const TUMBLE_TICKS = Math.max(1, Math.round((DURATION.diceTumble * 1000) / TUMBL
  * new roll never waits for the last one to leave before it appears.
  */
 function DiceOverlay() {
+  const geometry = useGeometry();
   const [roll, setRoll] = useState<{ id: number; faces: Face[] } | null>(null);
   const [tick, setTick] = useState(TUMBLE_TICKS);
 
@@ -273,10 +326,19 @@ function DiceOverlay() {
     settled ? real : TUMBLE_SEQUENCE[(tick + i) % TUMBLE_SEQUENCE.length]!,
   );
 
+  // One chain with the pot, on the table's own centre: the dice end just
+  // above the point the pot grows down from (layout's "center" zone). They
+  // sat at 38% of the screen instead, and on a phone the pot's first chip
+  // landed on the middle die. The geometry sizes the row (`zones.dice`), so
+  // the dice grow with the table rather than staying 48px on every screen.
+  if (!geometry) return null;
+  const zone = geometry.zones.dice;
+  const die = zone.h;
+
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 grid place-items-center"
-      style={{ top: "38%" }}
+      className="pointer-events-none absolute grid place-items-center"
+      style={{ left: zone.x, top: zone.y, width: zone.w, height: zone.h }}
     >
       <AnimatePresence initial={false}>
         {roll && shown && shown.length > 0 ? (
@@ -286,11 +348,11 @@ function DiceOverlay() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
             transition={TRANSITIONS.ui}
-            className="flex gap-2"
-            style={{ gridArea: "1 / 1" }}
+            className="flex"
+            style={{ gridArea: "1 / 1", gap: die * 0.18 }}
           >
             {shown.map((face, i) => (
-              <DiceFace key={i} face={face} size={48} />
+              <DiceFace key={i} face={face} size={die} />
             ))}
           </motion.div>
         ) : null}

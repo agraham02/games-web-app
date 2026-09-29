@@ -20,6 +20,7 @@
 import type { PieceId, SeatId } from "@/engine/types";
 import type { Suit } from "@/games/_shared/cards";
 import type { SpadesRules } from "./cards";
+import type { ScorePart } from "./scoring";
 
 export type SpadesPhase = "bid" | "play";
 
@@ -59,6 +60,9 @@ export interface RoundResult {
   /** THIS round's overtricks, mirrored per team — see `RoundScore`'s own
    * doc in scoring.ts for why a UI shouldn't recompute this per seat. */
   bagsAdded: Record<SeatId, number>;
+  /** Where each team's delta came from — see `RoundScore.parts`. Optional
+   * only so a result from before it existed still reads. */
+  parts?: Record<SeatId, ScorePart[]>;
 }
 
 export interface TrickCardPlay {

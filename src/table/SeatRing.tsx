@@ -17,6 +17,11 @@ import type { SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
+import { Avatar } from "@/ui/primitives/Avatar";
+import { Stats, type Stat, type StatLines } from "@/ui/primitives/Stats";
+
+/** One labelled number on a pod: "Bid 4", "Cards 7" — see `Stats`. */
+export type SeatStat = Stat;
 
 export interface SeatView {
   seat: SeatId;
@@ -24,11 +29,18 @@ export interface SeatView {
   /** Avatar tint. Any CSS colour. */
   colour: string;
   /**
-   * Second line: "bid 3 · won 2", "7 cards", etc. A list is one line each —
-   * for a game with two things to say, like poker's stack and bet. Joined
-   * onto one line, "$4837 · bet $362" is wider than a pod and got cut off.
+   * The numbers under the name, labelled — at most two lines, each a list
+   * of stats. The label is quiet and the number is not, in one style for
+   * every game.
+   *
+   * They used to be bare: "7 cards · 45", "4 · won 2 · 120". A second
+   * number with no label means nothing to anybody who did not write it,
+   * and joined onto one line it was wider than the pod and cut off. The
+   * second line may still truncate; each game keeps its first one short.
    */
-  meta?: string | readonly string[];
+  stats?: StatLines;
+  /** A word that says more than the numbers would: "Folded", "Out". */
+  status?: string;
   /** Highlights the pod and shows a pulse. */
   active?: boolean;
   thinking?: boolean;
@@ -46,7 +58,7 @@ export interface SeatView {
   /**
    * This seat is the HERO's partner — Spades' 2v2 partnership, the first
    * game with any team concept in this app. Purely a rung-1/2 ambient
-   * cue (POLICY.md): a small always-visible tag, same weight as `meta`.
+   * cue (POLICY.md): a small always-visible tag, same weight as `stats`.
    * The hero's own pod never renders here at all (SeatRing filters it
    * out below), so this only ever needs to answer one question — "is
    * THIS pod my partner or an opponent" — not represent teams in the
@@ -81,10 +93,6 @@ export interface SeatView {
   away?: boolean;
 }
 
-function initialsOf(name: string): string {
-  return name.slice(0, 2).toUpperCase();
-}
-
 /**
  * Pod dimensions per density tier. `compact`/`regular` keep the numbers
  * this component always had; `wide` steps up noticeably rather than a
@@ -96,10 +104,20 @@ function initialsOf(name: string): string {
  * substrings in source, and a lookup table keyed by a runtime value is
  * exactly that (unlike `w-${x}`, which it can't see).
  */
-const POD_STYLES: Record<Density, { pod: string; avatar: string; name: string; meta: string }> = {
-  compact: { pod: "w-16", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
-  regular: { pod: "w-16", avatar: "h-8 w-8 text-[11px]", name: "text-[11px]", meta: "text-[9px]" },
-  wide: { pod: "w-24", avatar: "h-12 w-12 text-[15px]", name: "text-[15px]", meta: "text-[13px]" },
+//
+// Tight vertical spacing on the two phone tiers: a pod carries up to two
+// lines under its name (`POD_LINES`), and at compact density a top-edge
+// pod's centre is only 37px from the top of the screen — any taller and
+// its avatar goes off the top.
+//
+// Retuned 2026-09-28 from both ends at once: on a phone, beside a board now
+// fitted to its room, 64px pods with 9px stats read too small and cut "Bid 3
+// · Won 0" to "Bid …"; on a laptop the 96px pods were among the biggest
+// things on the table. Keep `POD_SIZE` in geometry.ts in step (measured).
+const POD_STYLES: Record<Density, { pod: string; avatar: number; name: string; meta: string }> = {
+  compact: { pod: "w-19 gap-0.5 py-1", avatar: 32, name: "text-[12px]", meta: "text-[10px]" },
+  regular: { pod: "w-19 gap-0.5 py-1", avatar: 32, name: "text-[12px]", meta: "text-[10px]" },
+  wide: { pod: "w-20 gap-0.5 py-1.5", avatar: 38, name: "text-[13px]", meta: "text-[11px]" },
 };
 
 export function SeatRing({ players }: { players: readonly SeatView[] }) {
@@ -119,7 +137,7 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
               className="absolute -translate-x-1/2 -translate-y-1/2"
               style={{ left: slot.x, top: slot.y }}
             >
-              <SeatPod view={view} density={geometry.density} />
+              <SeatPod view={view} density={geometry.density} solid={geometry.tuck} />
             </div>
           );
         })}
@@ -127,31 +145,52 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
   );
 }
 
-const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; density: Density }) {
+/**
+ * Lines a pod may carry under the name, all told. The geometry sizes every
+ * pod for this (`POD_SIZE`); a third line made a top-edge pod taller than
+ * its slot, so its avatar went off the top of the screen and its last line
+ * sat under its own cards. "Away", "Partner" and a status word come first
+ * — they change how the numbers read — and the numbers take what is left.
+ */
+const POD_LINES = 2;
+
+/**
+ * `solid`: the seat's hand is tucked BEHIND this pod (phones — see
+ * `TableGeometry.tuck`), so the pod has to be opaque. Translucent, the white
+ * backs of the cards behind it washed its stats out to grey on grey.
+ */
+const SeatPod = memo(function SeatPod({
+  view,
+  density,
+  solid,
+}: {
+  view: SeatView;
+  density: Density;
+  solid: boolean;
+}) {
   const highlighted = view.active || view.winning;
   const s = POD_STYLES[density];
+  const said = (view.away ? 1 : 0) + (view.partner ? 1 : 0) + (view.status ? 1 : 0);
   return (
     <motion.div
       initial={false}
       animate={{ scale: highlighted ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
-      className={`flex ${s.pod} flex-col items-center gap-1 rounded-xl px-1 py-1.5 backdrop-blur-md transition-colors ${
+      className={`flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
         highlighted
-          ? "bg-felt-950/70 ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]"
-          : "bg-felt-950/55 ring-1 ring-brass-400/20"
+          ? `${solid ? "bg-felt-950" : "bg-felt-950/70"} ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]`
+          : `${solid ? "bg-felt-950" : "bg-felt-950/55"} ring-1 ring-brass-400/20`
       }`}
     >
       <div className="relative">
         <AnimatePresence>{view.winning ? <WinnerCrown /> : null}</AnimatePresence>
-        <div
-          className={`flex ${s.avatar} items-center justify-center rounded-full font-bold text-felt-950`}
-          style={{
-            background: view.colour,
-            filter: view.eliminated ? "grayscale(1)" : undefined,
-          }}
-        >
-          {initialsOf(view.name)}
-        </div>
+        <Avatar
+          name={view.name}
+          colour={view.colour}
+          size={s.avatar}
+          // The pod itself fades an eliminated seat; the avatar only greys.
+          style={{ filter: view.eliminated ? "grayscale(1)" : undefined }}
+        />
         {view.thinking ? <ThinkingRing /> : null}
         {view.badge ? <PositionBadge label={view.badge} /> : null}
         {view.away ? <AwayBadge name={view.name} /> : null}
@@ -172,7 +211,7 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
       {view.away ? (
         // The status line, in `warn` rather than in the pod's ordinary
         // muted tone: it has to be findable at a glance across a table,
-        // and it sits directly above `meta`, which is already bone-400.
+        // and it sits directly above the stats, whose labels are bone-400.
         // Not `loss` — nothing has gone wrong, somebody is just not here.
         <div
           className={`max-w-full truncate ${s.meta} leading-none font-bold`}
@@ -188,11 +227,11 @@ const SeatPod = memo(function SeatPod({ view, density }: { view: SeatView; densi
         </div>
       ) : null}
 
-      {(typeof view.meta === "string" ? [view.meta] : (view.meta ?? [])).map((line, i) => (
-        <div key={i} className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>
-          {line}
-        </div>
-      ))}
+      {view.status ? (
+        <div className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>{view.status}</div>
+      ) : null}
+
+      <Stats lines={view.stats ?? []} max={POD_LINES - said} className={s.meta} />
     </motion.div>
   );
 });

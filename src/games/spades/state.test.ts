@@ -9,6 +9,7 @@ import {
   partnerOf,
   teamOf,
   teammates,
+  whyNotPlayable,
 } from "./state";
 import type { SpadesState } from "./types";
 
@@ -201,5 +202,35 @@ describe("legalPlays — lead gating", () => {
       ledSuit: "S",
     });
     expect(legalPlays(state, 0)).toEqual([BIG_JOKER_ID]);
+  });
+});
+
+describe("whyNotPlayable — the reason given after an illegal tap (Hints off)", () => {
+  it("has nothing to say about a legal card", () => {
+    const state = baseState({
+      hands: { 0: [cardId("H", "2"), cardId("S", "A")], 1: [], 2: [], 3: [] },
+      trick: [{ seat: 3, card: cardId("H", "K") }],
+      ledSuit: "H",
+    });
+    expect(whyNotPlayable(state, 0, cardId("H", "2"))).toBeNull();
+  });
+
+  it("names the suit that has to be followed", () => {
+    const state = baseState({
+      hands: { 0: [cardId("H", "2"), cardId("S", "A")], 1: [], 2: [], 3: [] },
+      trick: [{ seat: 3, card: cardId("H", "K") }],
+      ledSuit: "H",
+    });
+    expect(whyNotPlayable(state, 0, cardId("S", "A"))).toBe(
+      "You have to follow suit: hearts were led",
+    );
+  });
+
+  it("says spades are not broken when a spade is led too early", () => {
+    const state = baseState({
+      hands: { 0: [cardId("H", "K"), cardId("S", "A")], 1: [], 2: [], 3: [] },
+      trumpBroken: false,
+    });
+    expect(whyNotPlayable(state, 0, cardId("S", "A"))).toBe("Spades have not been broken yet");
   });
 });

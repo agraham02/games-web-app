@@ -16,9 +16,11 @@
     "check": "npm run typecheck && npm run lint && npm run test",
     "dev:next": "next dev",
     "harness": "tsx scripts/ws-harness.ts",
+    "measure": "tsx scripts/measure-table.ts",
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@base-ui/react": "^1.8.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cross-env": "^10.1.0",

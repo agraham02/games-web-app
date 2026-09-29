@@ -18,6 +18,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { PieceId } from "@/engine/types";
+import { createRng } from "@/engine/rng";
+import { createDominoes, placements, startRound } from "@/games/dominoes/rules";
 import type { ChainEnd, DomAction, DomState } from "@/games/dominoes/types";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { tapTile } from "./table";
@@ -134,5 +136,38 @@ describe("tapTile", () => {
     tapTile("6-6", live(board([])), null, on);
 
     expect(on.play).toHaveBeenCalledWith("6-6", "right");
+  });
+});
+
+describe("how many taps a tile takes on a touchscreen", () => {
+  // Touch previews a piece on its first tap and acts on its second, so a
+  // mis-tap cannot play a tile. That gate is right for a tile a tap PLAYS,
+  // and wrong for one a tap only picks up: with the end still to choose, a
+  // two-end tile took three taps (reported 2026-09-28). `instantAct` is how
+  // a placement opts out of the gate.
+  function dealt(): DomState {
+    const rng = createRng(3);
+    const def = createDominoes({ target: 61 });
+    const { state } = startRound(def.setup({ seats: 2, rng }), rng);
+    return {
+      ...state,
+      turn: 0,
+      chain: [{ id: "5-3", x: 0, y: 0, rot: 0, a: 3, b: 5 }],
+      hands: { 0: ["5-3", "3-1", "6-6"], 1: ["4-4"] },
+    } as DomState;
+  }
+
+  it("picks up a tile that fits both ends on the first tap", () => {
+    expect(placements(dealt(), 0)["5-3"]?.instantAct).toBe(true);
+  });
+
+  it("keeps the preview tap for a tile the tap would play", () => {
+    const view = placements(dealt(), 0);
+    expect(view["3-1"]?.instantAct).toBeUndefined();
+    expect(view["6-6"]?.instantAct).toBeUndefined();
+  });
+
+  it("marks nothing when it is not your turn", () => {
+    expect(placements({ ...dealt(), turn: 1 }, 0)["5-3"]?.instantAct).toBeUndefined();
   });
 });

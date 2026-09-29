@@ -30,6 +30,20 @@ export type RoomPhase =
   /** Another tab for this identity took the connection. */
   | "superseded";
 
+/**
+ * Why this client is not in the room it was in, and which room that was.
+ *
+ * Kept, not announced: a toast of "They did not let you in" landed on top
+ * of the invitation it was answering and was gone in four seconds, leaving
+ * an unexplained form behind. The entry form shows it, for as long as it is
+ * the latest thing that happened (`RoomEntryForm`'s `notice`), and a leave
+ * the player asked for sends them home instead.
+ */
+export interface Farewell {
+  reason: "left" | "kicked" | "room-closed" | "denied";
+  code: string | null;
+}
+
 export interface RoomApi {
   phase: RoomPhase;
   status: ConnectionStatus;
@@ -37,6 +51,8 @@ export interface RoomApi {
   /** The code we are waiting on approval for, while `phase === "pending"`. */
   pendingCode: string | null;
   error: { code: ServerErrorCode; message: string } | null;
+  /** The last way out of a room; cleared by the next room, knock or attempt. */
+  farewell: Farewell | null;
   clearError: () => void;
   /** Takes the connection back from another tab. See `phase: "superseded"`. */
   resume: () => void;
@@ -60,8 +76,9 @@ export interface RoomApi {
     seats: number,
     difficulty: BotDifficulty,
   ) => void;
-  assignTeam: (session: string, team: number) => void;
-  randomizeTeams: () => void;
+  /** Leader only: the whole seating plan, `null` for a bot's seat. */
+  arrangeSeats: (plan: (string | null)[]) => void;
+  shuffleSeats: () => void;
   startGame: () => void;
   enterGame: (as?: "player" | "spectator") => void;
   exitGame: () => void;
@@ -76,7 +93,18 @@ export function useRoom(): RoomApi {
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [frame, setFrame] = useState<FrameView | null>(null);
   const [error, setError] = useState<{ code: ServerErrorCode; message: string } | null>(null);
+  const [farewell, setFarewell] = useState<Farewell | null>(null);
+  /** The room we are in or knocking on, for `farewell` to name. Read inside
+   * the message handler, which is created once and would see stale state. */
+  const codeRef = useRef<string | null>(null);
   const [greeted, setGreeted] = useState(false);
+  /**
+   * The server said this identity is still in a room, and the room itself
+   * has not arrived yet. It follows `hello` a moment later, and in that gap
+   * the page drew the join form ("You have been invited…") on every reload
+   * of a room (seen in Chrome, 2026-09-26).
+   */
+  const [awaitingRoom, setAwaitingRoom] = useState(false);
 
   // The newest frame wins, always. An older one arriving late (or a
   // re-render racing a burst) must never roll the table backwards, and
@@ -90,6 +118,7 @@ export function useRoom(): RoomApi {
         switch (message.t) {
           case "hello":
             setGreeted(true);
+            setAwaitingRoom(message.inRoom);
             // The server has just said whether this identity is still in a
             // room, and a reconnect is the only time it can say no while we
             // are showing one. `connection` already drops its replay cache
@@ -112,8 +141,11 @@ export function useRoom(): RoomApi {
             break;
 
           case "room":
+            setAwaitingRoom(false);
             setRoom(message.room);
             setPendingCode(null);
+            setFarewell(null);
+            codeRef.current = message.room.code;
             // Whatever was last refused, it is moot: we are in a room and
             // the server is talking to us. Nothing else ever cleared this,
             // so a failed join left "no room with that code" sitting under
@@ -139,29 +171,25 @@ export function useRoom(): RoomApi {
             break;
 
           case "pending":
+            setAwaitingRoom(false);
             setPendingCode(message.code);
             setRoom(null);
+            setFarewell(null);
+            codeRef.current = message.code;
             break;
 
           case "left":
+            setAwaitingRoom(false);
             setRoom(null);
             setFrame(null);
             setPendingCode(null);
             lastSeq.current = -1;
-            // Every reason is said out loud. Only "kicked" used to be,
-            // so being turned away from a private room — or having the
-            // room closed under you — dropped you back on the entry
-            // screen with no explanation at all.
-            announce(
-              message.reason === "kicked"
-                ? "You were removed"
-                : message.reason === "denied"
-                  ? "They did not let you in"
-                  : message.reason === "room-closed"
-                    ? "That room is closed"
-                    : "You left the room",
-              message.reason === "left" ? "info" : "bad",
-            );
+            // Every reason is said out loud — only "kicked" used to be, so
+            // being turned away from a private room dropped you back on the
+            // entry screen with no explanation at all. Said on the FORM now
+            // (see `Farewell`), rather than as a toast over it.
+            setFarewell({ reason: message.reason, code: codeRef.current });
+            codeRef.current = null;
             break;
 
           case "notice":
@@ -186,6 +214,7 @@ export function useRoom(): RoomApi {
               announce(message.message || "that move is no longer available", "bad");
               break;
             }
+            setAwaitingRoom(false);
             setError({ code: message.code, message: message.message });
             break;
 
@@ -212,7 +241,7 @@ export function useRoom(): RoomApi {
         ? "in-room"
         : pendingCode
           ? "pending"
-          : greeted && status === "open"
+          : greeted && status === "open" && !awaitingRoom
             ? "idle"
             : "connecting";
 
@@ -225,10 +254,21 @@ export function useRoom(): RoomApi {
       frame,
       error,
       clearError: () => setError(null),
+      farewell,
       resume: () => connection.resume(),
       send,
-      createRoom: (name) => send({ t: "createRoom", name }),
-      joinRoom: (code, name) => send({ t: "joinRoom", code: code.toUpperCase(), name }),
+      // A new attempt clears the last one's answer, so a refusal that is
+      // about to be repeated is not still on screen while it is asked again.
+      createRoom: (name) => {
+        setError(null);
+        setFarewell(null);
+        send({ t: "createRoom", name });
+      },
+      joinRoom: (code, name) => {
+        setError(null);
+        setFarewell(null);
+        send({ t: "joinRoom", code: code.toUpperCase(), name });
+      },
       leaveRoom: () => send({ t: "leaveRoom" }),
       withdraw: () => send({ t: "withdraw" }),
       rename: (name) => send({ t: "rename", name }),
@@ -239,13 +279,13 @@ export function useRoom(): RoomApi {
       deny: (session) => send({ t: "deny", session }),
       selectGame: (gameId, settings, seats, difficulty) =>
         send({ t: "selectGame", gameId, settings, seats, difficulty }),
-      assignTeam: (session, team) => send({ t: "assignTeam", session, team }),
-      randomizeTeams: () => send({ t: "randomizeTeams" }),
+      arrangeSeats: (plan) => send({ t: "arrangeSeats", plan }),
+      shuffleSeats: () => send({ t: "shuffleSeats" }),
       startGame: () => send({ t: "startGame" }),
       enterGame: (as) => send({ t: "enterGame", as }),
       exitGame: () => send({ t: "exitGame" }),
       endGame: () => send({ t: "endGame" }),
     }),
-    [phase, status, room, pendingCode, frame, error, send, connection],
+    [phase, status, room, pendingCode, frame, error, farewell, send, connection],
   );
 }

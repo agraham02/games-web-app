@@ -32,7 +32,7 @@ import type {
   SetupOptions,
 } from "@/engine/types";
 import { shuffledDeck, standardDeck } from "@/games/_shared/cards";
-import { countWord, handDisplayOrder, nextRank, rankOf, rankPlural } from "./cards";
+import { claimWords, handDisplayOrder, nextRank, rankOf } from "./cards";
 import {
   CHALLENGE_GRACE_MS,
   CHALLENGE_MS_SOLO,
@@ -206,8 +206,10 @@ function reducePlay(state: BsState, cards: readonly PieceId[]): ReduceResult<BsS
     {
       t: "announce",
       actor: seat,
-      text: "claims " + countWord(playing.length) + " " + rankPlural(claimed),
-      selfText: "claim " + countWord(playing.length) + " " + rankPlural(claimed),
+      // `claimWords`, not a bare plural: "claims one aces" was the toast
+      // for every single-card play.
+      text: "claims " + claimWords(playing.length, claimed),
+      selfText: "claim " + claimWords(playing.length, claimed),
       tone: "info",
     },
   ];
@@ -628,6 +630,11 @@ export function placements(state: BsState, viewer: SeatId): PlacementMap {
         count: ordered.length,
         faceUp: own,
         fanned: own,
+        // A hand tap only picks a card for the claim — Play commits it — so
+        // the touch preview-then-confirm gate is wrong here: it made a card
+        // take two taps to pick (see `Placement.instantAct`). Rummy's hand is
+        // the same.
+        instantAct: own ? true : undefined,
       };
     });
   }

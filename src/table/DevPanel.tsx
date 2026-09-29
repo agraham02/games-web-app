@@ -60,7 +60,10 @@ export function DevPanel({
   onDebugStateChange,
   scenarios,
 }: DevPanelProps) {
-  const [open, setOpen] = useState(true);
+  // Starts collapsed to its "Dev" pill: open, it covered the top-left seat
+  // and half the hand on a phone in every screenshot of a table, and it is
+  // the one piece of chrome no player ever sees.
+  const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const settings = useDevSettings();
   // `dragListener={false}` + this is what makes ONLY the title bar (not

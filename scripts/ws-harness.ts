@@ -27,6 +27,16 @@ const BASE = process.env.HARNESS_URL ?? "http://localhost:3000";
 const WS_URL = BASE.replace(/^http/, "ws") + "/ws";
 const PROTOCOL = 1;
 
+/**
+ * How many 100ms ticks a scenario waits for a Spades table to reach one of
+ * its two people. The seating plan seats people in join order, so two sit
+ * side by side (seats 0 and 1) and the bots after them can take two turns in
+ * a row — each spaced by the last frame's playback (the whole deal, first),
+ * its think and the 900ms hold. That is several seconds, and the 4s this
+ * used to allow failed about one run in three, in CI too.
+ */
+const HUMAN_TURN_TICKS = 150;
+
 /* ============================================================
    A scriptable client
    ============================================================ */
@@ -1017,7 +1027,7 @@ async function main(): Promise<void> {
 
     // Wait until the table is genuinely parked on one of the two humans.
     let onTurn: Client | undefined;
-    for (let tick = 0; tick < 40 && !onTurn; tick++) {
+    for (let tick = 0; tick < HUMAN_TURN_TICKS && !onTurn; tick++) {
       const table = (await dump(code)).table as { currentSeat: number | null } | null;
       onTurn = [a, b].find((c) => seatOf.get(c) === table?.currentSeat);
       if (!onTurn) await sleep(100);
@@ -1090,7 +1100,7 @@ async function main(): Promise<void> {
     for (const c of [a, b]) seatOf.set(c, (c.latest("frame")!.frame as { seat: number }).seat);
 
     let onTurn: Client | undefined;
-    for (let tick = 0; tick < 40 && !onTurn; tick++) {
+    for (let tick = 0; tick < HUMAN_TURN_TICKS && !onTurn; tick++) {
       const table = (await dump(code)).table as { currentSeat: number | null } | null;
       onTurn = [a, b].find((c) => seatOf.get(c) === table?.currentSeat);
       if (!onTurn) await sleep(100);

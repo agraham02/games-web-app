@@ -5,7 +5,7 @@ import { createBs } from "@/games/bs/rules";
 import type { BsAction, BsState, PilePlay } from "@/games/bs/types";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
-import { barMode, canPlay, OFFLINE_VIEW } from "./table";
+import { barMode, canPlay, OFFLINE_VIEW, playerViews, turnSeat } from "./table";
 
 const def = createBs({ target: 2 });
 
@@ -104,5 +104,58 @@ describe("bs — when your hand is live", () => {
     expect(canPlay(OFFLINE_VIEW, live({ ...s, turn: 0 }))).toBe(false);
     // Once it is closed, your turn is your turn.
     expect(canPlay(OFFLINE_VIEW, live({ ...s, turn: 0, window: null }))).toBe(true);
+  });
+});
+
+describe("bs — who the turn line names", () => {
+  it("stays on the player whose play is under challenge while bots decide", () => {
+    // Reported 2026-09-28: the "…is thinking" line walked the answer queue,
+    // naming each bot as it decided whether to call. The pacing still waits
+    // on the queue (`currentSeat`); the line names the play's owner, as the
+    // pods do.
+    const s = state({
+      turn: 0,
+      plays: [PLAY],
+      window: { play: 0, pending: [{ seat: 1, ms: 400 }, { seat: 2, ms: 900 }] },
+    });
+    const queue = (seat: number) => ({ ...live(s), currentSeat: seat }) as GameRuntime<BsState, BsAction>;
+    expect(turnSeat(s, queue(1))).toBe(3);
+    expect(turnSeat({ ...s, window: { play: 0, pending: [{ seat: 2, ms: 900 }] } }, queue(2))).toBe(3);
+  });
+
+  it("follows the table again once the window closes", () => {
+    const s = state({ turn: 0, plays: [PLAY], window: null });
+    const onTurn = { ...live(s), currentSeat: 0 } as GameRuntime<BsState, BsAction>;
+    expect(turnSeat(s, onTurn)).toBe(0);
+  });
+});
+
+describe("bs — whose pod is lit", () => {
+  const lit = (s: BsState, l: GameRuntime<BsState, BsAction>) =>
+    playerViews(OFFLINE_VIEW, s, l)
+      .filter((v) => v.active)
+      .map((v) => v.seat);
+
+  it("stays on the play under challenge while the window is open", () => {
+    const s = state({
+      turn: 0,
+      plays: [PLAY],
+      window: { play: 0, pending: [{ seat: 1, ms: 400 }, { seat: 2, ms: 900 }] },
+    });
+    const deciding = { ...live(s), currentSeat: 1, pendingReveal: true, lastAction: { seat: 1, action: { t: "declineBs", seat: 1 } } };
+    expect(lit(s, deciding as GameRuntime<BsState, BsAction>)).toEqual([3]);
+  });
+
+  it("goes to the next player, not the seat whose Let it go closed the window", () => {
+    // Reported 2026-09-28: the last bot to let a play go lit up for a beat
+    // between the window and the next turn. Letting a play go shows nothing.
+    const s = state({ turn: 1, plays: [PLAY], window: null });
+    const closing = {
+      ...live(s),
+      currentSeat: 1,
+      pendingReveal: true,
+      lastAction: { seat: 2, action: { t: "declineBs", seat: 2 } },
+    };
+    expect(lit(s, closing as GameRuntime<BsState, BsAction>)).toEqual([1]);
   });
 });

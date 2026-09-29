@@ -20,6 +20,7 @@ import {
 } from "@/lab/LabShell";
 import { cardFixture, makePlayers } from "@/lab/fixtures";
 import { TableSurface } from "@/table/TableSurface";
+import { HandZone } from "@/table/HandZone";
 import { SeatRing } from "@/table/SeatRing";
 import { useTableStore } from "@/table/store";
 import { applyEventToTable } from "@/table/applyEvent";
@@ -127,13 +128,14 @@ export default function PhasesLab() {
             title="Spades"
           />
 
-          <TurnIndicator label="Your turn" show={phase === "turn"} />
+          <HandZone center={<TurnIndicator label="Your turn" show={phase === "turn"} />} />
 
           <RoundEndScorecard
             show={phase === "roundEnd"}
             eyebrow="Round 3 of 7"
             title="Hand complete"
             rows={rows}
+            target={500}
             note={{
               tone: "warn",
               title: "Bag warning",

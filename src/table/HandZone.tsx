@@ -1,7 +1,9 @@
 "use client";
 
 /**
- * The one row that owns the band directly above the hero's hand.
+ * The band directly above the viewer's hand, and everything in it: the
+ * turn line, the viewer's own readouts, and whatever they are being asked
+ * to decide right now.
  *
  * This exists because the alternative does not work. The obvious way to
  * put a score badge, a turn cue and a sort menu above the hand is three
@@ -17,6 +19,22 @@
  * so they never occupy it at all. One positioned container with real
  * layout flow inside it is the fix.
  *
+ * Three modes, one owner:
+ *
+ *  - **row** — `left` / `center` / `right`: ambient readouts, when there
+ *    is nothing to decide.
+ *  - **bar** — one row of actions for what you are doing right now; it
+ *    takes the row's place.
+ *  - **panel** — a decision that needs more than a row (Spades' bid,
+ *    Poker's betting), stacked above the row or bar.
+ *
+ * The table reserves the band's ONE ROW (`ResolveOptions.bandZone`), so
+ * nothing on the table is laid out under the turn line and the readouts. A
+ * `panel` is not reserved: it is a temporary decision, and reserving it
+ * re-laid the table out every time one opened — side seats jumping up for a
+ * bid panel that never went near them. It is drawn over the felt while it is
+ * open instead (the user's call, 2026-09-28).
+ *
  * THREE EQUAL COLUMNS, and the "equal" is load-bearing. A `flex-1`
  * centre item centres itself within the space LEFT OVER after its
  * siblings, which is not the row's centre unless the siblings happen to
@@ -27,33 +45,20 @@
  * bare `1fr`, so a wide item shrinks inside its third instead of
  * blowing the track out and pushing the centre off again.
  *
+ * The band hugs the hand rather than the screen: 48rem at most, centred.
+ * Spread across a wide window, "You", the turn line and the menu sat at
+ * three far edges of the screen — and in landscape the edges are where
+ * the lowest seat pods are.
+ *
  * The one positioned container is legitimate: it tracks the hand zone's
  * real runtime geometry, which moves per viewport and density.
  */
 
-import { SHORT_VIEWPORT_H } from "./geometry";
+import { handHeaderHeight } from "./geometry";
 import { useGeometry } from "./store";
 
-/**
- * Height reserved for this row, in px.
- *
- * Deliberately not per-DENSITY: callers need it BEFORE `resolveTable`
- * has run (it feeds `ResolveOptions.bottomZone`, which is an input to
- * the very geometry that would tell you the density), so a
- * density-aware value would be circular.
- *
- * It does vary by viewport HEIGHT, which is not circular — the caller
- * already knows that before asking for any geometry. On a short screen
- * every vertical pixel is contested and 64px for one row of chips is
- * more than the row needs; 44 still clears the tallest thing that goes
- * in it (a pill button). See `SHORT_VIEWPORT_H`.
- */
-export const HAND_HEADER_H = 64;
-export const HAND_HEADER_H_SHORT = 44;
-
-export function handHeaderHeight(viewportH: number): number {
-  return viewportH < SHORT_VIEWPORT_H ? HAND_HEADER_H_SHORT : HAND_HEADER_H;
-}
+// Re-exported: callers reserved the band by hand before the surface did.
+export { HAND_HEADER_H, HAND_HEADER_H_SHORT, handHeaderHeight } from "./geometry";
 
 export interface HandZoneProps {
   left?: React.ReactNode;
@@ -64,54 +69,83 @@ export interface HandZoneProps {
    *
    * This is how a game puts a contextual action bar above the hand
    * without introducing a second floating band that has to be kept from
-   * colliding with this one. The band has one owner and two modes:
-   * ambient readouts when there is nothing to decide, and the actions
-   * for your current selection when there is. Two things can never
-   * overlap here because there is only ever one thing.
+   * colliding with this one. Two things can never overlap here because
+   * there is only ever one thing.
    */
   bar?: React.ReactNode;
+  /**
+   * A decision bigger than a row, above the row or bar — drawn over the
+   * felt while it is open, never reserved (see the file's doc).
+   */
+  panel?: React.ReactNode;
+  /**
+   * The viewer holds no cards yet (a deal-size choice before the deal), so
+   * the band may use the empty hand strip too: its content is centred in
+   * the viewer's whole section — band and hand — rather than sitting on top
+   * of a strip with nothing in it.
+   */
+  overHand?: boolean;
 }
 
-export function HandZone({ left, center, right, bar }: HandZoneProps) {
+/**
+ * The words beside a bar's buttons — "Nothing to play", "Choose 2 cards".
+ * One style, so every game's bar reads as the same band.
+ */
+export function BandNote({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="min-w-0 shrink truncate text-[10px] font-bold tracking-wide text-brass-300 uppercase">
+      {children}
+    </span>
+  );
+}
+
+export function HandZone({ left, center, right, bar, panel, overHand = false }: HandZoneProps) {
   const geometry = useGeometry();
   if (!geometry) return null;
 
   const hand = geometry.zones.hand;
-  const headerH = handHeaderHeight(geometry.box.h);
-  const shell = {
-    left: hand.x,
-    width: hand.w,
-    top: hand.y - headerH,
-    height: headerH,
-  };
-
-  if (bar) {
-    return (
-      <div
-        className="pointer-events-none absolute z-1700 flex items-center justify-center px-3"
-        style={shell}
-      >
-        <div className="pointer-events-auto flex w-full min-w-0 items-center justify-center gap-2">
-          {bar}
-        </div>
-      </div>
-    );
-  }
+  const rowH = handHeaderHeight(geometry.box.h);
 
   return (
     <div
       // `pointer-events-none` on the shell so the felt and the cards
-      // underneath stay reachable through the row's empty thirds; each
-      // cell turns them back on for its own content.
-      className="pointer-events-none absolute z-1700 grid items-center gap-2 px-3"
+      // underneath stay reachable through the band's empty parts; each
+      // cell turns them back on for its own content. Whole class strings
+      // for the two modes — Tailwind reads source statically.
+      className={
+        overHand
+          ? "pointer-events-none absolute z-1700 flex flex-col items-center justify-center"
+          : "pointer-events-none absolute z-1700 flex flex-col items-center justify-end"
+      }
       style={{
-        ...shell,
-        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)",
+        left: hand.x,
+        width: hand.w,
+        bottom: geometry.box.h - (overHand ? hand.y + hand.h : hand.y),
+        minHeight: overHand ? rowH + hand.h : rowH,
       }}
     >
-      <div className="pointer-events-auto flex min-w-0 justify-start">{left}</div>
-      <div className="pointer-events-auto flex min-w-0 justify-center">{center}</div>
-      <div className="pointer-events-auto flex min-w-0 justify-end">{right}</div>
+      {/* The panel takes the hand's whole width, not the row's cap: a
+          decision laid out as one row on a laptop (Poker's) needs more. */}
+      {panel ? <div className="pointer-events-auto flex w-full justify-center px-3 pt-2">{panel}</div> : null}
+      <div className="flex w-full max-w-3xl flex-col px-3">
+        {bar ? (
+          <div
+            className="pointer-events-auto flex w-full min-w-0 items-center justify-center gap-2"
+            style={{ minHeight: rowH }}
+          >
+            {bar}
+          </div>
+        ) : (
+          <div
+            className="grid items-center gap-2"
+            style={{ minHeight: rowH, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)" }}
+          >
+            <div className="pointer-events-auto flex min-w-0 justify-start">{left}</div>
+            <div className="pointer-events-auto flex min-w-0 justify-center">{center}</div>
+            <div className="pointer-events-auto flex min-w-0 justify-end">{right}</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

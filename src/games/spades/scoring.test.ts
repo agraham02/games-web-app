@@ -227,3 +227,41 @@ describe("match-level constants", () => {
     expect(AUTO_LOSS_SCORE).toBeLessThan(0);
   });
 });
+
+describe("scoreRound — the parts a round card shows", () => {
+  /**
+   * The round card says how a team's score was made from `parts`, not from
+   * arithmetic of its own — so the parts have to add up to the delta in
+   * every case scoring knows: a contract made or set, bags, a nil made or
+   * failed, a blind contract, and crossing the bag penalty.
+   */
+  it("always adds up to the team's delta", () => {
+    const cases: Array<{ bids: Record<SeatId, Bid>; won: Record<SeatId, number>; prior?: Record<SeatId, number> }> = [
+      { bids: { 0: bid(3), 1: bid(2), 2: bid(2), 3: bid(2) }, won: { 0: 4, 1: 2, 2: 3, 3: 2 } },
+      { bids: { 0: bid(5), 1: bid(3), 2: bid(4), 3: bid(2) }, won: { 0: 3, 1: 4, 2: 3, 3: 3 } },
+      { bids: { 0: nil(), 1: bid(4), 2: bid(5), 3: bid(3) }, won: { 0: 0, 1: 4, 2: 5, 3: 4 } },
+      { bids: { 0: nil({ blind: true }), 1: bid(4), 2: bid(5), 3: bid(3) }, won: { 0: 1, 1: 3, 2: 6, 3: 3 } },
+      {
+        bids: { 0: bid(3), 1: bid(3), 2: bid(3), 3: bid(3) },
+        won: { 0: 5, 1: 1, 2: 4, 3: 3 },
+        prior: { 0: 8, 1: 0, 2: 8, 3: 0 },
+      },
+    ];
+    for (const { bids, won, prior } of cases) {
+      const { deltas, parts } = scoreRound(bids, won, prior ?? NO_BAGS);
+      for (const seat of [0, 1, 2, 3] as SeatId[]) {
+        const sum = (parts[seat] ?? []).reduce((n, p) => n + p.points, 0);
+        expect(sum, `seat ${seat}: ${JSON.stringify(parts[seat])}`).toBe(deltas[seat]);
+      }
+    }
+  });
+
+  it("names a crossed bag penalty", () => {
+    const { parts } = scoreRound(
+      { 0: bid(3), 1: bid(3), 2: bid(3), 3: bid(3) },
+      { 0: 5, 1: 1, 2: 4, 3: 3 },
+      { 0: 8, 1: 0, 2: 8, 3: 0 },
+    );
+    expect(parts[0]).toContainEqual({ label: "10 bags", points: -100 });
+  });
+});

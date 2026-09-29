@@ -27,7 +27,6 @@ import { GAMES } from "@/session/registry";
 import type { RummyAction, RummyState } from "@/games/rummy/types";
 import { botColour } from "@/games/_shared/botIdentity";
 import { GameHostView } from "@/table/GameHost";
-import { handHeaderHeight } from "@/table/HandZone";
 import { Button } from "@/ui/primitives/Button";
 import {
   RotateNotice,
@@ -43,13 +42,9 @@ import {
   type RummyView,
 } from "@/app/play/rummy/table";
 import { tintFor } from "../Roster";
-import {
-  awayFrom,
-  continueWaitingFor,
-  openingPosition,
-  useOnlineRuntime,
-} from "../useOnlineRuntime";
+import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { TableMenu } from "./TableMenu";
 
 export function RummyOnline({ api, room, frame }: OnlineTableProps) {
   const definition = useMemo(() => {
@@ -57,7 +52,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
     return entry.create(room.settings);
   }, [room.gameId, room.settings]);
 
-  const { vh, short, touch } = useViewport();
+  const { short, touch } = useViewport();
 
   const live = useOnlineRuntime<RummyState, RummyAction>({
     frame,
@@ -81,7 +76,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
     () => ({
       viewerSeat: frame.seat,
       nameFor: (seat: SeatId) =>
-        seat === frame.seat ? "You" : (frame.seatNames[seat] ?? `Bot ${seat + 1}`),
+        seat === frame.seat ? "You" : nameForSeat(frame, seat),
       colourFor: (seat: SeatId) => {
         const owner = room.members.find((m) => m.seat === seat);
         return owner ? tintFor(owner.session) : botColour(seat);
@@ -110,8 +105,24 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        menuActions={
+          <TableMenu
+            code={room.code}
+            spectator={frame.seat === null}
+            leader={room.youAreLeader}
+            onStepAway={() => {
+              // Not kept, unlike Spades' exchange: a bot plays this seat
+              // meanwhile, so a staged pickup would be a depth into a pile
+              // that is no longer the same pile.
+              clearSelection();
+              api.exitGame();
+            }}
+            onEndGame={api.endGame}
+          />
+        }
         live={live}
-        bottomZone={handHeaderHeight(vh) + SHEET_PEEK_H}
+        // The resting sheet, above the band every table reserves.
+        bottomZone={SHEET_PEEK_H}
         players={playerViews(view, room.seats)}
         standings={standings(view, room.seats)}
         stats={statsFor}
@@ -140,29 +151,6 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
           else's game too. */}
       {short ? <RotateNotice touch={touch} /> : null}
 
-      <div className="absolute top-2 right-2 z-1900 flex gap-2">
-        {room.youAreLeader ? (
-          <Button size="sm" tone="danger" onClick={api.endGame}>
-            End game
-          </Button>
-        ) : null}
-        <Button
-          size="sm"
-          onClick={() => {
-            // Cleared on the way out, like the summary screen's own exit
-            // already does. Not KEPT, deliberately, unlike Spades'
-            // exchange: stepping away hands this seat to a bot, which
-            // draws and discards, so a staged pickup restored on return
-            // would be a depth into a pile that is no longer the same
-            // pile. The selection is only meaningful for the turn it was
-            // made in.
-            clearSelection();
-            api.exitGame();
-          }}
-        >
-          {frame.seat === null ? "Stop watching" : "Step away"}
-        </Button>
-      </div>
     </div>
   );
 }

@@ -36,15 +36,12 @@ import {
   standings,
   statsFor,
   type SpadesView,
+  SPADES_SETTINGS,
 } from "@/app/play/spades/table";
 import { tintFor } from "../Roster";
-import {
-  awayFrom,
-  continueWaitingFor,
-  openingPosition,
-  useOnlineRuntime,
-} from "../useOnlineRuntime";
+import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
+import { TableMenu } from "./TableMenu";
 
 export function SpadesOnline({
   api,
@@ -88,7 +85,7 @@ export function SpadesOnline({
       // A spectator has no seat. `-1` matches no seat anywhere, which is
       // exactly the effect wanted: nothing on the table is "yours".
       viewerSeat: frame.seat ?? -1,
-      nameFor: (seat: SeatId) => frame.seatNames[seat] ?? `Bot ${seat + 1}`,
+      nameFor: (seat: SeatId) => nameForSeat(frame, seat),
       colourFor: (seat: SeatId) => {
         const owner = room.members.find((m) => m.seat === seat);
         return owner ? tintFor(owner.session) : botColour(seat);
@@ -113,6 +110,16 @@ export function SpadesOnline({
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        settings={SPADES_SETTINGS}
+        menuActions={
+          <TableMenu
+            code={room.code}
+            spectator={frame.seat === null}
+            leader={room.youAreLeader}
+            onStepAway={api.exitGame}
+            onEndGame={api.endGame}
+          />
+        }
         live={live}
         players={(state, l) => playerViews(view, state, l)}
         standings={(state, l, seats) => standings(view, state, l, seats)}
@@ -128,23 +135,6 @@ export function SpadesOnline({
         {(l) => <SpadesTable view={view} live={l} held={held} onClearHeld={putDown} />}
       </GameHostView>
 
-      {/*
-        The only exit from a game is back to the lobby — leaving the room
-        outright is a lobby action, per the spec. Deliberately a small
-        corner control rather than anything in the hand band: that band has
-        one owner (`HandZone`), and a second claimant on it is how the
-        layout starts fighting itself.
-      */}
-      <div className="absolute top-2 right-2 z-1900 flex gap-2">
-        {room.youAreLeader ? (
-          <Button size="sm" tone="danger" onClick={api.endGame}>
-            End game
-          </Button>
-        ) : null}
-        <Button size="sm" onClick={api.exitGame}>
-          {frame.seat === null ? "Stop watching" : "Step away"}
-        </Button>
-      </div>
     </div>
   );
 }

@@ -45,8 +45,9 @@ import {
   pileSize,
 } from "@/games/bs/state";
 import type { BsAction, BsState } from "@/games/bs/types";
+import { HandPan } from "@/table/HandPan";
 import { HandZone } from "@/table/HandZone";
-import type { SeatView } from "@/table/SeatRing";
+import type { SeatStat, SeatView } from "@/table/SeatRing";
 import { useTableStore } from "@/table/store";
 import { useHeldMarks } from "@/table/useHeldMarks";
 import { seatCue } from "@/table/turnCue";
@@ -236,10 +237,13 @@ export function BsTable({
 
   return (
     <>
+      {/* A wrong call takes the whole pile, so a hand here can outgrow the
+          screen; past a point it pans rather than compressing to slivers. */}
+      {view.viewerSeat >= 0 ? <HandPan count={(state.hands[view.viewerSeat] ?? []).length} /> : null}
       <HandZone
         bar={bar}
         left={<RankBadge state={state} />}
-        center={<TurnIndicator label={turnLabel(view, state)} show={!bar} inline />}
+        center={<TurnIndicator label={turnLabel(view, state)} show={!bar && yourMove(view, state)} />}
       />
     </>
   );
@@ -256,10 +260,13 @@ function RankBadge({ state }: { state: BsState }) {
     <HeroStatusBadge
       label={rankPluralTitle(state.rank)}
       detail={pile === 0 ? "pile empty" : `${pile} on the pile`}
-      side="left"
-      inline
     />
   );
+}
+
+/** The brass cue is the viewer's own; everybody else's turn is the quiet line. */
+function yourMove(view: BsView, state: BsState): boolean {
+  return state.pendingTake !== null ? state.pendingTake === view.viewerSeat : state.turn === view.viewerSeat;
 }
 
 function turnLabel(view: BsView, state: BsState): string {
@@ -387,10 +394,28 @@ function seatColour(view: BsView, seat: SeatId): string {
  * thing on the table: a player down to one or two is about to go out, and
  * that is what makes their next claim worth doubting whatever it is.
  */
-function seatMeta(state: BsState, seat: SeatId): string {
-  const cards = (state.hands[seat] ?? []).length;
-  const rounds = state.scores[seat] ?? 0;
-  return `${cards} card${cards === 1 ? "" : "s"} · ${rounds}`;
+/** A pod's numbers: cards still to get rid of, and rounds won. */
+function seatStats(state: BsState, seat: SeatId): SeatStat[][] {
+  return [
+    [{ label: "Cards", value: (state.hands[seat] ?? []).length }],
+    [{ label: "Rounds", value: state.scores[seat] ?? 0 }],
+  ];
+}
+
+/** Whose play is open to challenge right now, if any. */
+function challengedSeat(state: BsState): SeatId | null {
+  return state.window ? (state.plays[state.window.play]?.seat ?? null) : null;
+}
+
+/**
+ * The seat the "…is thinking" line names (`GameHostProps.turnSeat`). Through
+ * a window that is the player whose play is under challenge — the seat the
+ * pods keep lit (see `playerViews`). The line used to follow `currentSeat`,
+ * which walks the answer queue, so it named every bot in turn as each one
+ * decided whether to call (reported 2026-09-28).
+ */
+export function turnSeat(state: BsState, live: Live): SeatId | null {
+  return challengedSeat(state) ?? live.currentSeat;
 }
 
 export function playerViews(view: BsView, state: BsState, live: Live): SeatView[] {
@@ -406,19 +431,30 @@ export function playerViews(view: BsView, state: BsState, live: Live): SeatView[
   // viewer, who was neither the next nor the last to play (reported
   // 2026-09-25). The play under challenge is the thing everyone is looking
   // at; the ring says so until the window is over.
-  const challenged = state.window ? (state.plays[state.window.play]?.seat ?? null) : null;
+  const challenged = challengedSeat(state);
+  // Letting a play go shows nothing — it IS nothing (see `reduceDecline`) —
+  // so the seat whose "Let it go" closed a window has no turn on show. Lit
+  // as though it had, its pod glowed for a beat between the window and the
+  // next player's turn, while the line already named that player (reported
+  // 2026-09-28). The table is on whoever plays next.
+  const letGo = live.lastAction?.action.t === "declineBs";
+  const cueFor = (seat: SeatId) =>
+    challenged !== null
+      ? { active: seat === challenged, thinking: false }
+      : letGo
+        ? { active: seat === live.currentSeat, thinking: false }
+        : seatCue(live, seat);
   for (let i = 0; i < state.seats; i++) {
     const seat = i as SeatId;
     if (seat === view.viewerSeat) continue;
     // Otherwise "who just moved" and "who are we waiting on", which
     // `seatCue` answers both of.
-    const cue =
-      challenged !== null ? { active: seat === challenged, thinking: false } : seatCue(live, seat);
+    const cue = cueFor(seat);
     out.push({
       seat,
       name: view.nameFor(seat),
       colour: view.colourFor(seat),
-      meta: seatMeta(state, seat),
+      stats: seatStats(state, seat),
       active: cue.active,
       thinking: cue.thinking,
       winning: state.result?.winner === seat,
@@ -484,6 +520,7 @@ export function roundSummary(view: BsView, state: BsState) {
     title: won ? "You take the round" : `${view.nameFor(result.winner)} takes the round`,
     rows,
     note,
+    target: state.target,
   };
 }
 

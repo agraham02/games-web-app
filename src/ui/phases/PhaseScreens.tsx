@@ -15,6 +15,11 @@ import { AnimatePresence, motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
 import { AnimatedNumber } from "@/ui/primitives/AnimatedNumber";
 import { TRANSITIONS } from "@/motion/presets";
+import { Stats, type StatLines } from "@/ui/primitives/Stats";
+import { useTableStore } from "@/table/store";
+import { Button } from "@/ui/primitives/Button";
+import { useState } from "react";
+import { Avatar } from "@/ui/primitives/Avatar";
 
 /* ============================================================
    Round intro — a brief title card over the deal.
@@ -86,42 +91,35 @@ export function RoundIntro({
  * point. The pulsing halo behind the label reuses the same
  * opacity/scale pulse language as SeatRing's `ThinkingRing` (a bot
  * deliberating), so the two read as one consistent "something is
- * happening here, act or wait" motion vocabulary across every game that
- * uses this shared component — which, as of writing, is all of them.
+ * happening here, act or wait" motion vocabulary across every game.
+ *
+ * A layout child of `HandZone`'s band and nothing else. It used to have a
+ * second, free-floating mode — `absolute`, `calc()`'d against
+ * `--hand-zone`, and in a z-index contest with the badge beside it — which
+ * is exactly what the band exists to replace.
  */
-export function TurnIndicator({
-  label,
-  show,
-  inline = false,
-}: {
-  label: string;
-  show: boolean;
-  /**
-   * Render as an ordinary layout child — no positioning, no z-index of
-   * its own — for use inside `HandZone`'s grid. See that component for
-   * why placing this band's contents by hand is the thing being fixed.
-   * Defaults false, so every pre-existing call site is untouched.
-   */
-  inline?: boolean;
-}) {
+export function TurnIndicator({ label, show }: { label: string; show: boolean }) {
+  // Everybody else's turn, said quietly in the same place: who the table is
+  // waiting on (see `TableState.turnLine`). Nothing on a table with no host.
+  const waiting = useTableStore((s) => s.turnLine);
   return (
-    <AnimatePresence>
+    <AnimatePresence mode="popLayout" initial={false}>
+      {!show && waiting ? (
+        <motion.div
+          key={`waiting:${waiting}`}
+          className="pointer-events-none min-w-0 truncate px-1 py-1 text-center text-[10px] font-bold tracking-widest text-bone-400 uppercase"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: TRANSITIONS.uiExit }}
+          transition={TRANSITIONS.uiEnter}
+        >
+          {waiting}
+        </motion.div>
+      ) : null}
       {show ? (
         <motion.div
-          // z-1700 when free-floating, above HeroStatusBadge's z-1600 —
-          // on a narrow phone the label can wrap to 2 lines and reach
-          // far enough left to brush the hero's own left-anchored badge,
-          // and at equal z-index the badge (rendered later in every
-          // game's table overlay) won that tie and covered the turn cue.
-          // This is the one that says "act now"; it should never lose a
-          // stacking fight with an ambient, passive readout. Both were
-          // raised past a bottom sheet's z-1500 for the same reason.
-          className={
-            inline
-              ? "pointer-events-none min-w-0"
-              : "pointer-events-none absolute left-1/2 z-1700 -translate-x-1/2"
-          }
-          style={inline ? undefined : { bottom: "calc(var(--hand-zone, 150px) + 8px)" }}
+          key="your-turn"
+          className="pointer-events-none min-w-0"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
@@ -131,9 +129,8 @@ export function TurnIndicator({
               text-align governs how a BLOCK's own line boxes wrap, and an
               inline element sets none of its own; centering it on the
               span was a no-op, which is why a wrapped 2-line label (a
-              real case on a narrow phone) rendered left-ragged despite
-              the outer block itself being screen-centered. */}
-          <div className={`relative py-1 text-center ${inline ? "px-1" : "px-3"}`}>
+              real case on a narrow phone) rendered left-ragged. */}
+          <div className="relative px-1 py-1 text-center">
             <motion.span
               aria-hidden
               className="pointer-events-none absolute -inset-5 rounded-full"
@@ -144,13 +141,8 @@ export function TurnIndicator({
               animate={{ opacity: [0.35, 1, 0.35], scale: [0.9, 1.08, 0.9] }}
               transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
             />
-            {/* Tighter type inline: a HandZone column is roughly a third
-                of the hand's width, far narrower than the free-floating
-                badge's whole-screen run. */}
             <span
-              className={`relative font-bold text-brass-300 uppercase ${
-                inline ? "text-[10px] tracking-widest" : "text-[11px] tracking-[0.16em]"
-              }`}
+              className="relative text-[10px] font-bold tracking-widest text-brass-300 uppercase"
               style={{ textShadow: "0 0 10px rgb(212 175 106 / 0.7)" }}
             >
               {label}
@@ -168,57 +160,53 @@ export function TurnIndicator({
    ============================================================ */
 
 /**
- * The hero's own always-visible readout of whatever this game's
- * central "stake" is — Spades' bid + tricks won, a future Poker's
- * current bet, a future Rummy's deadwood count. Every OTHER seat gets
- * this on their pod's `meta` string (SeatRing); the hero has no pod at
- * all, so this exists to carry the same rung-1 information for them.
+ * The hero's own always-visible readout of whatever this game's central
+ * "stake" is — Spades' bid and tricks won, Poker's stack, Rummy's score.
+ * Every OTHER seat carries this on its pod (SeatRing); the hero has no pod
+ * at all, so this carries the same rung-1 information for them.
  *
- * Anchored to the hand zone's top edge, offset to one side so it never
- * collides with `TurnIndicator`'s centred text — deliberately close to
- * the cards it's describing rather than a distant corner.
+ * A layout child of `HandZone`'s band, beside the cards it describes —
+ * see `TurnIndicator` for the positioned mode it no longer has.
  */
 export function HeroStatusBadge({
   label,
   detail,
+  stats,
   show = true,
-  side = "left",
-  inline = false,
 }: {
-  /** e.g. "Your bid" */
-  label: string;
-  /** e.g. "4 (blind) · won 2" */
-  detail: string;
+  /** e.g. "Your hand" — with `detail`, for a readout that is words. */
+  label?: string;
+  /** e.g. "Pair of 7s" */
+  detail?: string;
+  /**
+   * Labelled numbers — the same vocabulary the game's pods use (`Stats`),
+   * so the viewer's own numbers read like everybody else's. Up to two lines.
+   */
+  stats?: StatLines;
   show?: boolean;
-  side?: "left" | "right";
-  /** Render as a plain layout child, for `HandZone`. See TurnIndicator. */
-  inline?: boolean;
 }) {
   return (
     <AnimatePresence>
       {show ? (
         <motion.div
-          // z-1600 when free-floating, deliberately BELOW
-          // TurnIndicator's z-1700 — see that component's own doc. This
-          // badge is an ambient, always-on readout; the turn cue is the
-          // one thing that must never be hidden if the two brush against
-          // each other on a narrow screen. Both sit above a bottom
-          // sheet's z-1500.
           className={
-            inline
-              ? "min-w-0 truncate rounded-full bg-felt-950/78 px-2.5 py-1.5 text-[10px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm"
-              : `pointer-events-none absolute z-1600 rounded-full bg-felt-950/78 px-3.5 py-2 text-[11px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm ${
-                  side === "left" ? "left-3" : "right-3"
-                }`
+            stats
+              ? "flex min-w-0 flex-col gap-1 rounded-xl bg-felt-950/78 px-2.5 py-1.5 text-[10px] ring-1 ring-brass-400/30 backdrop-blur-sm"
+              : "min-w-0 truncate rounded-full bg-felt-950/78 px-2.5 py-1.5 text-[10px] font-bold text-brass-300 ring-1 ring-brass-400/30 backdrop-blur-sm"
           }
-          style={inline ? undefined : { bottom: "calc(var(--hand-zone, 150px) + 10px)" }}
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 6 }}
           transition={TRANSITIONS.ui}
         >
-          <span className="text-bone-300">{label}: </span>
-          {detail}
+          {stats ? (
+            <Stats lines={stats} />
+          ) : (
+            <>
+              <span className="text-bone-300">{label}: </span>
+              {detail}
+            </>
+          )}
         </motion.div>
       ) : null}
     </AnimatePresence>
@@ -248,6 +236,23 @@ export interface ScoreRow {
    * has, unaffected.
    */
   team?: string | number;
+  /** The viewer's own row — highlighted. Defaults to a row named "You". */
+  you?: boolean;
+}
+
+const isYou = (r: ScoreRow) => r.you ?? r.name === "You";
+
+/**
+ * "First to 10 · Mia 3" — how far the match has to go, and who is nearest.
+ * A team is named by its members. A tie at the top says so rather than
+ * picking one of them.
+ */
+function progressLine(groups: readonly (readonly ScoreRow[])[], target: number): string {
+  const [top, next] = groups;
+  if (!top?.[0]) return `First to ${target}`;
+  const total = top[0].total;
+  if (next?.[0] && next[0].total === total) return `First to ${target} · tied at ${total}`;
+  return `First to ${target} · ${top.map((r) => r.name).join(" & ")} ${total}`;
 }
 
 export function RoundEndScorecard({
@@ -259,6 +264,7 @@ export function RoundEndScorecard({
   onContinue,
   continueLabel = "Next round",
   waiting,
+  target,
 }: {
   show: boolean;
   eyebrow: string;
@@ -272,47 +278,82 @@ export function RoundEndScorecard({
    * "Waiting for Ada to continue". A room's round is the leader's to deal.
    */
   waiting?: string;
+  /** What the match is played to — adds the progress line. */
+  target?: number;
 }) {
+  // Lowered to a strip, so the table under it can be read — a showdown's
+  // board, the last trick, the melds. Every new card opens full.
+  const [peek, setPeek] = useState(false);
+  const [shownFor, setShownFor] = useState(show);
+  if (show !== shownFor) {
+    setShownFor(show);
+    if (show) setPeek(false);
+  }
+
+  // Highest total first: the order a player reads a scoreboard in.
+  const groups = groupScoreRows(rows).sort((a, b) => (b[0]?.total ?? 0) - (a[0]?.total ?? 0));
+
   return (
-    <PhaseSheet show={show}>
-      <div className="flex flex-col items-center gap-1.5 pt-2">
-        <span className="eyebrow">{eyebrow}</span>
-        <h2 className="font-display text-2xl tracking-wider text-brass-300">
-          {title}
-        </h2>
-        <span className="rule-brass mt-1 w-32" />
-      </div>
-
-      <div className="mt-6 flex flex-col">
-        {groupScoreRows(rows).map((group, i) => (
-          <ScoreRowGroup key={group.map((r) => r.seat).join("-")} rows={group} index={i} />
-        ))}
-      </div>
-
-      {note ? (
-        <div
-          className={`mt-6 rounded-xl p-3.5 ring-1 ${
-            note.tone === "warn"
-              ? "bg-warn/9 ring-warn/28"
-              : "bg-bone-50/5 ring-bone-50/12"
-          }`}
-        >
-          <div
-            className={`mb-1 text-[11px] font-bold ${note.tone === "warn" ? "text-warn" : "text-bone-200"}`}
-          >
-            {note.title}
-          </div>
-          <div className="text-[11px] text-bone-200">{note.body}</div>
+    <PhaseSheet show={show} strip={peek}>
+      {peek ? (
+        <div className="flex items-center justify-between gap-3">
+          <span className="min-w-0 truncate font-display text-lg tracking-wide text-brass-300">
+            {title}
+          </span>
+          <Button size="sm" onClick={() => setPeek(false)}>
+            Show scores
+          </Button>
         </div>
-      ) : null}
+      ) : (
+        <>
+          <div className="flex flex-col items-center gap-1.5 pt-2">
+            <span className="eyebrow">{eyebrow}</span>
+            <h2 className="font-display text-2xl tracking-wider text-brass-300">{title}</h2>
+            {target !== undefined ? (
+              <span className="text-xs font-semibold text-bone-400">{progressLine(groups, target)}</span>
+            ) : null}
+            <span className="rule-brass mt-1 w-32" />
+          </div>
 
-      {waiting ? (
-        <p className="mt-6 text-center text-sm font-semibold text-bone-300" role="status">
-          {waiting}
-        </p>
-      ) : onContinue ? (
-        <PrimaryAction onClick={onContinue}>{continueLabel}</PrimaryAction>
-      ) : null}
+          <div className="mt-6 flex flex-col">
+            {groups.map((group, i) => (
+              <ScoreRowGroup key={group.map((r) => r.seat).join("-")} rows={group} index={i} />
+            ))}
+          </div>
+
+          {note ? (
+            <div
+              className={`mt-6 rounded-xl p-3.5 ring-1 ${
+                note.tone === "warn" ? "bg-warn/9 ring-warn/28" : "bg-bone-50/5 ring-bone-50/12"
+              }`}
+            >
+              <div
+                className={`mb-1 text-[11px] font-bold ${note.tone === "warn" ? "text-warn" : "text-bone-200"}`}
+              >
+                {note.title}
+              </div>
+              <div className="text-[11px] text-bone-200">{note.body}</div>
+            </div>
+          ) : null}
+
+          {waiting ? (
+            <p className="mt-6 text-center text-sm font-semibold text-bone-300" role="status">
+              {waiting}
+            </p>
+          ) : onContinue ? (
+            <Button tone="primary" className="mt-7 w-full" onClick={onContinue}>
+              {continueLabel}
+            </Button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setPeek(true)}
+            className="mt-3 w-full text-center text-xs text-bone-400 underline-offset-4 hover:text-bone-200 hover:underline"
+          >
+            Look at the table
+          </button>
+        </>
+      )}
     </PhaseSheet>
   );
 }
@@ -355,20 +396,16 @@ function ScoreRowGroup({ rows, index }: { rows: readonly ScoreRow[]; index: numb
   if (!first) return null;
   return (
     <motion.div
-      className="grid grid-cols-[22px_1fr_auto_auto] items-center gap-2.5 border-b border-bone-50/7 py-2.5 last:border-b-0"
+      className={`grid grid-cols-[22px_1fr_auto_auto] items-center gap-2.5 border-b border-bone-50/7 py-2.5 last:border-b-0 ${
+        rows.some(isYou) ? "-mx-2 rounded-lg bg-brass-400/8 px-2" : ""
+      }`}
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ ...TRANSITIONS.ui, delay: 0.06 * index }}
     >
       <span className="flex flex-col gap-1.5">
         {rows.map((r) => (
-          <span
-            key={r.seat}
-            className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-[9px] font-bold text-felt-950"
-            style={{ background: r.colour }}
-          >
-            {r.name.slice(0, 2).toUpperCase()}
-          </span>
+          <Avatar key={r.seat} name={r.name} colour={r.colour} size={22} />
         ))}
       </span>
       <span className="flex flex-col gap-1.5">
@@ -386,8 +423,12 @@ function ScoreRowGroup({ rows, index }: { rows: readonly ScoreRow[]; index: numb
           </span>
         ))}
       </span>
+      {/* Green is for a gain. "+0" in green read as a win for everybody
+          who scored nothing, so a zero is neutral. */}
       <span
-        className={`text-[13px] font-bold ${first.delta >= 0 ? "text-win" : "text-loss"}`}
+        className={`text-[13px] font-bold ${
+          first.delta > 0 ? "text-win" : first.delta < 0 ? "text-loss" : "text-bone-400"
+        }`}
       >
         {first.delta >= 0 ? "+" : "−"}
         {Math.abs(first.delta)}
@@ -413,6 +454,7 @@ export function GameEndSummary({
   stats,
   onRematch,
   onLobby,
+  children,
 }: {
   show: boolean;
   winnerName: string;
@@ -422,6 +464,8 @@ export function GameEndSummary({
   stats?: ReadonlyArray<{ label: string; value: string }>;
   onRematch?: () => void;
   onLobby?: () => void;
+  /** Under the standings: a room's settle-up, for a game played for money. */
+  children?: React.ReactNode;
 }) {
   return (
     <PhaseSheet show={show}>
@@ -437,17 +481,14 @@ export function GameEndSummary({
       <div className="relative flex flex-col items-center gap-2 pt-4">
         <span className="eyebrow text-brass-400">Winner</span>
         <motion.span
-          className="flex h-[74px] w-[74px] items-center justify-center rounded-full text-2xl font-bold text-felt-950"
-          style={{
-            background: winnerColour,
-            boxShadow:
-              "0 0 0 3px var(--color-brass-500), 0 0 44px rgb(212 175 106 / 0.55)",
-          }}
-          initial={{ scale: 0.7, opacity: 0 }}
+          className="rounded-full"
+          style={{ boxShadow: "0 0 0 3px var(--color-brass-500), 0 0 44px rgb(212 175 106 / 0.55)" }}
+          initial={{ scale: 0.85, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 220, damping: 18 }}
+          // The UI tween like everything else here — the spring overshot.
+          transition={TRANSITIONS.uiEnterSlow}
         >
-          {winnerName.slice(0, 2).toUpperCase()}
+          <Avatar name={winnerName} colour={winnerColour} size={74} />
         </motion.span>
         <h2 className="mt-1 font-display text-3xl tracking-wider text-brass-300">
           {winnerName}
@@ -502,24 +543,23 @@ export function GameEndSummary({
         </>
       ) : null}
 
+      {children ? (
+        <>
+          <span className="rule-brass my-5 block" />
+          {children}
+        </>
+      ) : null}
+
       <div className="mt-7 flex gap-2.5">
         {onLobby ? (
-          <button
-            type="button"
-            onClick={onLobby}
-            className="flex-1 rounded-lg bg-bone-50/6 px-5 py-3.5 text-sm font-semibold text-bone-200 ring-1 ring-bone-50/16"
-          >
+          <Button className="flex-1" onClick={onLobby}>
             Lobby
-          </button>
+          </Button>
         ) : null}
         {onRematch ? (
-          <button
-            type="button"
-            onClick={onRematch}
-            className="flex-[1.4] rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-5 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
-          >
+          <Button tone="primary" className="flex-[1.4]" onClick={onRematch}>
             Rematch
-          </button>
+          </Button>
         ) : null}
       </div>
     </PhaseSheet>
@@ -536,24 +576,32 @@ export function GameEndSummary({
  */
 function PhaseSheet({
   show,
+  strip = false,
   children,
 }: {
   show: boolean;
+  /** Lowered to a bar at the bottom, with no backdrop over the table. */
+  strip?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <AnimatePresence>
       {show ? (
         <motion.div
-          className="absolute inset-0 z-3000 flex items-end justify-center sm:items-center"
+          className={`absolute inset-0 z-3000 flex items-end justify-center ${
+            strip ? "pointer-events-none" : "sm:items-center"
+          }`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={TRANSITIONS.ui}
         >
-          <div className="absolute inset-0 bg-felt-950/70 backdrop-blur-sm" />
+          {strip ? null : <div className="absolute inset-0 bg-felt-950/70 backdrop-blur-sm" />}
           <motion.div
-            className="relative max-h-full w-full overflow-y-auto rounded-t-[20px] bg-linear-to-b from-felt-800/95 to-felt-900 p-5 ring-1 ring-brass-400/25 sm:max-w-md sm:rounded-2xl"
+            layout
+            className={`pointer-events-auto relative max-h-full w-full overflow-y-auto rounded-t-[20px] bg-linear-to-b from-felt-800/95 to-felt-900 ring-1 ring-brass-400/25 sm:max-w-md ${
+              strip ? "px-5 py-3 sm:mb-4 sm:rounded-2xl" : "p-5 sm:rounded-2xl"
+            }`}
             initial={{ y: 40, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 24, opacity: 0 }}
@@ -567,20 +615,3 @@ function PhaseSheet({
   );
 }
 
-function PrimaryAction({
-  children,
-  onClick,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="mt-7 w-full rounded-lg bg-linear-to-b from-brass-300 to-brass-500 px-5 py-3.5 text-sm font-extrabold text-felt-950 shadow-e2"
-    >
-      {children}
-    </button>
-  );
-}

@@ -27,7 +27,7 @@ import { HERO, type PieceId } from "@/engine/types";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
 import { TileBack, TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
-import { artSize, baseSize, layoutPiece } from "./layout";
+import { baseSize, handArt, layoutPiece } from "./layout";
 import {
   useBoardView,
   useDiscardCount,
@@ -38,6 +38,7 @@ import {
   useHandScroll,
   useHeroHoverIndex,
   useHeroTurnActive,
+  useHintsShown,
   usePieceIds,
   usePlacement,
   usePieceMeta,
@@ -82,10 +83,10 @@ const MIN_TAPPABLE_OPACITY = 0.5;
  * to break the overlap enough to read the hovered card's edge, and a
  * bigger shove makes the whole hand lurch on every pointer move.
  *
- * Measured against `artSize`, not the base box — a domino inscribes
+ * Measured against the hand as drawn (`handArt`), not the base box — a domino inscribes
  * itself in a card-shaped box at roughly 70% of its width, so the same
  * constant against the box fanned a tile rack visibly wider than a card
- * hand. See `artSize`'s own doc in layout.ts.
+ * hand. See `artSize`'s and `handArt`'s docs in layout.ts.
  */
 const HOVER_SPREAD_NEAR = 0.22;
 const HOVER_SPREAD_FAR = 0.09;
@@ -297,6 +298,9 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   // is false on a genuine touch device, so this fully excludes it there.
   const mouseHoverEligible = hoverEligible && supportsHover();
   const heroTurnActive = useHeroTurnActive(isHeroHand);
+  // The game's dimming, unless the player has Hints off — see
+  // `TableState.hintsShown`.
+  const dimmed = useHintsShown(Boolean(placement?.dimmed)) && Boolean(placement?.dimmed);
   const hoverIndex = useHeroHoverIndex(hoverEligible);
   const setHeroHoverIndex = useSetHeroHoverIndex();
   // Three more enabled-gated slices, each reaching exactly the pieces
@@ -348,7 +352,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   const onScreenW = base.w * t.scale;
   const detail = onScreenW < DETAIL_THRESHOLD_PX ? "index" : "full";
   const hover = hoverEligible
-    ? handHoverLift(handIndex, hoverIndex, artSize(geometry, meta.kind).w, base.h)
+    ? handHoverLift(handIndex, hoverIndex, handArt(geometry, meta.kind).w, geometry.handCard.h)
     : { liftPx: 0, xPx: 0, scale: 1 };
   // Settles to a slightly smaller rest size while it isn't the hero's
   // turn at all — see INACTIVE_HAND_SCALE's own doc.
@@ -362,7 +366,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
     // clickable-but-ignored is what a dead button feels like, and this
     // is the one flag the piece layer can check without knowing why a
     // game dimmed it.
-    !placement.dimmed &&
+    !dimmed &&
     // Nothing responds to a tap while it isn't the hero's turn at all —
     // keeps the pointer honest about the same dim+shrink the piece is
     // showing below, rather than leaving a clickable-looking dead spot.
@@ -462,7 +466,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // hand at rest, just visually receded. This matters most during
         // bidding, where every seat's hand dims while waiting its turn
         // and nothing has actually been ruled illegal yet.
-        filter: placement.dimmed
+        filter: dimmed
           ? "grayscale(0.85) brightness(0.78)"
           : isHeroHand && !heroTurnActive
             ? "brightness(0.86)"

@@ -19,6 +19,7 @@ npm run dev      # server + app on one port: /play/rummy, /room, /lab/seats
 npm run check    # typecheck + lint + test
 npm run harness  # adversarial WebSocket scenarios (needs `npm run dev`)
 npm run e2e      # real browsers, one real server (starts its own, port 3210)
+npm run measure  # how much of the screen each table uses, by what (docs/table-layout-rethink.md)
 ```
 
 `npm run dev` boots `server.ts`, not `next dev`: rooms are live objects
@@ -428,16 +429,76 @@ product. It also means a room has to be a room: **`MIN_ROOM_PLAYERS`
 a room is the offline game plus a round trip per bot turn, and it is
 strictly worse — so the lobby dims Start, says why, and links straight
 to `/play/<gameId>`. The button is the courtesy; the guard is the rule.
+Only the leader has the button at all; everyone else is told who they are
+waiting on (the user's call, 2026-09-27 — a dimmed Start somebody can
+never press was the one exception worth making to the lobby's
+dim-don't-hide rule).
 
 Counted over CONNECTED members, deliberately: somebody whose phone is
 asleep gets a bot seat the moment the deal happens, so counting them
 would admit exactly the game the rule exists to prevent.
+
+**The site installs as an app** (the user, 2026-09-27). `app/manifest.ts`
+and the icons `scripts/app-icons.ts` draws make it installable.
+`public/sw.js` answers page loads only (the network, or an offline page)
+and caches nothing: Chromium fires `beforeinstallprompt` only for a site
+whose service worker handles fetches, and ignores an empty handler.
+`installCapture.ts` runs inline in the root layout's `<head>`, before React,
+because the event fires once and often during load; it keeps the event and
+registers the worker. `InstallPrompt`, on the home page only, offers Install
+on Chromium and the Share → Add to Home Screen steps on iOS, where nothing
+can start it (••• first in Safari 26, whose user agent still says iOS
+18_6). It says nothing inside the installed app, and "Not now" lasts a
+month.
 
 **The next round is the leader's to deal** (`mayContinueRound`, which gates
 the server and becomes `RoomView.youMayContinue`); everyone else's
 scorecard says who they are waiting on. It can never strand a table:
 while the leader is not at it, any seated player there may continue, and
 a leader who disconnects has already handed leadership on.
+
+**The lobby's list is the seating plan** (`seatingPlan`): one row per
+seat, seat 1 first and clockwise from there, `null` for a seat a bot
+plays, then anybody past the last seat, who will watch. The leader drags
+rows by a grip (Motion's `Reorder`; the grip alone, so a finger on a phone
+still scrolls the list) or moves them with the arrow keys, bots included,
+and `arrangeSeats` sends the whole plan; `shuffleSeats` mixes people and
+bots. `seatingPlan` squares the stored plan with the room — a departure
+leaves a bot seat, a newcomer takes the first bot seat, the plan follows
+the game's seat count, and nobody watches while a bot sits — so none of
+that needs bookkeeping. Locked while a game runs. **In a partnership game
+the seat IS the team** (`teamOfSeat`: partners across, seats 0/2 against
+1/3), so there is no team setting to keep in step with it; the A/B
+buttons, `assignTeam` and `randomizeTeams` are gone. Leadership is still
+inherited in JOIN order (`orderedMembers`), whatever the seats.
+
+**Making or joining is one press on the home page.** The home form takes
+the name too, and leaves an intent in `sessionStorage` ([entry.ts](src/room/entry.ts))
+that `RoomScreen` carries out once the server is listening. Read the
+intent in an EFFECT, never in a state updater: React runs updaters twice in
+StrictMode, and the first run consumed it (found in Chrome; the tests now
+render in StrictMode). A shared `/room/CODE` link lands on a form that is
+about joining that room.
+
+**Rejoining asks the server over HTTP** (`GET /api/rejoin`, the token in a
+header — [server/rejoin.ts](src/server/rejoin.ts)), not over the socket: a
+socket's `hello` ATTACHES, which would hand the seat back from the bot
+while the player is still on the home page. `peekSession` looks the token
+up without minting an identity, so asking creates nothing.
+
+**Leaving the room's page hangs up.** The socket is one per tab
+([connection.ts](src/room/connection.ts)), and it used to outlive the
+page: after the back gesture or a link home the server still had the
+player at the table, so the bots played on to their turn and a game with
+nobody real left in it never ended. `RoomConnection` now closes one tick
+after the last page stops listening (`closeWhenIdle`; the tick is what
+StrictMode's remount and `/room` → `/room/ABCD` need), which is exactly
+what closing the tab does: a bot takes the seat, and with no real player
+left `endIfAllBots` ends the game on the spot (the user: "not even for 1
+second"). The home page waits for that close (`roomConnectionClosed`)
+before asking `/api/rejoin`, or it is told about the game as it was.
+Every socket handler checks it is still the current socket, because a
+closed one goes on delivering its last frames and then its close.
 
 ### Presence is table state, so it needs a frame
 
@@ -457,6 +518,28 @@ kicked, a socket dropping and coming back, and whatever is added next.
 
 Found in a browser with two windows open. Every unit test asserted on a
 frame that in practice never arrived.
+
+### Settling up is the server's, because only it still has the game
+
+Poker and LRC may be played for money in a room (a buy-in; a chip value —
+room-only options, off by default). At the end everybody sees the FEWEST
+payments that square them up (`settle.ts`, the user's call, 2026-09-28):
+exact, not greedy — people not already even, less the most groups that
+each sum to zero, found by a search over subsets (≤ 1,024 at ten seats).
+Nobody pays a bot: money won from or lost to bots is left out and people's
+results scaled down to what people can pay each other (`amongPeople`).
+
+It is worked out by `RoomRuntime`, not a client, because the leader's End
+game clears the room's game in the same command — every table unmounts,
+and the only copy of the final position is the server's session. So the
+stop effect settles from the participation as it stood BEFORE the command
+(`gameBefore`), a match played to its winner settles on the frame that
+ends it, and the result rides on `RoomView.settlement` until the next game
+starts: on the winner's sheet (`summaryExtra`) and at the top of the lobby
+(`SettleUp`). Ended early, Poker calls off a hand in play (a hand at its
+showdown is already won, and is paid); LRC counts only finished rounds.
+`SettleUp` says what changes HANDS, never "you're even" — a person who lost
+to a bot is not even, they just owe no person.
 
 ### Two questions, not one: who moved, and who are we waiting on
 
@@ -546,7 +629,7 @@ where everything sits`. No React, no DOM, so
 9 seat counts without a browser.
 
 - The hero is **always** seat 0, pinned bottom-centre.
-- Seat 1 is the hero's left; numbering runs anticlockwise, matching the
+- Seat 1 is the hero's left; numbering runs clockwise on screen, matching the
   direction turn order passes.
 - Seats walk the perimeter of a rounded rectangle, **not an ellipse** —
   on a 9:19.5 phone an ellipse wastes the horizontal band, which is the
@@ -568,8 +651,72 @@ only ONE pile in either reads as visibly off-centre with nothing beside
 it to explain why.
 
 Three density tiers (`compact` / `regular` / `wide`) set piece sizes.
-Width picks the tier but height can demote it — a 844×390 landscape
-phone is wide enough for `wide` and far too short for it.
+Width picks the tier, but a SHORT screen is `compact` whatever its width —
+a 844×390 landscape phone is wide enough for `wide`, and every band on its
+short axis is sized from these pieces.
+
+### The board comes first
+
+Measured on a 390×844 phone (docs/table-layout-rethink.md), the board was
+the smallest thing on every table: 1–6% of the screen, drawn at half to
+three quarters of the hand's size, because `resolveTable` seated everybody
+first — pods, then their fanned hands reaching inward — and the board got
+the remainder at a fixed size. Every commercial table measured for that doc
+draws its board at least as big as the hand. So the order is now:
+
+1. **A profile** (`tableProfile`): `phonePortrait` (< 600 wide),
+   `phoneLandscape` (short), `roomy` (tablets and desktops). One engine;
+   a profile only sets its parameters (`RIM`). Never a second layout — the
+   user scrapped one before for being a second thing to maintain.
+2. **The controls**: hand strip, band, reserved bands — as before.
+3. **A thin rim of seats.** On phones an opponent's FACE-DOWN hand is
+   **tucked** behind their pod (`TableGeometry.tuck`; the user's call,
+   2026-09-27, reversing "keep the piles" on phones only): its backs peek
+   `TUCK_PEEK_FRACTION` of a card past the pod's inner edge (a few px read
+   as a sliver — 2026-09-28), the pod (opaque there) says the count, and the
+   board keeps clear of exactly that peek (`tuckPeek`). On a landscape
+   phone a TOP seat's hand does not peek down at all — it fans wider and
+   shows at the pod's sides, because height is what that table lacks. A FACE-UP opponent hand — a showdown —
+   is **shown** over the pod, upright. On a phone held upright, up to two
+   seats per side stack HIGH, below the corner buttons, so the board gets
+   the full width beneath them; the trick then offsets cards by the seat's
+   EDGE (`rimVectors`), not the line to it, or the left player's card lands
+   where the partner's goes. A face-up pile beside a side pod (LRC's chips)
+   hangs off that edge too, two abreast — aimed at the board's centre, a
+   corner seat's chips landed on the pod stacked below it. Where that pile
+   would reach the dice (many seats, a side seat level with the middle) it
+   hangs in the seat's own column BELOW its pod instead (`planPile`).
+   **A chip pile becomes one stack with its count on top** past what its
+   room shows one by one (`chipPileStacks`; the user's call, 2026-09-28):
+   a phone's pot always, a seat's pile past three rows — or sooner, past the
+   last row that keeps off the dice and the pot. Decided from the viewport,
+   never the count, so a pile never changes shape as chips move. The count
+   is chrome (`ChipStackCounts`), never a label on a piece: the top chip is
+   the one that leaves.
+4. **The stage** — everything inside the rim — and each board is **fitted**
+   to it: `zoneScale` may now exceed 1, up to `stageCeiling`, the RENDER BOX
+   (`pieceBox`). That ceiling is not taste: it is the base box every piece
+   renders at, pieces are `will-change: transform`, and a piece drawn past
+   its base box is an upscaled, blurred bitmap. `boardCamera` caps the domino
+   unit at the render box's tile for the same reason. On a phone the render
+   box IS the hand's card; on a laptop the hand is drawn smaller than it
+   (`handArt`, `handCard` 96×134 inside a 118×165 box), so the board may
+   outgrow the hand — the user found the hand, pods and opponents' cards the
+   biggest things on a laptop table (2026-09-28). Anything measured as a
+   fraction of "a card in your hand" uses `handArt`, never the base box.
+
+On a short, wide board poker's chain runs **sideways** (`pokerRow`: flop,
+pot badge, stub + burn in one row) and its betting panel takes the laptop's
+one row; a card hand may **bleed** off the bottom (`handBleed`, the top
+`HAND_PEEK` of each card — a tile hand never does, since a domino needs both
+halves; `GameHost` tells them apart from the game's own `pieces()`).
+
+`measure.test.ts` holds every game to its size targets through the same code
+`npm run measure` prints. Every other layout test asks whether things
+COLLIDE, and none of them could see a board drawn at half size — it
+collides with nothing. `POD_SIZE` is measured, not guessed (it was 7–13px
+short on every tier, which a tucked hand made visible), and
+`geometry.test.ts` checks real pod boxes, not centre distances.
 
 ### Chrome is laid out, not positioned
 
@@ -580,9 +727,45 @@ flex/grid flow inside as few geometry-anchored containers as possible.
 A z-index bump is a symptom, not a fix: it means two things occupy the
 same space and are being told who wins, instead of being laid out so
 they never occupy it at all. [HandZone.tsx](src/table/HandZone.tsx) is
-the worked example — one row owning the whole band above the hand, with
+the worked example — one owner of the whole band above the hand, with
 three **equal** `minmax(0, 1fr)` columns, because a `flex-1` centre
 item centres in the space *left over* rather than in the row.
+
+**The band's row is reserved; a panel is drawn over the felt.** The band has
+three modes — `row` (readouts), `bar` (one row of actions), `panel` (a
+decision bigger than a row: Spades' bid, Poker's betting). The surface
+reserves the ROW (`ResolveOptions.bandZone`) and publishes it as
+`geometry.band`, so nothing the table lays out sits under it. A panel is
+NOT reserved (the user's call, 2026-09-28): it is temporary, and reserving
+it re-laid the whole table out every time one opened — side seats jumping
+up for a bid panel that never went near them. The table's geometry does not
+change while a round is played. The one exception is a panel the viewer is
+asked for on EVERY turn — Poker's betting (`panelReserve`,
+`usePokerPanelReserve`): drawn over the felt, it covered the flop it was
+asking about on a landscape phone, so its room is reserved ALWAYS, open or
+not. Always, not while open, so that table does not move either. Every decision a game asks for goes in the
+band. Nothing is positioned with a `calc()` against the hand any more
+(`--hand-zone` is gone). Before a deal, with no cards to hold, a game may
+centre the band over the empty hand strip too (`HandZone overHand`, Rummy's
+"cards each" choice).
+
+**The centre is fitted; it does not overflow.** Poker's community → pot →
+stub chain and BS's reveal + pile draw at `geometry.zoneScale[zone]` — the
+largest scale, up to the hand's card, at which each chain fits between the
+top seats and the ring — down to a legible floor (`LEGIBLE_CARD_H`), and
+only past that may they overhang. A side seat's fan compresses rather than reaching past
+the ring. `layout.test.ts`'s band test holds every game, with the band it
+really shows, to this at every `TABLE_VIEWPORTS` size.
+
+**Toasts sit top left, below the corner buttons** (`toastLane(geometry)`, px
+from the top — the user's call, 2026-09-28; bottom right before that, top
+centre over the board before that). The Reconnecting pill keeps a lane of
+its own (`statusLane`: centred, just below the lowest top pod).
+
+**Pods say labelled numbers** (`SeatView.stats`, drawn by the shared
+`Stats`), at most two lines under the name (`POD_LINES` — the geometry
+sizes every pod for that). The viewer's own chip in the band uses the same
+vocabulary.
 
 ### Compress-then-pan
 
@@ -592,7 +775,20 @@ separate constants precisely because they no longer share a value); past
 that the overflow becomes a pannable range instead of ever-thinner
 slivers. Opt-in per game via the store's `discardScroll`/`handScroll`
 (`null` means "this game does not pan"), so every existing fan is
-untouched. The gesture is [usePanZone](src/table/usePanZone.ts) —
+untouched. A game whose hand can outgrow the screen mounts
+[HandPan](src/table/HandPan.tsx) (BS; Rummy wires its own, with the
+discard).
+
+**One tap picks a card where a tap only selects.** On touch, a hand tap
+first previews and a second acts — the guard against a fat-fingered,
+unrecoverable PLAY (Spades, Dominoes). Where the tap only toggles a
+selection that a button then commits (Rummy's melds, BS's claim), the hand's
+placements set `instantAct` and one tap selects; without it BS took two taps
+per card and then the button (the user, 2026-09-28). A Dominoes tile that
+fits BOTH ends sets it too: its tap only picks it up, and the ghost it then
+offers is the second tap (three taps before). A pannable DISCARD pile shows
+its newest card again whenever a card joins or leaves it — the player used
+to drag it back after every turn. The gesture is [usePanZone](src/table/usePanZone.ts) —
 coordinate-based at `document` level, never hit-tested, because a
 pointerdown landing on a card never reaches a catcher beneath it. It
 also takes the wheel, which is what a desktop player reaches for first;
@@ -642,6 +838,49 @@ screens use [SetupShell](src/ui/primitives/SetupShell.tsx) and the home
 screen the same shape: `h-svh overflow-y-auto` on the page, and `m-auto`
 rather than `justify-center` for the centring, because a flex container
 centres its overflow in *both* directions and puts the top out of reach.
+`SetupShell`'s `footer` sticks the screen's primary action to the bottom
+of that scroll container, so "Deal in" and a lobby's Start are never below
+the fold.
+
+### A game's options are data
+
+Each game's setup — what it asks, in what order, with what ranges,
+defaults and hints — is one spec in
+[gameSetup.ts](src/session/gameSetup.ts) (`GAME_SETUPS`). `GameOptions`
+draws it for the solo setup screen (`GameSetup`, one component for all
+six) AND the lobby (`mode: "room"`, `locked` for everyone but the leader),
+and the registry's `parse` clamps what arrives off the wire from the same
+numbers. The three used to be written separately and had drifted — the
+room played Rummy to 500 with no way to change it, offered LRC a
+difficulty slider, and let Caribbean be set to three seats. Add an option
+to the spec and all three follow. Defaults are the solo values everywhere
+(the user's call).
+
+## Shared UI primitives
+
+Reach for these before writing a one-off — each replaced several copies:
+
+- `Button` (cva: tone × size × shape) is the only button. `ChoiceGroup`
+  is one-of-a-few (a game, a ruleset, privacy); `variant="tiles"` makes
+  each option a picture over its words (the lobby's game picker).
+  `GameThumb` / `seatRange` / `GAME_BLURBS` draw a game the same way on
+  the home page and in the lobby. `Toggle` and the sliders
+  are Base UI, restyled (`src/ui/base/`); a slider's owner hears only where
+  a gesture ends (`useSliderDraft`), because in a room every change is a
+  message.
+- `locked` (shown, not changeable — anyone but a room's leader) is not
+  `unavailable` (off, with its reason — Six love without partners).
+- `Stats` (labelled numbers), `Avatar` (people, with a bot variant),
+  `PieceStrip` (the app's motif), `Reveal` / `Swap` / `Collapse` (the only
+  motion around the table: 150–250ms tweens, no springs).
+- `EndGameAction` is a solo game's way out, at the foot of its Settings
+  sheet (`GameHost` adds it wherever `onLobby` is given and the table is
+  not a room's). Asked twice, because nothing is saved.
+- Rooms: `RoomEntryForm` is the only way in (`home` / `invite` / `retry`);
+  `RoomStatusScreen` is every in-between state; `InviteCard` is the code
+  and the link (lobby and a table's Settings sheet). A room names a bot's
+  seat through `nameForSeat(frame, seat)` — the solo table's bot name for
+  it, never "Bot 3".
 
 ## Performance
 
@@ -710,13 +949,31 @@ app/room/     the lobby and the online table
 app/lab/      seats · motion · tokens · phases · rummy · redact
 ```
 
-**In-game settings are shared.** A game's player preferences (Poker's
-Hints, first) are a `GameSetting[]` passed to `GameHost` as `settings`;
-the host shows one Settings button and sheet, keeps the values per device
+**In-game settings are shared.** A game's player preferences are a
+`GameSetting[]` passed to `GameHost` as `settings`; the host appends
+`TABLE_SETTINGS` (Sound, Vibration) to every table's list, shows one
+Settings button and sheet, keeps the values per device
 ([gameSettings.tsx](src/table/gameSettings.tsx)), and passes them to the
-table content as `children(live, settings)`. Online corner controls go
-through the host's `corner` slot so they share that one row. Add a
-setting to a game by adding an entry to its list, never a per-game sheet.
+table content as `children(live, settings)`. A `shared` setting (Sound,
+Vibration) is kept once for the whole app, not per game. Add a setting to
+a game by adding an entry to its list, never a per-game sheet.
+
+- **Hints** (`hintsSetting`) is per game and means what the game says:
+  Poker spells out its labels; Spades and Dominoes dim what cannot be
+  played. Off by default (the user's call, 2026-09-26) — except Poker's,
+  which a newcomer needs and would not know to turn on. The host syncs it into the store as `hintsShown`, and with it off
+  `PieceLayer` ignores `dimmed` — the piece looks and taps like any other,
+  and the game's tap handler says why it was refused (`whyNotPlayable` in
+  Spades). Feedback AFTER a tap, never a hint before one.
+- **An online table's room buttons** — Return to the lobby, and the
+  leader's End game — are `menuActions` at the foot of the sheet
+  (`TableMenu`), not on the table (the user's call, 2026-09-26).
+- **The slam's sound and buzz** are `useSlamFeedback`
+  ([slamFeedback.ts](src/table/slamFeedback.ts)), mounted by the host and
+  gated by those two settings: a synthesised Web Audio thud (no file) and
+  `navigator.vibrate`, both at IMPACT (`SLAM_LAND_MS`), not the wind-up.
+  The audio context is resumed on the first tap or key, because browsers
+  allow no sound before one; a slam before that is silent.
 
 The dev panel also takes `scenarios` — labelled one-shot callbacks a game
 supplies for states only reachable by waiting (Rummy's claim window opens
@@ -732,8 +989,9 @@ declared `pieces()` vocabulary. Zero per-game code — use it to reach a
 ## Bot difficulty is a wired setting, not a decoration
 
 Every game's setup screen offers `DifficultyPicker` (shared 3-stop
-slider, each tier with a line of copy stating what actually changes) and
-passes `botTable(seats, tier)` — one tier for the whole table — into
+slider, each tier with a line of copy stating what actually changes — the
+copy lives in the game's spec, `GAME_SETUPS[game].difficulty`) and passes
+`botTable(seats, tier)` — one tier for the whole table — into
 `GameRuntime.difficulty`. This used to default silently to `steady`
 everywhere with nothing ever overriding it, so casual and sharp were
 unreachable in every game at once. If a future difficulty-related report

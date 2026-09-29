@@ -31,6 +31,7 @@ import type {
   SeatId,
 } from "@/engine/types";
 import { createRng, type Rng } from "@/engine/rng";
+import { botName } from "@/games/_shared/botIdentity";
 import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
 import { playbackMs, tailMs } from "@/motion/choreographer";
@@ -98,9 +99,9 @@ function surfaceEventFor(frame: FrameView) {
       const { text, tone } = composeAnnounce(
         event,
         frame.seat,
-        // A seat with no name is a bot's, and the pods call it "Bot N" —
-        // "Seat 3 claimed" named nobody at the table.
-        (seat) => frame.seatNames[seat] ?? `Bot ${seat + 1}`,
+        // The pods' own names for the seats — "Seat 3 claimed" named nobody
+        // at the table.
+        (seat) => nameForSeat(frame, seat),
       );
       announce(text, tone);
     }
@@ -661,6 +662,20 @@ export function viewerSeatOf(frame: FrameView | null): SeatId | null {
  * Offline there is nobody to step away from a seat, so no offline view
  * supplies this and every pod answers false.
  */
+/**
+ * What a room's table calls a seat: the person in it, or — for a seat a
+ * bot is playing with nobody's name on it — the same bot name the solo
+ * table gives that seat (`botIdentity`). It was "Bot 3", written out in
+ * seven places. A bot never takes a person's name: one that would is
+ * marked as the bot it is.
+ */
+export function nameForSeat(frame: Pick<FrameView, "seatNames">, seat: SeatId): string {
+  const person = frame.seatNames[seat];
+  if (person) return person;
+  const name = botName(seat);
+  return frame.seatNames.includes(name) ? `${name} (bot)` : name;
+}
+
 export function awayFrom(frame: FrameView): (seat: SeatId) => boolean {
   const bots = new Set(frame.botSeats);
   return (seat) => bots.has(seat) && frame.seatNames[seat] != null;

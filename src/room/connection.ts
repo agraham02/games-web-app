@@ -24,7 +24,7 @@
 import type { ClientMessage, ServerMessage } from "@/session/protocol";
 import { PROTOCOL_VERSION } from "@/session/protocol";
 
-const TOKEN_KEY = "table-games.session-token";
+export const TOKEN_KEY = "table-games.session-token";
 
 /**
  * Backoff between reconnection attempts. Short at first — the common case
@@ -138,6 +138,10 @@ export class RoomConnection {
   private attempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  /** The hang-up scheduled for when no page is listening. See `closeWhenIdle`. */
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Everyone waiting on `whenClosed`. */
+  private closedWaiters: Array<() => void> = [];
   private closedByUs = false;
   /** Set by a `superseded` message; cleared only by `resume()`. */
   private superseded = false;
@@ -157,6 +161,11 @@ export class RoomConnection {
   constructor(readonly token: string = sessionToken()) {}
 
   subscribe(listener: ConnectionListener): () => void {
+    // A page is listening again, so a hang-up scheduled for nobody is off.
+    if (this.idleTimer !== null) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
     this.listeners.add(listener);
     // Catch the newcomer up on what it missed. Order matters: `hello`
     // establishes identity, and the room and frame are meaningless before
@@ -175,7 +184,62 @@ export class RoomConnection {
     if (this.lastFrame) listener.onMessage(this.lastFrame as ServerMessage);
     if (this.lastPending) listener.onMessage(this.lastPending as ServerMessage);
     listener.onStatus(this.status);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) this.closeWhenIdle();
+    };
+  }
+
+  /**
+   * Hangs up once no page is listening, which means the player has left
+   * the room's page without closing the tab: the back gesture, a link home.
+   *
+   * An open socket told the server the opposite, that they were still at
+   * the table. So the seat stayed theirs, the bots played on up to their
+   * turn and parked there, and a game with nobody real left in it was never
+   * ended (the user, 2026-09-27: "all bots should not be playing, not even
+   * for 1 second"). Hanging up makes leaving the page what closing the tab
+   * already was: the server gives the seat to a bot, or ends the game when
+   * no real player is left. "Back to room" still works, because being a
+   * member of a room does not depend on the socket.
+   *
+   * What it heard is forgotten with it. The next page asks the server
+   * afresh, rather than being shown a table that has moved on without it.
+   *
+   * One tick late on purpose. StrictMode unmounts and remounts every
+   * effect, and moving from `/room` to `/room/ABCD` swaps one screen for
+   * another in a single commit; both have subscribed again by then.
+   */
+  private closeWhenIdle(): void {
+    if (this.idleTimer !== null) return;
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.listeners.size > 0) return;
+      this.session = null;
+      this.lastRoom = null;
+      this.lastFrame = null;
+      this.lastPending = null;
+      this.queue.length = 0;
+      this.close();
+    }, 0);
+  }
+
+  /**
+   * Resolves once this tab holds no socket: at once when it holds none, or
+   * when the one it is letting go of has finished closing.
+   *
+   * For the home page, which asks the server whether this browser is still
+   * in a room. Arriving there FROM a room hangs that room's socket up, and
+   * asked any sooner the server answered for the moment before the leaving
+   * ("Spades in progress", for a game that leaving had just ended).
+   */
+  whenClosed(): Promise<void> {
+    if (!this.socket && this.idleTimer === null) return Promise.resolve();
+    return new Promise((resolve) => this.closedWaiters.push(resolve));
+  }
+
+  private flushClosedWaiters(): void {
+    for (const resolve of this.closedWaiters.splice(0)) resolve();
   }
 
   connect(): void {
@@ -187,7 +251,14 @@ export class RoomConnection {
     const socket = new WebSocket(socketUrl());
     this.socket = socket;
 
+    // Every handler first asks whether this is still the socket in use. One
+    // that `close()` has let go of goes on delivering events for a while —
+    // the server's last frames, then its own close — and a page that left
+    // and came straight back has a new socket by then. Unguarded, the old
+    // close nulled the new socket (whose sends then queued forever) and old
+    // frames refilled the cache `closeWhenIdle` had just emptied.
     socket.onopen = () => {
+      if (this.socket !== socket) return;
       this.attempt = 0;
       this.setStatus("open");
       // Always first, and always before anything queued: it is what tells
@@ -198,6 +269,7 @@ export class RoomConnection {
     };
 
     socket.onmessage = (event) => {
+      if (this.socket !== socket) return;
       let message: ServerMessage;
       try {
         message = JSON.parse(String(event.data)) as ServerMessage;
@@ -209,6 +281,12 @@ export class RoomConnection {
     };
 
     socket.onclose = () => {
+      if (this.socket !== socket) {
+        // One we let go of, finished closing. Unless another has been
+        // opened since, this tab now holds no socket at all.
+        if (this.socket === null) this.flushClosedWaiters();
+        return;
+      }
       this.socket = null;
       this.stopKeepalive();
       if (this.closedByUs) {
@@ -350,6 +428,9 @@ export class RoomConnection {
   }
 
   close(): void {
+    // Nothing to wait for: `whenClosed` would otherwise hang on a socket
+    // that was never there (a close while between reconnection attempts).
+    if (!this.socket) queueMicrotask(() => this.flushClosedWaiters());
     this.closedByUs = true;
     this.stopKeepalive();
     if (this.retryTimer !== null) {
@@ -376,6 +457,14 @@ let shared: RoomConnection | null = null;
 export function roomConnection(): RoomConnection {
   if (!shared) shared = new RoomConnection();
   return shared;
+}
+
+/**
+ * Resolves once this tab holds no room socket — at once in a tab that never
+ * opened one. See `RoomConnection.whenClosed`.
+ */
+export function roomConnectionClosed(): Promise<void> {
+  return shared ? shared.whenClosed() : Promise.resolve();
 }
 
 /**

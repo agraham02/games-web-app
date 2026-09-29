@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* A viewport with no vertical room to spare — below 560px tall, the same
+   line as `SHORT_VIEWPORT_H` in table/geometry.ts. A landscape phone. */
+@custom-variant short (@media (max-height: 559.98px));
+
 /* ============================================================
    NEO-FELT — the single source of visual truth.
    Mirrors the Claude Design canvas "Neo-Felt System".
@@ -23,10 +27,19 @@
   --color-brass-600: #8e6e39;
   --color-brass-700: #5c4724;
 
-  /* -- text: bone ----------------------------------------- */
+  /* -- text: bone -----------------------------------------
+     Every step the code uses has to be here: Tailwind generates no
+     utility for an undefined shade, so `text-bone-500` silently fell
+     back to the inherited bone-50 — the brightest text on the screen
+     where the dimmest was meant (tokens.test.ts now guards this).
+     500 is lifted a little above the midpoint of 400 and 600 so that
+     11px hints clear 4.5:1 on the felt they sit on. */
   --color-bone-50: #f5f2ea;
+  --color-bone-100: #e9e4d8;
   --color-bone-200: #ddd6c5;
+  --color-bone-300: #c2baa7;
   --color-bone-400: #a69d89;
+  --color-bone-500: #948c79;
   --color-bone-600: #6b6455;
 
   /* -- printed stock -------------------------------------- */
@@ -45,6 +58,34 @@
   --color-win: #4e9e6a;
   --color-warn: #d89b3c;
   --color-loss: #b4453a;
+  /* A partnership game's two sides, in the lobby's seating plan. */
+  --color-team-a: #e3c68f;
+  --color-team-b: #8fb8e0;
+
+  /* -- roles ------------------------------------------------
+     shadcn's names, Neo-Felt's values. The primitives in src/ui/base
+     come from shadcn and speak in roles (primary, muted, ring…); each
+     role is mapped ONCE, here, onto the palette above. A component that
+     uses a role nobody mapped gets no CSS at all — tokens.test.ts checks
+     the names too. */
+  --color-background: var(--color-felt-950);
+  --color-foreground: var(--color-bone-50);
+  --color-card: var(--color-felt-900);
+  --color-card-foreground: var(--color-bone-50);
+  --color-popover: var(--color-felt-850);
+  --color-popover-foreground: var(--color-bone-50);
+  --color-primary: var(--color-brass-400);
+  --color-primary-foreground: var(--color-felt-950);
+  --color-secondary: rgb(245 242 234 / 0.06);
+  --color-secondary-foreground: var(--color-bone-200);
+  --color-muted: rgb(245 242 234 / 0.08);
+  --color-muted-foreground: var(--color-bone-400);
+  --color-accent: rgb(245 242 234 / 0.12);
+  --color-accent-foreground: var(--color-bone-50);
+  --color-destructive: var(--color-loss);
+  --color-border: rgb(245 242 234 / 0.12);
+  --color-input: rgb(245 242 234 / 0.16);
+  --color-ring: var(--color-brass-300);
 
   /* -- type ----------------------------------------------- */
   --font-display: var(--font-cinzel), Georgia, serif;
@@ -81,12 +122,15 @@
   --duration-collect: 420ms;
   --duration-flip: 300ms;
   --duration-ui: 200ms;
+  --duration-ui-fast: 150ms;
+  --duration-ui-slow: 250ms;
   --duration-count: 900ms;
   /* Caribbean dominoes' slam — rise, drop, and the board's rattle. */
   --duration-slam: 780ms;
 
   --ease-settle: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* ============================================================

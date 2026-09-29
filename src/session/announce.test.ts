@@ -66,7 +66,7 @@ describe("composeAnnounce", () => {
       expect(asActor.startsWith("You ")).toBe(true);
       expect(asOther.startsWith(nameFor(event.actor))).toBe(true);
       // And no engine text still carries a baked-in name.
-      expect(event.text).not.toMatch(/\b(You|Mia|Sam|Kofi|Jo|Ada|Rui|Nia|Tomas|Elle)\b/);
+      expect(event.text).not.toMatch(/\b(You|Mia|Sam|Kofi|Jo|Ada|Rui|Nia|Tomas|Elle|Yuki)\b/);
     }
   });
 });
@@ -98,7 +98,7 @@ describe("no game bakes a name into announcement text any more", () => {
     const announcements = seen.filter((e): e is AnnounceEvent => e.t === "announce");
     expect(announcements.length).toBeGreaterThan(10);
     for (const event of announcements) {
-      expect(event.text).not.toMatch(/\b(Mia|Sam|Kofi|Jo|Ada|Rui|Nia|Tomas|Elle)\b/);
+      expect(event.text).not.toMatch(/\b(Mia|Sam|Kofi|Jo|Ada|Rui|Nia|Tomas|Elle|Yuki)\b/);
     }
   });
 });

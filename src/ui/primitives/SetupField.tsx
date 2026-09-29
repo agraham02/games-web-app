@@ -1,3 +1,7 @@
+"use client";
+
+import { Slider, useSliderDraft } from "@/ui/base/slider";
+
 /**
  * One labelled control on a setup screen — the single header style every
  * game shares.
@@ -44,21 +48,17 @@ export interface SeatsSliderProps {
   min: number;
   max: number;
   onChange: (n: number) => void;
+  /** Shown, not changeable by this person (a room's setting). */
+  locked?: boolean;
 }
 
-/** The player-count control: a slider with the count in the header. */
-export function SeatsSlider({ value, min, max, onChange }: SeatsSliderProps) {
+/** The player-count control: a slider with the count in the header.
+ * `onChange` hears where a drag ends, not every step (`useSliderDraft`). */
+export function SeatsSlider({ value, min, max, onChange, locked = false }: SeatsSliderProps) {
+  const draft = useSliderDraft(value, onChange, locked);
   return (
-    <SetupField label="Players" value={value}>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label="Players"
-        className="w-full accent-brass-400"
-      />
+    <SetupField label="Players" value={draft.value}>
+      <Slider label="Players" min={min} max={max} step={1} disabled={locked} {...draft.props} />
     </SetupField>
   );
 }

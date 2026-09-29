@@ -105,6 +105,15 @@ export class RoomRegistry {
   }
 
   /**
+   * The public id for a token this process has already seen, or null.
+   * Unlike `sessionFor` it never mints one and never touches the entry, so
+   * merely ASKING (the home page's rejoin check) creates nothing.
+   */
+  peekSession(token: string): SessionId | null {
+    return this.sessions.get(token) ?? null;
+  }
+
+  /**
    * Drops the least recently seen identities that are not in a room.
    *
    * Forgetting one costs only the ability to reclaim a seat with that

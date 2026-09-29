@@ -601,6 +601,12 @@ export function placements(state: DomState, viewer: SeatId): PlacementMap {
   const isMyTurn = currentSeat(state) === viewer;
   const mine = isMyTurn ? playableTiles(state, viewer) : [];
   const playable = new Set(mine.map((p) => p.tile));
+  // A tile that fits BOTH ends is only picked up by a tap (`tapTile`), and
+  // the end is chosen by a second tap on a ghost. Touch's preview-first
+  // gate on top of that made it three taps to play one tile, so those
+  // tiles act on the first tap. A one-end tile keeps the gate: its tap
+  // PLAYS it, which is exactly what the gate protects.
+  const choosesEnd = new Set(mine.filter((p) => p.ends.length > 1).map((p) => p.tile));
 
   for (let seat = 0; seat < state.seats; seat++) {
     const hand = state.hands[seat] ?? [];
@@ -613,6 +619,7 @@ export function placements(state: DomState, viewer: SeatId): PlacementMap {
         count: hand.length,
         faceUp: isViewerHand,
         dimmed: (isViewerHand && isMyTurn && !playable.has(id)) || undefined,
+        instantAct: (isViewerHand && choosesEnd.has(id)) || undefined,
       };
     });
   }

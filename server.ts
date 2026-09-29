@@ -22,6 +22,7 @@ import { RoomRegistry } from "@/server/RoomRegistry";
 import { KeepAwake, keepAwakeUrl } from "@/server/keepAwake";
 import { attachWebSocketServer, WS_PATH } from "@/server/wsServer";
 import { debugEnabled, handleDebugRequest } from "@/server/debug";
+import { handleRejoinRequest } from "@/server/rejoin";
 import { log, setLogLevel } from "@/server/log";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -73,6 +74,8 @@ async function main(): Promise<void> {
     // are refused outright in production — see `debug.ts` on why there is
     // no middle setting.
     if (handleDebugRequest(req, res, registry)) return;
+    // The home page's "am I still in a room?" — see rejoin.ts.
+    if (handleRejoinRequest(req, res, registry)) return;
     void handle(req, res);
   });
 

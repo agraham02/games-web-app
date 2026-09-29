@@ -12,9 +12,11 @@ import {
   MIN_DISCARD_STEP_FRACTION,
   POD_GAP,
   POD_SIZE,
+  podBox,
   resolveDensity,
   resolveTable,
   TILE_HAND_GAP,
+  type Box,
   type Density,
 } from "./geometry";
 import { HERO } from "@/engine/types";
@@ -36,10 +38,12 @@ const SEAT_COUNTS = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 const DENSITIES: Density[] = ["compact", "regular", "wide"];
 
 describe("resolveDensity", () => {
-  it("demotes short landscape phones out of the wide tier", () => {
-    // 844x390 is wide enough for `wide` on width alone, but has no
-    // vertical room for 118px hand cards plus a seat ring.
-    expect(resolveDensity(844, 390)).toBe("regular");
+  it("sizes a short landscape phone's pieces for its height, not its width", () => {
+    // 844x390 is wide enough for `wide` on width alone, but every band on
+    // its short axis is sized from these pieces and the board gets what
+    // they leave — `regular`'s 103px hand cards took a third of the screen.
+    expect(resolveDensity(844, 390)).toBe("compact");
+    expect(resolveDensity(1052, 486)).toBe("compact");
     expect(resolveDensity(1440, 900)).toBe("wide");
     expect(resolveDensity(390, 844)).toBe("compact");
   });
@@ -129,6 +133,45 @@ describe("resolveTable", () => {
           expect(s.x).toBeLessThanOrEqual(vp.w);
           expect(s.y).toBeGreaterThanOrEqual(0);
           expect(s.y).toBeLessThanOrEqual(vp.h);
+        }
+      }
+    }
+  });
+
+  // The two checks above use pod CENTRES and one spacing constant, which
+  // said nothing about a pod taller than that spacing: three 72px pods
+  // stacked 58px apart down a landscape phone's side, and a top pod 5px
+  // above the screen, both passed them. This one uses the pods' real boxes
+  // (POD_SIZE, measured in Chrome) — including a spectator's bottom pod.
+  it("draws every pod whole, on screen, and clear of every other pod", () => {
+    const screens = [
+      ...VIEWPORTS,
+      { name: "phone 430", w: 430, h: 932 },
+      { name: "landscape 932", w: 932, h: 430 },
+      { name: "landscape 1052", w: 1052, h: 486 },
+    ];
+    const overlap = (a: Box, b: Box) =>
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    for (const vp of screens) {
+      for (const seats of SEAT_COUNTS) {
+        for (const viewerSeat of [0, null] as const) {
+          const g = resolveTable({ seats, width: vp.w, height: vp.h, bandZone: 64, viewerSeat });
+          const pods = g.seats.filter((s) => !s.isHero).map((s) => ({ s, b: podBox(s, g.density) }));
+          const ctx = `${vp.name}/${seats} seats${viewerSeat === null ? " (watching)" : ""}`;
+          for (const { s, b } of pods) {
+            expect(b.x, `${ctx}: seat ${s.seat} off the left`).toBeGreaterThanOrEqual(0);
+            expect(b.y, `${ctx}: seat ${s.seat} off the top`).toBeGreaterThanOrEqual(0);
+            expect(b.x + b.w, `${ctx}: seat ${s.seat} off the right`).toBeLessThanOrEqual(vp.w);
+            expect(b.y + b.h, `${ctx}: seat ${s.seat} off the bottom`).toBeLessThanOrEqual(vp.h);
+          }
+          for (let i = 0; i < pods.length; i++) {
+            for (let j = i + 1; j < pods.length; j++) {
+              expect(
+                overlap(pods[i]!.b, pods[j]!.b),
+                `${ctx}: seats ${pods[i]!.s.seat} and ${pods[j]!.s.seat}`,
+              ).toBe(false);
+            }
+          }
         }
       }
     }
@@ -244,9 +287,14 @@ describe("resolveTable", () => {
 
         expect(pot.w, `${ctx}: collapsed`).toBeGreaterThan(0);
         expect(pot.h, `${ctx}: collapsed`).toBeGreaterThan(0);
-        expect(pot.y, `${ctx}: pot overlaps the community row`).toBeGreaterThanOrEqual(
-          community.y + community.h - 0.001,
-        );
+        // Below the row on a tall board; beside it where a short, wide one
+        // lays the chain out sideways (`pokerRow`). Never on it, either way.
+        const beside = pot.x >= community.x + community.w - 0.001;
+        if (!beside) {
+          expect(pot.y, `${ctx}: pot overlaps the community row`).toBeGreaterThanOrEqual(
+            community.y + community.h - 0.001,
+          );
+        }
         expect(pot.x, `${ctx}: left of the play area`).toBeGreaterThanOrEqual(
           g.zones.play.x - 0.001,
         );
@@ -272,9 +320,12 @@ describe("resolveTable", () => {
           const z = g.zones[name];
           expect(z.w, `${ctx}: ${name} collapsed`).toBeGreaterThan(0);
           expect(z.h, `${ctx}: ${name} collapsed`).toBeGreaterThan(0);
-          expect(z.y, `${ctx}: ${name} overlaps the pot`).toBeGreaterThanOrEqual(
-            pot.y + pot.h - 0.001,
-          );
+          // Below the pot, or beside it in the sideways chain.
+          if (z.x < pot.x + pot.w - 0.001) {
+            expect(z.y, `${ctx}: ${name} overlaps the pot`).toBeGreaterThanOrEqual(
+              pot.y + pot.h - 0.001,
+            );
+          }
         }
         // The two sit side by side, never overlapping each other.
         const stub = g.zones.stub;
@@ -547,9 +598,15 @@ describe("pileRegion", () => {
           // boundary derived from the pod's footprint alone undershoots
           // this, which is the exact bug pileRegion exists to prevent —
           // so the assertion has to use the hand's reach, not the pod's.
+          //
+          // Where hands are TUCKED behind the pod (phones) there is no fan:
+          // the reach is the pod plus the few px a tucked hand peeks past
+          // it. layout.test.ts checks the tucked pieces themselves.
           const pod = POD_SIZE[g.density];
-          const reach =
-            (seat.anchor === "top" ? pod.h : pod.w) / 2 + g.miniCard.h + TILE_HAND_GAP;
+          const podHalf = (seat.anchor === "top" ? pod.h : pod.w) / 2;
+          const reach = g.tuck ? podHalf + 9 : podHalf + g.miniCard.h + TILE_HAND_GAP;
+          // A high side seat sits ABOVE the board, not beside it.
+          if (g.tuck && seat.y + pod.h / 2 <= region.y + 0.001) continue;
 
           if (seat.anchor === "left") {
             expect(seat.x + reach, `${ctx}: seat ${seat.seat}'s hand reaches the pile`)
@@ -587,8 +644,12 @@ describe("pileRegion", () => {
         if (sides.length > 0) {
           // Level with the pods flanking it whenever the clamp allows —
           // which is the whole reason the axis is derived from the seats
-          // rather than from a fraction of the region.
-          const mid = sides.reduce((sum, s) => sum + s.y, 0) / sides.length;
+          // rather than from a fraction of the region. Where the seats are a
+          // rim around the board (hands tucked, phones), they say nothing
+          // about where the piles go and the board's own middle does.
+          const mid = g.tuck
+            ? g.pileRegion.y + g.pileRegion.h / 2
+            : sides.reduce((sum, s) => sum + s.y, 0) / sides.length;
           const clamped =
             mid < g.pileRegion.y + g.card.h / 2 ||
             mid > g.pileRegion.y + g.pileRegion.h - g.card.h / 2;
@@ -752,7 +813,7 @@ describe("pile assembly — portrait and landscape are different, not relabelled
     for (const vp of VIEWPORTS) {
       const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
       expect(handFanMaxScroll(g, 7), `${vp.name}: an ordinary hand must not pan`).toBe(0);
-      expect(handFanMaxScroll(g, 34), `${vp.name}: a huge hand must pan`).toBeGreaterThan(0);
+      expect(handFanMaxScroll(g, 48), `${vp.name}: a huge hand must pan`).toBeGreaterThan(0);
     }
   });
 });
@@ -885,9 +946,12 @@ describe("bs — the pile and the reveal row", () => {
     for (const vp of VIEWPORTS) {
       const g = resolveTable({ seats: 4, width: vp.w, height: vp.h });
       const { play, reveal } = g.zones;
-      if (play.w >= g.card.w * 4.5) {
+      // At the row's own scale: on a short screen the pair shrinks to fit
+      // the height (`zoneScale`), and four of ITS cards must still fit.
+      const cardW = g.card.w * (g.zoneScale.reveal ?? 1);
+      if (play.w >= cardW * 4.5) {
         expect(reveal.w, `${vp.name}: reveal row too narrow for four cards`)
-          .toBeGreaterThanOrEqual(g.card.w * 4);
+          .toBeGreaterThanOrEqual(cardW * 4);
       }
     }
   });

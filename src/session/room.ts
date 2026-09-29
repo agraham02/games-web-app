@@ -28,7 +28,7 @@
 
 import type { BotDifficulty, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { gameEntry, type GameId, type RawSettings } from "./registry";
+import { clampSeats, gameEntry, type GameId, type RawSettings } from "./registry";
 
 export type SessionId = string;
 export type RoomCode = string;
@@ -70,6 +70,9 @@ export const MAX_ROOM_MEMBERS = 24;
  */
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 export const CODE_LENGTH = 4;
+
+/** Longer than any real seating plan (members + seats); refuses junk. */
+const MAX_PLAN_LENGTH = 64;
 
 export interface Member {
   session: SessionId;
@@ -113,9 +116,15 @@ export interface Room {
   settings: RawSettings;
   seats: number;
   difficulty: BotDifficulty;
-  /** session -> 0 | 1, for games that play in partnerships. */
-  teams: Record<SessionId, number> | null;
   game: GameParticipation | null;
+  /**
+   * The seating plan the leader arranged: who sits in each seat, seat 0
+   * first and clockwise from there, with `null` for a seat a bot plays.
+   * Absent until somebody arranges it. Read it through `seatingPlan`,
+   * which squares it with who is actually here and how many seats the game
+   * has, so joins, departures and a change of game need no bookkeeping.
+   */
+  seatPlan?: (SessionId | null)[];
 }
 
 export type RoomError =
@@ -133,6 +142,7 @@ export type RoomError =
   | "not-in-game"
   | "cannot-target-self"
   | "bad-seat-count"
+  | "bad-seat-plan"
   | "room-full";
 
 export type RoomEffect =
@@ -163,8 +173,9 @@ export type RoomCommand =
       seats: number;
       difficulty: BotDifficulty;
     }
-  | { t: "assignTeam"; session: SessionId; team: number }
-  | { t: "randomizeTeams" }
+  /** The whole seating plan, as the leader has just arranged it. */
+  | { t: "arrangeSeats"; plan: (SessionId | null)[] }
+  | { t: "shuffleSeats" }
   | { t: "startGame" }
   | {
       t: "enterGame";
@@ -185,7 +196,7 @@ export type RoomCommand =
 export interface RoomContext {
   actor: SessionId;
   now: number;
-  /** Only `randomizeTeams` needs one. Never `Math.random`. */
+  /** Only `shuffleSeats` needs one. Never `Math.random`. */
   rng?: Rng;
 }
 
@@ -223,7 +234,6 @@ export function createRoom(opts: {
     settings: {},
     seats: 0,
     difficulty: "steady",
-    teams: null,
     game: null,
   };
 }
@@ -234,6 +244,61 @@ export function createRoom(opts: {
 
 export function orderedMembers(room: Room): Member[] {
   return Object.values(room.members).sort((a, b) => a.joinedAt - b.joinedAt);
+}
+
+/**
+ * Who sits where when a game is dealt: one entry per seat, seat 0 first
+ * and clockwise from there, `null` for a seat a bot plays — and then
+ * anybody who does not fit, who will watch.
+ *
+ * The leader's `seatPlan` is the starting point, squared with the room as
+ * it is now: somebody no longer here leaves a bot seat; somebody not in the
+ * plan (joined since) takes the first bot seat, or waits at the end; the
+ * plan grows or shrinks to the game's seat count; and nobody is left
+ * watching while a bot has a seat they could take. Join order alone used to
+ * decide the seats, with no way to change them or to put a bot between two
+ * people (the user asked for both, 2026-09-26).
+ *
+ * In a partnership game the seat IS the team: this app's partners sit
+ * across, seats 0/2 against 1/3 (`teamOfSeat`).
+ *
+ * Leadership is NOT inherited in this order; that stays `orderedMembers`,
+ * the longest-standing member, whatever the seats.
+ */
+export function seatingPlan(room: Room): (SessionId | null)[] {
+  const seats = Math.max(0, room.seats);
+  const seen = new Set<SessionId>();
+  const kept = (room.seatPlan ?? []).map((s) => {
+    if (s === null || !room.members[s] || seen.has(s)) return null;
+    seen.add(s);
+    return s;
+  });
+  const table: (SessionId | null)[] = kept.slice(0, seats);
+  while (table.length < seats) table.push(null);
+  const waiting = kept.slice(seats).filter((s): s is SessionId => s !== null);
+  for (const m of orderedMembers(room)) if (!seen.has(m.session)) waiting.push(m.session);
+  // Nobody watches while a bot holds a seat they could have.
+  for (let i = 0; i < table.length && waiting.length > 0; i++) {
+    if (table[i] === null) table[i] = waiting.shift()!;
+  }
+  return [...table, ...waiting];
+}
+
+/** The members in seating order: `seatingPlan` without the bot seats. */
+export function seatingOrder(room: Room): Member[] {
+  return seatingPlan(room)
+    .filter((s): s is SessionId => s !== null)
+    .map((s) => room.members[s]!);
+}
+
+/**
+ * Which side seat `index` of the plan plays for — 0 or 1 — in a game with
+ * partnerships, or null where there are none (or it is not a seat). The
+ * seat decides it: partners sit across, seats 0/2 against 1/3.
+ */
+export function teamOfSeat(room: Room, index: number): number | null {
+  if (!room.gameId || !gameEntry(room.gameId).teams(room.settings)) return null;
+  return index >= 0 && index < room.seats ? index % 2 : null;
 }
 
 export function connectedCount(room: Room): number {
@@ -298,25 +363,6 @@ export function nameTaken(room: Room, name: string, except?: SessionId): boolean
   return Object.values(room.members).some(
     (m) => m.session !== except && m.name.toLowerCase() === wanted,
   );
-}
-
-/**
- * Forces anything at all into a real team index, 0 or 1.
- *
- * `team % 2` looks like it does this and does not: `-1 % 2` is `-1` and
- * `0.5 % 2` is `0.5`, both of which are perfectly good numbers and
- * neither of which is a team. `seatMembers` then indexes its queue array
- * with one, gets `undefined`, and throws — which used to take the whole
- * process down, because a leader is allowed to send `assignTeam` and
- * nothing between the socket and here was checking.
- *
- * Applied at BOTH ends deliberately: once where a client's number is
- * stored, so a bad one never enters the room, and once where it is read,
- * so a room that acquired one some other way still seats everybody.
- */
-export function teamIndex(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
-  return Math.abs(Math.round(value)) % 2;
 }
 
 export function cleanName(raw: string): string {
@@ -388,51 +434,28 @@ function endIfAllBots(room: Room, effects: RoomEffect[]): Room {
 }
 
 /**
- * Seats the room's members for a fresh game.
+ * Seats the room's members for a fresh game, as the seating plan says.
  *
- * Teams, where a game uses them, decide WHICH seats rather than merely how
- * many: this app's partnership games are partners-across, seats 0/2 against
- * 1/3, so a team assignment that ignored seat parity would put both
- * partners on the same side of the table and quietly break the game.
- * Everyone who does not fit becomes a spectator, per the spec's
- * fill-seats-then-overflow rule.
+ * Only the connected are seated: a planned seat whose person is away goes
+ * to whoever was waiting for one, and failing that to a bot. Everyone who
+ * does not fit becomes a spectator, per the spec's fill-seats-then-overflow
+ * rule. Teams need nothing of their own here, because the seat is the team.
  */
 function seatMembers(
   room: Room,
   seats: number,
 ): { seatOwner: (SessionId | null)[]; present: SessionId[] } {
-  const seatOwner: (SessionId | null)[] = Array.from({ length: seats }, () => null);
-  const members = orderedMembers(room).filter((m) => m.connected);
-  const present = members.map((m) => m.session);
-
-  const usesTeams = room.teams !== null && gameEntry(room.gameId!).teams(room.settings);
-
-  if (usesTeams) {
-    const even: SeatId[] = [];
-    const odd: SeatId[] = [];
-    for (let i = 0; i < seats; i++) (i % 2 === 0 ? even : odd).push(i);
-    const queues = [even, odd];
-    const leftovers: SessionId[] = [];
-
-    for (const m of members) {
-      const queue = queues[teamIndex(room.teams?.[m.session])]!;
-      const seat = queue.shift();
-      if (seat === undefined) leftovers.push(m.session);
-      else seatOwner[seat] = m.session;
-    }
-    // A lopsided assignment (three on one team) still has to seat people
-    // somewhere rather than dropping them: whoever overflowed their own
-    // side takes whatever is left before anyone becomes a spectator.
-    const spare = [...queues[0]!, ...queues[1]!].sort((a, b) => a - b);
-    for (const session of leftovers) {
-      const seat = spare.shift();
-      if (seat !== undefined) seatOwner[seat] = session;
-    }
-  } else {
-    members.forEach((m, i) => {
-      if (i < seats) seatOwner[i] = m.session;
-    });
+  const here = (session: SessionId | null): session is SessionId =>
+    session !== null && Boolean(room.members[session]?.connected);
+  const plan = seatingPlan({ ...room, seats });
+  const seatOwner: (SessionId | null)[] = plan.slice(0, seats).map((s) => (here(s) ? s : null));
+  const waiting = plan.slice(seats).filter(here);
+  for (let i = 0; i < seatOwner.length && waiting.length > 0; i++) {
+    if (seatOwner[i] === null) seatOwner[i] = waiting.shift()!;
   }
+  const present = seatingOrder(room)
+    .filter((m) => m.connected)
+    .map((m) => m.session);
 
   return { seatOwner, present };
 }
@@ -575,15 +598,13 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       const name = nameOf(room, target);
       const members = { ...room.members };
       delete members[target];
-      const teams = room.teams ? { ...room.teams } : null;
-      if (teams) delete teams[target];
 
       // Leaving the room releases the seat outright, unlike backing out to
       // the lobby. The spec reserves a seat for a player who disconnects or
       // steps away; someone who is no longer in the room at all is neither,
       // and holding seats for departed strangers would let a room strand
       // itself with no way to seat anybody.
-      let next = releaseFromGame({ ...room, members, teams }, target);
+      let next = releaseFromGame({ ...room, members }, target);
       next = reassignLeader(next);
       effects.push({
         t: "notice",
@@ -662,7 +683,9 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       const entry = gameEntry(command.gameId);
       if (!entry.online) return fail("game-not-online");
       const settings = entry.parse(command.settings);
-      const seats = Math.min(entry.maxSeats, Math.max(entry.minSeats, Math.round(command.seats)));
+      // The GAME's bounds under these settings, not the entry's: Caribbean
+      // dominoes is four-handed whatever the entry allows (`seatBounds`).
+      const seats = clampSeats(command.gameId, settings, Math.round(command.seats));
       if (!Number.isFinite(seats)) return fail("bad-seat-count");
       return {
         ok: true,
@@ -672,56 +695,53 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
           settings,
           seats,
           difficulty: command.difficulty,
-          // Team assignments are per-game: carrying them across a switch
-          // from Spades to Poker would silently apply a pairing nobody
-          // chose to a game that has no partnerships.
-          teams: entry.teams(settings) ? (room.teams ?? {}) : null,
         },
         effects,
       };
     }
 
-    case "assignTeam": {
+    case "arrangeSeats": {
       const err = requireLeader();
       if (err) return fail(err);
-      // Teams are dealt INTO a game: `seatMembers` reads them once, at
-      // `startGame`, and the running session keeps whatever it was given.
-      // Without this the roster happily reassigned somebody mid-match while
-      // the table's actual partnerships did not move - a change that looks
-      // like it worked and does nothing, which is worse than a refusal.
+      // Seats are dealt INTO a game: `seatMembers` reads the plan once, at
+      // `startGame`, and the running session keeps what it was given. A
+      // change mid-match would move the lobby's list and not the table,
+      // which looks like it worked and does nothing — worse than a refusal.
       if (room.game) return fail("game-already-running");
-      if (!room.members[command.session]) return fail("not-a-member");
-      if (room.teams === null) return fail("no-game-selected");
+      const plan: unknown = command.plan;
+      if (!Array.isArray(plan) || plan.length > MAX_PLAN_LENGTH) return fail("bad-seat-plan");
+      const seen = new Set<SessionId>();
+      for (const s of plan as unknown[]) {
+        if (s === null) continue;
+        if (typeof s !== "string" || !room.members[s] || seen.has(s)) return fail("bad-seat-plan");
+        seen.add(s);
+      }
+      // Stored squared with the room, so what everybody sees is what will
+      // be dealt (`seatingPlan`).
       return {
         ok: true,
-        room: {
-          ...room,
-          teams: { ...room.teams, [command.session]: teamIndex(command.team) },
-        },
+        room: { ...room, seatPlan: seatingPlan({ ...room, seatPlan: command.plan }) },
         effects,
       };
     }
 
-    case "randomizeTeams": {
+    case "shuffleSeats": {
       const err = requireLeader();
       if (err) return fail(err);
-      // See `assignTeam`: partnerships are fixed once a game has dealt.
       if (room.game) return fail("game-already-running");
-      if (room.teams === null) return fail("no-game-selected");
       const rng = ctx.rng;
       if (!rng) return fail("no-game-selected");
-      const shuffled = rng.shuffle(orderedMembers(room).map((m) => m.session));
-      const teams: Record<SessionId, number> = {};
-      // Alternating rather than splitting down the middle, so an odd
-      // number of members lands one extra on the first side instead of
-      // failing to divide.
-      shuffled.forEach((session, i) => {
-        teams[session] = i % 2;
-      });
+      // The bot seats shuffle too, so people and bots end up mixed. So do
+      // the people past the last seat: they are only watching because the
+      // table is full, and a shuffle that always left the same latecomers
+      // out would be no shuffle for them. (Either there are bot seats or
+      // there are people waiting, never both — `seatingPlan` fills one
+      // from the other — so the whole plan is one pool.)
+      const shuffled = rng.shuffle(seatingPlan(room));
       return {
         ok: true,
-        room: { ...room, teams },
-        effects: [{ t: "notice", text: "Teams were shuffled" }],
+        room: { ...room, seatPlan: seatingPlan({ ...room, seatPlan: shuffled }) },
+        effects: [{ t: "notice", text: "Seats were shuffled" }],
       };
     }
 
@@ -743,7 +763,7 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       // courtesy and this is the rule.
       if (connectedCount(room) < MIN_ROOM_PLAYERS) return fail("needs-two-players");
 
-      const seats = Math.min(entry.maxSeats, Math.max(entry.minSeats, room.seats || entry.defaultSeats));
+      const seats = clampSeats(room.gameId, room.settings, room.seats || entry.defaultSeats);
       const { seatOwner, present } = seatMembers(room, seats);
 
       return {

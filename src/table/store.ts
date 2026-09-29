@@ -73,6 +73,14 @@ interface TableState {
    */
   heroTurnActive: boolean;
   /**
+   * Whether a game's `dimmed` marks are drawn — the player's Hints
+   * setting, synced in by GameHost. Off, a card that cannot be played
+   * looks and taps like any other, and the game says why after the tap
+   * instead of before it. Defaults true: dimming is the long-standing
+   * behaviour, and a table with no Hints setting keeps it.
+   */
+  hintsShown: boolean;
+  /**
    * Pan offset, in px, of the discard pile's own fan — how far it has
    * been dragged past what fits. See geometry.ts's compress-then-pan
    * note: a fan compresses only down to a floor, and everything past
@@ -116,6 +124,13 @@ interface TableState {
    * allow.
    */
   handOrder: Record<PieceId, number> | null;
+  /**
+   * Who the table is waiting on, in words, when it is not the viewer —
+   * "Mia is thinking…", "Waiting for Ada". Written by `GameHostView`,
+   * shown by `TurnIndicator` whenever it is not the viewer's turn. Null
+   * when it is, or when nobody is on turn.
+   */
+  turnLine: string | null;
 
   setGeometry(g: TableGeometry): void;
   /** Replaces the whole board — used on setup and on reconciliation. */
@@ -144,9 +159,11 @@ interface TableState {
   clearFlags(): void;
   setHeroHoverIndex(index: number | null): void;
   setHeroTurnActive(active: boolean): void;
+  setHintsShown(shown: boolean): void;
   setDiscardScroll(px: number | null): void;
   setHandScroll(px: number | null): void;
   setHandOrder(order: Record<PieceId, number> | null): void;
+  setTurnLine(line: string | null): void;
 }
 
 function countInZone(placements: PlacementMap, zone: Placement["zone"]): number {
@@ -208,10 +225,12 @@ export const useTableStore = create<TableState>((set) => {
     ghosts: [],
     heroHoverIndex: null,
     heroTurnActive: true,
+    hintsShown: true,
     discardScroll: null,
     discardCount: 0,
     handScroll: null,
     handOrder: null,
+    turnLine: null,
 
     setGeometry: (geometry) => set({ geometry }),
 
@@ -309,12 +328,17 @@ export const useTableStore = create<TableState>((set) => {
     setHeroTurnActive: (active) =>
       set((s) => (s.heroTurnActive === active ? s : { heroTurnActive: active })),
 
+    setHintsShown: (shown) =>
+      set((s) => (s.hintsShown === shown ? s : { hintsShown: shown })),
+
     setDiscardScroll: (px) =>
       set((s) => (s.discardScroll === px ? s : { discardScroll: px })),
 
     setHandScroll: (px) => set((s) => (s.handScroll === px ? s : { handScroll: px })),
 
     setHandOrder: (order) => set({ handOrder: order }),
+
+    setTurnLine: (line) => set((s) => (s.turnLine === line ? s : { turnLine: line })),
   };
 });
 
@@ -367,6 +391,13 @@ export const useSetHeroHoverIndex = () => useTableStore((s) => s.setHeroHoverInd
  */
 export const useHeroTurnActive = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.heroTurnActive : true));
+
+/**
+ * See `TableState.hintsShown`. Enabled only for a piece the game has
+ * dimmed, so no other piece re-renders when the setting changes.
+ */
+export const useHintsShown = (enabled: boolean) =>
+  useTableStore((s) => (enabled ? s.hintsShown : true));
 
 /**
  * Pan/count slices, all on the same enabled-gated pattern as the two

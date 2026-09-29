@@ -33,7 +33,7 @@ export function makePlayers(
       seat,
       name: botName(seat),
       colour: botColour(seat),
-      meta: opts.melds ? `${4 + (i % 5)} cards` : `bid ${1 + (i % 4)}`,
+      stats: [[opts.melds ? { label: "Cards", value: 4 + (i % 5) } : { label: "Bid", value: 1 + (i % 4) }]],
       active: opts.activeSeat === seat,
       thinking: opts.activeSeat === seat,
     });

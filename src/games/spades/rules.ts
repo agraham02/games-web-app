@@ -670,7 +670,7 @@ function endRound(state: SpadesState, events: GameEvent[]): ReduceResult<SpadesS
     2: state.bids[2]!,
     3: state.bids[3]!,
   };
-  const { deltas, bags, bagPenalty, bagsAdded } = scoreRound(bids, state.tricksWon, state.bags);
+  const { deltas, bags, bagPenalty, bagsAdded, parts } = scoreRound(bids, state.tricksWon, state.bags);
 
   const scores: Record<SeatId, number> = {};
   const nilsAttempted = { ...state.nilsAttempted };
@@ -683,7 +683,7 @@ function endRound(state: SpadesState, events: GameEvent[]): ReduceResult<SpadesS
     }
   }
 
-  const result: RoundResult = { bids, tricksWon: { ...state.tricksWon }, deltas, bags, bagPenalty, bagsAdded };
+  const result: RoundResult = { bids, tricksWon: { ...state.tricksWon }, deltas, bags, bagPenalty, bagsAdded, parts };
   events.push({ t: "score", deltas });
   events.push({ t: "roundEnd", round: state.round });
 
