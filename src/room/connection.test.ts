@@ -342,6 +342,27 @@ describe("a page that is no longer listening", () => {
     vi.advanceTimersByTime(1_000);
     expect(socket.readyState).toBe(1);
     expect(connection.status).toBe("open");
+    // ...and says nothing: nobody is leaving.
+    expect(socket.count("bye")).toBe(0);
+  });
+
+  it("says bye before hanging up, so leaving the lobby is immediate", () => {
+    // A bare close looks like a phone locking, which the server gives the
+    // lobby grace to come back from; `bye` says it was on purpose.
+    const { socket, off } = listening();
+    deliver(socket, { t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    off();
+    vi.advanceTimersByTime(0);
+    expect(socket.count("bye")).toBe(1);
+    expect(socket.sent.at(-1)?.t).toBe("bye");
+    expect(socket.readyState).toBe(3);
+  });
+
+  it("says nothing on behalf of an identity the server never confirmed", () => {
+    const { socket, off } = listening();
+    off();
+    vi.advanceTimersByTime(0);
+    expect(socket.count("bye")).toBe(0);
   });
 
   it("forgets what it heard, so the next page asks the server afresh", () => {

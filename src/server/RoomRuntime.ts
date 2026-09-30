@@ -33,7 +33,9 @@ import { piecesNamed, projectEvents, redactPlacements } from "@/session/redact";
 import {
   applyCommand,
   connectedCount,
+  holdsSeat,
   isSeatLive,
+  LOBBY_GRACE_MS,
   mayContinueRound,
   openSeats,
   seatOf,
@@ -55,7 +57,7 @@ import {
 } from "@/session/structural";
 import type { FrameView, MemberView, RoomView, ServerMessage, SettlementView } from "@/session/protocol";
 import { seatNets, settleUp, type Stint } from "@/session/settle";
-import type { Clock } from "@/session/clock";
+import type { Clock, TimerHandle } from "@/session/clock";
 import { log } from "./log";
 
 /**
@@ -88,6 +90,15 @@ export interface RoomRuntimeOptions {
   rng: Rng;
   /** Called when the room has no reason to exist any more. */
   onEmpty: (code: string) => void;
+  /**
+   * Called when a member has been let go of without asking — their
+   * `LOBBY_GRACE_MS` ran out — so whoever keeps the map of who is in which
+   * room can forget them. Leaving on purpose goes through the router, which
+   * does that itself.
+   */
+  onDeparted?: (session: SessionId) => void;
+  /** `LOBBY_GRACE_MS` unless a test (or a dev server) wants it shorter. */
+  graceMs?: number;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,7 +110,17 @@ export class RoomRuntime {
   private readonly clock: Clock;
   private readonly rng: Rng;
   private readonly onEmpty: (code: string) => void;
+  private readonly onDeparted: (session: SessionId) => void;
+  private readonly graceMs: number;
   private readonly connections = new Map<SessionId, Connection>();
+  /**
+   * Members who have dropped with nothing to hold, each with the timer that
+   * lets them go (`LOBBY_GRACE_MS`). Kept up to date after every command by
+   * `maintainGrace`, which asks what is true now rather than reacting to
+   * particular commands — so a game ending while a seat holder is away
+   * starts their clock too, with nobody having to remember that it should.
+   */
+  private readonly grace = new Map<SessionId, TimerHandle>();
 
   private session: AnySession | null = null;
   /**
@@ -147,6 +168,8 @@ export class RoomRuntime {
     this.clock = opts.clock;
     this.rng = opts.rng;
     this.onEmpty = opts.onEmpty;
+    this.onDeparted = opts.onDeparted ?? (() => {});
+    this.graceMs = opts.graceMs ?? LOBBY_GRACE_MS;
   }
 
   get code(): string {
@@ -278,8 +301,47 @@ export class RoomRuntime {
       this.session?.settled();
     }
 
+    this.maintainGrace();
     log.info("command", { room: this.code, session, event: command.t });
     return { ok: true };
+  }
+
+  /* ---------- letting go of the absent ---------- */
+
+  /** Gone, with nothing waiting for them: the ones `LOBBY_GRACE_MS` is for. */
+  private exposed(session: SessionId): boolean {
+    const member = this.room.members[session];
+    return Boolean(member) && !member!.connected && !holdsSeat(this.room, session);
+  }
+
+  private maintainGrace(): void {
+    for (const [session, handle] of this.grace) {
+      if (this.exposed(session)) continue;
+      this.clock.clearTimeout(handle);
+      this.grace.delete(session);
+    }
+    for (const session of Object.keys(this.room.members)) {
+      if (!this.exposed(session) || this.grace.has(session)) continue;
+      this.grace.set(
+        session,
+        this.clock.setTimeout(() => this.lapse(session), this.graceMs),
+      );
+    }
+  }
+
+  /**
+   * Their grace ran out: they leave, exactly as if they had pressed Leave —
+   * the same "X left" everybody would have seen, and leadership handed on.
+   */
+  private lapse(session: SessionId): void {
+    this.grace.delete(session);
+    // Re-asked rather than assumed. Every route back cancels the timer, but
+    // it costs nothing to be sure before removing somebody.
+    if (!this.exposed(session)) return;
+    if (!this.command(session, { t: "leave" }).ok) return;
+    log.info("member lapsed", { room: this.code, session });
+    this.broadcastRoom();
+    this.onDeparted(session);
   }
 
   /**
@@ -670,7 +732,9 @@ export class RoomRuntime {
       return {
         session: m.session,
         name: m.name,
-        connected: m.connected,
+        // Silent, as the user asked: somebody inside their grace looks
+        // exactly as they did, and simply goes if it runs out.
+        connected: m.connected || this.grace.has(m.session),
         seat,
         spectating: Boolean(game?.present.includes(m.session)) && seat === null,
         // The seat decides the side: the one they hold in a running game,
@@ -757,6 +821,8 @@ export class RoomRuntime {
   }
 
   dispose(): void {
+    for (const handle of this.grace.values()) this.clock.clearTimeout(handle);
+    this.grace.clear();
     this.stopSession();
     for (const connection of this.connections.values()) connection.close();
     this.connections.clear();

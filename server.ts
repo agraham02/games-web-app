@@ -44,7 +44,13 @@ async function main(): Promise<void> {
   await app.prepare();
   const handle = app.getRequestHandler();
 
-  const registry = new RoomRegistry();
+  // `ROOM_GRACE_MS` shortens how long a dropped lobby member is kept, so the
+  // ws harness can watch one lapse without waiting 20 seconds. Dev only: in
+  // production the rule is the rule.
+  const graceOverride = dev ? Number(process.env.ROOM_GRACE_MS) : NaN;
+  const registry = new RoomRegistry({
+    graceMs: Number.isFinite(graceOverride) && graceOverride > 0 ? graceOverride : undefined,
+  });
 
   const server = createServer((req, res) => {
     // Liveness, and deliberately NOT one of the debug routes: those are

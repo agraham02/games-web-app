@@ -22,10 +22,13 @@
 import WebSocket from "ws";
 // The 52 real ids, so the leak check below cannot drift from the deck.
 import { rummyDeck } from "../src/games/rummy/cards";
+import { PROTOCOL_VERSION } from "../src/session/protocol";
 
 const BASE = process.env.HARNESS_URL ?? "http://localhost:3000";
 const WS_URL = BASE.replace(/^http/, "ws") + "/ws";
-const PROTOCOL = 1;
+// The server's own number, so a protocol bump cannot leave every scenario
+// refused at the handshake.
+const PROTOCOL = PROTOCOL_VERSION;
 
 /**
  * How many 100ms ticks a scenario waits for a Spades table to reach one of

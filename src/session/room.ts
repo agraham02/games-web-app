@@ -64,6 +64,22 @@ export const MIN_ROOM_PLAYERS = 2;
 export const MAX_ROOM_MEMBERS = 24;
 
 /**
+ * How long somebody who dropped out of the lobby stays a member.
+ *
+ * The lobby holds nothing for anybody (the user, 2026-09-29): somebody who
+ * leaves it simply leaves, and there is no "Away" row waiting for them. But
+ * the server cannot tell leaving from a refresh, a phone locking, or the
+ * host switching apps to send the code — all of them are just a socket
+ * closing — so an unexpected drop gets this long to come back, and nothing
+ * on anybody's screen says it happened. Leaving on purpose (Leave, or
+ * navigating away inside the app, which sends `bye`) skips it.
+ *
+ * Only for people with nothing to hold: a seat in a running game is kept
+ * for its owner exactly as before (see `holdsSeat`).
+ */
+export const LOBBY_GRACE_MS = 20_000;
+
+/**
  * Codes are uppercase and skip I and O, which are the two letters people
  * reliably mistype as 1 and 0 when reading a code off someone else's
  * screen. 24^4 is still 331,776 rooms.
@@ -338,6 +354,17 @@ export function mayContinueRound(room: Room, session: SessionId): boolean {
   return seatOf(room, session) !== null && here(session);
 }
 
+/**
+ * Does this member have a seat in the running game waiting for them?
+ *
+ * The line between a member the room keeps while they are gone and one it
+ * lets go of (`LOBBY_GRACE_MS`): a seat is theirs to come back to, and a bot
+ * holds it meanwhile, but a lobby row or a spectator's view holds nothing.
+ */
+export function holdsSeat(room: Room, session: SessionId): boolean {
+  return room.game?.seatOwner.includes(session) ?? false;
+}
+
 export function seatOf(room: Room, session: SessionId): SeatId | null {
   const idx = room.game?.seatOwner.indexOf(session) ?? -1;
   return idx === -1 ? null : idx;
@@ -507,7 +534,9 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       // into one nobody could rejoin after a dropped socket.
       if (Object.keys(room.members).length >= MAX_ROOM_MEMBERS) return fail("room-full");
 
-      if (room.privacy === "private") {
+      // Nobody left to ask means nobody to wait for: a knock on an emptied
+      // private room could never be answered.
+      if (room.privacy === "private" && room.members[room.leader]) {
         return {
           ok: true,
           room: {
@@ -522,6 +551,10 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
         ok: true,
         room: {
           ...room,
+          // A room everybody has left still names its last leader, and
+          // `reassignLeader` has nobody to hand it to. Whoever arrives next
+          // takes it, or they would be in a room nobody can start.
+          leader: room.members[room.leader] ? room.leader : actor,
           members: {
             ...room.members,
             [actor]: { session: actor, name, connected: true, joinedAt: now },

@@ -209,12 +209,21 @@ export class RoomConnection {
    * One tick late on purpose. StrictMode unmounts and remounts every
    * effect, and moving from `/room` to `/room/ABCD` swaps one screen for
    * another in a single commit; both have subscribed again by then.
+   *
+   * It says `bye` first, which is what makes leaving the LOBBY this way
+   * immediate (the user, 2026-09-29: "if they leave the lobby, then they
+   * just leave"). A bare close looks to the server like a phone locking,
+   * which it gives `LOBBY_GRACE_MS` to come back; `bye` says it is on
+   * purpose. The server decides what that costs — a seat in a running game
+   * is kept either way. A refresh or a closed tab never gets here: the page
+   * is torn down without running this timer, so those still get the grace.
    */
   private closeWhenIdle(): void {
     if (this.idleTimer !== null) return;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       if (this.listeners.size > 0) return;
+      if (this.session && this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "bye" });
       this.session = null;
       this.lastRoom = null;
       this.lastFrame = null;

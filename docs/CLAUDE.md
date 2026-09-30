@@ -500,6 +500,21 @@ before asking `/api/rejoin`, or it is told about the game as it was.
 Every socket handler checks it is still the current socket, because a
 closed one goes on delivering its last frames and then its close.
 
+**The lobby holds nothing for anybody** (the user, 2026-09-29). Hanging up
+that way first says `bye`, and the server decides: a seat in a running
+game is kept (a bot plays it), anybody else leaves the room there and
+then. A refresh or a closed tab never runs that timer, and the server
+cannot tell those from a phone locking, so an unexpected drop gets
+`LOBBY_GRACE_MS` (20s) and then leaves like a Leave. The grace is silent —
+`viewFor` reports them connected until it runs out — and it lives in
+`RoomRuntime` (`maintainGrace`, re-derived after every command), not in the
+pure room, so a seat holder whose game ends while they are away gets a
+fresh 20s from then. A room is destroyed the moment its last member goes
+(`displace`); `EMPTY_ROOM_TTL_MS` is now only the backstop for a room held
+open by an unanswered knock, and knockers are told when any room goes
+(`onRoomDestroyed`). Joining a room nobody is left in makes you its
+leader, straight in even if it was private — there is nobody to ask.
+
 ### Presence is table state, so it needs a frame
 
 `SeatView.away` marks a seat whose OWNER is not in it — read from

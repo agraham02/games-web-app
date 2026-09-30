@@ -26,6 +26,7 @@ import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
 import type { SpadesState } from "@/games/spades/types";
 import { EMPTY_ROOM_TTL_MS, RoomRegistry } from "./RoomRegistry";
+import { LOBBY_GRACE_MS } from "@/session/room";
 import type { Connection } from "./RoomRuntime";
 import { makePeer, Router, type Peer } from "./router";
 
@@ -147,37 +148,40 @@ describe("the server, in process", () => {
   });
 
   describe("expiry", () => {
-    it("deletes a room a minute after the last person disconnects", () => {
+    // A room nobody is left in goes with its last member: each member who
+    // drops gets LOBBY_GRACE_MS, then leaves, and `displace` destroys the
+    // emptied room. EMPTY_ROOM_TTL_MS is only the backstop now.
+    it("lets go of a room everybody dropped out of, once the grace runs out", () => {
       const { peer, code } = host();
       expect(registry.get(code)).not.toBeNull();
 
       router.onClose(peer);
-      // Still there during the grace period: the commonest cause of an
-      // empty room is everybody refreshing at once.
-      clock.advance(EMPTY_ROOM_TTL_MS - 1);
+      // Still there during the grace: the commonest cause of an empty room
+      // is everybody refreshing at once.
+      clock.advance(LOBBY_GRACE_MS - 1);
       expect(registry.get(code)).not.toBeNull();
 
-      clock.advance(2);
+      clock.advance(1);
       expect(registry.get(code)).toBeNull();
     });
 
-    it("spares a room when somebody returns inside the window", () => {
+    it("spares a room when somebody returns inside the grace", () => {
       const { peer, code } = host("returner");
       router.onClose(peer);
-      clock.advance(EMPTY_ROOM_TTL_MS - 100);
+      clock.advance(LOBBY_GRACE_MS - 100);
 
       peerFor("returner");
       clock.advance(EMPTY_ROOM_TTL_MS * 2);
       expect(registry.get(code)).not.toBeNull();
     });
 
-    it("survives a reconnect landing right on the edge of the window", () => {
-      // Named in the spec. The reaper re-checks rather than assuming,
+    it("survives a reconnect landing right on the edge of the grace", () => {
+      // Named in the spec. The lapse re-checks rather than assuming,
       // because the entire point of a grace period is that returning
       // during it is allowed.
       const { peer, code } = host("edge");
       router.onClose(peer);
-      clock.advance(EMPTY_ROOM_TTL_MS - 1);
+      clock.advance(LOBBY_GRACE_MS - 1);
 
       const back = peerFor("edge");
       clock.advance(1000);
@@ -187,14 +191,107 @@ describe("the server, in process", () => {
     });
 
     it("does not rearm the timer on a flapping connection", () => {
-      // Otherwise a client reconnecting every 59 seconds keeps a dead room
+      // Otherwise a client reconnecting every 19 seconds keeps a dead room
       // alive forever.
       const { peer, code } = host("flapper");
       router.onClose(peer);
-      clock.advance(EMPTY_ROOM_TTL_MS / 2);
+      clock.advance(LOBBY_GRACE_MS / 2);
       router.onClose(peer); // A second close, no reconnect in between.
-      clock.advance(EMPTY_ROOM_TTL_MS / 2 + 10);
+      clock.advance(LOBBY_GRACE_MS / 2 + 10);
       expect(registry.get(code)).toBeNull();
+    });
+
+    it("keeps a room holding only a knock for the reaper, which tells the knocker", () => {
+      const { peer, code } = host("quitter");
+      send(peer, { t: "setPrivacy", privacy: "private" });
+      const knocker = peerFor("hopeful");
+      send(knocker.peer, { t: "joinRoom", code, name: "Hopeful" });
+      expect(knocker.conn.last("pending")).toBeDefined();
+
+      router.onClose(peer);
+      clock.advance(LOBBY_GRACE_MS);
+      // Its only member is gone, but a knock is still waiting on it.
+      expect(registry.get(code)).not.toBeNull();
+
+      clock.advance(EMPTY_ROOM_TTL_MS);
+      expect(registry.get(code)).toBeNull();
+      expect(knocker.conn.last("left")?.reason).toBe("room-closed");
+    });
+  });
+
+  /**
+   * The lobby holds nothing for anybody (the user, 2026-09-29): leaving it
+   * is leaving, and an unexpected drop gets a silent LOBBY_GRACE_MS.
+   */
+  describe("leaving the lobby", () => {
+    function lobbyOfTwo() {
+      const h = host("ada");
+      const bo = peerFor("bo");
+      send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      return { ...h, bo, boSession: registry.sessionFor("bo") };
+    }
+
+    const memberNamed = (conn: FakeConnection, name: string) =>
+      conn.last("room")!.room.members.find((m) => m.name === name);
+
+    it("keeps somebody who dropped looking exactly as they were, then lets them go", () => {
+      const { conn, bo, boSession } = lobbyOfTwo();
+      router.onClose(bo.peer);
+
+      // Silent: nothing on the leader's screen says Bo dropped.
+      expect(memberNamed(conn, "Bo")?.connected).toBe(true);
+      clock.advance(LOBBY_GRACE_MS - 1);
+      expect(memberNamed(conn, "Bo")).toBeDefined();
+
+      clock.advance(1);
+      expect(memberNamed(conn, "Bo")).toBeUndefined();
+      expect(conn.all("notice").map((n) => n.text)).toContain("Bo left");
+      // Forgotten by the registry too, so the home page offers no rejoin.
+      expect(registry.roomOf(boSession)).toBeNull();
+    });
+
+    it("keeps them, and says nothing, when they are back inside the grace", () => {
+      const { conn, bo, code } = lobbyOfTwo();
+      router.onClose(bo.peer);
+      clock.advance(LOBBY_GRACE_MS - 1000);
+      conn.clear();
+
+      const back = peerFor("bo");
+      clock.advance(LOBBY_GRACE_MS * 3);
+      expect(back.conn.last("room")!.room.code).toBe(code);
+      expect(memberNamed(conn, "Bo")?.connected).toBe(true);
+      expect(conn.all("notice").map((n) => n.text)).not.toContain("Bo left");
+    });
+
+    it("lets somebody who says bye go at once", () => {
+      const { conn, bo, boSession } = lobbyOfTwo();
+      send(bo.peer, { t: "bye" });
+      expect(memberNamed(conn, "Bo")).toBeUndefined();
+      expect(registry.roomOf(boSession)).toBeNull();
+    });
+
+    it("destroys a room the moment its last member leaves", () => {
+      const { peer, code } = host("alone");
+      send(peer, { t: "leaveRoom" });
+      expect(registry.get(code)).toBeNull();
+    });
+
+    it("lets the next person into a room nobody is left in, and makes them its leader", () => {
+      // Its last member lapsed while a knock was still waiting, so the room
+      // is kept (for the reaper) with a leader who is no longer in it. The
+      // next person in must not land in a room nobody can start - and there
+      // is nobody left to let them in, so they are not made to knock.
+      const { peer, code } = host("first");
+      send(peer, { t: "setPrivacy", privacy: "private" });
+      const knocker = peerFor("waiting");
+      send(knocker.peer, { t: "joinRoom", code, name: "Waiting" });
+      router.onClose(peer);
+      clock.advance(LOBBY_GRACE_MS);
+
+      const late = peerFor("late");
+      send(late.peer, { t: "joinRoom", code, name: "Late" });
+      expect(late.conn.last("pending")).toBeUndefined();
+      expect(late.conn.last("room")!.room.youAreLeader).toBe(true);
     });
   });
 
@@ -818,6 +915,51 @@ describe("the server, in process", () => {
           expect(other.conn.all("frame"), "no frame to anybody else").toEqual([]);
         });
       }
+    });
+
+    describe("a seat is held, a lobby row is not", () => {
+      it("keeps a dropped seat holder past the grace, and lets them go once the game ends", () => {
+        const { peer, p2 } = twoPlayerSpades();
+        const second = registry.sessionFor("p2");
+        router.onClose(p2.peer);
+
+        clock.advance(LOBBY_GRACE_MS * 3);
+        expect(registry.roomOf(second)).not.toBeNull();
+
+        send(peer, { t: "endGame" });
+        clock.advance(LOBBY_GRACE_MS - 1);
+        expect(registry.roomOf(second)).not.toBeNull();
+        clock.advance(1);
+        expect(registry.roomOf(second)).toBeNull();
+      });
+
+      it("keeps the seat of somebody who says bye mid-game, and the table plays on", () => {
+        const { code, p2 } = twoPlayerSpades();
+        const second = registry.sessionFor("p2");
+        const seat = registry.get(code)!.room.game!.seatOwner.indexOf(second);
+
+        send(p2.peer, { t: "bye" });
+        router.onClose(p2.peer);
+        const before = registry.get(code)!.debugDump().table as { fingerprint: string };
+        clock.drain();
+
+        const runtime = registry.get(code)!;
+        expect(runtime.room.game!.seatOwner[seat]).toBe(second);
+        expect(registry.roomOf(second)).toBe(runtime);
+        const after = runtime.debugDump().table as { fingerprint: string };
+        expect(after.fingerprint, "a bot should have played on in their seat").not.toBe(
+          before.fingerprint,
+        );
+      });
+
+      it("lets a spectator who says bye go at once", () => {
+        const { code, conn } = twoPlayerSpades();
+        const watcher = peerFor("watcher");
+        send(watcher.peer, { t: "joinRoom", code, name: "Watcher" });
+        send(watcher.peer, { t: "enterGame", as: "spectator" });
+        send(watcher.peer, { t: "bye" });
+        expect(conn.last("room")!.room.members.some((m) => m.name === "Watcher")).toBe(false);
+      });
     });
   });
 

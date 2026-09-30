@@ -28,7 +28,7 @@ import type { BotDifficulty } from "@/engine/types";
 import type { GameId, RawSettings } from "./registry";
 import type { Privacy, RoomCode, RoomError, SessionId } from "./room";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /* ============================================================
    Client -> server
@@ -49,6 +49,16 @@ export type ClientMessage =
   | ({ t: "createRoom"; name: string } & Addressed)
   | ({ t: "joinRoom"; code: RoomCode; name: string } & Addressed)
   | ({ t: "leaveRoom" } & Addressed)
+  /**
+   * This tab is leaving the room's page on purpose — the back gesture, a
+   * link home — and is about to hang up. The server decides what that
+   * means: somebody holding a seat in a running game keeps it (a bot plays
+   * it, exactly as when they drop), anybody else leaves the room at once
+   * instead of waiting out `LOBBY_GRACE_MS`. A refresh or a closed tab
+   * never sends it, which is precisely the split wanted: those might be
+   * back in a moment.
+   */
+  | ({ t: "bye" } & Addressed)
   /** Take back a knock on a private room that has not been answered. */
   | ({ t: "withdraw" } & Addressed)
   | ({ t: "rename"; name: string } & Addressed)
@@ -387,6 +397,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   switch (data.t) {
     case "ping":
       return { t: "ping" };
+
+    case "bye":
+      return { t: "bye" };
 
     case "hello": {
       const token = str("token");

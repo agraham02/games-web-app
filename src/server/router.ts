@@ -24,7 +24,7 @@ import {
   type ServerErrorCode,
 } from "@/session/protocol";
 import { isGameId } from "@/session/registry";
-import type { RoomCommand, SessionId } from "@/session/room";
+import { holdsSeat, type RoomCommand, type SessionId } from "@/session/room";
 import type { Connection } from "./RoomRuntime";
 import type { RoomRegistry } from "./RoomRegistry";
 import { log } from "./log";
@@ -77,7 +77,22 @@ export class Router {
   constructor(
     private readonly registry: RoomRegistry,
     private readonly now: () => number,
-  ) {}
+  ) {
+    registry.onRoomDestroyed((code) => this.roomGone(code));
+  }
+
+  /**
+   * Tells everybody still knocking on a room that it has gone. They are not
+   * members, so nothing the room does reaches them — and the reaper used to
+   * take a room out from under a knock with nobody saying so.
+   */
+  private roomGone(code: string): void {
+    for (const [session, waiting] of this.awaiting) {
+      if (waiting.code !== code) continue;
+      this.awaiting.delete(session);
+      waiting.peer.connection.send({ t: "left", reason: "room-closed" });
+    }
+  }
 
   /**
    * The boundary between one client's message and the process.
@@ -155,6 +170,11 @@ export class Router {
 
     if (message.t === "withdraw") {
       this.withdraw(peer, session);
+      return;
+    }
+
+    if (message.t === "bye") {
+      this.bye(peer, session);
       return;
     }
 
@@ -339,6 +359,26 @@ export class Router {
     if (!this.awaiting.has(session)) return;
     this.withdrawQuietly(session);
     peer.connection.send({ t: "left", reason: "left" });
+  }
+
+  /**
+   * The tab is leaving the room's page on purpose and about to hang up.
+   *
+   * Somebody with a seat in a running game keeps it: the close that follows
+   * detaches them and a bot plays on until they come back, as it always
+   * has. Anybody else — the lobby, a spectator, a knock — goes now, rather
+   * than sitting in everybody's roster for `LOBBY_GRACE_MS` looking as
+   * though they were still there.
+   *
+   * Silent, and answered with nothing: the page that sent it is gone.
+   */
+  private bye(peer: Peer, session: SessionId): void {
+    this.withdrawQuietly(session);
+    const runtime = this.registry.roomOf(session);
+    if (!runtime || holdsSeat(runtime.room, session)) return;
+    runtime.command(session, { t: "leave" });
+    runtime.detach(session, peer.connection);
+    this.registry.displace(session);
   }
 
   private admit(session: SessionId, code: string): void {

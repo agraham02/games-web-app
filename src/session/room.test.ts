@@ -18,6 +18,7 @@ import { GAMES, GAME_IDS, gameEntry } from "./registry";
 import {
   applyCommand,
   createRoom,
+  holdsSeat,
   isSeatLive,
   makeCode,
   mayContinueRound,
@@ -183,6 +184,33 @@ describe("leadership", () => {
     r = ok(r, { t: "leave" }, { actor: LEADER });
     expect(r.leader).toBe("s-0");
     expect(r.members[LEADER]).toBeUndefined();
+  });
+
+  it("gives an emptied room to whoever walks in next", () => {
+    // The last one out has nobody to hand the lead to, so the room still
+    // names them; the next person in would otherwise be in a room nobody
+    // can start.
+    let r = ok(room(), { t: "leave" }, { actor: LEADER });
+    expect(r.members).toEqual({});
+    r = ok(r, { t: "join", name: "Late" }, { actor: "s-late" });
+    expect(r.leader).toBe("s-late");
+  });
+
+  it("lets the next person straight into an emptied private room", () => {
+    // There is nobody left to answer a knock.
+    let r = ok(room(), { t: "setPrivacy", privacy: "private" }, { actor: LEADER });
+    r = ok(r, { t: "leave" }, { actor: LEADER });
+    r = ok(r, { t: "join", name: "Late" }, { actor: "s-late" });
+    expect(r.pending).toEqual({});
+    expect(r.members["s-late"]).toBeDefined();
+    expect(r.leader).toBe("s-late");
+  });
+
+  it("still makes a newcomer knock while somebody is there to answer", () => {
+    let r = ok(room(), { t: "setPrivacy", privacy: "private" }, { actor: LEADER });
+    r = ok(r, { t: "join", name: "Knocker" }, { actor: "s-knock" });
+    expect(r.pending["s-knock"]).toBeDefined();
+    expect(r.leader).toBe(LEADER);
   });
 
   it("lets a freshly promoted leader immediately use a leader-only power", () => {
@@ -519,6 +547,20 @@ describe("seats, presence and bots", () => {
     r = spades(r, 4);
     return ok(r, { t: "startGame" }, { actor: LEADER });
   }
+
+  it("says who has a seat waiting for them, whether or not they are at it", () => {
+    // The line between a member the room keeps while they are gone and one
+    // it lets go of after LOBBY_GRACE_MS.
+    const lobby = spades(withMembers(["Sam", "Kofi", "Jo", "Rui"]), 4);
+    expect(holdsSeat(lobby, LEADER)).toBe(false);
+
+    const r = ok(lobby, { t: "startGame" }, { actor: LEADER });
+    const away = ok(r, { t: "exitGame" }, { actor: LEADER });
+    expect(holdsSeat(away, LEADER), "stepped away, seat still theirs").toBe(true);
+    // Five people, four seats: whoever did not fit is only watching.
+    const watcher = seatingPlan(lobby)[4]!;
+    expect(holdsSeat(r, watcher)).toBe(false);
+  });
 
   it("counts a seat live only when its owner is connected AND at the table", () => {
     const r = started();

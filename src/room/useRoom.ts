@@ -97,6 +97,8 @@ export function useRoom(): RoomApi {
   /** The room we are in or knocking on, for `farewell` to name. Read inside
    * the message handler, which is created once and would see stale state. */
   const codeRef = useRef<string | null>(null);
+  /** Whether a room is on screen, for the same reason `codeRef` is a ref. */
+  const inRoomRef = useRef(false);
   const [greeted, setGreeted] = useState(false);
   /**
    * The server said this identity is still in a room, and the room itself
@@ -128,6 +130,7 @@ export function useRoom(): RoomApi {
             // room that no longer existed, every button on it answering
             // `no-room` into a screen that renders no error.
             if (!message.inRoom) {
+              inRoomRef.current = false;
               setRoom(null);
               setFrame(null);
               lastSeq.current = -1;
@@ -142,6 +145,7 @@ export function useRoom(): RoomApi {
 
           case "room":
             setAwaitingRoom(false);
+            inRoomRef.current = true;
             setRoom(message.room);
             setPendingCode(null);
             setFarewell(null);
@@ -173,6 +177,7 @@ export function useRoom(): RoomApi {
           case "pending":
             setAwaitingRoom(false);
             setPendingCode(message.code);
+            inRoomRef.current = false;
             setRoom(null);
             setFarewell(null);
             codeRef.current = message.code;
@@ -180,6 +185,7 @@ export function useRoom(): RoomApi {
 
           case "left":
             setAwaitingRoom(false);
+            inRoomRef.current = false;
             setRoom(null);
             setFrame(null);
             setPendingCode(null);
@@ -212,6 +218,15 @@ export function useRoom(): RoomApi {
             // later, because nothing ever cleared it.
             if (message.code === "move-refused") {
               announce(message.message || "that move is no longer available", "bad");
+              break;
+            }
+            // Any other refusal from inside a room goes the same way, for
+            // the same reason: the entry form is not on screen to show it.
+            // A Start refused because somebody had just dropped (they look
+            // present through their silent `LOBBY_GRACE_MS`) said nothing
+            // at all.
+            if (inRoomRef.current) {
+              announce(message.message, "bad");
               break;
             }
             setAwaitingRoom(false);
