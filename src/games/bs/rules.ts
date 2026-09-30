@@ -450,6 +450,18 @@ export function isOver(state: BsState): boolean {
   return state.winner !== null;
 }
 
+/**
+ * The last card in hand (see `GameDefinition.forcedMove`) — the count is on
+ * every pod, and the claim is forced by the cycle. Never inside a window,
+ * which has its own deadline and its own two answers.
+ */
+export function forcedMove(state: BsState, seat: SeatId): BsAction | null {
+  if (state.window !== null || state.pendingTake !== null) return null;
+  if ((state.hands[seat]?.length ?? 0) !== 1) return null;
+  const legal = legalActions(state, seat);
+  return legal.length === 1 && legal[0]!.t === "play" ? legal[0]! : null;
+}
+
 export function legalActions(state: BsState, seat: SeatId): BsAction[] {
   if (state.winner !== null || state.result !== null || !state.dealt) return [];
 
@@ -731,6 +743,7 @@ export function createBs(rules: Partial<BsRules> = {}): GameDefinition<BsState, 
     setup: makeSetup(resolved),
     reduce,
     legalActions,
+    forcedMove,
     validate,
     completeAction,
     deadline,

@@ -54,6 +54,15 @@ import { extractRound } from "./structural";
 export const DEFAULT_TURN_HOLD_MS = 900;
 
 /**
+ * How long a person gets to make a move that is no choice at all before it
+ * is made for them — `GameDefinition.forcedMove` (the user, 2026-09-29).
+ * Counted from when they could first make it: offline that is when the
+ * session settles, after the animation; online the driver adds how long
+ * the frame that handed it over takes to play (`deadlineLeadMs`).
+ */
+export const FORCED_MOVE_MS = 5_000;
+
+/**
  * One batch of things that happened, handed to whoever is driving.
  *
  * Deliberately NOT carrying the resulting state. The driver reads
@@ -134,6 +143,17 @@ export interface GameSessionOptions<S, A> {
    */
   turnHoldMs?: (state: S, seat: SeatId) => number;
   /**
+   * How long from now until a live seat can actually act — the driver's
+   * estimate of what is still playing on their screen. Added to a forced
+   * move's `FORCED_MOVE_MS`, so the five seconds are theirs rather than
+   * spent watching the move that handed them the turn.
+   *
+   * Offline it is nothing: the browser settles when the animation has
+   * finished, so the wait starts where the player's does. The server
+   * settles the moment it broadcasts, and passes the last frame's playback.
+   */
+  deadlineLeadMs?: () => number;
+  /**
    * When false a bot's turn is computed as soon as it is reachable but
    * never auto-revealed — the driver must call `advance()`. Dev affordance
    * for stepping a game one turn at a time.
@@ -171,6 +191,8 @@ export class GameSession<S, A> {
    * `GameDefinition.deadline`'s `key`.
    */
   private deadlineAnchor: { key: string; at: number } | null = null;
+  /** The last forced move played for somebody, and when. See `playedFor`. */
+  private lastForced: { seat: SeatId; at: number } | null = null;
   /** A bot turn that `settled()` has decided on but not yet revealed. */
   private pending: S | null = null;
   private disposed = false;
@@ -509,11 +531,13 @@ export class GameSession<S, A> {
     // Liveness is the session's to know, and a race's deadline can depend
     // on it: Rummy's ring is the soonest BOT's arrival, never another
     // person's (see `claimDeadlineMs`).
-    const due = this.definition.deadline?.(this.state, seat, (s) => this.isLive(s));
+    const own = this.definition.deadline?.(this.state, seat, (s) => this.isLive(s)) ?? null;
+    const due = own ?? this.forcedDeadline(seat);
     if (!due) {
       this.deadlineAnchor = null;
       return;
     }
+    const forced = own === null;
 
     // How long is actually LEFT of this wait, not how long it was worth
     // when it started.
@@ -544,8 +568,41 @@ export class GameSession<S, A> {
       // illegal in the meantime is refused exactly as a client's would be
       // — the seat may have acted a moment before this fired.
       const result = this.submit(seat, due.action);
+      if (result.ok && forced) this.lastForced = { seat, at: this.clock.now() };
       if (result.ok && !result.animated) this.settled();
     }, ms);
+  }
+
+  /**
+   * The wait for a forced move (`GameDefinition.forcedMove`), in the same
+   * shape as a game's own deadline so it rides the same machinery.
+   *
+   * Keyed by the emitted-frame counter: `submit` emits even for a move that
+   * animates nothing, so `seq` changes exactly when the position does, and a
+   * re-settle for the same position — somebody else dropping or coming back
+   * — resumes this countdown instead of handing out a fresh five seconds.
+   */
+  private forcedDeadline(seat: SeatId): { ms: number; action: A; key: string } | null {
+    const action = this.definition.forcedMove?.(this.state, seat) ?? null;
+    if (action === null) return null;
+    const lead = Math.max(0, this.opts.deadlineLeadMs?.() ?? 0);
+    return { ms: lead + FORCED_MOVE_MS, action, key: `forced:${this.seq}:${seat}` };
+  }
+
+  /**
+   * Was a forced move played for this seat within the last `withinMs`?
+   *
+   * For a driver deciding what to say about a refusal: a person who pressed
+   * their last card a moment after it was played for them made the same
+   * move, and telling them "it is not your turn" would be both true and
+   * baffling.
+   */
+  playedFor(seat: SeatId, withinMs: number): boolean {
+    return (
+      this.lastForced !== null &&
+      this.lastForced.seat === seat &&
+      this.clock.now() - this.lastForced.at <= withinMs
+    );
   }
 
   /**

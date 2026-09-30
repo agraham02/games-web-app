@@ -77,6 +77,16 @@ export const SPECTATOR_SEAT: SeatId = -1;
  */
 const BACKPRESSURE_BYTES = 256 * 1024;
 
+/**
+ * How long after a forced move is played for somebody their own press of it
+ * still counts as the same move, arriving second (`GameSession.playedFor`).
+ * Generous against a slow phone, and far short of their next turn.
+ */
+const LATE_PRESS_MS = 3_000;
+
+/** The refusal that is not one: see `LATE_PRESS_MS`. The router says nothing. */
+export const PLAYED_FOR_YOU = "played-for-you";
+
 export interface Connection {
   send(message: ServerMessage): void;
   close(): void;
@@ -135,6 +145,8 @@ export class RoomRuntime {
    * `startSession` for why the next bot turn is spaced by it.
    */
   private lastFramePlaybackMs = 0;
+  /** When that frame went out, so "still playing" can be asked later. */
+  private lastFrameAt = 0;
   /**
    * Who pays whom for the last game played for money (see `settle.ts`).
    * Worked out here because only the server still holds the position when
@@ -470,6 +482,12 @@ export class RoomRuntime {
       turnHoldMs: (state, seat) =>
         this.lastFramePlaybackMs +
         (definition.turnHold?.(state, seat) ?? DEFAULT_TURN_HOLD_MS),
+      // A person cannot make a forced move while the frame that handed it to
+      // them is still playing on their screen, so their five seconds start
+      // after it. What is LEFT of it, not all of it: a seat that comes live
+      // long after the frame went out has already watched it.
+      deadlineLeadMs: () =>
+        Math.max(0, this.lastFrameAt + this.lastFramePlaybackMs - this.clock.now()),
       emit: (frame) => this.onFrame(frame),
     });
 
@@ -508,6 +526,7 @@ export class RoomRuntime {
     this.previous = after;
     // Before `settled()`, which is what reads it to schedule the next turn.
     this.lastFramePlaybackMs = playbackMs(frame.events);
+    this.lastFrameAt = this.clock.now();
     // Played to a winner: settle up now, while everyone is still at the
     // table to see it on the winner's sheet. Once — frames after the end
     // (a show or muck) must not settle, or broadcast, all over again.
@@ -690,7 +709,12 @@ export class RoomRuntime {
     // A spectator has no seat, so they never reach here; a seated player
     // who is not on turn is refused by the session's own gate.
     const result = this.session.submit(seat, action);
-    if (!result.ok) return { ok: false, error: result.reason };
+    if (!result.ok) {
+      // Their last card, a moment after it was played for them: the same
+      // move, arriving second. Nothing to tell them.
+      if (this.session.playedFor(seat, LATE_PRESS_MS)) return { ok: false, error: PLAYED_FOR_YOU };
+      return { ok: false, error: result.reason };
+    }
     if (!result.animated) this.session.settled();
     return { ok: true };
   }

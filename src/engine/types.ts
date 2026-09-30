@@ -610,6 +610,26 @@ export interface GameDefinition<S, A> {
   } | null;
 
   /**
+   * A move so forced that waiting on a person to make it is only waiting:
+   * the driver plays it for a live seat that has not moved within
+   * `FORCED_MOVE_MS` (the user, 2026-09-29 — "the last card in hand in
+   * Spades, passing in Dominoes, rolling in LRC"). Return null for anything
+   * that is a choice.
+   *
+   * "Only one legal action" is NOT the test, and a game must not answer with
+   * `legalActions` alone. A Spades singleton in the suit led, or a domino
+   * hand with one tile that fits, is also one legal action — and a move that
+   * lands at exactly five seconds tells the table so. Name only what is
+   * forced for reasons everybody can already see: a last card (the count is
+   * public), a draw or a pass (making it says the same thing either way), a
+   * roll. A game's `deadline?()` takes precedence over this.
+   *
+   * Submitted through the session's own gate, like any deadline's action,
+   * so `completeAction` still resolves what it must (LRC's dice).
+   */
+  forcedMove?(state: S, seat: SeatId): A | null;
+
+  /**
    * How much dead air this particular turn deserves before the next one
    * is revealed. Return undefined — as almost every game always should —
    * to leave it to the driver.

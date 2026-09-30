@@ -557,6 +557,20 @@ function blockedWinner(state: DomState, pips: Record<SeatId, number>): SeatId | 
    GameDefinition surface
    ============================================================ */
 
+/**
+ * Draw, Pass, or the last tile (see `GameDefinition.forcedMove`). Pressing
+ * Draw or Pass says exactly what waiting for it does. A hand with one tile
+ * that fits is a read on the hand — the strongest read in dominoes — so
+ * that stays the player's to make, however long they take.
+ */
+export function forcedMove(state: DomState, seat: SeatId): DomAction | null {
+  const legal = legalActions(state, seat);
+  if (legal.length !== 1) return null;
+  const only = legal[0]!;
+  if (only.t !== "play") return only;
+  return (state.hands[seat]?.length ?? 0) === 1 ? only : null;
+}
+
 export function legalActions(state: DomState, seat: SeatId): DomAction[] {
   if (state.winner !== null || state.result !== null || state.turn !== seat) return [];
   const out: DomAction[] = [];
@@ -690,6 +704,7 @@ export function createDominoes(
     setup: makeSetup(rules, target),
     reduce,
     legalActions,
+    forcedMove,
     validate: validateByEnumeration(legalActions),
     pieces,
     placements,

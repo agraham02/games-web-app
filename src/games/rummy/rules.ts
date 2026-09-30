@@ -856,6 +856,23 @@ export function isRoundOver(state: RummyState): boolean {
   return state.result !== null;
 }
 
+/**
+ * Drawing from the stock when the discard pile is empty, and discarding the
+ * last card (see `GameDefinition.forcedMove`).
+ *
+ * Only an EMPTY pile. The stock is also the only draw whenever no depth of
+ * the pile makes a meld with the hand, and drawing from it at exactly five
+ * seconds would tell the table the hand has no use for the pile.
+ */
+export function forcedMove(state: RummyState, seat: SeatId): RummyAction | null {
+  const legal = legalActions(state, seat);
+  if (legal.length !== 1) return null;
+  const only = legal[0]!;
+  if (only.t === "drawStock") return state.discard.length === 0 ? only : null;
+  if (only.t === "discard") return (state.hands[seat]?.length ?? 0) === 1 ? only : null;
+  return null;
+}
+
 export function legalActions(state: RummyState, seat: SeatId): RummyAction[] {
   // Checked BEFORE the turn gate, because this is the one place in the
   // game where more than one seat is entitled at the same instant.
@@ -1129,6 +1146,7 @@ export function createRummy(
     setup: makeSetup(opts.target ?? DEFAULT_TARGET),
     reduce,
     legalActions,
+    forcedMove,
     validate,
     pieces,
     placements,

@@ -231,6 +231,14 @@ export function reduce(state: LrcState, action: LrcAction): ReduceResult<LrcStat
   return { state: next, events };
 }
 
+/**
+ * Rolling is all there ever is to do (see `GameDefinition.forcedMove`). The
+ * dice in the action are a placeholder; `completeAction` rolls them.
+ */
+export function forcedMove(state: LrcState, seat: SeatId): LrcAction | null {
+  return legalActions(state, seat)[0] ?? null;
+}
+
 export function legalActions(state: LrcState, seat: SeatId): LrcAction[] {
   if (!state.dealt || state.result !== null || state.winner !== null || state.turn !== seat) {
     return [];
@@ -353,6 +361,7 @@ export function createLrc(target: number = LRC_DEFAULT_TARGET): GameDefinition<L
     setup: makeSetup(target),
     reduce,
     legalActions,
+    forcedMove,
     pieces,
     placements,
     playerView,

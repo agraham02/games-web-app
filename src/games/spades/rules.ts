@@ -728,6 +728,17 @@ export function isOver(state: SpadesState): boolean {
   return state.winner !== null;
 }
 
+/**
+ * The last card in hand, and nothing else (see `GameDefinition.forcedMove`).
+ * A singleton in the suit led is just as forced, but played the moment the
+ * five seconds are up it would tell the table it was a singleton.
+ */
+export function forcedMove(state: SpadesState, seat: SeatId): SpadesAction | null {
+  if (state.phase !== "play" || (state.hands[seat]?.length ?? 0) !== 1) return null;
+  const legal = legalActions(state, seat);
+  return legal.length === 1 ? legal[0]! : null;
+}
+
 export function legalActions(state: SpadesState, seat: SeatId): SpadesAction[] {
   // Before the `currentSeat` gate: the vote is open to both partners at
   // once, and `currentSeat` can only name one of them.
@@ -930,6 +941,7 @@ export function createSpades(
     setup: makeSetup(rules),
     reduce,
     legalActions,
+    forcedMove,
     validate: validateByEnumeration(legalActions),
     completeAction,
     pieces,

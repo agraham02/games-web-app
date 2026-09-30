@@ -17,7 +17,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { TestClock } from "@/session/clock";
 import { playbackMs } from "@/motion/choreographer";
-import { DEFAULT_TURN_HOLD_MS } from "@/session/GameSession";
+import { DEFAULT_TURN_HOLD_MS, FORCED_MOVE_MS } from "@/session/GameSession";
 import { PROTOCOL_VERSION, type ServerMessage } from "@/session/protocol";
 import { createSpades } from "@/games/spades/rules";
 import { GAMES } from "@/session/registry";
@@ -930,6 +930,41 @@ describe("the server, in process", () => {
           expect(other.conn.all("frame"), "no frame to anybody else").toEqual([]);
         });
       }
+    });
+
+    describe("a forced move, made for somebody who does not make it", () => {
+      it("rolls for a silent LRC player at five seconds, and takes their late press quietly", () => {
+        const h = host("p1");
+        const p2 = peerFor("p2");
+        send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+        send(h.peer, { t: "selectGame", gameId: "lrc", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+
+        const runtime = registry.get(h.code)!;
+        const table = () => runtime.debugDump().table as { currentSeat: number; fingerprint: string };
+        const seat = table().currentSeat;
+        const owner = runtime.room.game!.seatOwner[seat];
+        expect(owner, "the opening roll should be a person's").not.toBeNull();
+        const who = owner === registry.sessionFor("p1") ? h : p2;
+
+        // Their five seconds start once the deal that handed them the turn
+        // has played on their screen — the server's own measure of it.
+        const frames = h.conn.all("frame");
+        expect(frames, "only the deal has happened").toHaveLength(1);
+        const lead = playbackMs(frames[0]!.frame.events);
+        expect(lead, "the deal takes time to watch").toBeGreaterThan(0);
+
+        const before = table().fingerprint;
+        clock.advance(lead + FORCED_MOVE_MS - 1);
+        expect(table().fingerprint, "nothing before the five seconds are up").toBe(before);
+        clock.advance(1);
+        expect(table().fingerprint, "the roll should have been made for them").not.toBe(before);
+
+        // They pressed Roll just as it was made for them: same move, second.
+        who.conn.clear();
+        send(who.peer, { t: "action", action: { t: "roll", dice: [] } });
+        expect(who.conn.all("error")).toEqual([]);
+      });
     });
 
     describe("a seat is held, a lobby row is not", () => {
