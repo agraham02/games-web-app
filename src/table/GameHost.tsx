@@ -19,6 +19,7 @@ import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
 import { TableSurface } from "./TableSurface";
 import { SeatRing } from "./SeatRing";
+import { SeatBubbles } from "./SeatBubbles";
 import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
@@ -43,6 +44,7 @@ import {
 } from "@/ui/phases/PhaseScreens";
 import { useGameRuntime, type GameRuntime, type GameRuntimeOptions } from "./useGameRuntime";
 import { AUTO_CONTINUE_MS } from "@/session/roundEnd";
+import { Settings as SettingsIcon } from "lucide-react";
 
 export interface GameHostProps<S, A> {
   definition: GameDefinition<S, A>;
@@ -383,6 +385,7 @@ export function GameHostView<S, A>({
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
+      <SeatBubbles players={seatViews} />
       <HeroWinFlourish
         show={
           // A spectator has no side to celebrate, so confetti for one would
@@ -456,8 +459,10 @@ export function GameHostView<S, A>({
 
       <div className="absolute top-2 right-2 z-1900 flex gap-2">
         {corner}
-        <Button size="sm" onClick={() => setSettingsOpen(true)}>
-          <span aria-hidden>⚙</span> Settings
+        {/* An icon, like the chat beside it online (the user, 2026-09-29):
+            two words side by side crowded a phone's corner. */}
+        <Button size="sm" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
+          <SettingsIcon size={16} aria-hidden />
         </Button>
       </div>
       <SettingsSheet

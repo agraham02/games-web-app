@@ -239,6 +239,40 @@ test.describe("a room, in real browsers", () => {
     await two.close();
   });
 
+  test("chat reaches the room, and a Spades hand keeps it to the quick replies", async ({ browser }) => {
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    // In the lobby: Bo says hello, and Ada's chat button counts it.
+    await bo.getByRole("button", { name: "Chat", exact: true }).click();
+    await bo.getByRole("textbox", { name: "Message" }).fill("hello table");
+    await bo.getByRole("button", { name: "Send" }).click();
+    await ada.getByRole("button", { name: "Chat, 1 new" }).click();
+    await expect(ada.getByRole("list", { name: "Messages" })).toContainText("hello table");
+    // Exactly: the leader's lobby also has a "Close room".
+    await ada.getByRole("button", { name: "Close", exact: true }).click();
+    await bo.getByRole("button", { name: "Close", exact: true }).click();
+
+    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /start spades/i }).click();
+    for (const page of [ada, bo]) await atTable(page);
+
+    // Mid-hand, Bo may send only the table-safe replies...
+    await bo.getByRole("button", { name: /^Chat/ }).click();
+    await expect(bo.getByRole("textbox", { name: "Message" })).toBeDisabled();
+    await expect(bo.getByRole("group", { name: "Quick replies" }).getByRole("button", { name: "Nice one!" })).toBeDisabled();
+    await bo.getByRole("group", { name: "Quick replies" }).getByRole("button", { name: "Good luck!" }).click();
+    // ...and it lands beside Bo's pod on Ada's table, not as a toast.
+    await expect(ada.getByRole("status").filter({ hasText: "Good luck!" })).toBeVisible();
+
+    await one.close();
+    await two.close();
+  });
+
   test("stepping away hands the seat to a bot, and coming back reclaims it", async ({
     browser,
   }) => {

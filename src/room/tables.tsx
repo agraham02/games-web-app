@@ -49,6 +49,8 @@ export interface OnlineTableProps {
    * exchange came to disagree with its offline one.
    */
   setHeld: (next: (prev: PieceId[]) => PieceId[]) => void;
+  /** The room's own buttons for the table's top-right corner: the chat. */
+  corner?: React.ReactNode;
 }
 
 export type OnlineTableComponent = (props: OnlineTableProps) => React.ReactNode;

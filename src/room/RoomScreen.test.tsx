@@ -435,6 +435,36 @@ describe("the room client", () => {
       expect(screen.getAllByRole("button", { name: /photo/i })).toHaveLength(1);
     });
 
+    it("counts what other people said since the chat was last open", async () => {
+      await enterLobby();
+      const msg = (id: number, session: string, text: string) => ({
+        t: "chat" as const,
+        message: { id, session, name: session === "me" ? "Ada" : "Bo", text, at: id },
+      });
+      act(() => {
+        socket().deliver(msg(1, "bo", "hi"));
+        socket().deliver(msg(2, "me", "hello"));
+        socket().deliver(msg(3, "bo", "ready?"));
+      });
+      // Your own lines are not news to you.
+      fireEvent.click(await screen.findByRole("button", { name: "Chat, 2 new" }));
+      expect(await screen.findByText("ready?")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(await screen.findByRole("button", { name: "Chat" })).toBeInTheDocument();
+      act(() => socket().deliver(msg(4, "bo", "one more")));
+      expect(await screen.findByRole("button", { name: "Chat, 1 new" })).toBeInTheDocument();
+    });
+
+    it("sends what you type to the room", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      const field = await screen.findByLabelText("Message");
+      fireEvent.change(field, { target: { value: "shall we?" } });
+      fireEvent.submit(field.closest("form")!);
+      expect(socket().lastSent("chat")).toMatchObject({ text: "shall we?" });
+    });
+
     it("says who closed the room, on the form", async () => {
       await enterLobby({ youAreLeader: false });
       socket().deliver({ t: "left", reason: "room-closed", by: "Ada", settlement: null });

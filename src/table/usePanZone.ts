@@ -109,9 +109,16 @@ export function usePanZone({
       );
     };
 
+    // Something drawn OVER the table that takes gestures of its own — the
+    // chat sheet's log and its sideways row of quick replies, which sit over
+    // the hand strip on a phone. Asked of the element under the pointer, the
+    // one question the coordinate test above cannot answer.
+    const overlaid = (e: Event) =>
+      e.target instanceof Element && e.target.closest("[data-pan-ignore]") !== null;
+
     const onDown = (e: PointerEvent) => {
       if (!live.current.enabled) return;
-      if (!inZone(e)) return;
+      if (!inZone(e) || overlaid(e)) return;
       tracking = true;
       committed = false;
       start.x = e.clientX;
@@ -152,7 +159,7 @@ export function usePanZone({
 
     const onWheel = (e: WheelEvent) => {
       if (!live.current.enabled) return;
-      if (!inZone(e)) return;
+      if (!inZone(e) || overlaid(e)) return;
       // A trackpad reports both axes on one gesture; take whichever the
       // player pushed harder, so a slightly-off-axis swipe still works
       // instead of doing nothing.

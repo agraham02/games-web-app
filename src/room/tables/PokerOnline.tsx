@@ -41,7 +41,7 @@ import { SettleUp } from "../SettleUp";
 import { TableMenu } from "./TableMenu";
 import { useSeatExtras } from "./seatExtras";
 
-export function PokerOnline({ api, room, frame }: OnlineTableProps) {
+export function PokerOnline({ api, room, frame, corner }: OnlineTableProps) {
   const definition = useMemo(() => {
     const entry = GAMES[room.gameId ?? "poker"];
     return entry.create(room.settings);
@@ -84,7 +84,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
-  const seatExtras = useSeatExtras(room);
+  const seatExtras = useSeatExtras(room, api.chat);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (
@@ -100,6 +100,7 @@ export function PokerOnline({ api, room, frame }: OnlineTableProps) {
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        corner={corner}
         summaryExtra={room.settlement ? <SettleUp settlement={room.settlement} you={room.you} /> : undefined}
         live={live}
         players={(state, l) => playerViews(view, state, l)}

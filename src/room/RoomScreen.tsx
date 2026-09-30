@@ -35,6 +35,8 @@ import { readSavedName, takeEntryIntent, type EntryIntent } from "./entry";
 import { Lobby } from "./Lobby";
 import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
 import { readSavedPhoto } from "./photo";
+import { ChatButton } from "./chat/ChatButton";
+import { ChatSheet } from "./chat/ChatSheet";
 import { RoomStatusScreen } from "./RoomStatusScreen";
 import { SettleUp } from "./SettleUp";
 import { tableFor } from "./tables";
@@ -159,6 +161,21 @@ export function RoomScreen({ code }: { code?: string }) {
     if (me && !me.photo && saved) setPhoto(saved);
   }, [room, setPhoto]);
 
+  // The chat: one sheet for the lobby and the table, so a trip between the
+  // two neither closes it nor loses what was unread. "Unread" is what other
+  // people said since it was last put away, counted per room (a new room's
+  // messages start again from one).
+  const [chatOpen, setChatOpen] = useState(false);
+  const [seen, setSeen] = useState<{ code: string | null; id: number }>({ code: null, id: 0 });
+  const seenId = room && seen.code === room.code ? seen.id : 0;
+  const unread =
+    chatOpen || !room ? 0 : api.chat.filter((m) => m.id > seenId && m.session !== room.you).length;
+  const closeChat = () => {
+    setSeen({ code: room?.code ?? null, id: api.chat.at(-1)?.id ?? 0 });
+    setChatOpen(false);
+  };
+  const chatButton = <ChatButton unread={unread} onClick={() => setChatOpen(true)} />;
+
   // Keep the address bar honest. A room reached by code, created fresh, or
   // rejoined automatically on reconnect should all end up with the code in
   // the URL so it can be copied out of it. Not while the home page's
@@ -215,6 +232,20 @@ export function RoomScreen({ code }: { code?: string }) {
         top={tableShowing && geometry ? statusLane(geometry) : undefined}
       />
 
+      {/* The lobby's chat button, where the table keeps its own: top right.
+          Outside the screen's `Reveal`, whose transform would otherwise make
+          `fixed` mean "fixed to the fading screen". Within the lobby's top
+          padding, so it sits over nothing. */}
+      {screen === "lobby" ? <div className="fixed top-2 right-2 z-40">{chatButton}</div> : null}
+      <ChatSheet
+        open={chatOpen && room !== null}
+        onClose={closeChat}
+        messages={api.chat}
+        you={room?.you ?? ""}
+        mode={room?.chat ?? "open"}
+        onSend={api.sendChat}
+      />
+
       {screen === "table" ? (
         // Looked up rather than hardcoded: the room may be running any
         // game, and a table that assumed one would render the wrong one.
@@ -233,6 +264,7 @@ export function RoomScreen({ code }: { code?: string }) {
               onToggleHeld={toggleHeld}
               onClearHeld={() => setHeld([])}
               setHeld={setHeld}
+              corner={chatButton}
             />
           );
         })()

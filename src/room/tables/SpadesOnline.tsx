@@ -51,6 +51,7 @@ export function SpadesOnline({
   held,
   onClearHeld,
   setHeld,
+  corner,
 }: OnlineTableProps) {
   // Through the shared rule, not a bare toggle. `RoomScreen` owns WHERE
   // the selection lives (so it survives a trip to the lobby); what a tap
@@ -101,7 +102,7 @@ export function SpadesOnline({
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
-  const seatExtras = useSeatExtras(room);
+  const seatExtras = useSeatExtras(room, api.chat);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (
@@ -114,6 +115,7 @@ export function SpadesOnline({
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        corner={corner}
         settings={SPADES_SETTINGS}
         menuActions={
           <TableMenu
