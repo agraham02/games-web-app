@@ -96,6 +96,7 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     inGame: false,
     youMayContinue: true,
     settlement: null,
+    chat: "open",
     ...over,
   };
 }

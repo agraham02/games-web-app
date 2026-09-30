@@ -241,6 +241,12 @@ export class Router {
         return;
       }
 
+      case "chat": {
+        const refused = runtime.chat(session, { text: message.text, quick: message.quick });
+        if (refused) this.fail(peer, refused, errorText(refused), message.reqId);
+        return;
+      }
+
       case "setPhoto":
         if (!runtime.setPhoto(session, message.image)) {
           this.fail(peer, "photo-rejected", errorText("photo-rejected"), message.reqId);

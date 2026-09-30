@@ -27,8 +27,9 @@ import type { GameEvent, PieceId, PieceMeta, PlacementMap, SeatId } from "@/engi
 import type { BotDifficulty } from "@/engine/types";
 import type { GameId, RawSettings } from "./registry";
 import type { Privacy, RoomCode, RoomError, SessionId } from "./room";
+import type { ChatMessage, ChatMode } from "./chat";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /* ============================================================
    Client -> server
@@ -88,6 +89,12 @@ export type ClientMessage =
    * cropped (see `session/photo.ts`), or null to take it down.
    */
   | ({ t: "setPhoto"; image: string | null } & Addressed)
+  /**
+   * Something said to the room: typed `text`, or one of the `QUICK_REPLIES`
+   * by id — never both. A quick reply goes by id so the server, which
+   * decides what is table-safe, is the one that knows what it says.
+   */
+  | ({ t: "chat"; text?: string; quick?: string } & Addressed)
   /** A move. `action` is the game's own action type, validated server-side. */
   | ({ t: "action"; action: unknown } & Addressed)
   | ({ t: "nextRound" } & Addressed)
@@ -157,6 +164,11 @@ export interface RoomView {
    * a game with no stake set, and before any game.
    */
   settlement: SettlementView | null;
+  /**
+   * Whether you may type, or only send the table-safe quick replies: the
+   * latter while a partnership hand you hold a seat in is being played.
+   */
+  chat: ChatMode;
 }
 
 /**
@@ -248,7 +260,13 @@ export type ServerErrorCode =
    */
   | "move-refused"
   /** Not a picture the server will keep: the wrong kind, or too big. */
-  | "photo-rejected";
+  | "photo-rejected"
+  /** Typed, or not table-safe, during a partnership hand you are in. */
+  | "chat-locked"
+  /** More than `CHAT_RATE` allows. */
+  | "chat-limited"
+  /** Empty once cleaned, too long, or a quick reply that does not exist. */
+  | "chat-invalid";
 
 /**
  * What each refusal says out loud.
@@ -310,6 +328,9 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "move-refused": "that move is no longer available",
   "protocol-mismatch": "this page is out of date — reload to keep playing",
   "photo-rejected": "that picture could not be used — try another",
+  "chat-locked": "no table talk during the hand — quick replies only",
+  "chat-limited": "a few messages at a time — try again in a moment",
+  "chat-invalid": "that message could not be sent",
 };
 
 export function errorText(code: ServerErrorCode): string {
@@ -383,6 +404,13 @@ export type ServerMessage =
    */
   | { t: "superseded" }
   | { t: "error"; code: ServerErrorCode; message: string; reqId?: string }
+  /** Somebody said something. To everybody in the room, lobby and table alike. */
+  | { t: "chat"; message: ChatMessage }
+  /**
+   * What has been said, up to `CHAT_HISTORY`, sent on joining or returning
+   * to a room — it replaces whatever the client had, which may be stale.
+   */
+  | { t: "chatLog"; messages: ChatMessage[] }
   | { t: "pong" };
 
 /* ============================================================
@@ -472,6 +500,17 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         difficulty,
         reqId,
       };
+    }
+
+    case "chat": {
+      const text = str("text");
+      const quick = str("quick");
+      // Exactly one, and nothing absurd: the real limits are applied to the
+      // cleaned text by the room, but a megabyte is refused unread.
+      if ((text === null) === (quick === null)) return null;
+      if (text !== null && text.length > 2_000) return null;
+      if (quick !== null && quick.length > 32) return null;
+      return text !== null ? { t: "chat", text, reqId } : { t: "chat", quick: quick!, reqId };
     }
 
     case "setPhoto": {
