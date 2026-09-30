@@ -20,7 +20,7 @@
  * last one's exit.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { PieceId } from "@/engine/types";
@@ -34,6 +34,7 @@ import { ConnectionNotice } from "./ConnectionNotice";
 import { readSavedName, takeEntryIntent, type EntryIntent } from "./entry";
 import { Lobby } from "./Lobby";
 import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
+import { readSavedPhoto } from "./photo";
 import { RoomStatusScreen } from "./RoomStatusScreen";
 import { SettleUp } from "./SettleUp";
 import { tableFor } from "./tables";
@@ -143,6 +144,20 @@ export function RoomScreen({ code }: { code?: string }) {
   useEffect(() => {
     if (leaving) router.replace("/");
   }, [leaving, router]);
+
+  // A photo taken earlier in this session goes with the player to the next
+  // room (the user, 2026-09-29: for the session, never beyond). Once per
+  // room: taking it down again in this room clears the saved one too.
+  const carriedTo = useRef<string | null>(null);
+  const room = api.room;
+  const setPhoto = api.setPhoto;
+  useEffect(() => {
+    if (!room || carriedTo.current === room.code) return;
+    carriedTo.current = room.code;
+    const me = room.members.find((m) => m.session === room.you);
+    const saved = readSavedPhoto();
+    if (me && !me.photo && saved) setPhoto(saved);
+  }, [room, setPhoto]);
 
   // Keep the address bar honest. A room reached by code, created fresh, or
   // rejoined automatically on reconnect should all end up with the code in

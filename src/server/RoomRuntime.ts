@@ -60,6 +60,7 @@ import { seatNets, settleUp, type Stint } from "@/session/settle";
 import type { Clock, TimerHandle } from "@/session/clock";
 import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
 import { log } from "./log";
+import { decodePhoto, newPhotoId, type StoredPhoto } from "./photo";
 
 /**
  * The seat a spectator "occupies". Every game's `placements` and
@@ -150,6 +151,12 @@ export class RoomRuntime {
   private lastFrameAt = 0;
   /** The next round, dealt if nobody continues in time. See `syncAutoContinue`. */
   private continueTimer: TimerHandle | null = null;
+  /**
+   * Members' photos, by member. Kept here rather than on the room, which is
+   * a pure description that goes to every client; only the id goes out
+   * (`MemberView.photo`), and the bytes are fetched once by URL.
+   */
+  private readonly photos = new Map<SessionId, StoredPhoto>();
   /**
    * Who pays whom for the last game played for money (see `settle.ts`).
    * Worked out here because only the server still holds the position when
@@ -317,8 +324,38 @@ export class RoomRuntime {
     }
 
     this.maintainGrace();
+    // Whoever has gone takes their photo with them.
+    for (const owner of this.photos.keys()) {
+      if (!this.room.members[owner]) this.photos.delete(owner);
+    }
     log.info("command", { room: this.code, session, event: command.t });
     return { ok: true };
+  }
+
+  /* ---------- photos ---------- */
+
+  /**
+   * Sets (or, with null, removes) a member's photo. False when it is not a
+   * member or not a photo we will keep (`decodePhoto`). Every new photo gets
+   * a new id, so the old URL stops working and nobody is shown a stale one
+   * from their cache.
+   */
+  setPhoto(session: SessionId, image: unknown): boolean {
+    if (!this.room.members[session]) return false;
+    if (image === null) {
+      this.photos.delete(session);
+      return true;
+    }
+    const photo = decodePhoto(image);
+    if (!photo) return false;
+    this.photos.set(session, { id: newPhotoId(), ...photo });
+    return true;
+  }
+
+  /** The photo with this id, if a member of this room still has it. */
+  photoById(id: string): StoredPhoto | null {
+    for (const photo of this.photos.values()) if (photo.id === id) return photo;
+    return null;
   }
 
   /* ---------- letting go of the absent ---------- */
@@ -824,6 +861,7 @@ export class RoomRuntime {
         // Silent, as the user asked: somebody inside their grace looks
         // exactly as they did, and simply goes if it runs out.
         connected: m.connected || this.grace.has(m.session),
+        photo: this.photos.get(m.session)?.id ?? null,
         seat,
         spectating: Boolean(game?.present.includes(m.session)) && seat === null,
         // The seat decides the side: the one they hold in a running game,
@@ -912,6 +950,7 @@ export class RoomRuntime {
   dispose(): void {
     for (const handle of this.grace.values()) this.clock.clearTimeout(handle);
     this.grace.clear();
+    this.photos.clear();
     this.stopSession();
     for (const connection of this.connections.values()) connection.close();
     this.connections.clear();

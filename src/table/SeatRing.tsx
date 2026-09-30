@@ -99,6 +99,11 @@ export interface SeatView {
    * on every pod would be noise. Never true together with `away`.
    */
   bot?: boolean;
+  /**
+   * Their photo (`photoUrl`), in a room where they took one — laid over by
+   * `GameHost`'s `seatExtras`, never by a game. Initials stay underneath.
+   */
+  photo?: string | null;
 }
 
 /**
@@ -196,6 +201,7 @@ const SeatPod = memo(function SeatPod({
           name={view.name}
           colour={view.colour}
           size={s.avatar}
+          src={view.photo}
           // The pod itself fades an eliminated seat; the avatar only greys.
           style={{ filter: view.eliminated ? "grayscale(1)" : undefined }}
         />

@@ -220,6 +220,32 @@ describe("the server, in process", () => {
     });
   });
 
+  describe("photos", () => {
+    const jpeg = `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(64)]).toString("base64")}`;
+
+    it("shows everybody a member's photo, by id, and takes it down again", () => {
+      const { conn, code } = host("ada");
+      const bo = peerFor("bo");
+      send(bo.peer, { t: "joinRoom", code, name: "Bo" });
+
+      send(bo.peer, { t: "setPhoto", image: jpeg });
+      const seen = conn.last("room")!.room.members.find((m) => m.name === "Bo")!;
+      expect(seen.photo).toMatch(/^[A-Za-z0-9_-]{16,}$/);
+      // The roster carries the id, never the picture.
+      expect(JSON.stringify(conn.last("room"))).not.toContain("base64");
+
+      send(bo.peer, { t: "setPhoto", image: null });
+      expect(conn.last("room")!.room.members.find((m) => m.name === "Bo")!.photo).toBeNull();
+    });
+
+    it("refuses a picture it will not keep, and says so", () => {
+      const { peer, conn } = host("ada");
+      send(peer, { t: "setPhoto", image: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" });
+      expect(conn.last("error")?.code).toBe("photo-rejected");
+      expect(conn.last("room")!.room.members[0]!.photo).toBeNull();
+    });
+  });
+
   /**
    * The lobby holds nothing for anybody (the user, 2026-09-29): leaving it
    * is leaving, and an unexpected drop gets a silent LOBBY_GRACE_MS.

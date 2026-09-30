@@ -26,6 +26,7 @@ import { createRoom, makeCode, type Room, type RoomCode, type SessionId } from "
 import { realClock, type Clock, type TimerHandle } from "@/session/clock";
 import { RoomRuntime } from "./RoomRuntime";
 import { log } from "./log";
+import type { StoredPhoto } from "./photo";
 
 /**
  * How long a room with nobody connected survives. Straight from the spec.
@@ -166,6 +167,19 @@ export class RoomRegistry {
 
   codes(): RoomCode[] {
     return [...this.rooms.keys()];
+  }
+
+  /**
+   * A member's photo by its id, in whichever room it is. Asked of every room
+   * rather than indexed: there are only ever a handful, and an index is one
+   * more thing to keep in step as members come and go.
+   */
+  findPhoto(id: string): StoredPhoto | null {
+    for (const runtime of this.rooms.values()) {
+      const photo = runtime.photoById(id);
+      if (photo) return photo;
+    }
+    return null;
   }
 
   /* ---------- lifecycle ---------- */

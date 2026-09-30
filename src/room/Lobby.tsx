@@ -345,6 +345,7 @@ function TablePanel({ api }: { api: RoomApi }) {
         onPromote={api.promote}
         onKick={api.kick}
         onArrange={api.arrangeSeats}
+        onPhoto={api.setPhoto}
       />
       {room.gameRunning ? null : hasGame ? (
         <p className="text-[11px] leading-relaxed text-bone-500">

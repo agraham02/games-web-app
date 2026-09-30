@@ -29,6 +29,8 @@ import { useEffect, useRef, useState } from "react";
 import type { MemberView } from "@/session/protocol";
 import { Avatar } from "@/ui/primitives/Avatar";
 import { Button } from "@/ui/primitives/Button";
+import { photoUrl } from "@/session/photo";
+import { RemovePhoto, YourAvatar } from "./YourAvatar";
 import { TRANSITIONS } from "@/motion/presets";
 
 /** Stable per-name so the same person keeps the same colour across renders. */
@@ -68,6 +70,8 @@ export interface RosterProps {
   onKick: (session: string) => void;
   /** Leader only, between games: the rearranged plan. Absent, no dragging. */
   onArrange?: (plan: (string | null)[]) => void;
+  /** Sets or takes down your own photo. Absent, your avatar is just an avatar. */
+  onPhoto?: (image: string | null) => void;
 }
 
 /** A row's identity for the drag list: a session, or `bot:n` for a bot seat. */
@@ -93,7 +97,7 @@ export function Roster(props: RosterProps) {
 }
 
 /** During a game: the people, with the seats they hold. */
-function MemberList({ members, you, youAreLeader, onPromote, onKick }: RosterProps) {
+function MemberList({ members, you, youAreLeader, onPromote, onKick, onPhoto }: RosterProps) {
   return (
     <ul aria-label="Room members" className="flex w-full flex-col gap-1.5">
       {members.map((m) => (
@@ -114,6 +118,7 @@ function MemberList({ members, you, youAreLeader, onPromote, onKick }: RosterPro
                     : "In the lobby"
             }
             team={m.team}
+            onPhoto={onPhoto}
           />
           <LeaderActions member={m} you={you} youAreLeader={youAreLeader} onPromote={onPromote} onKick={onKick} />
         </li>
@@ -133,6 +138,7 @@ function SeatingPlan({
   onPromote,
   onKick,
   onArrange,
+  onPhoto,
 }: RosterProps & { plan: (string | null)[] }) {
   const [keys, setKeys] = useState<RowKey[]>(() => keysFor(plan, []));
   const dragging = useRef(false);
@@ -203,6 +209,7 @@ function SeatingPlan({
                   label={label}
                   status={!member.connected ? "Away" : seated ? "In the lobby" : "Will watch — table full"}
                   team={team}
+                  onPhoto={onPhoto}
                 />
                 <LeaderActions
                   member={member}
@@ -318,17 +325,30 @@ function MemberCells({
   label,
   status,
   team,
+  onPhoto,
 }: {
   member: MemberView;
   you: string;
   label: string | null;
   status: string;
   team: number | null;
+  onPhoto?: (image: string | null) => void;
 }) {
+  // Your own row sets your photo; nobody else's can.
+  const setPhoto = m.session === you ? onPhoto : undefined;
   return (
     <>
       <SeatLabel label={label} />
-      <Avatar name={m.name} colour={tintFor(m.session)} dim={!m.connected} />
+      {setPhoto ? (
+        <YourAvatar member={m} colour={tintFor(m.session)} onPhoto={setPhoto} />
+      ) : (
+        <Avatar
+          name={m.name}
+          colour={tintFor(m.session)}
+          dim={!m.connected}
+          src={m.photo ? photoUrl(m.photo) : null}
+        />
+      )}
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-1.5 truncate text-sm font-semibold text-bone-100">
           {m.name}
@@ -337,7 +357,15 @@ function MemberCells({
             <Crown size={13} className="shrink-0 text-brass-300" aria-label="Party leader" />
           ) : null}
         </span>
-        <span className="truncate text-xs text-bone-400">{status}</span>
+        <span className="truncate text-xs text-bone-400">
+          {status}
+          {setPhoto && m.photo ? (
+            <>
+              {" · "}
+              <RemovePhoto onPhoto={setPhoto} />
+            </>
+          ) : null}
+        </span>
       </div>
       {m.spectating ? (
         <Eye size={14} className="shrink-0 text-bone-600" aria-label="Spectating" />

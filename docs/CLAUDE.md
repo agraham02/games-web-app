@@ -555,6 +555,25 @@ open by an unanswered knock, and knockers are told when any room goes
 (`onRoomDestroyed`). Joining a room nobody is left in makes you its
 leader, straight in even if it was private — there is nobody to ask.
 
+### A photo is the room's, not the game's
+
+A member may add a photo for as long as they are in the room (the user,
+2026-09-29: no accounts, nothing kept past the session). The browser crops
+it to a centred square and shrinks it to a small JPEG itself
+(`room/photo.ts`), on every device through a plain file input — a phone's
+picker already offers the camera. The server checks the BYTES, never the
+label (JPEG or WebP magic only — an SVG called a JPEG is a script), keeps
+it in memory against the member (`RoomRuntime.photos`, not the pure room),
+and serves it at `photoUrl(id)` with `nosniff` and a sandboxing CSP. The
+id is random and new with every photo, so it is the version (cached for
+ever), and it is the only way to reach one — an `<img>` cannot send a
+token header, and a code-plus-session URL would be guessable. The roster
+carries only the id: `RoomView` goes to up to 24 people on every change.
+Pods get it through `GameHost`'s `seatExtras`, which lays room-only facts
+over what each game's `playerViews` built, so no game knows about photos.
+The browser keeps the picture for the session and offers it to the next
+room joined in it.
+
 ### Presence is table state, so it needs a frame
 
 `SeatView.away` marks a seat whose OWNER is not in it — read from

@@ -82,8 +82,8 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     you: "me",
     youAreLeader: true,
     members: [
-      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true },
-      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false },
+      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true, photo: null },
+      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false, photo: null },
     ],
     seatPlan: ["me", "bo", null, null],
     pending: [],
@@ -419,6 +419,19 @@ describe("the room client", () => {
       socket().deliver({ t: "left", reason: "left" });
       expect(replace).toHaveBeenCalledWith("/");
       expect(screen.queryByText(/you have been invited/i)).toBeNull();
+    });
+
+    it("brings a photo taken earlier this session to the next room, once", async () => {
+      window.sessionStorage.setItem("table-games.photo", "data:image/jpeg;base64,/9j/AAAA");
+      await enterLobby();
+      expect(socket().lastSent("setPhoto")).toMatchObject({ image: "data:image/jpeg;base64,/9j/AAAA" });
+      window.sessionStorage.clear();
+    });
+
+    it("offers your own avatar as the way to add a photo, and nobody else's", async () => {
+      await enterLobby();
+      expect(screen.getByRole("button", { name: "Add a photo" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /photo/i })).toHaveLength(1);
     });
 
     it("says who closed the room, on the form", async () => {

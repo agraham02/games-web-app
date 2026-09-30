@@ -169,6 +169,13 @@ export interface GameHostProps<S, A> {
    */
   continueWaiting?: string;
   /**
+   * What a room knows about each seat that no game does — the person's
+   * photo — laid over whatever the game's own `players` built for it. The
+   * one place a room's pods differ from a solo table's, so the six games'
+   * `playerViews` need not know rooms exist. Absent offline.
+   */
+  seatExtras?: (seat: SeatId) => Partial<SeatView>;
+  /**
    * Under the standings on the winner's sheet — a room's settle-up, for a
    * game played for money (`SettleUp`).
    */
@@ -245,6 +252,7 @@ export function GameHostView<S, A>({
   handActive,
   turnSeat,
   continueWaiting,
+  seatExtras,
   summaryExtra,
   roundNoun = "Round",
   children,
@@ -306,9 +314,11 @@ export function GameHostView<S, A>({
   // (Dominoes cut-throat, LRC) and correctly crowns BOTH partners when a
   // partnership game scores a round — team dominoes, the first to do so.
   const winningSeats = live.winningSeats ?? live.roundWinningSeats;
-  const seatViews = players(live.state, live).map((view) =>
-    winningSeats?.includes(view.seat) ? { ...view, winning: true } : view,
-  );
+  const seatViews = players(live.state, live).map((view) => {
+    const room = seatExtras?.(view.seat);
+    const seen = room ? { ...view, ...room } : view;
+    return winningSeats?.includes(view.seat) ? { ...seen, winning: true } : seen;
+  });
   const board = standings
     ? standings(live.state, live, seatViews)
     : winLoseStandings(live.state, live, seatViews, viewerSeat);

@@ -99,6 +99,8 @@ export interface RoomApi {
   endGame: () => void;
   /** Leader only: closes the room for everybody in it. */
   closeRoom: () => void;
+  /** Your photo for this room (a small data URL — `photoFromFile`), or null to take it down. */
+  setPhoto: (image: string | null) => void;
   send: (message: ClientMessage) => void;
 }
 
@@ -335,6 +337,7 @@ export function useRoom(): RoomApi {
         closingRef.current = true;
         send({ t: "closeRoom" });
       },
+      setPhoto: (image) => send({ t: "setPhoto", image }),
     }),
     [phase, status, room, pendingCode, frame, error, farewell, send, connection],
   );

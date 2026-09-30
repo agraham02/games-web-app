@@ -83,6 +83,11 @@ export type ClientMessage =
   | ({ t: "endGame" } & Addressed)
   /** Leader only: closes the room for everybody in it. */
   | ({ t: "closeRoom" } & Addressed)
+  /**
+   * Your own photo, as a small JPEG or WebP data URL the browser has already
+   * cropped (see `session/photo.ts`), or null to take it down.
+   */
+  | ({ t: "setPhoto"; image: string | null } & Addressed)
   /** A move. `action` is the game's own action type, validated server-side. */
   | ({ t: "action"; action: unknown } & Addressed)
   | ({ t: "nextRound" } & Addressed)
@@ -107,6 +112,8 @@ export interface MemberView {
    */
   team: number | null;
   isLeader: boolean;
+  /** Their photo's id — fetch it from `photoUrl(id)` — or null for none. */
+  photo: string | null;
 }
 
 export interface RoomView {
@@ -239,7 +246,9 @@ export type ServerErrorCode =
    * move is ordinary — your view was a moment stale, or somebody beat
    * you to a claim — and the next frame already puts you right.
    */
-  | "move-refused";
+  | "move-refused"
+  /** Not a picture the server will keep: the wrong kind, or too big. */
+  | "photo-rejected";
 
 /**
  * What each refusal says out loud.
@@ -300,6 +309,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "rate-limited": "slow down",
   "move-refused": "that move is no longer available",
   "protocol-mismatch": "this page is out of date — reload to keep playing",
+  "photo-rejected": "that picture could not be used — try another",
 };
 
 export function errorText(code: ServerErrorCode): string {
@@ -462,6 +472,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         difficulty,
         reqId,
       };
+    }
+
+    case "setPhoto": {
+      const image = data.image;
+      if (image !== null && typeof image !== "string") return null;
+      return { t: "setPhoto", image, reqId };
     }
 
     case "arrangeSeats": {

@@ -46,6 +46,7 @@ import { tintFor } from "../Roster";
 import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
+import { useSeatExtras } from "./seatExtras";
 
 export function RummyOnline({ api, room, frame }: OnlineTableProps) {
   const definition = useMemo(() => {
@@ -96,6 +97,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
+  const seatExtras = useSeatExtras(room);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (
@@ -108,6 +110,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        seatExtras={seatExtras}
         menuActions={
           <TableMenu
             code={room.code}

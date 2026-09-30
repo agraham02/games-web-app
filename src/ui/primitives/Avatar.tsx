@@ -1,6 +1,9 @@
+"use client";
+
 /**
- * A person at the table: initials on their tint — or, for a seat a bot
- * holds with nobody's name on it, the bot glyph the lobby uses.
+ * A person at the table: their photo if they took one in this room, else
+ * initials on their tint — or, for a seat a bot holds with nobody's name on
+ * it, the bot glyph the lobby uses.
  *
  * It was drawn four ways: the lobby's roster, the seat pods, the round
  * card's rows and the game-end winner each had their own circle, with
@@ -8,6 +11,7 @@
  * component now, sized by the caller.
  */
 
+import { useState } from "react";
 import { Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +21,7 @@ export function Avatar({
   size = 32,
   dim = false,
   bot = false,
+  src,
   className,
   style,
 }: {
@@ -29,9 +34,17 @@ export function Avatar({
   dim?: boolean;
   /** A seat a bot holds for nobody: the glyph, not a name. */
   bot?: boolean;
+  /**
+   * Their photo (`photoUrl`), drawn over the initials. The initials stay
+   * underneath, so a photo still loading shows them, and one that cannot
+   * be loaded at all (they took it down, the room closed) falls back to
+   * them rather than to a broken-image box.
+   */
+  src?: string | null;
   className?: string;
   style?: React.CSSProperties;
 }) {
+  const [failed, setFailed] = useState<string | null>(null);
   if (bot) {
     return (
       <span
@@ -50,7 +63,7 @@ export function Avatar({
     <span
       aria-hidden
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full font-display font-bold text-felt-950",
+        "relative flex shrink-0 items-center justify-center rounded-full font-display font-bold text-felt-950",
         className,
       )}
       style={{
@@ -64,6 +77,19 @@ export function Avatar({
       }}
     >
       {name.slice(0, 2).toUpperCase()}
+      {src && failed !== src ? (
+        // A plain <img>: it is our own small square, served by URL, and
+        // next/image's optimiser would only add a round trip to it.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={src}
+          src={src}
+          alt=""
+          draggable={false}
+          onError={() => setFailed(src)}
+          className="absolute inset-0 h-full w-full rounded-full object-cover"
+        />
+      ) : null}
     </span>
   );
 }

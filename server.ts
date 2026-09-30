@@ -23,6 +23,7 @@ import { KeepAwake, keepAwakeUrl } from "@/server/keepAwake";
 import { attachWebSocketServer, WS_PATH } from "@/server/wsServer";
 import { debugEnabled, handleDebugRequest } from "@/server/debug";
 import { handleRejoinRequest } from "@/server/rejoin";
+import { handlePhotoRequest } from "@/server/photo";
 import { log, setLogLevel } from "@/server/log";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -82,6 +83,8 @@ async function main(): Promise<void> {
     if (handleDebugRequest(req, res, registry)) return;
     // The home page's "am I still in a room?" — see rejoin.ts.
     if (handleRejoinRequest(req, res, registry)) return;
+    // Members' photos — see server/photo.ts.
+    if (handlePhotoRequest(req, res, registry)) return;
     void handle(req, res);
   });
 

@@ -241,6 +241,14 @@ export class Router {
         return;
       }
 
+      case "setPhoto":
+        if (!runtime.setPhoto(session, message.image)) {
+          this.fail(peer, "photo-rejected", errorText("photo-rejected"), message.reqId);
+          return;
+        }
+        runtime.broadcastRoom();
+        return;
+
       case "closeRoom": {
         const result = runtime.command(session, { t: "closeRoom" });
         if (!result.ok) {
