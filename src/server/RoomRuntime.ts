@@ -58,6 +58,7 @@ import {
 import type { FrameView, MemberView, RoomView, ServerMessage, SettlementView } from "@/session/protocol";
 import { seatNets, settleUp, type Stint } from "@/session/settle";
 import type { Clock, TimerHandle } from "@/session/clock";
+import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
 import { log } from "./log";
 
 /**
@@ -147,6 +148,8 @@ export class RoomRuntime {
   private lastFramePlaybackMs = 0;
   /** When that frame went out, so "still playing" can be asked later. */
   private lastFrameAt = 0;
+  /** The next round, dealt if nobody continues in time. See `syncAutoContinue`. */
+  private continueTimer: TimerHandle | null = null;
   /**
    * Who pays whom for the last game played for money (see `settle.ts`).
    * Worked out here because only the server still holds the position when
@@ -497,9 +500,47 @@ export class RoomRuntime {
   }
 
   private stopSession(): void {
+    this.clearAutoContinue();
     this.session?.dispose();
     this.session = null;
     this.previous = null;
+  }
+
+  /**
+   * Deals the next round if nobody has pressed Continue within
+   * `AUTO_CONTINUE_MS` of the scorecard appearing (the user, 2026-09-29).
+   *
+   * The leader's own screen sends Continue the moment its ring empties, so
+   * this is the backstop — for a leader whose tab is hidden (its timers
+   * throttled) or who has simply walked off. Counted from when the card
+   * shows on their screen: the last move still has to play, then the board
+   * is held (`ROUND_END_HOLD_MS`), and only then does the card go up.
+   */
+  private syncAutoContinue(): void {
+    const session = this.session;
+    const state = session?.snapshot();
+    const waiting =
+      session !== null &&
+      !session.definition.isOver(state) &&
+      Boolean(session.definition.isRoundOver?.(state));
+    if (!waiting) {
+      this.clearAutoContinue();
+      return;
+    }
+    if (this.continueTimer !== null) return;
+    this.continueTimer = this.clock.setTimeout(
+      () => {
+        this.continueTimer = null;
+        this.session?.nextRound();
+      },
+      this.lastFramePlaybackMs + ROUND_END_HOLD_MS + AUTO_CONTINUE_MS + AUTO_CONTINUE_GRACE_MS,
+    );
+  }
+
+  private clearAutoContinue(): void {
+    if (this.continueTimer === null) return;
+    this.clock.clearTimeout(this.continueTimer);
+    this.continueTimer = null;
   }
 
   /**
@@ -536,6 +577,7 @@ export class RoomRuntime {
       this.broadcastRoom();
     }
     session.settled();
+    this.syncAutoContinue();
   }
 
   /**

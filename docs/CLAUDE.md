@@ -483,6 +483,20 @@ scorecard says who they are waiting on. It can never strand a table:
 while the leader is not at it, any seated player there may continue, and
 a leader who disconnects has already handed leadership on.
 
+**…and it deals itself after 20s** (`AUTO_CONTINUE_MS`, the user's call,
+2026-09-29, whether or not anything else is timed). The Continue button
+empties a `CountdownRing` over it and presses itself at zero, and everybody
+waiting sees the seconds; the end time is fixed once, as the card appears,
+so peeking at the table or the leader stepping away does not restart it.
+The server deals anyway `AUTO_CONTINUE_GRACE_MS` later, counted from when
+the card went up on screen (the frame's playback plus `ROUND_END_HOLD_MS`,
+both ends reading the same constant from `session/roundEnd.ts`) — the
+backstop for a leader whose tab is hidden or gone. `syncAutoContinue`
+clears it the moment a round is dealt; a leftover would deal the NEXT
+round early whenever that one ended inside the old twenty seconds, which
+only fast rounds reach — the test uses poker hands folded at once, because
+an LRC round never ends that fast and let the bug through.
+
 **The lobby's list is the seating plan** (`seatingPlan`): one row per
 seat, seat 1 first and clockwise from there, `null` for a seat a bot
 plays, then anybody past the last seat, who will watch. The leader drags

@@ -42,6 +42,7 @@ import {
   type ScoreRow,
 } from "@/ui/phases/PhaseScreens";
 import { useGameRuntime, type GameRuntime, type GameRuntimeOptions } from "./useGameRuntime";
+import { AUTO_CONTINUE_MS } from "@/session/roundEnd";
 
 export interface GameHostProps<S, A> {
   definition: GameDefinition<S, A>;
@@ -404,6 +405,9 @@ export function GameHostView<S, A>({
         target={card?.target}
         onContinue={live.nextRound}
         waiting={continueWaiting}
+        // A room's round deals itself if nobody continues; a game on this
+        // device waits for its one player.
+        autoContinueMs={serverDriven ? AUTO_CONTINUE_MS : undefined}
       />
 
       <GameEndSummary

@@ -18,7 +18,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { TestClock } from "@/session/clock";
 import { playbackMs } from "@/motion/choreographer";
 import { DEFAULT_TURN_HOLD_MS, FORCED_MOVE_MS } from "@/session/GameSession";
-import { PROTOCOL_VERSION, type ServerMessage } from "@/session/protocol";
+import { PROTOCOL_VERSION, type FrameView, type ServerMessage } from "@/session/protocol";
+import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
 import { createSpades } from "@/games/spades/rules";
 import { GAMES } from "@/session/registry";
 import type { PlacementMap } from "@/engine/types";
@@ -967,6 +968,111 @@ describe("the server, in process", () => {
       });
     });
 
+    describe("the next round deals itself", () => {
+      // LRC, because every move in it is forced: a room of people who never
+      // press anything plays itself to each scorecard, and the only thing
+      // left to wait on is Continue.
+      function table(gameId: "lrc" | "poker", settings: Record<string, unknown>) {
+        const h = host("p1");
+        const p2 = peerFor("p2");
+        send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+        send(h.peer, { t: "selectGame", gameId, settings, seats: 3, difficulty: "steady" });
+        // When each frame went out: the server counts the scorecard's twenty
+        // seconds from there, plus what that frame takes to play.
+        const stamps: Array<{ at: number; frame: FrameView }> = [];
+        const deliver = h.conn.send.bind(h.conn);
+        h.conn.send = (m: ServerMessage) => {
+          if (m.t === "frame") stamps.push({ at: clock.now(), frame: m.frame });
+          deliver(m);
+        };
+        send(h.peer, { t: "startGame" });
+        return { h, p2, stamps, runtime: registry.get(h.code)! };
+      }
+      const lrcTable = () => table("lrc", { target: 3 });
+
+      function untilRoundOver(stamps: Array<{ at: number; frame: FrameView }>, from: number) {
+        for (let i = 0; i < 4_000; i++) {
+          const hit = stamps.slice(from).find((x) => x.frame.isRoundOver && !x.frame.isOver);
+          if (hit) return hit;
+          clock.advance(250);
+        }
+        throw new Error("no round ended");
+      }
+
+      const dueAt = (hit: { at: number; frame: FrameView }) =>
+        hit.at + playbackMs(hit.frame.events) + ROUND_END_HOLD_MS + AUTO_CONTINUE_MS + AUTO_CONTINUE_GRACE_MS;
+      const roundOf = (runtime: NonNullable<ReturnType<RoomRegistry["get"]>>) =>
+        (runtime.debugDump().table as { round: number }).round;
+
+      it("twenty seconds after the scorecard goes up, if nobody continues", () => {
+        const { stamps, runtime } = lrcTable();
+        const hit = untilRoundOver(stamps, 0);
+        const round = roundOf(runtime);
+
+        clock.advance(dueAt(hit) - clock.now() - 1);
+        expect(roundOf(runtime), "not a moment early").toBe(round);
+        clock.advance(1);
+        expect(roundOf(runtime), "the next round should have been dealt").toBe(round + 1);
+      });
+
+      it("gives every scorecard its own twenty seconds, however soon the last was answered", () => {
+        // A timer left over from the first scorecard must not deal the third
+        // round early. It can only do that if the second round is already
+        // over when it fires, so this needs rounds that end fast: poker hands
+        // where both people fold at every chance.
+        const { h, p2, stamps, runtime } = table("poker", {});
+        const rules = GAMES.poker.create(GAMES.poker.parse({}));
+        const people = [h, p2];
+
+        /** Folds (or mucks, or checks) for whichever person is on turn, until a hand ends. */
+        const handOver = (from: number) => {
+          for (let i = 0; i < 4_000; i++) {
+            const hit = stamps.slice(from).find((x) => x.frame.isRoundOver && !x.frame.isOver);
+            if (hit) return hit;
+            const seat = (runtime.debugDump().table as { currentSeat: number | null }).currentSeat;
+            const who = people.find((p) => p.conn.last("frame")?.frame.seat === seat);
+            if (who && seat !== null) {
+              const legal = rules.legalActions(who.conn.last("frame")!.frame.state, seat) as Array<{ t: string }>;
+              const pick =
+                legal.find((a) => a.t === "fold") ??
+                legal.find((a) => a.t === "muck") ??
+                legal.find((a) => a.t === "check") ??
+                legal[0];
+              if (pick) send(who.peer, { t: "action", action: pick });
+            }
+            clock.advance(50);
+          }
+          throw new Error("no hand ended");
+        };
+
+        const first = handOver(0);
+        clock.advance(2_000);
+        send(h.peer, { t: "nextRound" });
+        const second = roundOf(runtime);
+
+        const hit = handOver(stamps.length);
+        // The whole point: the second hand ended well inside the first
+        // scorecard's twenty seconds, which is when a leftover timer bites.
+        expect(hit.at).toBeLessThan(dueAt(first));
+        expect(roundOf(runtime)).toBe(second);
+        clock.advance(dueAt(hit) - clock.now() - 1);
+        expect(roundOf(runtime), "dealt early, by the first scorecard's timer").toBe(second);
+        clock.advance(1);
+        expect(roundOf(runtime)).toBe(second + 1);
+      });
+
+      it("leaves nothing behind when the leader ends the game during it", () => {
+        const { h, stamps, runtime } = lrcTable();
+        const hit = untilRoundOver(stamps, 0);
+        send(h.peer, { t: "endGame" });
+        const framesAfter = stamps.length;
+
+        clock.advance(dueAt(hit) - clock.now() + 1_000);
+        expect(runtime.room.game).toBeNull();
+        expect(stamps.length, "no deal for a game that has ended").toBe(framesAfter);
+      });
+    });
+
     describe("a seat is held, a lobby row is not", () => {
       it("keeps a dropped seat holder past the grace, and lets them go once the game ends", () => {
         const { peer, p2 } = twoPlayerSpades();
@@ -1289,8 +1395,11 @@ describe("the server, in process", () => {
 
       const players = [h, p2, p3];
       const rules = GAMES.lrc.create(GAMES.lrc.parse({ target: 2 }));
-      for (let turn = 0; turn < 2000 && !h.conn.last("frame")?.frame.isRoundOver; turn++) {
-        clock.drain();
+      // Stepped, not drained: a drain would run on through the scorecard's
+      // own twenty seconds (it deals the next round itself) and past the
+      // point this test is about.
+      for (let turn = 0; turn < 6000 && !h.conn.last("frame")?.frame.isRoundOver; turn++) {
+        clock.advance(100);
         const current = h.conn.last("frame")?.frame.currentSeat;
         const who = players.find((p) => p.conn.last("frame")?.frame.seat === current);
         if (current == null || !who) continue;

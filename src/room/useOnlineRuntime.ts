@@ -42,6 +42,7 @@ import { piecesNamed, redactPlacements, sentinelFor } from "@/session/redact";
 import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
+import { ROUND_END_HOLD_MS } from "@/session/roundEnd";
 
 /**
  * How many frames may pile up before the client stops watching history and
@@ -85,7 +86,6 @@ const CATCH_UP_MS = 2500;
 export const READY_BEAT_MS = 450;
 
 const DEFAULT_END_HOLD_MS = 1200;
-const DEFAULT_ROUND_HOLD_MS = 1000;
 const ROUND_INTRO_HOLD_MS = 3000;
 
 /**
@@ -565,7 +565,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
       ? 0
       : matchOver
         ? DEFAULT_END_HOLD_MS
-        : DEFAULT_ROUND_HOLD_MS;
+        : ROUND_END_HOLD_MS;
     const t = setTimeout(() => (matchOver ? setGameEndRevealed(true) : setRoundEndRevealed(true)), delay);
     return () => clearTimeout(t);
   }, [applied]);
