@@ -14,7 +14,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BotDifficulty } from "@/engine/types";
 import type { GameId, RawSettings } from "@/session/registry";
-import type { ClientMessage, FrameView, RoomView, ServerErrorCode } from "@/session/protocol";
+import type {
+  ClientMessage,
+  FrameView,
+  RoomView,
+  ServerErrorCode,
+  SettlementView,
+} from "@/session/protocol";
 import { announce } from "@/ui/disclosure";
 import { roomConnection, type ConnectionStatus } from "./connection";
 
@@ -42,6 +48,14 @@ export type RoomPhase =
 export interface Farewell {
   reason: "left" | "kicked" | "room-closed" | "denied";
   code: string | null;
+  /** `room-closed`: the leader who closed it. */
+  by?: string;
+  /** `room-closed`: who owes whom, if the last game was played for money. */
+  settlement?: SettlementView | null;
+  /** `room-closed`: this player pressed it. */
+  byYou?: boolean;
+  /** Who this player was in the room — `SettleUp` says "you" by it. */
+  you?: string;
 }
 
 export interface RoomApi {
@@ -83,6 +97,8 @@ export interface RoomApi {
   enterGame: (as?: "player" | "spectator") => void;
   exitGame: () => void;
   endGame: () => void;
+  /** Leader only: closes the room for everybody in it. */
+  closeRoom: () => void;
   send: (message: ClientMessage) => void;
 }
 
@@ -99,6 +115,10 @@ export function useRoom(): RoomApi {
   const codeRef = useRef<string | null>(null);
   /** Whether a room is on screen, for the same reason `codeRef` is a ref. */
   const inRoomRef = useRef(false);
+  /** Who we are in the room on screen, for the farewell to remember. */
+  const youRef = useRef<string | null>(null);
+  /** This player asked to close the room, so its `room-closed` is theirs. */
+  const closingRef = useRef(false);
   const [greeted, setGreeted] = useState(false);
   /**
    * The server said this identity is still in a room, and the room itself
@@ -146,6 +166,7 @@ export function useRoom(): RoomApi {
           case "room":
             setAwaitingRoom(false);
             inRoomRef.current = true;
+            youRef.current = message.room.you;
             setRoom(message.room);
             setPendingCode(null);
             setFarewell(null);
@@ -194,8 +215,16 @@ export function useRoom(): RoomApi {
             // being turned away from a private room dropped you back on the
             // entry screen with no explanation at all. Said on the FORM now
             // (see `Farewell`), rather than as a toast over it.
-            setFarewell({ reason: message.reason, code: codeRef.current });
+            setFarewell({
+              reason: message.reason,
+              code: codeRef.current,
+              by: message.by,
+              settlement: message.settlement ?? null,
+              byYou: message.reason === "room-closed" && closingRef.current,
+              you: youRef.current ?? undefined,
+            });
             codeRef.current = null;
+            closingRef.current = false;
             break;
 
           case "notice":
@@ -205,6 +234,8 @@ export function useRoom(): RoomApi {
             break;
 
           case "error":
+            // Whatever this answers, a close we asked for did not happen.
+            closingRef.current = false;
             // A refused MOVE is not a form error. It has no control to sit
             // next to — the thing that caused it was a tap on a card — and
             // the only screen that renders `error` is the entry form, so
@@ -300,6 +331,10 @@ export function useRoom(): RoomApi {
       enterGame: (as) => send({ t: "enterGame", as }),
       exitGame: () => send({ t: "exitGame" }),
       endGame: () => send({ t: "endGame" }),
+      closeRoom: () => {
+        closingRef.current = true;
+        send({ t: "closeRoom" });
+      },
     }),
     [phase, status, room, pendingCode, frame, error, farewell, send, connection],
   );

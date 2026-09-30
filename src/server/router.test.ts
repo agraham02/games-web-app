@@ -270,6 +270,21 @@ describe("the server, in process", () => {
       expect(registry.roomOf(boSession)).toBeNull();
     });
 
+    it("lets only the leader close the room", () => {
+      const { code, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "closeRoom" });
+      expect(bo.conn.last("error")?.code).toBe("not-leader");
+      expect(registry.get(code)).not.toBeNull();
+    });
+
+    it("closes a lobby for everybody, with nothing to settle", () => {
+      const { peer, conn, bo, code } = lobbyOfTwo();
+      send(peer, { t: "closeRoom" });
+      expect(bo.conn.last("left")).toMatchObject({ reason: "room-closed", by: "Ada", settlement: null });
+      expect(conn.last("left")?.reason).toBe("room-closed");
+      expect(registry.get(code)).toBeNull();
+    });
+
     it("destroys a room the moment its last member leaves", () => {
       const { peer, code } = host("alone");
       send(peer, { t: "leaveRoom" });
@@ -1171,6 +1186,33 @@ describe("the server, in process", () => {
       expect(h.conn.last("room")!.room.settlement).not.toBeNull();
       send(h.peer, { t: "startGame" });
       expect(h.conn.last("room")!.room.settlement).toBeNull();
+    });
+
+    it("settles a game the leader closes the room on, and tells everybody with it", () => {
+      const { h, p2 } = room("poker", { buyIn: 2000 });
+      const knocker = peerFor("late-knock");
+      send(h.peer, { t: "setPrivacy", privacy: "private" });
+      // Private only now, mid-game: a knock on it waits in `awaiting`.
+      send(knocker.peer, { t: "joinRoom", code: h.code, name: "Late" });
+      expect(knocker.conn.last("pending")).toBeDefined();
+
+      send(h.peer, { t: "closeRoom" });
+
+      for (const who of [h, p2]) {
+        const left = who.conn.last("left")!;
+        expect(left.reason).toBe("room-closed");
+        expect(left.by).toBe("Ada");
+        expect(left.settlement?.gameId).toBe("poker");
+        // Let go of, not hung up on: that socket carries whatever they do next.
+        expect(who.conn.closed).toBe(false);
+      }
+      expect(knocker.conn.last("left")?.reason).toBe("room-closed");
+      expect(registry.get(h.code)).toBeNull();
+      expect(registry.roomOf(registry.sessionFor("p2"))).toBeNull();
+
+      // And the socket still works: the same person can make a new room.
+      send(p2.peer, { t: "createRoom", name: "Bo" });
+      expect(p2.conn.last("room")!.room.code).not.toBe(h.code);
     });
 
     it("says nothing for a game with no stake", () => {

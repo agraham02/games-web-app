@@ -379,7 +379,30 @@ export class RoomRuntime {
       case "notice":
         this.notify(effect.text);
         break;
+      case "close":
+        this.closeOut(effect.by);
+        break;
     }
+  }
+
+  /**
+   * Tells everybody attached that the room is gone, and lets go of their
+   * sockets WITHOUT closing them. The registry destroys the room next
+   * (the router does, once this command returns), and its `dispose` closes
+   * whatever is still attached — which a client reads as the network
+   * dropping, reconnects, and loses the screen that says why. The sockets
+   * stay open for whatever each person does next.
+   *
+   * Whatever was last settled goes with it: a game ended by closing has just
+   * been settled by the `stopSession` before this, and one finished earlier
+   * is still on the lobby's SettleUp, which is about to vanish with the room.
+   */
+  private closeOut(by: string): void {
+    const settlement = this.settlement;
+    for (const connection of this.connections.values()) {
+      this.push(connection, { t: "left", reason: "room-closed", by, settlement });
+    }
+    this.connections.clear();
   }
 
   /* ---------- the game ---------- */

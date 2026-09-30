@@ -556,6 +556,15 @@ showdown is already won, and is paid); LRC counts only finished rounds.
 `SettleUp` says what changes HANDS, never "you're even" — a person who lost
 to a bot is not even, they just owe no person.
 
+**Closing the room** (the leader's, 2026-09-29) settles the same way:
+`closeRoom` stops a running game with a `stopSession` effect BEFORE its
+`close` effect, so the settlement exists by the time `closeOut` tells
+everybody — and it rides on that `left{room-closed, by, settlement}`,
+because the lobby that would have shown it is going too. `closeOut` lets
+go of each socket without closing it (a close reads as a network drop, and
+the client would reconnect straight past the news); the router then
+destroys the room, which tells anybody still knocking.
+
 ### Two questions, not one: who moved, and who are we waiting on
 
 A seat pod lights from **`seatCue`** ([turnCue.ts](src/table/turnCue.ts)),

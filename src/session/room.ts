@@ -163,9 +163,15 @@ export type RoomError =
 
 export type RoomEffect =
   | { t: "startSession"; gameId: GameId; settings: RawSettings; seats: number; difficulty: BotDifficulty }
-  | { t: "stopSession"; reason: "ended-by-leader" | "all-bots" }
+  | { t: "stopSession"; reason: "ended-by-leader" | "all-bots" | "room-closed" }
   /** Surfaced to everyone in the room as a toast. Past tense, names the actor. */
-  | { t: "notice"; text: string };
+  | { t: "notice"; text: string }
+  /**
+   * The room is over: tell everybody in it, and let it go. Always after any
+   * `stopSession` in the same command, so a game played for money has been
+   * settled by the time anybody is told (the settlement rides on the news).
+   */
+  | { t: "close"; by: string };
 
 export type RoomResult =
   | { ok: true; room: Room; effects: RoomEffect[] }
@@ -207,6 +213,8 @@ export type RoomCommand =
     }
   | { t: "exitGame" }
   | { t: "endGame" }
+  /** Leader only: ends the room itself, for everybody in it. */
+  | { t: "closeRoom" }
   | { t: "setConnected"; connected: boolean };
 
 export interface RoomContext {
@@ -890,6 +898,16 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
           { t: "notice", text: "The game was ended" },
         ],
       };
+    }
+
+    case "closeRoom": {
+      const err = requireLeader();
+      if (err) return fail(err);
+      // A game in progress stops first, exactly as End game stops it — which
+      // is what settles one played for money before anybody is told.
+      if (room.game) effects.push({ t: "stopSession", reason: "room-closed" });
+      effects.push({ t: "close", by: nameOf(room, actor) });
+      return { ok: true, room: { ...room, game: null }, effects };
     }
   }
 }

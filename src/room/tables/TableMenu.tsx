@@ -3,7 +3,7 @@
 /**
  * The room's own buttons in an online table's Settings sheet: the invite
  * (so somebody can be asked in mid-game), back to the lobby for everyone,
- * and ending the game for the leader.
+ * and ending the game — or the whole room — for the leader.
  *
  * They used to be a row in the table's top-right corner. The user moved
  * them into the Settings sheet (2026-09-26): a table is for playing, and a
@@ -21,6 +21,7 @@ export function TableMenu({
   leader,
   onStepAway,
   onEndGame,
+  onCloseRoom,
 }: {
   /** The room's code, for the invite. */
   code: string;
@@ -30,6 +31,8 @@ export function TableMenu({
   leader: boolean;
   onStepAway: () => void;
   onEndGame: () => void;
+  /** Leader only. A game played for money is settled first, as by End game. */
+  onCloseRoom: () => void;
 }) {
   return (
     <>
@@ -47,6 +50,17 @@ export function TableMenu({
           label="End the game for everyone"
           question="End the game for everyone?"
           note="Everyone goes back to the lobby."
+        />
+      ) : null}
+      {leader ? (
+        <EndGameAction
+          onEnd={onCloseRoom}
+          tone="danger"
+          label="Close the room"
+          question="Close the room for everyone?"
+          note="The game ends and everyone is sent home."
+          confirmLabel="Close room"
+          cancelLabel="Keep playing"
         />
       ) : null}
     </>

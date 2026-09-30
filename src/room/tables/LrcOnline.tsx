@@ -100,6 +100,7 @@ export function LrcOnline({ api, room, frame }: OnlineTableProps) {
             leader={room.youAreLeader}
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
+            onCloseRoom={api.closeRoom}
           />
         }
         handZone={LRC_HAND_ZONE}

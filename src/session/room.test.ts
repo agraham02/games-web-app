@@ -213,6 +213,25 @@ describe("leadership", () => {
     expect(r.leader).toBe(LEADER);
   });
 
+  it("closes the room, stopping a game first so it can be settled", () => {
+    let r = spades(withMembers(["Sam"]));
+    r = ok(r, { t: "startGame" }, { actor: LEADER });
+    expect(applyCommand(r, { t: "closeRoom" }, { actor: "s-0", now: 2 })).toEqual({
+      ok: false,
+      error: "not-leader",
+    });
+    const res = applyCommand(r, { t: "closeRoom" }, { actor: LEADER, now: 2 });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.room.game).toBeNull();
+    // The order is the point: the stop settles money, the close carries it.
+    expect(res.effects.map((e) => e.t)).toEqual(["stopSession", "close"]);
+    expect(res.effects[1]).toEqual({ t: "close", by: "Ada" });
+  });
+
+  it("closes a lobby with nothing to stop", () => {
+    expect(effectsOf(room(), { t: "closeRoom" }, { actor: LEADER })).toEqual([{ t: "close", by: "Ada" }]);
+  });
+
   it("lets a freshly promoted leader immediately use a leader-only power", () => {
     // The spec's scenario: leader drops mid-game, the new one acts at once.
     let r = withMembers(["Sam", "Kofi"]);

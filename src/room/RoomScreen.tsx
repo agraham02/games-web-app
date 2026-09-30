@@ -35,6 +35,7 @@ import { readSavedName, takeEntryIntent, type EntryIntent } from "./entry";
 import { Lobby } from "./Lobby";
 import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
 import { RoomStatusScreen } from "./RoomStatusScreen";
+import { SettleUp } from "./SettleUp";
 import { tableFor } from "./tables";
 import { useRoom, type RoomApi } from "./useRoom";
 import { statusLane } from "@/table/geometry";
@@ -128,7 +129,17 @@ export function RoomScreen({ code }: { code?: string }) {
   // form at the same URL — the invitation to the room just left, "You have
   // been invited to a room", which is the one place they had chosen not to
   // be. `replace`, so Back does not return to it either.
-  const leaving = api.phase === "idle" && api.farewell?.reason === "left";
+  //
+  // Closing the room yourself is a leave you asked for, too — unless it
+  // leaves money to square up, which everybody (the leader included) is
+  // shown before going anywhere.
+  const farewell = api.farewell;
+  const closedWithMoney =
+    api.phase === "idle" && farewell?.reason === "room-closed" && Boolean(farewell.settlement);
+  const leaving =
+    api.phase === "idle" &&
+    (farewell?.reason === "left" ||
+      (farewell?.reason === "room-closed" && farewell.byYou === true && !closedWithMoney));
   useEffect(() => {
     if (leaving) router.replace("/");
   }, [leaving, router]);
@@ -170,7 +181,9 @@ export function RoomScreen({ code }: { code?: string }) {
             : api.phase === "idle"
               ? leaving
                 ? "leaving"
-                : "entry"
+                : closedWithMoney
+                  ? "closed"
+                  : "entry"
               : tableShowing
                 ? "table"
                 : "lobby";
@@ -254,6 +267,21 @@ export function RoomScreen({ code }: { code?: string }) {
             />
           ) : screen === "leaving" ? (
             <RoomStatusScreen title="Leaving the room…" />
+          ) : screen === "closed" ? (
+            // The room and its lobby are gone, and with them the SettleUp
+            // that said who owes whom — so it is said here, once, for
+            // everybody who was in it.
+            <RoomStatusScreen
+              title="Room closed"
+              line={farewell?.byYou ? "You closed the room." : `${farewell?.by ?? "The leader"} closed the room.`}
+              action={
+                <SettleUp
+                  settlement={farewell!.settlement!}
+                  you={farewell?.you ?? ""}
+                  className="w-full max-w-xs text-left"
+                />
+              }
+            />
           ) : screen === "entry" ? (
             <EntryScreen api={api} urlCode={code} />
           ) : (
@@ -271,6 +299,7 @@ type Screen =
   | "acting"
   | "pending"
   | "leaving"
+  | "closed"
   | "entry"
   | "table"
   | "lobby";
@@ -332,7 +361,9 @@ function refusalOf(api: RoomApi): { notice?: string; name?: string; code?: strin
     case "kicked":
       return { notice: `You were removed from ${room}.` };
     case "room-closed":
-      return { notice: `${sentence(room)} has closed.` };
+      return {
+        notice: farewell?.by ? `${farewell.by} closed ${room}.` : `${sentence(room)} has closed.`,
+      };
     default:
       return {};
   }

@@ -81,6 +81,8 @@ export type ClientMessage =
   | ({ t: "enterGame"; as?: "player" | "spectator" } & Addressed)
   | ({ t: "exitGame" } & Addressed)
   | ({ t: "endGame" } & Addressed)
+  /** Leader only: closes the room for everybody in it. */
+  | ({ t: "closeRoom" } & Addressed)
   /** A move. `action` is the game's own action type, validated server-side. */
   | ({ t: "action"; action: unknown } & Addressed)
   | ({ t: "nextRound" } & Addressed)
@@ -332,6 +334,14 @@ export type ServerMessage =
        * answer a refused knock had.
        */
       reason: "left" | "kicked" | "room-closed" | "denied";
+      /** `room-closed` by its leader: who closed it. */
+      by?: string;
+      /**
+       * `room-closed`: who owes whom, when the last game was played for
+       * money. The room — and the lobby that showed this — is gone, so it
+       * travels with the news or nobody sees it.
+       */
+      settlement?: SettlementView | null;
     }
   /** Waiting on a private room's leader to decide. */
   | { t: "pending"; code: RoomCode }
@@ -480,6 +490,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case "startGame":
     case "exitGame":
     case "endGame":
+    case "closeRoom":
     case "nextRound":
       return { t: data.t, reqId };
 

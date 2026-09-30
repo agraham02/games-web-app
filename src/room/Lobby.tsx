@@ -134,6 +134,19 @@ function LobbyFooter({ api }: { api: RoomApi }) {
             question="End the game for everyone?"
             note="Everyone comes back here."
           />
+        ) : leader ? (
+          // Hidden, not dimmed, for everybody else: they can never press it
+          // (see `hide-controls-never-usable`), and a Leave is theirs.
+          <EndGameAction
+            onEnd={api.closeRoom}
+            size="sm"
+            tone="danger"
+            label="Close room"
+            question="Close the room for everyone?"
+            note="Everyone is sent home."
+            confirmLabel="Close room"
+            cancelLabel="Keep it open"
+          />
         ) : (
           <span />
         )}

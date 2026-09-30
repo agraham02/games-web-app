@@ -119,6 +119,7 @@ export function SpadesOnline({
             leader={room.youAreLeader}
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
+            onCloseRoom={api.closeRoom}
           />
         }
         live={live}

@@ -14,8 +14,18 @@ afterEach(cleanup);
 
 function menu(leader: boolean) {
   const onEndGame = vi.fn();
-  render(<TableMenu code="ABCD" spectator={false} leader={leader} onStepAway={() => {}} onEndGame={onEndGame} />);
-  return onEndGame;
+  const onCloseRoom = vi.fn();
+  render(
+    <TableMenu
+      code="ABCD"
+      spectator={false}
+      leader={leader}
+      onStepAway={() => {}}
+      onEndGame={onEndGame}
+      onCloseRoom={onCloseRoom}
+    />,
+  );
+  return Object.assign(onEndGame, { onCloseRoom });
 }
 
 describe("ending a room's game from the table", () => {
@@ -40,5 +50,18 @@ describe("ending a room's game from the table", () => {
   it("is the leader's alone", () => {
     menu(false);
     expect(screen.queryByRole("button", { name: /end the game/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
+  });
+});
+
+describe("closing the room from the table", () => {
+  it("asks before closing it for everyone", () => {
+    const { onCloseRoom } = menu(true);
+    fireEvent.click(screen.getByRole("button", { name: "Close the room" }));
+    expect(onCloseRoom).not.toHaveBeenCalled();
+
+    const ask = screen.getByRole("group", { name: "Close the room for everyone?" });
+    fireEvent.click(within(ask).getByRole("button", { name: "Close room" }));
+    expect(onCloseRoom).toHaveBeenCalledTimes(1);
   });
 });

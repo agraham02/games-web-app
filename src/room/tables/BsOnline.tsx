@@ -111,6 +111,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
             leader={room.youAreLeader}
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
+            onCloseRoom={api.closeRoom}
           />
         }
         live={live}

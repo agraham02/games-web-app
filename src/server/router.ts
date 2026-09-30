@@ -236,6 +236,18 @@ export class Router {
         return;
       }
 
+      case "closeRoom": {
+        const result = runtime.command(session, { t: "closeRoom" });
+        if (!result.ok) {
+          this.fail(peer, result.error, errorText(result.error), message.reqId);
+          return;
+        }
+        // Everybody has been told and let go of (`RoomRuntime.closeOut`);
+        // this forgets them and the room, and tells anybody still knocking.
+        this.registry.destroy(runtime.code);
+        return;
+      }
+
       default: {
         const command = toCommand(message);
         if (!command) {

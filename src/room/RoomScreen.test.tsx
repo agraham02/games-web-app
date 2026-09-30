@@ -15,7 +15,7 @@
  */
 
 import { StrictMode } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION, type RoomView, type ServerMessage } from "@/session/protocol";
 import { GAMES, GAME_IDS } from "@/session/registry";
@@ -419,6 +419,49 @@ describe("the room client", () => {
       socket().deliver({ t: "left", reason: "left" });
       expect(replace).toHaveBeenCalledWith("/");
       expect(screen.queryByText(/you have been invited/i)).toBeNull();
+    });
+
+    it("says who closed the room, on the form", async () => {
+      await enterLobby({ youAreLeader: false });
+      socket().deliver({ t: "left", reason: "room-closed", by: "Ada", settlement: null });
+      expect(await screen.findByText("Ada closed room ABCD.")).toBeInTheDocument();
+    });
+
+    it("sends the leader who closed it home", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: "Close room" }));
+      fireEvent.click(
+        within(screen.getByRole("group", { name: "Close the room for everyone?" })).getByRole("button", {
+          name: "Close room",
+        }),
+      );
+      expect(socket().lastSent("closeRoom")).toBeDefined();
+      socket().deliver({ t: "left", reason: "room-closed", by: "Ada", settlement: null });
+      expect(replace).toHaveBeenCalledWith("/");
+    });
+
+    it("shows everybody who owes whom when a room closes on a game played for money", async () => {
+      // The lobby's SettleUp goes with the room, so the news has to carry it.
+      await enterLobby();
+      socket().deliver({
+        t: "left",
+        reason: "room-closed",
+        by: "Ada",
+        settlement: {
+          gameId: "poker",
+          stake: "$20 buy-in",
+          finished: false,
+          results: [
+            { session: "me", name: "Ada", cents: 1500 },
+            { session: "s-bo", name: "Bo", cents: -1500 },
+          ],
+          payments: [{ from: "s-bo", fromName: "Bo", to: "me", toName: "Ada", cents: 1500 }],
+          botsLeftOut: false,
+        },
+      });
+      expect(await screen.findByText("Room closed")).toBeInTheDocument();
+      expect(screen.getByText("Ada closed the room.")).toBeInTheDocument();
+      expect(replace).not.toHaveBeenCalledWith("/");
     });
 
     it("waits visibly on a private room's leader", async () => {
