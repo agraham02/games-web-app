@@ -6,8 +6,9 @@ import { Button } from "@/ui/primitives/Button";
 /**
  * Opens the chat. An icon, like Settings beside it (the user, 2026-09-29):
  * two words side by side crowded a phone's corner. The count is messages
- * from other people since the chat was last open — never a toast, which is
- * the one place chat was asked not to go.
+ * from other people since the chat was last open: at the table the one
+ * sign of them besides the bubbles on pods, since chat there is never a
+ * toast (in the lobby it is — `chatToast`).
  */
 export function ChatButton({ unread, onClick }: { unread: number; onClick: () => void }) {
   const label = unread > 0 ? `Chat, ${unread} new` : "Chat";
