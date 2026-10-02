@@ -183,8 +183,10 @@ export function RoomScreen({ code }: { code?: string }) {
       <WeakLinkIcon
         show={api.weakLink && api.status === "open"}
         label="Your connection is slow"
-        size={16}
-        className="h-8 w-6"
+        size={18}
+        // A chip the size of the buttons beside it: bare, the glyph read as
+        // a stray dot in the corner (seen in Chrome, 2026-10-02).
+        className="h-8 w-8 rounded-full bg-felt-950/55 ring-1 ring-warn/40"
       />
       <ChatButton unread={unread} onClick={() => setChatOpen(true)} />
     </>
