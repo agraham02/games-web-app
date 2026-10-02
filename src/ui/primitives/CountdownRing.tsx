@@ -10,19 +10,28 @@
  * same way: green, amber at half, red at a fifth — the user's thresholds for
  * the turn timer, adopted everywhere so there is one opinion about it.
  *
- * ## Why a masked conic gradient and not an SVG
+ * ## Why a measured SVG path
  *
- * The first version was an SVG `<rect rx="9999">` laid over the button. It
- * read as cheap for two reasons that are the same reason: an SVG rect cannot
- * share the element's `border-radius`, it can only approximate it, and it
- * had to be inset to keep its stroke from clipping — so it sat visibly
+ * Third try. The first was an SVG `<rect rx="9999">` laid over the button.
+ * It read as cheap: a rect cannot share the element's `border-radius`, only
+ * approximate it (an `rx` past half the width turns it into an ellipse),
+ * and it was inset to keep its stroke from clipping — so it sat visibly
  * INSIDE the edge rather than being the edge.
  *
- * This is a conic gradient masked to a ring. `border-radius` on the overlay
- * resolves against the overlay's own box, so it is the element's shape at
- * any size; the two-layer mask (`content-box` minus the whole box) punches
- * out the middle, leaving `inset` worth of ring. Sweeping the gradient's
- * stop from a full turn to nothing empties it.
+ * The second was a conic gradient masked to a ring, which had the shape
+ * exactly but swept by ANGLE from the middle. On anything wider than it is
+ * tall, equal angles are very unequal lengths of edge: it raced round the
+ * ends and crawled along the long sides — "really fast at the start, then
+ * slow in the middle, and then really fast again" (the user, 2026-10-01,
+ * on the scorecard's Continue) — and its tip was a hard radial cut where
+ * they wanted a rounded end.
+ *
+ * So: the overlay is measured (its layout size, which a `scale` animation
+ * does not touch, and its computed corner radius, so any CSS length works)
+ * and a rounded rectangle is drawn along the middle of the band, with round
+ * caps and `overflow: visible` so nothing clips. The visible part is a dash
+ * of `fraction × perimeter`: it empties by DISTANCE, which is what an eye
+ * follows, at one speed all the way round.
  *
  * ## Why it is driven by an end time
  *
@@ -38,8 +47,15 @@
  * the switch is still a switch.
  */
 
-import { useEffect } from "react";
-import { animate, motion, useMotionValue, useTransform, type AnimationPlaybackControls } from "motion/react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  animate,
+  motion,
+  useMotionValue,
+  useTransform,
+  type AnimationPlaybackControls,
+  type MotionValue,
+} from "motion/react";
 
 /** Where the ring turns amber, then red, as a fraction of time REMAINING. */
 export const WARN_AT = 0.5;
@@ -77,14 +93,114 @@ export interface CountdownRingProps {
   inset?: number;
 }
 
-export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3 }: CountdownRingProps) {
-  const sweep = useMotionValue(1);
-  const colour = useTransform(sweep, (v) => BAND_COLOUR[bandOf(v)]);
-  const background = useTransform(
-    sweep,
-    (v) => `conic-gradient(from -90deg, currentColor ${v * 360}deg, transparent 0)`,
-  );
+/**
+ * The ring's path, along the middle of its stroke: a rounded rectangle in
+ * a `width` × `height` box (the overlay — the element plus the ring round
+ * it), whose OUTER corners have `radius`. Starts at the middle of the left
+ * side and runs clockwise, where the conic gradient before it did.
+ *
+ * `length` is the true perimeter, so a dash of `fraction × length` is that
+ * fraction of the way round by distance.
+ */
+export function ringPath(
+  width: number,
+  height: number,
+  radius: number,
+  stroke: number,
+): { d: string; length: number } {
+  const half = stroke / 2;
+  const w = Math.max(0, width - stroke);
+  const h = Math.max(0, height - stroke);
+  // What CSS does with a radius too big for the box (a pill's 9999px):
+  // clamped to half the shorter side.
+  const r = Math.max(0, Math.min(radius - half, w / 2, h / 2));
+  const n = (v: number) => Math.round(v * 100) / 100;
+  const [left, top, right, bottom] = [half, half, half + w, half + h];
+  const d = [
+    `M ${n(left)} ${n(top + h / 2)}`,
+    `V ${n(top + r)}`,
+    `A ${n(r)} ${n(r)} 0 0 1 ${n(left + r)} ${n(top)}`,
+    `H ${n(right - r)}`,
+    `A ${n(r)} ${n(r)} 0 0 1 ${n(right)} ${n(top + r)}`,
+    `V ${n(bottom - r)}`,
+    `A ${n(r)} ${n(r)} 0 0 1 ${n(right - r)} ${n(bottom)}`,
+    `H ${n(left + r)}`,
+    `A ${n(r)} ${n(r)} 0 0 1 ${n(left)} ${n(bottom - r)}`,
+    `V ${n(top + h / 2)}`,
+  ].join(" ");
+  return { d, length: 2 * (w - 2 * r) + 2 * (h - 2 * r) + 2 * Math.PI * r };
+}
 
+export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3 }: CountdownRingProps) {
+  const sweep = useCountdownSweep(totalMs, endsAt);
+  const colour = useTransform(sweep, (v) => BAND_COLOUR[bandOf(v)]);
+
+  const ref = useRef<HTMLSpanElement>(null);
+  const [box, setBox] = useState<{ width: number; height: number; radius: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      // Layout size, not `getBoundingClientRect`: a pod grows 6% while it is
+      // that seat's turn, and the button this sits in lands with a bounce.
+      const next = {
+        width: el.offsetWidth,
+        height: el.offsetHeight,
+        radius: parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0,
+      };
+      setBox((was) =>
+        was && was.width === next.width && was.height === next.height && was.radius === next.radius
+          ? was
+          : next,
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [radius, inset]);
+
+  const path = box && box.width > 0 && box.height > 0 ? ringPath(box.width, box.height, box.radius, inset) : null;
+  const length = useMotionValue(0);
+  useEffect(() => length.set(path?.length ?? 0), [length, path?.length]);
+  // The gap is longer than the whole path, so the dash never repeats.
+  const dash = useTransform([sweep, length], ([v, l]: number[]) => `${v! * l!} ${l! + inset * 2}`);
+  // A round cap on an empty dash is still a dot.
+  const opacity = useTransform(sweep, (v) => (v > 0 ? 1 : 0));
+
+  return (
+    <span
+      ref={ref}
+      aria-hidden
+      className="pointer-events-none absolute"
+      // Just OUTSIDE the element, so it reads as a border around it rather
+      // than as decoration painted on the face. The radius is here only to
+      // be read back as pixels.
+      style={{ inset: -inset, borderRadius: radius }}
+    >
+      {path ? (
+        <svg className="absolute inset-0 overflow-visible" width={box!.width} height={box!.height}>
+          <motion.path
+            d={path.d}
+            fill="none"
+            strokeWidth={inset}
+            strokeLinecap="round"
+            style={{ stroke: colour, strokeDasharray: dash, opacity }}
+          />
+        </svg>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * How full a countdown is, 1 to 0, as a motion value. Held full while more
+ * than a clock's worth is left, then linear; re-read from the time whenever
+ * the tab is shown again.
+ */
+function useCountdownSweep(totalMs: number, endsAt?: number): MotionValue<number> {
+  const sweep = useMotionValue(1);
   useEffect(() => {
     const end = endsAt ?? Date.now() + totalMs;
     let controls: AnimationPlaybackControls | undefined;
@@ -109,28 +225,5 @@ export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3 }:
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [endsAt, totalMs, sweep]);
-
-  const ring = "linear-gradient(#000 0 0)";
-  return (
-    <motion.span
-      aria-hidden
-      className="pointer-events-none absolute"
-      style={{
-        // Just OUTSIDE the element, so it reads as a border around it rather
-        // than as decoration painted on the face.
-        inset: -inset,
-        padding: inset,
-        borderRadius: radius,
-        color: colour,
-        background,
-        // Two mask layers, the inner one clipped to the content box,
-        // composited so the middle is punched out — what is left is exactly
-        // `inset` worth of ring following the overlay's own radius.
-        WebkitMask: `${ring} content-box, ${ring}`,
-        WebkitMaskComposite: "xor",
-        mask: `${ring} content-box, ${ring}`,
-        maskComposite: "exclude",
-      }}
-    />
-  );
+  return sweep;
 }
