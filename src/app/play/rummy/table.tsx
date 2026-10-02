@@ -134,6 +134,8 @@ export interface RummyView {
    * nobody to step away. Supplied by `awayFrom(frame)`.
    */
   awayFor?: (seat: SeatId) => boolean;
+  /** Supplied by `botFrom(frame)`: a seat nobody owns, which a bot plays. */
+  botFor?: (seat: SeatId) => boolean;
   /**
    * Whether a bot is playing that seat right now. The claim ring races
    * the soonest bot only — another person's reaction time is not a
@@ -1888,6 +1890,7 @@ export function playerViews(view: RummyView, seats: number) {
         active: cue.active,
         thinking: cue.thinking,
         away: view.awayFor?.(s) ?? false,
+        bot: view.botFor?.(s) ?? false,
       });
     }
     return views;

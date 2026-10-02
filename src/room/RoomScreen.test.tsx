@@ -15,7 +15,7 @@
  */
 
 import { StrictMode } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION, type RoomView, type ServerMessage } from "@/session/protocol";
 import { GAMES, GAME_IDS } from "@/session/registry";
@@ -82,8 +82,8 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     you: "me",
     youAreLeader: true,
     members: [
-      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true },
-      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false },
+      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true, photo: null, idle: false },
+      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false, photo: null, idle: false },
     ],
     seatPlan: ["me", "bo", null, null],
     pending: [],
@@ -96,6 +96,8 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     inGame: false,
     youMayContinue: true,
     settlement: null,
+    chat: "open",
+    turnTimer: { on: true, seconds: 30 },
     ...over,
   };
 }
@@ -421,6 +423,150 @@ describe("the room client", () => {
       expect(screen.queryByText(/you have been invited/i)).toBeNull();
     });
 
+    it("brings a photo taken earlier this session to the next room, once", async () => {
+      window.sessionStorage.setItem("table-games.photo", "data:image/jpeg;base64,/9j/AAAA");
+      await enterLobby();
+      expect(socket().lastSent("setPhoto")).toMatchObject({ image: "data:image/jpeg;base64,/9j/AAAA" });
+      window.sessionStorage.clear();
+    });
+
+    it("offers your own avatar as the way to add a photo, and nobody else's", async () => {
+      await enterLobby();
+      expect(screen.getByRole("button", { name: "Add a photo" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /photo/i })).toHaveLength(1);
+    });
+
+    it("counts what other people said since the chat was last open", async () => {
+      await enterLobby();
+      const msg = (id: number, session: string, text: string) => ({
+        t: "chat" as const,
+        message: { id, session, name: session === "me" ? "Ada" : "Bo", text, at: id },
+      });
+      act(() => {
+        socket().deliver(msg(1, "bo", "hi"));
+        socket().deliver(msg(2, "me", "hello"));
+        socket().deliver(msg(3, "bo", "ready?"));
+      });
+      // Your own lines are not news to you.
+      fireEvent.click(await screen.findByRole("button", { name: "Chat, 2 new" }));
+      expect(within(await screen.findByRole("list", { name: "Messages" })).getByText("ready?")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(await screen.findByRole("button", { name: "Chat" })).toBeInTheDocument();
+      act(() => socket().deliver(msg(4, "bo", "one more")));
+      expect(await screen.findByRole("button", { name: "Chat, 1 new" })).toBeInTheDocument();
+    });
+
+    // The user, 2026-10-01: "In the lobby, show the chat messages as a toast,
+    // instead of us having to open the chat window to see the messages as
+    // they come".
+    it("pops up what other people say — not your own words, and not what was said before you came", async () => {
+      await enterLobby();
+      const msg = (id: number, session: string, text: string) => ({
+        id,
+        session,
+        name: session === "me" ? "Ada" : "Bo",
+        text,
+        at: id,
+      });
+      socket().deliver({ t: "chatLog", messages: [msg(1, "bo", "earlier")] });
+      socket().deliver({ t: "chat", message: msg(2, "me", "hello") });
+      socket().deliver({ t: "chat", message: msg(3, "bo", "ready?") });
+
+      const toast = await screen.findByRole("button", { name: /^Bo: ready\?/ });
+      expect(screen.queryByRole("button", { name: /^Bo: earlier/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Ada: hello/ })).toBeNull();
+
+      // Tapping it opens the chat; while that is open there is nothing to pop up.
+      fireEvent.click(toast);
+      await screen.findByRole("list", { name: "Messages" });
+      socket().deliver({ t: "chat", message: msg(4, "bo", "anyone?") });
+      expect(within(screen.getByRole("list", { name: "Messages" })).getByText("anyone?")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Bo: anyone\?/ })).toBeNull();
+    });
+
+    it("sends what you type to the room", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      const field = await screen.findByLabelText("Message");
+      fireEvent.change(field, { target: { value: "shall we?" } });
+      fireEvent.submit(field.closest("form")!);
+      expect(socket().lastSent("chat")).toMatchObject({ text: "shall we?" });
+    });
+
+    it("gives back what you typed when the room will not take it", async () => {
+      // The field emptied on Send, so "too many messages, try again in a
+      // moment" also threw away the message it was about.
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      const field = (await screen.findByLabelText("Message")) as HTMLInputElement;
+      fireEvent.change(field, { target: { value: "shall we?" } });
+      fireEvent.submit(field.closest("form")!);
+      expect(field.value).toBe("");
+
+      const reqId = socket().lastSent("chat")!.reqId as string;
+      socket().deliver({ t: "error", code: "chat-limited", message: "try again in a moment", reqId });
+      expect(field.value).toBe("shall we?");
+    });
+
+    it("lets the leader switch the turn timer off, and change how long it is", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));
+      expect(socket().lastSent("setTurnTimer")).toMatchObject({ on: false });
+      fireEvent.click(screen.getByRole("button", { name: "More seconds per move" }));
+      expect(socket().lastSent("setTurnTimer")).toMatchObject({ seconds: 35 });
+    });
+
+    it("shows everybody else the timer as it is, but not to change", async () => {
+      await enterLobby({ youAreLeader: false, turnTimer: { on: true, seconds: 15 } });
+      expect(screen.getByText("15")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));
+      expect(socket().lastSent("setTurnTimer")).toBeUndefined();
+    });
+
+    it("says who closed the room, on the form", async () => {
+      await enterLobby({ youAreLeader: false });
+      socket().deliver({ t: "left", reason: "room-closed", by: "Ada", settlement: null });
+      expect(await screen.findByText("Ada closed room ABCD.")).toBeInTheDocument();
+    });
+
+    it("sends the leader who closed it home", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: "Close room" }));
+      fireEvent.click(
+        within(screen.getByRole("group", { name: "Close the room for everyone?" })).getByRole("button", {
+          name: "Close room",
+        }),
+      );
+      expect(socket().lastSent("closeRoom")).toBeDefined();
+      socket().deliver({ t: "left", reason: "room-closed", by: "Ada", settlement: null });
+      expect(replace).toHaveBeenCalledWith("/");
+    });
+
+    it("shows everybody who owes whom when a room closes on a game played for money", async () => {
+      // The lobby's SettleUp goes with the room, so the news has to carry it.
+      await enterLobby();
+      socket().deliver({
+        t: "left",
+        reason: "room-closed",
+        by: "Ada",
+        settlement: {
+          gameId: "poker",
+          stake: "$20 buy-in",
+          finished: false,
+          results: [
+            { session: "me", name: "Ada", cents: 1500 },
+            { session: "s-bo", name: "Bo", cents: -1500 },
+          ],
+          payments: [{ from: "s-bo", fromName: "Bo", to: "me", toName: "Ada", cents: 1500 }],
+          botsLeftOut: false,
+        },
+      });
+      expect(await screen.findByText("Room closed")).toBeInTheDocument();
+      expect(screen.getByText("Ada closed the room.")).toBeInTheDocument();
+      expect(replace).not.toHaveBeenCalledWith("/");
+    });
+
     it("waits visibly on a private room's leader", async () => {
       await open();
       socket().deliver({ t: "pending", code: "WXYZ" });
@@ -488,6 +634,36 @@ describe("the room client", () => {
 
     expect(await screen.findByText("No room with that code")).toBeInTheDocument();
     expect(screen.getByLabelText(/your name/i)).toHaveValue("Ada");
+  });
+
+  it("stops waiting on a join refused while still in a room, and goes back to that room", async () => {
+    // Somebody still in ABCD pressed Join on the home page with a code that
+    // has no room behind it. The refusal arrives while ABCD is on screen, and
+    // used to go only to a toast: nothing told "Joining WXYZ…" to stop, so it
+    // never did (reproduced in a real browser).
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "join", code: "WXYZ" }),
+    );
+    render(
+      <StrictMode>
+        <RoomScreen code="WXYZ" />
+      </StrictMode>,
+    );
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+    socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    socket().deliver({ t: "room", room: roomView() });
+    await waitFor(() => expect(socket().lastSent("joinRoom")).toMatchObject({ code: "WXYZ" }));
+    expect(screen.getByText("Joining WXYZ…")).toBeInTheDocument();
+
+    const reqId = socket().lastSent("joinRoom")!.reqId;
+    expect(reqId).toEqual(expect.any(String));
+    socket().deliver({ t: "error", code: "no-such-room", message: "no room with that code", reqId: reqId as string });
+
+    expect(await screen.findByText("ABCD")).toBeInTheDocument();
+    expect(screen.queryByText("Joining WXYZ…")).toBeNull();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/room/ABCD"));
   });
 
   it("keeps a turned-down knock on the form, with the room ready to ask again", async () => {

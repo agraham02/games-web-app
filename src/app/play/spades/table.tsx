@@ -64,6 +64,8 @@ export interface SpadesView {
    * nobody to step away. Supplied by `awayFrom(frame)`.
    */
   awayFor?: (seat: SeatId) => boolean;
+  /** Supplied by `botFrom(frame)`: a seat nobody owns, which a bot plays. */
+  botFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -534,6 +536,7 @@ export function playerViews(view: SpadesView, state: SpadesState, live: Live): S
       // quietly told anyone watching that seat 1 was their partner.
       partner: isSeated(view) && s === partnerOf(view.viewerSeat),
       away: view.awayFor?.(s) ?? false,
+      bot: view.botFor?.(s) ?? false,
     });
   }
   return out;

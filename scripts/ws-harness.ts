@@ -22,10 +22,16 @@
 import WebSocket from "ws";
 // The 52 real ids, so the leak check below cannot drift from the deck.
 import { rummyDeck } from "../src/games/rummy/cards";
+import { PROTOCOL_VERSION } from "../src/session/protocol";
+import { createSpades } from "../src/games/spades/rules";
+import type { SpadesState } from "../src/games/spades/types";
+import { TURN_GRACE_MS } from "../src/session/GameSession";
 
 const BASE = process.env.HARNESS_URL ?? "http://localhost:3000";
 const WS_URL = BASE.replace(/^http/, "ws") + "/ws";
-const PROTOCOL = 1;
+// The server's own number, so a protocol bump cannot leave every scenario
+// refused at the handshake.
+const PROTOCOL = PROTOCOL_VERSION;
 
 /**
  * How many 100ms ticks a scenario waits for a Spades table to reach one of
@@ -58,6 +64,10 @@ class Client {
     });
     this.ws.on("message", (data) => {
       const msg = JSON.parse(data.toString()) as Message;
+      // When it arrived, for the turn-timer scenarios: the server's clock
+      // is relative to the moment it sent, and this is as close as a
+      // client gets to that moment.
+      msg.__at = Date.now();
       this.inbox.push(msg);
       if (msg.t === "hello") this.session = msg.session as string;
     });
@@ -512,14 +522,23 @@ async function main(): Promise<void> {
     assert(names.includes("Admitted"), `an approved member should be able to act; saw ${names}`);
   });
 
-  await scenario("leadership moves on when the leader drops, and the new one can act", async () => {
-    const a = await client(`t-lead-a-${Date.now()}`);
+  await scenario("a lobby leader keeps the lead through a drop, hands it on by leaving, and the new one can act", async () => {
+    const tokenA = `t-lead-a-${Date.now()}`;
+    const a = await client(tokenA);
     const code = await hostRoom(a, "First");
     const b = await client(`t-lead-b-${Date.now()}`);
     b.send({ t: "joinRoom", code, name: "Second" });
     await b.until((m) => m.t === "room");
 
+    // A drop is a refresh as far as anybody can tell: the silent lobby grace
+    // keeps them looking as they were, crown included.
     a.close();
+    await sleep(250);
+    const dropped = await dump(code);
+    assert(dropped.leader === a.session, `a dropped lobby leader should keep it; leader is ${dropped.leader}`);
+
+    const back = await client(tokenA);
+    back.send({ t: "leaveRoom" });
     await sleep(250);
 
     const state = await dump(code);
@@ -1479,6 +1498,152 @@ async function main(): Promise<void> {
       if (now && now.fingerprint !== before.fingerprint) moved = true;
     }
     assert(moved, "the table stalled after somebody was kicked out of it");
+  });
+
+
+  /* ---------- the turn timer, over real sockets ---------- */
+
+  /** Two people at a Spades table with a 5s turn timer. */
+  async function timedTable(tag: string) {
+    const { code, clients } = await party(tag, 2, ["Ada", "Bo"]);
+    const [host] = clients;
+    host!.send({ t: "setTurnTimer", on: true, seconds: 5 });
+    host!.send({ t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+    await sleep(60);
+    host!.send({ t: "startGame" });
+    await sleep(400);
+    return { code, clients };
+  }
+
+  type Clock = { seat: number; key: string; totalMs: number; endsInMs: number };
+
+  /** Waits for a clock on one of these people's seats, with who and when it arrived. */
+  async function personClock(clients: Client[], ms = 30_000) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      for (const c of clients) {
+        const tc = c.latest("turnClock");
+        const frame = c.latest("frame");
+        const clock = tc?.clock as Clock | null | undefined;
+        const seat = (frame?.frame as { seat?: number } | undefined)?.seat;
+        if (clock && clock.seat === seat) return { who: c, clock, at: tc!.__at as number };
+      }
+      await sleep(25);
+    }
+    throw new Error("no person's clock ever ran");
+  }
+
+  const fingerprintOf = async (code: string) =>
+    ((await dump(code)).table as { fingerprint: string } | null)?.fingerprint ?? "";
+
+  await scenario("a silent player's move is made for them, on time, over a real socket", async () => {
+    const { code, clients } = await timedTable("tt-silent");
+    const { who, clock, at } = await personClock(clients);
+    const before = await fingerprintOf(code);
+    const shownEnd = at + clock.endsInMs;
+
+    let movedAt = 0;
+    for (let i = 0; i < 400 && !movedAt; i++) {
+      await sleep(25);
+      if ((await fingerprintOf(code)) !== before) movedAt = Date.now();
+    }
+    assert(movedAt, "the move was never made");
+    // Never before the clock everybody was shown ran out; within the grace
+    // (plus this harness's own polling) after it.
+    assert(movedAt >= shownEnd, `made ${shownEnd - movedAt}ms before the clock on screen ran out`);
+    assert(
+      movedAt <= shownEnd + TURN_GRACE_MS + 600,
+      `made ${movedAt - shownEnd}ms after the clock ran out; the grace is ${TURN_GRACE_MS}ms`,
+    );
+    await who.until(
+      (m) =>
+        m.t === "frame" &&
+        ((m.frame as { events: Array<{ t: string; text?: string }> }).events ?? []).some(
+          (e) => e.t === "announce" && e.text === "ran out of time",
+        ),
+    );
+  });
+
+  await scenario("a move made with the clock nearly out, on a slow connection, still counts", async () => {
+    const { clients } = await timedTable("tt-slow");
+    const { who, clock, at } = await personClock(clients);
+    const rules = createSpades();
+    const frame = who.latest("frame")!.frame as { seat: number; state: SpadesState };
+    const move = rules.legalActions(frame.state, frame.seat)[0];
+    assert(move, "the player on the clock has a move");
+
+    // Pressed with 200ms showing, then 600ms on the wire: it lands 400ms
+    // after the ring emptied, which is what the grace is for.
+    await sleep(Math.max(0, at + clock.endsInMs - 200 - Date.now()));
+    await sleep(600);
+    who.clear();
+    who.send({ t: "action", action: move });
+    await sleep(400);
+    const refused = who.inbox.find((m) => m.t === "error");
+    assert(!refused, `the move was refused: ${JSON.stringify(refused)}`);
+    const madeForThem = who.inbox.some(
+      (m) =>
+        m.t === "frame" &&
+        ((m.frame as { events: Array<{ t: string; text?: string }> }).events ?? []).some(
+          (e) => e.t === "announce" && e.text === "ran out of time",
+        ),
+    );
+    assert(!madeForThem, "the timer made the move even though the player's arrived in time");
+  });
+
+  await scenario("two timeouts in a row hand the seat to a bot, and I'm back gives it back", async () => {
+    const { code, clients } = await timedTable("tt-idle");
+    const [ada, bo] = clients as [Client, Client];
+    const rules = createSpades();
+    // Ada plays whenever it is her turn; Bo never touches anything.
+    const deadline = Date.now() + 60_000;
+    let idle = false;
+    while (Date.now() < deadline && !idle) {
+      const frame = ada.latest("frame")?.frame as { seat: number; state: SpadesState } | undefined;
+      const table = (await dump(code)).table as { currentSeat: number | null } | null;
+      if (frame && table?.currentSeat === frame.seat) {
+        const move = rules.legalActions(frame.state, frame.seat)[0];
+        if (move) ada.send({ t: "action", action: move });
+      }
+      const game = (await dump(code)).game as { idle?: string[] } | null;
+      idle = Boolean(game?.idle?.includes(bo.session!));
+      await sleep(150);
+    }
+    assert(idle, "Bo timed out twice and was never handed to a bot");
+    const seat = ((await dump(code)).game as { seatOwner: (string | null)[] }).seatOwner.indexOf(bo.session!);
+    assert(((await dump(code)).liveSeats as boolean[])[seat] === false, "Bo's seat should be a bot's now");
+
+    bo.send({ t: "resume" });
+    await sleep(300);
+    const game = (await dump(code)).game as { idle?: string[] };
+    assert(!game.idle?.includes(bo.session!), "I'm back did not give Bo his seat back");
+  });
+
+  await scenario("another player reconnecting mid-move does not refill the clock", async () => {
+    const { code, clients } = await timedTable("tt-refill");
+    const { who, clock, at } = await personClock(clients);
+    const other = clients.find((c) => c !== who)!;
+    const shownEnd = at + clock.endsInMs;
+    const before = await fingerprintOf(code);
+
+    await sleep(1_500);
+    other.close();
+    await sleep(500);
+    const back = await client(other.token);
+    const told = await back.until((m) => m.t === "turnClock" && m.clock !== null, 3_000);
+    const remaining = (told.clock as Clock).endsInMs;
+    assert((told.clock as Clock).key === clock.key, "the reconnect started a new clock");
+    assert(
+      Math.abs(told.__at as number) > 0 && Math.abs((told.__at as number) + remaining - shownEnd) < 400,
+      `told ${remaining}ms left; the original clock ends ${shownEnd - (told.__at as number)}ms from then`,
+    );
+
+    let movedAt = 0;
+    for (let i = 0; i < 400 && !movedAt; i++) {
+      await sleep(25);
+      if ((await fingerprintOf(code)) !== before) movedAt = Date.now();
+    }
+    assert(movedAt && movedAt <= shownEnd + TURN_GRACE_MS + 600, "the move was put off by the reconnect");
   });
 
   console.log(`\n${passed} passed, ${failed} failed\n`);

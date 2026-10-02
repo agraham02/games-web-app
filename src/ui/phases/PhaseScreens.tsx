@@ -18,7 +18,8 @@ import { TRANSITIONS } from "@/motion/presets";
 import { Stats, type StatLines } from "@/ui/primitives/Stats";
 import { useTableStore } from "@/table/store";
 import { Button } from "@/ui/primitives/Button";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CountdownRing } from "@/ui/primitives/CountdownRing";
 import { Avatar } from "@/ui/primitives/Avatar";
 
 /* ============================================================
@@ -265,6 +266,7 @@ export function RoundEndScorecard({
   continueLabel = "Next round",
   waiting,
   target,
+  autoContinueMs,
 }: {
   show: boolean;
   eyebrow: string;
@@ -280,6 +282,15 @@ export function RoundEndScorecard({
   waiting?: string;
   /** What the match is played to — adds the progress line. */
   target?: number;
+  /**
+   * A room's next round deals itself this long after the card appears (the
+   * user, 2026-09-29), so nobody who has walked off can hold the table. The
+   * Continue button empties a ring over it and presses itself at the end;
+   * everybody waiting sees the seconds. The server deals anyway a little
+   * after, for a screen that is hidden or gone. Offline: undefined, and the
+   * card waits for the player.
+   */
+  autoContinueMs?: number;
 }) {
   // Lowered to a strip, so the table under it can be read — a showdown's
   // board, the last trick, the melds. Every new card opens full.
@@ -289,6 +300,31 @@ export function RoundEndScorecard({
     setShownFor(show);
     if (show) setPeek(false);
   }
+
+  // When the next round deals itself: fixed once, as the card appears, so
+  // neither peeking at the table (which unmounts the button) nor becoming
+  // the one who may continue (the leader stepping away) restarts it.
+  const [autoEndsAt, setAutoEndsAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (!show || !autoContinueMs) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a clock reading, taken once per showing
+    setAutoEndsAt(Date.now() + autoContinueMs);
+    return () => setAutoEndsAt(null);
+  }, [show, autoContinueMs]);
+
+  // Pressed for whoever may press it, when the ring runs out. Through a ref:
+  // the handler is a new function every render, and re-arming on each one
+  // would push the moment back for ever.
+  const continueRef = useRef(onContinue);
+  useEffect(() => {
+    continueRef.current = onContinue;
+  });
+  const mayContinue = Boolean(onContinue) && !waiting;
+  useEffect(() => {
+    if (autoEndsAt === null || !mayContinue) return;
+    const t = setTimeout(() => continueRef.current?.(), Math.max(0, autoEndsAt - Date.now()));
+    return () => clearTimeout(t);
+  }, [autoEndsAt, mayContinue]);
 
   // Highest total first: the order a player reads a scoreboard in.
   const groups = groupScoreRows(rows).sort((a, b) => (b[0]?.total ?? 0) - (a[0]?.total ?? 0));
@@ -339,10 +375,15 @@ export function RoundEndScorecard({
           {waiting ? (
             <p className="mt-6 text-center text-sm font-semibold text-bone-300" role="status">
               {waiting}
+              {autoEndsAt !== null ? <SecondsLeft endsAt={autoEndsAt} /> : null}
             </p>
           ) : onContinue ? (
-            <Button tone="primary" className="mt-7 w-full" onClick={onContinue}>
+            <Button tone="primary" className="relative mt-7 w-full" onClick={onContinue}>
               {continueLabel}
+              {autoEndsAt !== null && autoContinueMs ? (
+                // `md` buttons are `rounded-lg`; the ring sits 3px outside.
+                <CountdownRing totalMs={autoContinueMs} endsAt={autoEndsAt} radius="calc(0.5rem + 3px)" />
+              ) : null}
             </Button>
           ) : null}
           <button
@@ -356,6 +397,22 @@ export function RoundEndScorecard({
       )}
     </PhaseSheet>
   );
+}
+
+/** " · next round in 14s", counting down to `endsAt`. */
+function SecondsLeft({ endsAt }: { endsAt: number }) {
+  const [left, setLeft] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = () => setLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
+    const first = setTimeout(tick, 0);
+    const every = setInterval(tick, 250);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [endsAt]);
+  if (left === null) return null;
+  return <span className="text-bone-400"> · next round in {left}s</span>;
 }
 
 /**

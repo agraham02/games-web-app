@@ -23,6 +23,7 @@ import { KeepAwake, keepAwakeUrl } from "@/server/keepAwake";
 import { attachWebSocketServer, WS_PATH } from "@/server/wsServer";
 import { debugEnabled, handleDebugRequest } from "@/server/debug";
 import { handleRejoinRequest } from "@/server/rejoin";
+import { handlePhotoRequest } from "@/server/photo";
 import { log, setLogLevel } from "@/server/log";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -44,7 +45,13 @@ async function main(): Promise<void> {
   await app.prepare();
   const handle = app.getRequestHandler();
 
-  const registry = new RoomRegistry();
+  // `ROOM_GRACE_MS` shortens how long a dropped lobby member is kept, so the
+  // ws harness can watch one lapse without waiting 20 seconds. Dev only: in
+  // production the rule is the rule.
+  const graceOverride = dev ? Number(process.env.ROOM_GRACE_MS) : NaN;
+  const registry = new RoomRegistry({
+    graceMs: Number.isFinite(graceOverride) && graceOverride > 0 ? graceOverride : undefined,
+  });
 
   const server = createServer((req, res) => {
     // Liveness, and deliberately NOT one of the debug routes: those are
@@ -76,6 +83,8 @@ async function main(): Promise<void> {
     if (handleDebugRequest(req, res, registry)) return;
     // The home page's "am I still in a room?" — see rejoin.ts.
     if (handleRejoinRequest(req, res, registry)) return;
+    // Members' photos — see server/photo.ts.
+    if (handlePhotoRequest(req, res, registry)) return;
     void handle(req, res);
   });
 

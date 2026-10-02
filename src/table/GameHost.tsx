@@ -19,6 +19,8 @@ import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
 import { TableSurface } from "./TableSurface";
 import { SeatRing } from "./SeatRing";
+import { SeatBubbles } from "./SeatBubbles";
+import { CountdownBar } from "@/ui/primitives/CountdownRing";
 import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
@@ -42,6 +44,8 @@ import {
   type ScoreRow,
 } from "@/ui/phases/PhaseScreens";
 import { useGameRuntime, type GameRuntime, type GameRuntimeOptions } from "./useGameRuntime";
+import { AUTO_CONTINUE_MS } from "@/session/roundEnd";
+import { Settings as SettingsIcon } from "lucide-react";
 
 export interface GameHostProps<S, A> {
   definition: GameDefinition<S, A>;
@@ -168,6 +172,19 @@ export interface GameHostProps<S, A> {
    */
   continueWaiting?: string;
   /**
+   * What a room knows about each seat that no game does — the person's
+   * photo — laid over whatever the game's own `players` built for it. The
+   * one place a room's pods differ from a solo table's, so the six games'
+   * `playerViews` need not know rooms exist. Absent offline.
+   */
+  seatExtras?: (seat: SeatId) => Partial<SeatView>;
+  /**
+   * A room's turn timer: whose move it is counting, and when the clock runs
+   * out (by `Date.now()`). Another seat's goes round its pod; the viewer's
+   * own, who has no pod, is a line along the very foot of the table.
+   */
+  turnClock?: { seat: SeatId; key: string; totalMs: number; endsAt: number } | null;
+  /**
    * Under the standings on the winner's sheet — a room's settle-up, for a
    * game played for money (`SettleUp`).
    */
@@ -244,6 +261,8 @@ export function GameHostView<S, A>({
   handActive,
   turnSeat,
   continueWaiting,
+  seatExtras,
+  turnClock,
   summaryExtra,
   roundNoun = "Round",
   children,
@@ -305,9 +324,16 @@ export function GameHostView<S, A>({
   // (Dominoes cut-throat, LRC) and correctly crowns BOTH partners when a
   // partnership game scores a round — team dominoes, the first to do so.
   const winningSeats = live.winningSeats ?? live.roundWinningSeats;
-  const seatViews = players(live.state, live).map((view) =>
-    winningSeats?.includes(view.seat) ? { ...view, winning: true } : view,
-  );
+  const seatViews = players(live.state, live).map((view) => {
+    const room = seatExtras?.(view.seat);
+    let seen = room ? { ...view, ...room } : view;
+    if (turnClock && turnClock.seat === view.seat) seen = { ...seen, timer: turnClock };
+    return winningSeats?.includes(view.seat) ? { ...seen, winning: true } : seen;
+  });
+  // The viewer's own clock. Not a spectator's (`viewerSeat` null): they
+  // have no move to make.
+  const ownClock =
+    turnClock && viewerSeat !== null && turnClock.seat === (viewerSeat ?? HERO) ? turnClock : null;
   const board = standings
     ? standings(live.state, live, seatViews)
     : winLoseStandings(live.state, live, seatViews, viewerSeat);
@@ -372,6 +398,21 @@ export function GameHostView<S, A>({
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
+      <SeatBubbles players={seatViews} />
+      {ownClock ? (
+        // The very foot of the table, over the hand if need be (the user's
+        // call): thin, and taps go straight through it.
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 h-1">
+          <CountdownBar
+            key={ownClock.key}
+            totalMs={ownClock.totalMs}
+            endsAt={ownClock.endsAt}
+            onDanger={() => {
+              if (settingValues.vibration !== false) navigator.vibrate?.(60);
+            }}
+          />
+        </div>
+      ) : null}
       <HeroWinFlourish
         show={
           // A spectator has no side to celebrate, so confetti for one would
@@ -404,6 +445,9 @@ export function GameHostView<S, A>({
         target={card?.target}
         onContinue={live.nextRound}
         waiting={continueWaiting}
+        // A room's round deals itself if nobody continues; a game on this
+        // device waits for its one player.
+        autoContinueMs={serverDriven ? AUTO_CONTINUE_MS : undefined}
       />
 
       <GameEndSummary
@@ -442,8 +486,10 @@ export function GameHostView<S, A>({
 
       <div className="absolute top-2 right-2 z-1900 flex gap-2">
         {corner}
-        <Button size="sm" onClick={() => setSettingsOpen(true)}>
-          <span aria-hidden>⚙</span> Settings
+        {/* An icon, like the chat beside it online (the user, 2026-09-29):
+            two words side by side crowded a phone's corner. */}
+        <Button size="sm" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
+          <SettingsIcon size={16} aria-hidden />
         </Button>
       </div>
       <SettingsSheet

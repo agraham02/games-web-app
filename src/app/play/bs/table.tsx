@@ -76,6 +76,8 @@ export interface BsView {
    * Optional because only a room can answer it. Supplied by `awayFrom(frame)`.
    */
   awayFor?: (seat: SeatId) => boolean;
+  /** Supplied by `botFrom(frame)`: a seat nobody owns, which a bot plays. */
+  botFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -463,6 +465,7 @@ export function playerViews(view: BsView, state: BsState, live: Live): SeatView[
       thinking: cue.thinking,
       winning: state.result?.winner === seat,
       away: view.awayFor?.(seat) ?? false,
+      bot: view.botFor?.(seat) ?? false,
     });
   }
   return out;

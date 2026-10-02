@@ -24,7 +24,7 @@ import {
   type ServerErrorCode,
 } from "@/session/protocol";
 import { isGameId } from "@/session/registry";
-import type { RoomCommand, SessionId } from "@/session/room";
+import { holdsSeat, type RoomCommand, type SessionId } from "@/session/room";
 import type { Connection } from "./RoomRuntime";
 import type { RoomRegistry } from "./RoomRegistry";
 import { log } from "./log";
@@ -77,7 +77,22 @@ export class Router {
   constructor(
     private readonly registry: RoomRegistry,
     private readonly now: () => number,
-  ) {}
+  ) {
+    registry.onRoomDestroyed((code) => this.roomGone(code));
+  }
+
+  /**
+   * Tells everybody still knocking on a room that it has gone. They are not
+   * members, so nothing the room does reaches them — and the reaper used to
+   * take a room out from under a knock with nobody saying so.
+   */
+  private roomGone(code: string): void {
+    for (const [session, waiting] of this.awaiting) {
+      if (waiting.code !== code) continue;
+      this.awaiting.delete(session);
+      waiting.peer.connection.send({ t: "left", reason: "room-closed" });
+    }
+  }
 
   /**
    * The boundary between one client's message and the process.
@@ -128,7 +143,8 @@ export class Router {
     }
 
     if (message.t === "ping") {
-      peer.connection.send({ t: "pong" });
+      // Echoed, so the client can time the round trip (`clockSync`).
+      peer.connection.send(message.sent === undefined ? { t: "pong" } : { t: "pong", sent: message.sent });
       return;
     }
 
@@ -158,6 +174,11 @@ export class Router {
       return;
     }
 
+    if (message.t === "bye") {
+      this.bye(peer, session);
+      return;
+    }
+
     const runtime = this.registry.roomOf(session);
     if (!runtime) {
       this.fail(peer, "no-room", "you are not in a room", message.reqId);
@@ -177,6 +198,11 @@ export class Router {
           // used to send: a client switching on `code` could not tell a
           // lost race from a parse failure, so it could not sensibly
           // decide which of the two is worth interrupting somebody over.
+          //
+          // Except the one refusal that is not a disagreement: the move
+          // they pressed had just been made for them (a forced move's wait,
+          // or their clock, ran out). Their screen is already right.
+          if (result.silent) return;
           this.fail(peer, "move-refused", moveRefusedText(result.error), message.reqId);
         }
         return;
@@ -213,6 +239,32 @@ export class Router {
         // and its memory for the life of the process.
         runtime.detach(session, peer.connection);
         this.registry.displace(session);
+        return;
+      }
+
+      case "chat": {
+        const refused = runtime.chat(session, { text: message.text, quick: message.quick });
+        if (refused) this.fail(peer, refused, errorText(refused), message.reqId);
+        return;
+      }
+
+      case "setPhoto":
+        if (!runtime.setPhoto(session, message.image)) {
+          this.fail(peer, "photo-rejected", errorText("photo-rejected"), message.reqId);
+          return;
+        }
+        runtime.broadcastRoom();
+        return;
+
+      case "closeRoom": {
+        const result = runtime.command(session, { t: "closeRoom" });
+        if (!result.ok) {
+          this.fail(peer, result.error, errorText(result.error), message.reqId);
+          return;
+        }
+        // Everybody has been told and let go of (`RoomRuntime.closeOut`);
+        // this forgets them and the room, and tells anybody still knocking.
+        this.registry.destroy(runtime.code);
         return;
       }
 
@@ -341,6 +393,26 @@ export class Router {
     peer.connection.send({ t: "left", reason: "left" });
   }
 
+  /**
+   * The tab is leaving the room's page on purpose and about to hang up.
+   *
+   * Somebody with a seat in a running game keeps it: the close that follows
+   * detaches them and a bot plays on until they come back, as it always
+   * has. Anybody else — the lobby, a spectator, a knock — goes now, rather
+   * than sitting in everybody's roster for `LOBBY_GRACE_MS` looking as
+   * though they were still there.
+   *
+   * Silent, and answered with nothing: the page that sent it is gone.
+   */
+  private bye(peer: Peer, session: SessionId): void {
+    this.withdrawQuietly(session);
+    const runtime = this.registry.roomOf(session);
+    if (!runtime || holdsSeat(runtime.room, session)) return;
+    runtime.command(session, { t: "leave" });
+    runtime.detach(session, peer.connection);
+    this.registry.displace(session);
+  }
+
   private admit(session: SessionId, code: string): void {
     const waiting = this.awaiting.get(session);
     this.awaiting.delete(session);
@@ -446,7 +518,20 @@ export class Router {
     // Checked before joining, not after: a client that skips the UI and
     // sends `joinRoom` while already seated somewhere would otherwise be a
     // member of two rooms at once, holding a seat in each.
-    if (this.registry.roomOf(session) !== runtime) this.leaveCurrentRoom(peer, session);
+    //
+    // But only once the join is known to work. Leaving first and THEN being
+    // refused — a full room, a name already taken there — left somebody in
+    // no room at all while their screen still showed the one they had been
+    // in, every button on it answering "you are not in a room". A refused
+    // join leaves them where they were, like a code with no room behind it.
+    if (this.registry.roomOf(session) !== runtime) {
+      const refused = runtime.joinRefusal(session, name);
+      if (refused) {
+        this.fail(peer, refused, errorText(refused), reqId);
+        return;
+      }
+      this.leaveCurrentRoom(peer, session);
+    }
 
     const result = runtime.command(session, { t: "join", name });
     if (!result.ok) {
@@ -532,6 +617,10 @@ function toCommand(message: ClientMessage): RoomCommand | null {
       return { t: "exitGame" };
     case "endGame":
       return { t: "endGame" };
+    case "setTurnTimer":
+      return { t: "setTurnTimer", on: message.on, seconds: message.seconds };
+    case "resume":
+      return { t: "resume" };
     default:
       return null;
   }

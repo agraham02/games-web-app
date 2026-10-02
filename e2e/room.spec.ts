@@ -239,6 +239,95 @@ test.describe("a room, in real browsers", () => {
     await two.close();
   });
 
+  test("chat reaches the room, and a Spades hand keeps it to the quick replies", async ({ browser }) => {
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    // In the lobby: Bo says hello. It pops up on Ada's screen as a toast that
+    // opens the chat, and her chat button counts it.
+    await bo.getByRole("button", { name: "Chat", exact: true }).click();
+    await bo.getByRole("textbox", { name: "Message" }).fill("hello table");
+    await bo.getByRole("button", { name: "Send" }).click();
+    await expect(ada.getByRole("button", { name: "Chat, 1 new" })).toBeVisible();
+    await ada.getByRole("button", { name: /^Bo: hello table/ }).click();
+    await expect(ada.getByRole("list", { name: "Messages" })).toContainText("hello table");
+    // Exactly: the leader's lobby also has a "Close room".
+    await ada.getByRole("button", { name: "Close", exact: true }).click();
+    await bo.getByRole("button", { name: "Close", exact: true }).click();
+
+    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /start spades/i }).click();
+    for (const page of [ada, bo]) await atTable(page);
+
+    // Mid-hand, Bo may send only the table-safe replies...
+    await bo.getByRole("button", { name: /^Chat/ }).click();
+    await expect(bo.getByRole("textbox", { name: "Message" })).toBeDisabled();
+    await expect(bo.getByRole("group", { name: "Quick replies" }).getByRole("button", { name: "Nice one!" })).toBeDisabled();
+    await bo.getByRole("group", { name: "Quick replies" }).getByRole("button", { name: "Good luck!" }).click();
+    // ...and it lands beside Bo's pod on Ada's table, not as a toast.
+    await expect(ada.getByRole("status").filter({ hasText: "Good luck!" })).toBeVisible();
+
+    await one.close();
+    await two.close();
+  });
+
+  test("the turn timer, with one player on a slow connection", async ({ browser }) => {
+    // Two timeouts at five seconds plus a few hands of poker.
+    test.setTimeout(120_000);
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    // Bo's socket goes through a proxy that holds every message 300ms each
+    // way: a 600ms round trip, which is what the grace has to absorb.
+    await bo.routeWebSocket(/\/ws$/, (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((m) => void setTimeout(() => server.send(m), 300));
+      server.onMessage((m) => void setTimeout(() => ws.send(m), 300));
+    });
+    await join(bo, code);
+
+    // Thirty seconds in a new room; down to five.
+    const fewer = ada.getByRole("button", { name: "Fewer seconds per move" });
+    for (let i = 0; i < 5; i++) await fewer.click();
+    await expect(ada.getByText("5", { exact: true })).toBeVisible();
+
+    await ada.getByRole("button", { name: "Poker" }).click();
+    await ada.getByRole("button", { name: /start poker/i }).click();
+    for (const page of [ada, bo]) await atTable(page);
+
+    // Ada plays every turn she gets; Bo never touches anything.
+    let ringOnBo = false;
+    let barOnBo = false;
+    const deadline = Date.now() + 100_000;
+    while (Date.now() < deadline) {
+      if (await bo.getByRole("button", { name: "I'm back" }).isVisible()) break;
+      if (!ringOnBo) ringOnBo = (await ada.getByTestId("countdown-ring").count()) > 0;
+      if (!barOnBo) barOnBo = (await bo.getByTestId("countdown-bar").count()) > 0;
+      const mine = ada.getByRole("button", { name: /^(Check|Call)/ }).first();
+      if (await mine.isVisible().catch(() => false)) await mine.click().catch(() => {});
+      await ada.waitForTimeout(250);
+    }
+
+    // While it was Bo's move, Ada saw the ring round his pod and Bo saw his
+    // own clock along the foot of the table.
+    expect(ringOnBo, "no ring was drawn round the waiting player's pod").toBe(true);
+    expect(barOnBo, "the waiting player never saw their own clock").toBe(true);
+
+    // Two in a row, and a bot took his seat — and he can have it back.
+    await expect(bo.getByText("A bot is playing for you")).toBeVisible();
+    await bo.getByRole("button", { name: "I'm back" }).click();
+    await expect(bo.getByText("A bot is playing for you")).toBeHidden();
+
+    await one.close();
+    await two.close();
+  });
+
   test("stepping away hands the seat to a bot, and coming back reclaims it", async ({
     browser,
   }) => {

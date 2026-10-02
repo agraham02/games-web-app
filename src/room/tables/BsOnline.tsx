@@ -43,11 +43,12 @@ import {
   BS_SETTINGS,
 } from "@/app/play/bs/table";
 import { tintFor } from "../Roster";
-import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
+import { useSeatExtras } from "./seatExtras";
 
-export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: OnlineTableProps) {
+export function BsOnline({ api, room, frame, held, onClearHeld, setHeld, corner }: OnlineTableProps) {
   // Through the shared rule, not a bare toggle. `RoomScreen` owns WHERE the
   // selection lives (so it survives a trip to the lobby); what a tap means is
   // a rules question with one answer, and it lives next to `onPieceTap` in
@@ -84,6 +85,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
       },
       // A seat somebody owns but is not currently in — see `awayFrom`.
       awayFor: awayFrom(frame),
+      botFor: botFrom(frame),
     }),
     [frame, room.members],
   );
@@ -91,6 +93,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
+  const seatExtras = useSeatExtras(room, api.chat);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (
@@ -103,6 +106,9 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        seatExtras={seatExtras}
+        corner={corner}
+        turnClock={api.turnClock}
         menuActions={
           <TableMenu
             code={room.code}
@@ -110,6 +116,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
             leader={room.youAreLeader}
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
+            onCloseRoom={api.closeRoom}
           />
         }
         live={live}

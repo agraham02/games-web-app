@@ -33,7 +33,7 @@ import { useState } from "react";
 import { defaultSettings, summarizeSetup, textOf } from "@/session/gameSetup";
 import type { RoomView } from "@/session/protocol";
 import { GAMES, GAME_IDS, isGameId, onlineGames, type GameId } from "@/session/registry";
-import { MIN_ROOM_PLAYERS } from "@/session/room";
+import { MIN_ROOM_PLAYERS, TURN_TIMER_MAX_S, TURN_TIMER_MIN_S, TURN_TIMER_STEP_S } from "@/session/room";
 import { EndGameAction } from "@/table/gameSettings";
 import { motion } from "motion/react";
 import { Collapse, Swap, listItemMotion } from "@/ui/motion";
@@ -41,6 +41,8 @@ import { Button } from "@/ui/primitives/Button";
 import { ChoiceGroup } from "@/ui/primitives/ChoiceGroup";
 import { DIFFICULTY_NAMES } from "@/ui/primitives/DifficultyPicker";
 import { GameThumb, seatRange } from "@/ui/primitives/GameThumb";
+import { NumberStepper } from "@/ui/primitives/NumberStepper";
+import { Toggle } from "@/ui/primitives/Toggle";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameOptions } from "@/ui/setup/GameOptions";
 import { useMediaQuery } from "@/ui/useMediaQuery";
@@ -133,6 +135,19 @@ function LobbyFooter({ api }: { api: RoomApi }) {
             label="End the game for everyone"
             question="End the game for everyone?"
             note="Everyone comes back here."
+          />
+        ) : leader ? (
+          // Hidden, not dimmed, for everybody else: they can never press it
+          // (see `hide-controls-never-usable`), and a Leave is theirs.
+          <EndGameAction
+            onEnd={api.closeRoom}
+            size="sm"
+            tone="danger"
+            label="Close room"
+            question="Close the room for everyone?"
+            note="Everyone is sent home."
+            confirmLabel="Close room"
+            cancelLabel="Keep it open"
           />
         ) : (
           <span />
@@ -332,6 +347,7 @@ function TablePanel({ api }: { api: RoomApi }) {
         onPromote={api.promote}
         onKick={api.kick}
         onArrange={api.arrangeSeats}
+        onPhoto={api.setPhoto}
       />
       {room.gameRunning ? null : hasGame ? (
         <p className="text-[11px] leading-relaxed text-bone-500">
@@ -366,7 +382,62 @@ function TablePanel({ api }: { api: RoomApi }) {
           onChange={(privacy) => api.setPrivacy(privacy)}
         />
       </div>
+
+      <TurnTimerField
+        timer={room.turnTimer}
+        // Like the game's options: dimmed with its real values for anybody
+        // but the leader, and for the leader too while a game is running.
+        locked={!leader || room.gameRunning}
+        onChange={api.setTurnTimer}
+      />
     </section>
+  );
+}
+
+/**
+ * The turn timer (the user, 2026-09-29): on in a new room at 30 seconds,
+ * 5 to 60 in steps of 5. Switching it off keeps the length, so switching it
+ * back on restores it.
+ */
+function TurnTimerField({
+  timer,
+  locked,
+  onChange,
+}: {
+  timer: RoomView["turnTimer"];
+  locked: boolean;
+  onChange: (change: { on?: boolean; seconds?: number }) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-xs font-bold text-bone-200">Turn timer</span>
+      <Toggle
+        label="Time each move"
+        hint={
+          timer.on
+            ? "Run out and a move is made for you. Twice in a row and a bot plays for you until you are back."
+            : "Everyone takes as long as they like."
+        }
+        checked={timer.on}
+        locked={locked}
+        onChange={(on) => onChange({ on })}
+      />
+      <Collapse open={timer.on}>
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <span className="text-xs text-bone-300">Seconds per move</span>
+          <NumberStepper
+            value={timer.seconds}
+            min={TURN_TIMER_MIN_S}
+            max={TURN_TIMER_MAX_S}
+            step={TURN_TIMER_STEP_S}
+            label="seconds per move"
+            disabled={locked}
+            size="sm"
+            onChange={(seconds) => onChange({ seconds })}
+          />
+        </div>
+      </Collapse>
+    </div>
   );
 }
 

@@ -227,13 +227,16 @@ export function useGameSettings(
  * A room's leader ends the game for EVERYONE, and settles up a game played
  * for money, so their button asks too — in the Settings sheet and in the
  * lobby — with its own words (`label`, `question`, `note`) and look (`tone`,
- * `size`).
+ * `size`). Closing a room asks the same way, in its own words again
+ * (`confirmLabel`, `cancelLabel`).
  */
 export function EndGameAction({
   onEnd,
   label = "End game",
   question = "End this game?",
   note = "It is not saved.",
+  confirmLabel = "End game",
+  cancelLabel = "Keep playing",
   tone,
   size,
 }: {
@@ -241,6 +244,10 @@ export function EndGameAction({
   label?: string;
   question?: string;
   note?: string;
+  /** The button that does it, once asked. */
+  confirmLabel?: string;
+  /** The button that thinks better of it. */
+  cancelLabel?: string;
   tone?: "danger";
   size?: "sm";
 }) {
@@ -259,10 +266,10 @@ export function EndGameAction({
       </p>
       <div className="flex gap-2">
         <Button size={size} className="flex-1" onClick={() => setAsking(false)}>
-          Keep playing
+          {cancelLabel}
         </Button>
         <Button tone="danger" size={size} className="flex-1" onClick={onEnd}>
-          End game
+          {confirmLabel}
         </Button>
       </div>
     </div>

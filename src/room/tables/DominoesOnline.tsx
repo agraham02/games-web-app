@@ -37,9 +37,10 @@ import {
   DOMINO_SETTINGS,
 } from "@/app/play/dominoes/table";
 import { tintFor } from "../Roster";
-import { awayFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
+import { useSeatExtras } from "./seatExtras";
 
 export function DominoesOnline({
   api,
@@ -48,6 +49,7 @@ export function DominoesOnline({
   held,
   onToggleHeld,
   onClearHeld,
+  corner,
 }: OnlineTableProps) {
   const definition = useMemo(() => {
     const entry = GAMES[room.gameId ?? "dominoes"];
@@ -81,6 +83,7 @@ export function DominoesOnline({
       },
       // A seat somebody owns but is not currently in — see `awayFrom`.
       awayFor: awayFrom(frame),
+      botFor: botFrom(frame),
     }),
     [frame, room.members],
   );
@@ -105,6 +108,7 @@ export function DominoesOnline({
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
+  const seatExtras = useSeatExtras(room, api.chat);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (
@@ -116,6 +120,9 @@ export function DominoesOnline({
         viewerSeat={frame.seat}
         serverDriven
         continueWaiting={continueWaitingFor(room)}
+        seatExtras={seatExtras}
+        corner={corner}
+        turnClock={api.turnClock}
         settings={DOMINO_SETTINGS}
         menuActions={
           <TableMenu
@@ -124,6 +131,7 @@ export function DominoesOnline({
             leader={room.youAreLeader}
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
+            onCloseRoom={api.closeRoom}
           />
         }
         live={live}

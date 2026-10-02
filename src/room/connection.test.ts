@@ -42,6 +42,54 @@ class FakeSocket {
   }
 }
 
+describe("timing the round trip", () => {
+  beforeEach(() => {
+    sockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("probes soon after connecting, timed, and keeps the quickest answer", () => {
+    const connection = new RoomConnection("token-rtt");
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    // An ordinary connection, before anything is known.
+    expect(connection.oneWayMs()).toBe(75);
+
+    vi.advanceTimersByTime(300);
+    const ping = socket.sent.find((m) => m.t === "ping")!;
+    expect(typeof ping.sent).toBe("number");
+
+    const answer = (rtt: number) => {
+      vi.spyOn(performance, "now").mockReturnValue((ping.sent as number) + rtt);
+      socket.onmessage?.({ data: JSON.stringify({ t: "pong", sent: ping.sent }) });
+      vi.restoreAllMocks();
+    };
+    answer(240);
+    expect(connection.oneWayMs()).toBe(120);
+    answer(600); // a slow one: the quickest still stands
+    expect(connection.oneWayMs()).toBe(120);
+  });
+
+  it("never believes a round trip worth more than a second each way", () => {
+    const connection = new RoomConnection("token-rtt-2");
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    vi.advanceTimersByTime(300);
+    const ping = socket.sent.find((m) => m.t === "ping")!;
+    vi.spyOn(performance, "now").mockReturnValue((ping.sent as number) + 9_000);
+    socket.onmessage?.({ data: JSON.stringify({ t: "pong", sent: ping.sent }) });
+    vi.restoreAllMocks();
+    expect(connection.oneWayMs()).toBe(1_000);
+  });
+});
+
 describe("the keepalive", () => {
   beforeEach(() => {
     sockets.length = 0;
@@ -115,6 +163,47 @@ describe("the keepalive", () => {
  * as long as both tabs were open, and at any instant one of them was
  * holding a dead socket. That looks exactly like the game desyncing.
  */
+describe("a remount in the middle of a move", () => {
+  beforeEach(() => {
+    sockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeSocket);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("is told the turn clock with what is left of it, and not one from a game that has ended", () => {
+    // The server says a clock only when it changes, so a page that mounted
+    // mid-move (from `/room` to `/room/ABCD`) showed no ring for that move.
+    const connection = new RoomConnection("token-clock");
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    const deliver = (m: unknown) => socket.onmessage?.({ data: JSON.stringify(m) });
+    const now = vi.spyOn(performance, "now").mockReturnValue(10_000);
+    deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    deliver({ t: "room", room: { code: "ABCD", gameRunning: true } });
+    deliver({ t: "frame", frame: { seq: 3 } });
+    deliver({ t: "turnClock", clock: { seat: 1, key: "turn:3:1", totalMs: 30_000, endsInMs: 20_000 } });
+
+    now.mockReturnValue(16_000);
+    const seen: { t: string; clock?: unknown }[] = [];
+    connection.subscribe({ onMessage: (m) => seen.push(m), onStatus: () => {} });
+    expect(seen.find((m) => m.t === "turnClock")?.clock).toEqual({
+      seat: 1,
+      key: "turn:3:1",
+      totalMs: 30_000,
+      endsInMs: 14_000,
+    });
+
+    deliver({ t: "room", room: { code: "ABCD", gameRunning: false } });
+    const later: { t: string }[] = [];
+    connection.subscribe({ onMessage: (m) => later.push(m), onStatus: () => {} });
+    expect(later.some((m) => m.t === "turnClock")).toBe(false);
+  });
+});
+
 describe("being replaced by another tab", () => {
   beforeEach(() => {
     sockets.length = 0;
@@ -342,6 +431,27 @@ describe("a page that is no longer listening", () => {
     vi.advanceTimersByTime(1_000);
     expect(socket.readyState).toBe(1);
     expect(connection.status).toBe("open");
+    // ...and says nothing: nobody is leaving.
+    expect(socket.count("bye")).toBe(0);
+  });
+
+  it("says bye before hanging up, so leaving the lobby is immediate", () => {
+    // A bare close looks like a phone locking, which the server gives the
+    // lobby grace to come back from; `bye` says it was on purpose.
+    const { socket, off } = listening();
+    deliver(socket, { t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    off();
+    vi.advanceTimersByTime(0);
+    expect(socket.count("bye")).toBe(1);
+    expect(socket.sent.at(-1)?.t).toBe("bye");
+    expect(socket.readyState).toBe(3);
+  });
+
+  it("says nothing on behalf of an identity the server never confirmed", () => {
+    const { socket, off } = listening();
+    off();
+    vi.advanceTimersByTime(0);
+    expect(socket.count("bye")).toBe(0);
   });
 
   it("forgets what it heard, so the next page asks the server afresh", () => {

@@ -16,9 +16,10 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { TestClock } from "@/session/clock";
-import { playbackMs } from "@/motion/choreographer";
-import { DEFAULT_TURN_HOLD_MS } from "@/session/GameSession";
-import { PROTOCOL_VERSION, type ServerMessage } from "@/session/protocol";
+import { READY_BEAT_MS, playbackMs } from "@/motion/choreographer";
+import { DEFAULT_TURN_HOLD_MS, FORCED_MOVE_MS, TURN_GRACE_MS } from "@/session/GameSession";
+import { PROTOCOL_VERSION, type FrameView, type ServerMessage, type TurnClockView } from "@/session/protocol";
+import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
 import { createSpades } from "@/games/spades/rules";
 import { GAMES } from "@/session/registry";
 import type { PlacementMap } from "@/engine/types";
@@ -26,6 +27,7 @@ import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
 import type { SpadesState } from "@/games/spades/types";
 import { EMPTY_ROOM_TTL_MS, RoomRegistry } from "./RoomRegistry";
+import { LOBBY_GRACE_MS } from "@/session/room";
 import type { Connection } from "./RoomRuntime";
 import { makePeer, Router, type Peer } from "./router";
 
@@ -81,10 +83,17 @@ describe("the server, in process", () => {
     router.onMessage(peer, JSON.stringify(message));
   }
 
-  function host(token = "host"): { peer: Peer; conn: FakeConnection; code: string } {
+  function host(token = "host", opts: { turnTimer?: boolean } = {}): { peer: Peer; conn: FakeConnection; code: string } {
     const { peer, conn } = peerFor(token);
     send(peer, { t: "createRoom", name: "Ada" });
     const code = conn.last("room")!.room.code;
+    // Off unless a test is about it. A new room has it on (30s), and most of
+    // these tests park the table on a person who never moves and then
+    // `drain()` — which with the timer running would make their moves for
+    // them, mark them idle, and end the game: not what they are testing.
+    if (!opts.turnTimer) send(peer, { t: "setTurnTimer", on: false });
+    conn.clear();
+    send(peer, { t: "rename", name: "Ada" });
     return { peer, conn, code };
   }
 
@@ -147,37 +156,40 @@ describe("the server, in process", () => {
   });
 
   describe("expiry", () => {
-    it("deletes a room a minute after the last person disconnects", () => {
+    // A room nobody is left in goes with its last member: each member who
+    // drops gets LOBBY_GRACE_MS, then leaves, and `displace` destroys the
+    // emptied room. EMPTY_ROOM_TTL_MS is only the backstop now.
+    it("lets go of a room everybody dropped out of, once the grace runs out", () => {
       const { peer, code } = host();
       expect(registry.get(code)).not.toBeNull();
 
       router.onClose(peer);
-      // Still there during the grace period: the commonest cause of an
-      // empty room is everybody refreshing at once.
-      clock.advance(EMPTY_ROOM_TTL_MS - 1);
+      // Still there during the grace: the commonest cause of an empty room
+      // is everybody refreshing at once.
+      clock.advance(LOBBY_GRACE_MS - 1);
       expect(registry.get(code)).not.toBeNull();
 
-      clock.advance(2);
+      clock.advance(1);
       expect(registry.get(code)).toBeNull();
     });
 
-    it("spares a room when somebody returns inside the window", () => {
+    it("spares a room when somebody returns inside the grace", () => {
       const { peer, code } = host("returner");
       router.onClose(peer);
-      clock.advance(EMPTY_ROOM_TTL_MS - 100);
+      clock.advance(LOBBY_GRACE_MS - 100);
 
       peerFor("returner");
       clock.advance(EMPTY_ROOM_TTL_MS * 2);
       expect(registry.get(code)).not.toBeNull();
     });
 
-    it("survives a reconnect landing right on the edge of the window", () => {
-      // Named in the spec. The reaper re-checks rather than assuming,
+    it("survives a reconnect landing right on the edge of the grace", () => {
+      // Named in the spec. The lapse re-checks rather than assuming,
       // because the entire point of a grace period is that returning
       // during it is allowed.
       const { peer, code } = host("edge");
       router.onClose(peer);
-      clock.advance(EMPTY_ROOM_TTL_MS - 1);
+      clock.advance(LOBBY_GRACE_MS - 1);
 
       const back = peerFor("edge");
       clock.advance(1000);
@@ -187,14 +199,322 @@ describe("the server, in process", () => {
     });
 
     it("does not rearm the timer on a flapping connection", () => {
-      // Otherwise a client reconnecting every 59 seconds keeps a dead room
+      // Otherwise a client reconnecting every 19 seconds keeps a dead room
       // alive forever.
       const { peer, code } = host("flapper");
       router.onClose(peer);
-      clock.advance(EMPTY_ROOM_TTL_MS / 2);
+      clock.advance(LOBBY_GRACE_MS / 2);
       router.onClose(peer); // A second close, no reconnect in between.
-      clock.advance(EMPTY_ROOM_TTL_MS / 2 + 10);
+      clock.advance(LOBBY_GRACE_MS / 2 + 10);
       expect(registry.get(code)).toBeNull();
+    });
+
+    it("keeps a room holding only a knock for the reaper, which tells the knocker", () => {
+      const { peer, code } = host("quitter");
+      send(peer, { t: "setPrivacy", privacy: "private" });
+      const knocker = peerFor("hopeful");
+      send(knocker.peer, { t: "joinRoom", code, name: "Hopeful" });
+      expect(knocker.conn.last("pending")).toBeDefined();
+
+      router.onClose(peer);
+      clock.advance(LOBBY_GRACE_MS);
+      // Its only member is gone, but a knock is still waiting on it.
+      expect(registry.get(code)).not.toBeNull();
+
+      clock.advance(EMPTY_ROOM_TTL_MS);
+      expect(registry.get(code)).toBeNull();
+      expect(knocker.conn.last("left")?.reason).toBe("room-closed");
+    });
+  });
+
+  describe("chat", () => {
+    function lobbyOfTwo() {
+      const h = host("ada");
+      const bo = peerFor("bo");
+      send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      return { ...h, bo };
+    }
+
+    it("reaches everybody in the room, cleaned, with who said it", () => {
+      const { conn, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "chat", text: "  hello\n\n there  " });
+      for (const who of [conn, bo.conn]) {
+        expect(who.last("chat")!.message).toMatchObject({ name: "Bo", text: "hello there" });
+      }
+    });
+
+    it("sends a quick reply by what it says, not what the client claims", () => {
+      const { conn, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "chat", quick: "luck" });
+      expect(conn.last("chat")!.message).toMatchObject({ text: "Good luck!", quick: "luck" });
+      send(bo.peer, { t: "chat", quick: "made-up" });
+      expect(bo.conn.last("error")?.code).toBe("chat-invalid");
+    });
+
+    it("refuses nothing and too much", () => {
+      const { bo } = lobbyOfTwo();
+      send(bo.peer, { t: "chat", text: "   " });
+      expect(bo.conn.last("error")?.code).toBe("chat-invalid");
+      send(bo.peer, { t: "chat", text: "x".repeat(121) });
+      expect(bo.conn.last("error")?.code).toBe("chat-invalid");
+      expect(bo.conn.all("chat")).toHaveLength(0);
+    });
+
+    it("keeps a flood down, and lets the talker back in after a moment", () => {
+      const { conn, bo } = lobbyOfTwo();
+      for (let i = 0; i < 6; i++) send(bo.peer, { t: "chat", text: `m${i}` });
+      expect(conn.all("chat")).toHaveLength(5);
+      expect(bo.conn.last("error")?.code).toBe("chat-limited");
+      clock.advance(10_000);
+      send(bo.peer, { t: "chat", text: "later" });
+      expect(conn.last("chat")!.message.text).toBe("later");
+    });
+
+    it("tells somebody arriving what has been said", () => {
+      const { peer, code } = lobbyOfTwo();
+      send(peer, { t: "chat", text: "before you came" });
+      const cy = peerFor("cy");
+      send(cy.peer, { t: "joinRoom", code, name: "Cy" });
+      expect(cy.conn.last("chatLog")!.messages.map((m) => m.text)).toEqual(["before you came"]);
+    });
+
+    it("hears nothing from somebody still knocking", () => {
+      const { peer, conn, code } = host("ada");
+      send(peer, { t: "setPrivacy", privacy: "private" });
+      const knocker = peerFor("knock");
+      send(knocker.peer, { t: "joinRoom", code, name: "Knock" });
+      send(knocker.peer, { t: "chat", text: "let me in" });
+      expect(knocker.conn.last("error")?.code).toBe("no-room");
+      expect(conn.all("chat")).toHaveLength(0);
+    });
+
+    describe("table talk in a partnership hand", () => {
+      /** Spades, both people seated: a partnership game. */
+      function spadesHand() {
+        const h = host("ada");
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        return { ...h, bo };
+      }
+
+      it("limits the players in it to the table-safe quick replies", () => {
+        const { peer, conn, bo } = spadesHand();
+        expect(conn.last("room")!.room.chat).toBe("quick-only");
+
+        send(peer, { t: "chat", text: "I have the ace" });
+        expect(conn.last("error")?.code).toBe("chat-locked");
+        send(peer, { t: "chat", quick: "nice" });
+        expect(conn.last("error")?.code).toBe("chat-locked");
+        send(peer, { t: "chat", quick: "luck" });
+        expect(bo.conn.last("chat")!.message.text).toBe("Good luck!");
+      });
+
+      it("lets somebody who is only watching say what they like", () => {
+        const { conn, code } = spadesHand();
+        const cy = peerFor("cy");
+        send(cy.peer, { t: "joinRoom", code, name: "Cy" });
+        send(cy.peer, { t: "enterGame", as: "spectator" });
+        expect(cy.conn.last("room")!.room.chat).toBe("open");
+        send(cy.peer, { t: "chat", text: "great game to watch" });
+        expect(conn.last("chat")!.message.text).toBe("great game to watch");
+      });
+
+      it("still holds somebody who stepped back to the lobby — they know their cards", () => {
+        const { peer, conn } = spadesHand();
+        send(peer, { t: "exitGame" });
+        send(peer, { t: "chat", text: "psst" });
+        expect(conn.last("error")?.code).toBe("chat-locked");
+      });
+
+      it("gives table talk back when the hand is over", () => {
+        // Played out for real: each person takes their first legal action
+        // whenever it is their turn, and the bots do the rest.
+        const { peer, conn, bo, code } = spadesHand();
+        const rules = createSpades();
+        const people = [{ peer, conn }, bo];
+        for (let i = 0; i < 20_000 && !conn.last("frame")!.frame.isRoundOver; i++) {
+          const seat = (registry.get(code)!.debugDump().table as { currentSeat: number | null }).currentSeat;
+          const who = people.find((p) => p.conn.last("frame")?.frame.seat === seat);
+          if (who && seat !== null) {
+            const legal = rules.legalActions(who.conn.last("frame")!.frame.state as SpadesState, seat);
+            if (legal[0]) send(who.peer, { t: "action", action: legal[0] });
+          }
+          clock.advance(100);
+        }
+        expect(conn.last("frame")!.frame.isRoundOver, "the hand should have been played out").toBe(true);
+        expect(conn.last("room")!.room.chat, "the room is told the moment it opens").toBe("open");
+        send(peer, { t: "chat", text: "well that went badly" });
+        expect(bo.conn.last("chat")!.message.text).toBe("well that went badly");
+      });
+
+      it("does not apply to a game without partners", () => {
+        const h = host("ada");
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "selectGame", gameId: "poker", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        expect(h.conn.last("room")!.room.chat).toBe("open");
+        send(h.peer, { t: "chat", text: "all in" });
+        expect(bo.conn.last("chat")!.message.text).toBe("all in");
+      });
+
+      it("applies to dominoes played in teams, and only then", () => {
+        const teams = (on: boolean) => {
+          const h = host(`d-${on}`);
+          const bo = peerFor(`d-bo-${on}`);
+          send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+          send(h.peer, {
+            t: "selectGame",
+            gameId: "dominoes",
+            settings: { mode: "caribbean", teams: on },
+            seats: 4,
+            difficulty: "steady",
+          });
+          send(h.peer, { t: "startGame" });
+          return h.conn.last("room")!.room.chat;
+        };
+        expect(teams(true)).toBe("quick-only");
+        expect(teams(false)).toBe("open");
+      });
+    });
+  });
+
+  describe("photos", () => {
+    const jpeg = `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(64)]).toString("base64")}`;
+
+    it("shows everybody a member's photo, by id, and takes it down again", () => {
+      const { conn, code } = host("ada");
+      const bo = peerFor("bo");
+      send(bo.peer, { t: "joinRoom", code, name: "Bo" });
+
+      send(bo.peer, { t: "setPhoto", image: jpeg });
+      const seen = conn.last("room")!.room.members.find((m) => m.name === "Bo")!;
+      expect(seen.photo).toMatch(/^[A-Za-z0-9_-]{16,}$/);
+      // The roster carries the id, never the picture.
+      expect(JSON.stringify(conn.last("room"))).not.toContain("base64");
+
+      send(bo.peer, { t: "setPhoto", image: null });
+      expect(conn.last("room")!.room.members.find((m) => m.name === "Bo")!.photo).toBeNull();
+    });
+
+    it("refuses a picture it will not keep, and says so", () => {
+      const { peer, conn } = host("ada");
+      send(peer, { t: "setPhoto", image: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" });
+      expect(conn.last("error")?.code).toBe("photo-rejected");
+      expect(conn.last("room")!.room.members[0]!.photo).toBeNull();
+    });
+  });
+
+  /**
+   * The lobby holds nothing for anybody (the user, 2026-09-29): leaving it
+   * is leaving, and an unexpected drop gets a silent LOBBY_GRACE_MS.
+   */
+  describe("leaving the lobby", () => {
+    function lobbyOfTwo() {
+      const h = host("ada");
+      const bo = peerFor("bo");
+      send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      return { ...h, bo, boSession: registry.sessionFor("bo") };
+    }
+
+    const memberNamed = (conn: FakeConnection, name: string) =>
+      conn.last("room")!.room.members.find((m) => m.name === name);
+
+    it("keeps somebody who dropped looking exactly as they were, then lets them go", () => {
+      const { conn, bo, boSession } = lobbyOfTwo();
+      router.onClose(bo.peer);
+
+      // Silent: nothing on the leader's screen says Bo dropped.
+      expect(memberNamed(conn, "Bo")?.connected).toBe(true);
+      clock.advance(LOBBY_GRACE_MS - 1);
+      expect(memberNamed(conn, "Bo")).toBeDefined();
+
+      clock.advance(1);
+      expect(memberNamed(conn, "Bo")).toBeUndefined();
+      expect(conn.all("notice").map((n) => n.text)).toContain("Bo left");
+      // Forgotten by the registry too, so the home page offers no rejoin.
+      expect(registry.roomOf(boSession)).toBeNull();
+    });
+
+    it("keeps them, and says nothing, when they are back inside the grace", () => {
+      const { conn, bo, code } = lobbyOfTwo();
+      router.onClose(bo.peer);
+      clock.advance(LOBBY_GRACE_MS - 1000);
+      conn.clear();
+
+      const back = peerFor("bo");
+      clock.advance(LOBBY_GRACE_MS * 3);
+      expect(back.conn.last("room")!.room.code).toBe(code);
+      expect(memberNamed(conn, "Bo")?.connected).toBe(true);
+      expect(conn.all("notice").map((n) => n.text)).not.toContain("Bo left");
+    });
+
+    it("keeps the leader's crown through a refresh, and hands it on only if they never come back", () => {
+      // The crown moved at the drop, while the roster still showed the old
+      // leader as present: a refresh was a silent demotion (reproduced in a
+      // real browser).
+      const { peer, bo } = lobbyOfTwo();
+      router.onClose(peer);
+      expect(memberNamed(bo.conn, "Ada")?.isLeader).toBe(true);
+      expect(memberNamed(bo.conn, "Bo")?.isLeader).toBe(false);
+
+      clock.advance(1_500);
+      const back = peerFor("ada");
+      expect(back.conn.last("room")!.room.youAreLeader).toBe(true);
+
+      // Gone for good this time: the grace runs out, and Bo leads.
+      router.onClose(back.peer);
+      clock.advance(LOBBY_GRACE_MS);
+      expect(memberNamed(bo.conn, "Ada")).toBeUndefined();
+      expect(memberNamed(bo.conn, "Bo")?.isLeader).toBe(true);
+    });
+
+    it("lets somebody who says bye go at once", () => {
+      const { conn, bo, boSession } = lobbyOfTwo();
+      send(bo.peer, { t: "bye" });
+      expect(memberNamed(conn, "Bo")).toBeUndefined();
+      expect(registry.roomOf(boSession)).toBeNull();
+    });
+
+    it("lets only the leader close the room", () => {
+      const { code, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "closeRoom" });
+      expect(bo.conn.last("error")?.code).toBe("not-leader");
+      expect(registry.get(code)).not.toBeNull();
+    });
+
+    it("closes a lobby for everybody, with nothing to settle", () => {
+      const { peer, conn, bo, code } = lobbyOfTwo();
+      send(peer, { t: "closeRoom" });
+      expect(bo.conn.last("left")).toMatchObject({ reason: "room-closed", by: "Ada", settlement: null });
+      expect(conn.last("left")?.reason).toBe("room-closed");
+      expect(registry.get(code)).toBeNull();
+    });
+
+    it("destroys a room the moment its last member leaves", () => {
+      const { peer, code } = host("alone");
+      send(peer, { t: "leaveRoom" });
+      expect(registry.get(code)).toBeNull();
+    });
+
+    it("lets the next person into a room nobody is left in, and makes them its leader", () => {
+      // Its last member lapsed while a knock was still waiting, so the room
+      // is kept (for the reaper) with a leader who is no longer in it. The
+      // next person in must not land in a room nobody can start - and there
+      // is nobody left to let them in, so they are not made to knock.
+      const { peer, code } = host("first");
+      send(peer, { t: "setPrivacy", privacy: "private" });
+      const knocker = peerFor("waiting");
+      send(knocker.peer, { t: "joinRoom", code, name: "Waiting" });
+      router.onClose(peer);
+      clock.advance(LOBBY_GRACE_MS);
+
+      const late = peerFor("late");
+      send(late.peer, { t: "joinRoom", code, name: "Late" });
+      expect(late.conn.last("pending")).toBeUndefined();
+      expect(late.conn.last("room")!.room.youAreLeader).toBe(true);
     });
   });
 
@@ -819,6 +1139,436 @@ describe("the server, in process", () => {
         });
       }
     });
+
+    describe("a forced move, made for somebody who does not make it", () => {
+      it("rolls for a silent LRC player once the wait is up, and takes their late press quietly", () => {
+        const h = host("p1");
+        const p2 = peerFor("p2");
+        send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+        send(h.peer, { t: "selectGame", gameId: "lrc", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+
+        const runtime = registry.get(h.code)!;
+        const table = () => runtime.debugDump().table as { currentSeat: number; fingerprint: string };
+        const seat = table().currentSeat;
+        const owner = runtime.room.game!.seatOwner[seat];
+        expect(owner, "the opening roll should be a person's").not.toBeNull();
+        const who = owner === registry.sessionFor("p1") ? h : p2;
+
+        // Their wait starts once the deal that handed them the turn
+        // has started on their screen (`READY_BEAT_MS`) and played — the
+        // server's own measure of it.
+        const frames = h.conn.all("frame");
+        expect(frames, "only the deal has happened").toHaveLength(1);
+        const lead = READY_BEAT_MS + playbackMs(frames[0]!.frame.events);
+        expect(lead, "the deal takes time to watch").toBeGreaterThan(0);
+
+        const before = table().fingerprint;
+        clock.advance(lead + FORCED_MOVE_MS - 1);
+        expect(table().fingerprint, "nothing before the wait is up").toBe(before);
+        clock.advance(1);
+        expect(table().fingerprint, "the roll should have been made for them").not.toBe(before);
+
+        // They pressed Roll just as it was made for them: same move, second.
+        who.conn.clear();
+        send(who.peer, { t: "action", action: { t: "roll", dice: [] } });
+        expect(who.conn.all("error")).toEqual([]);
+      });
+    });
+
+    describe("the next round deals itself", () => {
+      // LRC, because every move in it is forced: a room of people who never
+      // press anything plays itself to each scorecard, and the only thing
+      // left to wait on is Continue.
+      function table(gameId: "lrc" | "poker", settings: Record<string, unknown>) {
+        const h = host("p1");
+        const p2 = peerFor("p2");
+        send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
+        send(h.peer, { t: "selectGame", gameId, settings, seats: 3, difficulty: "steady" });
+        // When each frame went out: the server counts the scorecard's twenty
+        // seconds from there, plus what that frame takes to play.
+        const stamps: Array<{ at: number; frame: FrameView }> = [];
+        const deliver = h.conn.send.bind(h.conn);
+        h.conn.send = (m: ServerMessage) => {
+          if (m.t === "frame") stamps.push({ at: clock.now(), frame: m.frame });
+          deliver(m);
+        };
+        send(h.peer, { t: "startGame" });
+        return { h, p2, stamps, runtime: registry.get(h.code)! };
+      }
+      const lrcTable = () => table("lrc", { target: 3 });
+
+      function untilRoundOver(stamps: Array<{ at: number; frame: FrameView }>, from: number) {
+        for (let i = 0; i < 4_000; i++) {
+          const hit = stamps.slice(from).find((x) => x.frame.isRoundOver && !x.frame.isOver);
+          if (hit) return hit;
+          clock.advance(250);
+        }
+        throw new Error("no round ended");
+      }
+
+      const dueAt = (hit: { at: number; frame: FrameView }) =>
+        hit.at + playbackMs(hit.frame.events) + ROUND_END_HOLD_MS + AUTO_CONTINUE_MS + AUTO_CONTINUE_GRACE_MS;
+      const roundOf = (runtime: NonNullable<ReturnType<RoomRegistry["get"]>>) =>
+        (runtime.debugDump().table as { round: number }).round;
+
+      it("twenty seconds after the scorecard goes up, if nobody continues", () => {
+        const { stamps, runtime } = lrcTable();
+        const hit = untilRoundOver(stamps, 0);
+        const round = roundOf(runtime);
+
+        clock.advance(dueAt(hit) - clock.now() - 1);
+        expect(roundOf(runtime), "not a moment early").toBe(round);
+        clock.advance(1);
+        expect(roundOf(runtime), "the next round should have been dealt").toBe(round + 1);
+      });
+
+      it("gives every scorecard its own twenty seconds, however soon the last was answered", () => {
+        // A timer left over from the first scorecard must not deal the third
+        // round early. It can only do that if the second round is already
+        // over when it fires, so this needs rounds that end fast: poker hands
+        // where both people fold at every chance.
+        const { h, p2, stamps, runtime } = table("poker", {});
+        const rules = GAMES.poker.create(GAMES.poker.parse({}));
+        const people = [h, p2];
+
+        /** Folds (or mucks, or checks) for whichever person is on turn, until a hand ends. */
+        const handOver = (from: number) => {
+          for (let i = 0; i < 4_000; i++) {
+            const hit = stamps.slice(from).find((x) => x.frame.isRoundOver && !x.frame.isOver);
+            if (hit) return hit;
+            const seat = (runtime.debugDump().table as { currentSeat: number | null }).currentSeat;
+            const who = people.find((p) => p.conn.last("frame")?.frame.seat === seat);
+            if (who && seat !== null) {
+              const legal = rules.legalActions(who.conn.last("frame")!.frame.state, seat) as Array<{ t: string }>;
+              const pick =
+                legal.find((a) => a.t === "fold") ??
+                legal.find((a) => a.t === "muck") ??
+                legal.find((a) => a.t === "check") ??
+                legal[0];
+              if (pick) send(who.peer, { t: "action", action: pick });
+            }
+            clock.advance(50);
+          }
+          throw new Error("no hand ended");
+        };
+
+        const first = handOver(0);
+        clock.advance(2_000);
+        send(h.peer, { t: "nextRound" });
+        const second = roundOf(runtime);
+
+        const hit = handOver(stamps.length);
+        // The whole point: the second hand ended well inside the first
+        // scorecard's twenty seconds, which is when a leftover timer bites.
+        expect(hit.at).toBeLessThan(dueAt(first));
+        expect(roundOf(runtime)).toBe(second);
+        clock.advance(dueAt(hit) - clock.now() - 1);
+        expect(roundOf(runtime), "dealt early, by the first scorecard's timer").toBe(second);
+        clock.advance(1);
+        expect(roundOf(runtime)).toBe(second + 1);
+      });
+
+      it("leaves nothing behind when the leader ends the game during it", () => {
+        const { h, stamps, runtime } = lrcTable();
+        const hit = untilRoundOver(stamps, 0);
+        send(h.peer, { t: "endGame" });
+        const framesAfter = stamps.length;
+
+        clock.advance(dueAt(hit) - clock.now() + 1_000);
+        expect(runtime.room.game).toBeNull();
+        expect(stamps.length, "no deal for a game that has ended").toBe(framesAfter);
+      });
+    });
+
+    describe("the turn timer", () => {
+      /**
+       * Spades with two people at five seconds a move, every message
+       * stamped with the clock when it was SENT — the server counts from
+       * there, and so must the test.
+       */
+      function timedSpades() {
+        const h = host("ada", { turnTimer: true });
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "setTurnTimer", on: true, seconds: 5 });
+        send(h.peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+        const people = [
+          { peer: h.peer, conn: h.conn, session: registry.sessionFor("ada") },
+          { peer: bo.peer, conn: bo.conn, session: registry.sessionFor("bo") },
+        ];
+        const clocks: Array<{ at: number; clock: TurnClockView | null; to: string }> = [];
+        for (const p of people) {
+          const deliver = p.conn.send.bind(p.conn);
+          p.conn.send = (m: ServerMessage) => {
+            if (m.t === "turnClock") clocks.push({ at: clock.now(), clock: m.clock, to: p.session });
+            deliver(m);
+          };
+        }
+        send(h.peer, { t: "startGame" });
+        const runtime = registry.get(h.code)!;
+        return { h, bo, people, clocks, runtime, rules: createSpades() };
+      }
+      type Timed = ReturnType<typeof timedSpades>;
+
+      const tableOf = (t: Timed) => t.runtime.debugDump().table as { currentSeat: number | null; fingerprint: string };
+
+      /** Steps the bots along until a person is on turn and has been told their clock. */
+      function untilPersonOnTurn(t: Timed) {
+        for (let i = 0; i < 2_000; i++) {
+          const seat = tableOf(t).currentSeat;
+          const owner = seat === null ? null : t.runtime.room.game!.seatOwner[seat];
+          const person = t.people.find((p) => p.session === owner);
+          const told = [...t.clocks].reverse().find((c) => c.to === owner);
+          if (person && told?.clock && told.clock.seat === seat) return { seat: seat!, person, told };
+          clock.advance(50);
+        }
+        throw new Error("never reached a person's turn");
+      }
+
+      const playFirstLegal = (t: Timed, who: Timed["people"][number], seat: number) => {
+        const legal = t.rules.legalActions(who.conn.last("frame")!.frame.state as SpadesState, seat);
+        send(who.peer, { t: "action", action: legal[0] });
+      };
+
+      it("tells the table whose clock it is, and makes the move when it runs out", () => {
+        const t = timedSpades();
+        const { seat, told } = untilPersonOnTurn(t);
+        expect(told.clock!.totalMs).toBe(5_000);
+        // Everybody at the table is told, not only the person on turn.
+        expect(new Set(t.clocks.filter((c) => c.clock?.key === told.clock!.key).map((c) => c.to)).size).toBe(2);
+
+        const due = told.at + told.clock!.endsInMs + TURN_GRACE_MS;
+        const before = tableOf(t).fingerprint;
+        clock.advance(due - clock.now() - 1);
+        expect(tableOf(t).fingerprint, "inside the grace the move is still theirs").toBe(before);
+        clock.advance(1);
+        expect(tableOf(t).currentSeat).not.toBe(seat);
+        const said = t.people[0]!.conn.all("frame").flatMap((f) => f.frame.events);
+        expect(said).toContainEqual(expect.objectContaining({ t: "announce", text: "ran out of time" }));
+      });
+
+      it("takes a press that lands just after the clock ran out without a second word", () => {
+        // The frame that made the move already told them ("You ran out of
+        // time"); a refusal toast on top was the same news twice, in red.
+        const t = timedSpades();
+        const { seat, person, told } = untilPersonOnTurn(t);
+        const legal = t.rules.legalActions(person.conn.last("frame")!.frame.state as SpadesState, seat);
+        clock.advance(told.at + told.clock!.endsInMs + TURN_GRACE_MS - clock.now());
+        expect(tableOf(t).currentSeat, "the clock should have made the move").not.toBe(seat);
+
+        const errors = person.conn.all("error").length;
+        send(person.peer, { t: "action", action: legal[0] });
+        expect(person.conn.all("error")).toHaveLength(errors);
+      });
+
+      it("answers a move that would not have been taken before the clock ran out either", () => {
+        // Rummy: the clock draws for them and they are still on turn. A late
+        // Draw is their press for the position it ran out on, and is let go;
+        // an invalid meld tried in the same breath is a mistake of its own
+        // and gets its "no" — it used to be swallowed with the late press.
+        const h = host("ada", { turnTimer: true });
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "setTurnTimer", on: true, seconds: 5 });
+        send(h.peer, { t: "selectGame", gameId: "rummy", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        const runtime = registry.get(h.code)!;
+        const people = [
+          { peer: h.peer, conn: h.conn, seat: runtime.room.game!.seatOwner.indexOf(registry.sessionFor("ada")) },
+          { peer: bo.peer, conn: bo.conn, seat: runtime.room.game!.seatOwner.indexOf(registry.sessionFor("bo")) },
+        ];
+        const drewFor = () =>
+          people.find((p) => {
+            const f = p.conn.last("frame")?.frame;
+            return (
+              f?.lastAction?.seat === p.seat &&
+              (f.lastAction.action as { t: string }).t.startsWith("draw") &&
+              f.events.some((e) => e.t === "announce" && e.text === "ran out of time")
+            );
+          });
+        for (let i = 0; i < 5_000 && !drewFor(); i++) clock.advance(50);
+        const person = drewFor()!;
+        expect(person, "the clock never drew for anybody").toBeDefined();
+
+        const errors = person.conn.all("error").length;
+        send(person.peer, { t: "action", action: { t: "drawStock" } });
+        expect(person.conn.all("error"), "a late Draw is let go").toHaveLength(errors);
+
+        send(person.peer, { t: "action", action: { t: "layNewMeld", cards: ["no-such-card"] } });
+        expect(person.conn.all("error")).toHaveLength(errors + 1);
+        expect(person.conn.last("error")!.code).toBe("move-refused");
+      });
+
+      it("tells somebody arriving mid-move the time actually left, and does not refill it", () => {
+        // Somebody else dropping and coming back is a liveness edge, which
+        // re-settles the table — the classic way to refill a clock.
+        const t = timedSpades();
+        const { told, person } = untilPersonOnTurn(t);
+        const other = t.people.find((p) => p !== person)!;
+        const due = told.at + told.clock!.endsInMs + TURN_GRACE_MS;
+
+        clock.advance(1_500);
+        router.onClose(other.peer);
+        clock.advance(1_000);
+        const back = peerFor(other.session === registry.sessionFor("ada") ? "ada" : "bo");
+        const arrived = back.conn.last("turnClock")!.clock!;
+        expect(arrived.key).toBe(told.clock!.key);
+        expect(arrived.endsInMs).toBe(told.at + told.clock!.endsInMs - clock.now());
+
+        const before = tableOf(t).fingerprint;
+        clock.advance(due - clock.now() - 1);
+        expect(tableOf(t).fingerprint, "the clock was refilled").toBe(before);
+        clock.advance(1);
+        expect(tableOf(t).fingerprint).not.toBe(before);
+      });
+
+      it("gives the seat to a bot after two in a row, until they say they are back", () => {
+        const t = timedSpades();
+        const first = untilPersonOnTurn(t);
+        const who = first.person;
+        let timedOut = 0;
+        for (let i = 0; i < 400 && timedOut < 2; i++) {
+          const now = untilPersonOnTurn(t);
+          if (now.person === who) {
+            clock.advance(now.told.at + now.told.clock!.endsInMs + TURN_GRACE_MS - clock.now());
+            timedOut++;
+          } else {
+            playFirstLegal(t, now.person, now.seat);
+          }
+        }
+        expect(timedOut).toBe(2);
+        const game = t.runtime.room.game!;
+        const seat = game.seatOwner.indexOf(who.session);
+        expect(game.idle).toContain(who.session);
+        expect(t.runtime.debugDump().liveSeats).toEqual(expect.arrayContaining([false]));
+        expect((t.runtime.debugDump().liveSeats as boolean[])[seat]).toBe(false);
+        expect(who.conn.last("room")!.room.members.find((m) => m.session === who.session)!.idle).toBe(true);
+
+        send(who.peer, { t: "resume" });
+        expect(t.runtime.room.game!.idle).not.toContain(who.session);
+        expect((t.runtime.debugDump().liveSeats as boolean[])[seat]).toBe(true);
+      });
+
+      it("counts a turn of several moves once: one silent Rummy turn is not two in a row", () => {
+        // Every move has its own clock, and a Rummy turn is at least two
+        // moves. Counting clocks marked somebody idle after a single turn
+        // away — and with both people at a two-person table doing that, the
+        // whole game ended in its first round.
+        const h = host("ada", { turnTimer: true });
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "setTurnTimer", on: true, seconds: 5 });
+        send(h.peer, { t: "selectGame", gameId: "rummy", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        const runtime = registry.get(h.code)!;
+        const boSeat = runtime.room.game!.seatOwner.indexOf(registry.sessionFor("bo"));
+        const onTurn = () => (runtime.debugDump().table as { currentSeat: number | null }).currentSeat;
+        const boTimedOut = () =>
+          bo.conn
+            .all("frame")
+            .filter(
+              (f) =>
+                f.frame.lastAction?.seat === boSeat &&
+                f.frame.events.some((e) => e.t === "announce" && e.text === "ran out of time"),
+            ).length;
+        const botTookBo = () => h.conn.all("notice").some((n) => n.text === "A bot is playing for Bo");
+
+        // Bo's first turn, every move of it run out, and over.
+        for (let i = 0; i < 5_000 && !(boTimedOut() >= 2 && onTurn() !== boSeat); i++) clock.advance(100);
+        expect(boTimedOut(), "a draw and a discard, at least").toBeGreaterThanOrEqual(2);
+        expect(onTurn()).not.toBe(boSeat);
+        expect(botTookBo(), "one turn away is not two in a row").toBe(false);
+
+        // The second turn they miss is.
+        const firstTurn = boTimedOut();
+        for (let i = 0; i < 5_000 && boTimedOut() === firstTurn; i++) clock.advance(100);
+        expect(botTookBo()).toBe(true);
+      });
+
+      it("takes a move from somebody idle as their being back", () => {
+        const t = timedSpades();
+        const { person } = untilPersonOnTurn(t);
+        // Two timeouts, as above, in fewer words: straight to idle.
+        t.runtime.command(person.session, { t: "markIdle" });
+        t.runtime.broadcastRoom();
+        expect(person.conn.last("room")!.room.members.find((m) => m.session === person.session)!.idle).toBe(true);
+        const seat = t.runtime.room.game!.seatOwner.indexOf(person.session);
+        for (let i = 0; i < 4_000 && tableOf(t).currentSeat !== seat; i++) {
+          const on = tableOf(t).currentSeat;
+          const other = t.people.find((p) => p !== person && t.runtime.room.game!.seatOwner[on ?? -1] === p.session);
+          if (other && on !== null) playFirstLegal(t, other, on);
+          clock.advance(10);
+        }
+        expect(tableOf(t).currentSeat).toBe(seat);
+        playFirstLegal(t, person, seat);
+        expect(t.runtime.room.game!.idle).not.toContain(person.session);
+        // And their screen is told, so the "I'm back" pill goes.
+        expect(person.conn.last("room")!.room.members.find((m) => m.session === person.session)!.idle).toBe(false);
+      });
+
+      it("ends the game when everybody has walked away", () => {
+        const t = timedSpades();
+        for (let i = 0; i < 400 && t.runtime.room.game; i++) {
+          const seat = tableOf(t).currentSeat;
+          if (seat !== null && t.runtime.room.game.seatOwner[seat]) clock.advance(10_000);
+          else clock.advance(50);
+        }
+        expect(t.runtime.room.game).toBeNull();
+        expect(t.people[0]!.conn.all("notice").map((n) => n.text)).toContain("Everyone is away — game ended");
+      });
+
+      it("cannot be changed while a game is running", () => {
+        const t = timedSpades();
+        send(t.h.peer, { t: "setTurnTimer", on: false });
+        expect(t.h.conn.last("error")?.code).toBe("game-already-running");
+      });
+    });
+
+    describe("a seat is held, a lobby row is not", () => {
+      it("keeps a dropped seat holder past the grace, and lets them go once the game ends", () => {
+        const { peer, p2 } = twoPlayerSpades();
+        const second = registry.sessionFor("p2");
+        router.onClose(p2.peer);
+
+        clock.advance(LOBBY_GRACE_MS * 3);
+        expect(registry.roomOf(second)).not.toBeNull();
+
+        send(peer, { t: "endGame" });
+        clock.advance(LOBBY_GRACE_MS - 1);
+        expect(registry.roomOf(second)).not.toBeNull();
+        clock.advance(1);
+        expect(registry.roomOf(second)).toBeNull();
+      });
+
+      it("keeps the seat of somebody who says bye mid-game, and the table plays on", () => {
+        const { code, p2 } = twoPlayerSpades();
+        const second = registry.sessionFor("p2");
+        const seat = registry.get(code)!.room.game!.seatOwner.indexOf(second);
+
+        send(p2.peer, { t: "bye" });
+        router.onClose(p2.peer);
+        const before = registry.get(code)!.debugDump().table as { fingerprint: string };
+        clock.drain();
+
+        const runtime = registry.get(code)!;
+        expect(runtime.room.game!.seatOwner[seat]).toBe(second);
+        expect(registry.roomOf(second)).toBe(runtime);
+        const after = runtime.debugDump().table as { fingerprint: string };
+        expect(after.fingerprint, "a bot should have played on in their seat").not.toBe(
+          before.fingerprint,
+        );
+      });
+
+      it("lets a spectator who says bye go at once", () => {
+        const { code, conn } = twoPlayerSpades();
+        const watcher = peerFor("watcher");
+        send(watcher.peer, { t: "joinRoom", code, name: "Watcher" });
+        send(watcher.peer, { t: "enterGame", as: "spectator" });
+        send(watcher.peer, { t: "bye" });
+        expect(conn.last("room")!.room.members.some((m) => m.name === "Watcher")).toBe(false);
+      });
+    });
   });
 
   /* ============================================================
@@ -1031,6 +1781,33 @@ describe("the server, in process", () => {
       expect(h.conn.last("room")!.room.settlement).toBeNull();
     });
 
+    it("settles a game the leader closes the room on, and tells everybody with it", () => {
+      const { h, p2 } = room("poker", { buyIn: 2000 });
+      const knocker = peerFor("late-knock");
+      send(h.peer, { t: "setPrivacy", privacy: "private" });
+      // Private only now, mid-game: a knock on it waits in `awaiting`.
+      send(knocker.peer, { t: "joinRoom", code: h.code, name: "Late" });
+      expect(knocker.conn.last("pending")).toBeDefined();
+
+      send(h.peer, { t: "closeRoom" });
+
+      for (const who of [h, p2]) {
+        const left = who.conn.last("left")!;
+        expect(left.reason).toBe("room-closed");
+        expect(left.by).toBe("Ada");
+        expect(left.settlement?.gameId).toBe("poker");
+        // Let go of, not hung up on: that socket carries whatever they do next.
+        expect(who.conn.closed).toBe(false);
+      }
+      expect(knocker.conn.last("left")?.reason).toBe("room-closed");
+      expect(registry.get(h.code)).toBeNull();
+      expect(registry.roomOf(registry.sessionFor("p2"))).toBeNull();
+
+      // And the socket still works: the same person can make a new room.
+      send(p2.peer, { t: "createRoom", name: "Bo" });
+      expect(p2.conn.last("room")!.room.code).not.toBe(h.code);
+    });
+
     it("says nothing for a game with no stake", () => {
       const { h } = room("poker", {});
       send(h.peer, { t: "endGame" });
@@ -1070,8 +1847,11 @@ describe("the server, in process", () => {
 
       const players = [h, p2, p3];
       const rules = GAMES.lrc.create(GAMES.lrc.parse({ target: 2 }));
-      for (let turn = 0; turn < 2000 && !h.conn.last("frame")?.frame.isRoundOver; turn++) {
-        clock.drain();
+      // Stepped, not drained: a drain would run on through the scorecard's
+      // own twenty seconds (it deals the next round itself) and past the
+      // point this test is about.
+      for (let turn = 0; turn < 6000 && !h.conn.last("frame")?.frame.isRoundOver; turn++) {
+        clock.advance(100);
         const current = h.conn.last("frame")?.frame.currentSeat;
         const who = players.find((p) => p.conn.last("frame")?.frame.seat === current);
         if (current == null || !who) continue;
@@ -1191,6 +1971,26 @@ describe("the server, in process", () => {
       // And A's leader approving now cannot drag them back out of B.
       send(a.peer, { t: "approve", session: registry.sessionFor("wanderer") });
       expect(registry.roomOf(registry.sessionFor("wanderer"))!.code).toBe(b.code);
+    });
+
+    it("leaves somebody in their room when the one they asked to join turns them away", () => {
+      // It took them out of A first and was THEN refused by B — here, a name
+      // B already has — which left them in no room at all while their screen
+      // still showed A, every button on it answering "you are not in a room".
+      const a = host("owner-a");
+      const b = host("owner-b");
+      const wanderer = peerFor("wanderer");
+      send(wanderer.peer, { t: "joinRoom", code: a.code, name: "Wanderer" });
+      wanderer.conn.clear();
+
+      send(wanderer.peer, { t: "joinRoom", code: b.code, name: "Ada", reqId: "r7" });
+
+      // Answered with the request it answers, so the screen waiting on it stops.
+      expect(wanderer.conn.last("error")).toMatchObject({ code: "name-taken", reqId: "r7" });
+      const session = registry.sessionFor("wanderer");
+      expect(registry.roomOf(session)!.code).toBe(a.code);
+      expect(registry.get(a.code)!.room.members[session]).toBeDefined();
+      expect(a.conn.all("notice").map((n) => n.text)).not.toContain("Wanderer left");
     });
 
     it("answers a Continue from somebody with no seat", () => {

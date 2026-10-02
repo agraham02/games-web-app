@@ -39,6 +39,7 @@ import type { SeatStat, SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
 import { useGeometry } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
+import { SHOWDOWN_MS } from "@/games/poker/state";
 
 type Live = GameRuntime<PokerState, PokerAction>;
 
@@ -53,6 +54,8 @@ export interface PokerView {
    * nobody to step away. Supplied by `awayFrom(frame)`.
    */
   awayFor?: (seat: SeatId) => boolean;
+  /** Supplied by `botFrom(frame)`: a seat nobody owns, which a bot plays. */
+  botFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -238,6 +241,7 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
       eliminated: busted,
       badge: positionBadge(state, seat) ?? undefined,
       away: view.awayFor?.(seat) ?? false,
+      bot: view.botFor?.(seat) ?? false,
     });
   }
   return out;
@@ -734,7 +738,8 @@ function betPresets(pot: number, range: { min: number; max: number }) {
  * depleting-ring polish (`ClaimRing`) that window earns from being the
  * one deliberately loud moment in that game; here a plain timed bar is
  * enough for a decision that carries no real stakes either way. */
-const SHOWDOWN_MS = 5000;
+// `SHOWDOWN_MS`, shared with the session, which mucks a little after this
+// for a page that is not running its timers.
 
 function useShowdownCountdown(live: Live, active: boolean) {
   useEffect(() => {

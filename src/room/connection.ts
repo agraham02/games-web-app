@@ -21,7 +21,8 @@
  * accidental back button. Memory does not survive any of those.
  */
 
-import type { ClientMessage, ServerMessage } from "@/session/protocol";
+import type { ClientMessage, ServerMessage, TurnClockView } from "@/session/protocol";
+import { CHAT_HISTORY, type ChatMessage } from "@/session/chat";
 import { PROTOCOL_VERSION } from "@/session/protocol";
 
 export const TOKEN_KEY = "table-games.session-token";
@@ -51,6 +52,21 @@ const RETRY_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
  * router's own 120-messages-per-10-seconds budget.
  */
 const KEEPALIVE_MS = 25_000;
+
+/**
+ * Two early pings after connecting, timed (`sent`), so the turn clock has a
+ * round trip to go on before the first keepalive would give it one.
+ */
+const PROBE_MS = [300, 2_000] as const;
+
+/** Round trips remembered; the smallest is the least delayed by anything else. */
+const RTT_SAMPLES = 5;
+
+/** One way, before anything has been measured: an ordinary connection. */
+const DEFAULT_ONE_WAY_MS = 75;
+
+/** Never trusted beyond this: one bad sample must not swallow a short clock. */
+const MAX_ONE_WAY_MS = 1_000;
 
 /**
  * `superseded` is a deliberate stop, not a failure: another tab for this
@@ -133,11 +149,26 @@ export class RoomConnection {
    * entry screen while the leader still had their request.
    */
   lastPending: unknown = null;
+  /**
+   * What has been said in the room, as the server last told it plus
+   * everything since — replayed as one `chatLog`, so moving between the
+   * lobby and the table does not empty the chat.
+   */
+  chatLog: ChatMessage[] = [];
+  /**
+   * The turn clock as last told, and when (`performance.now()`). Replayed
+   * with what is left of it: the server only says again when the clock
+   * changes, so a remount mid-move otherwise showed no ring at all.
+   */
+  private lastClock: { clock: TurnClockView; at: number } | null = null;
 
   private socket: WebSocket | null = null;
   private attempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private probeTimers: ReturnType<typeof setTimeout>[] = [];
+  /** Recent round trips, ms — see `oneWayMs`. */
+  private rtts: number[] = [];
   /** The hang-up scheduled for when no page is listening. See `closeWhenIdle`. */
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   /** Everyone waiting on `whenClosed`. */
@@ -182,7 +213,13 @@ export class RoomConnection {
     }
     if (this.lastRoom) listener.onMessage(this.lastRoom as ServerMessage);
     if (this.lastFrame) listener.onMessage(this.lastFrame as ServerMessage);
+    if (this.lastFrame && this.lastClock) {
+      const { clock, at } = this.lastClock;
+      const endsInMs = Math.max(0, clock.endsInMs - (performance.now() - at));
+      listener.onMessage({ t: "turnClock", clock: { ...clock, endsInMs } });
+    }
     if (this.lastPending) listener.onMessage(this.lastPending as ServerMessage);
+    if (this.lastRoom) listener.onMessage({ t: "chatLog", messages: this.chatLog });
     listener.onStatus(this.status);
     return () => {
       this.listeners.delete(listener);
@@ -209,16 +246,27 @@ export class RoomConnection {
    * One tick late on purpose. StrictMode unmounts and remounts every
    * effect, and moving from `/room` to `/room/ABCD` swaps one screen for
    * another in a single commit; both have subscribed again by then.
+   *
+   * It says `bye` first, which is what makes leaving the LOBBY this way
+   * immediate (the user, 2026-09-29: "if they leave the lobby, then they
+   * just leave"). A bare close looks to the server like a phone locking,
+   * which it gives `LOBBY_GRACE_MS` to come back; `bye` says it is on
+   * purpose. The server decides what that costs — a seat in a running game
+   * is kept either way. A refresh or a closed tab never gets here: the page
+   * is torn down without running this timer, so those still get the grace.
    */
   private closeWhenIdle(): void {
     if (this.idleTimer !== null) return;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       if (this.listeners.size > 0) return;
+      if (this.session && this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "bye" });
       this.session = null;
       this.lastRoom = null;
       this.lastFrame = null;
+      this.lastClock = null;
       this.lastPending = null;
+      this.chatLog = [];
       this.queue.length = 0;
       this.close();
     }, 0);
@@ -316,18 +364,32 @@ export class RoomConnection {
 
   private startKeepalive(): void {
     this.stopKeepalive();
-    this.keepaliveTimer = setInterval(() => {
-      // Straight to the socket rather than through `send`, which would
-      // QUEUE a ping while disconnected and then deliver a burst of stale
-      // ones the moment the connection came back.
-      if (this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "ping" });
-    }, KEEPALIVE_MS);
+    // Straight to the socket rather than through `send`, which would QUEUE
+    // a ping while disconnected and then deliver a burst of stale ones the
+    // moment the connection came back. Timed, so every answer is a sample.
+    const ping = () => {
+      if (this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "ping", sent: performance.now() });
+    };
+    this.keepaliveTimer = setInterval(ping, KEEPALIVE_MS);
+    this.probeTimers = PROBE_MS.map((ms) => setTimeout(ping, ms));
   }
 
   private stopKeepalive(): void {
+    for (const t of this.probeTimers) clearTimeout(t);
+    this.probeTimers = [];
     if (this.keepaliveTimer === null) return;
     clearInterval(this.keepaliveTimer);
     this.keepaliveTimer = null;
+  }
+
+  /**
+   * How long a message takes to get here from the server, as best this end
+   * can tell: half the smallest recent round trip. What the turn clock takes
+   * off the time it is told, since that time was measured when it was sent.
+   */
+  oneWayMs(): number {
+    if (this.rtts.length === 0) return DEFAULT_ONE_WAY_MS;
+    return Math.min(MAX_ONE_WAY_MS, Math.min(...this.rtts) / 2);
   }
 
   private scheduleRetry(): void {
@@ -358,6 +420,8 @@ export class RoomConnection {
         if (!message.inRoom) {
           this.lastRoom = null;
           this.lastFrame = null;
+          this.lastClock = null;
+          this.chatLog = [];
           // A knock does not survive the socket that made it: the server
           // drops its `awaiting` entry when that socket closes, so a
           // request cached across a reconnect is one nobody can answer.
@@ -374,7 +438,10 @@ export class RoomConnection {
         this.lastPending = null;
         // A room view supersedes any frame from a game that is no longer
         // running, or the next mount would replay a table nobody is at.
-        if (!message.room.gameRunning) this.lastFrame = null;
+        if (!message.room.gameRunning) {
+          this.lastFrame = null;
+          this.lastClock = null;
+        }
         break;
       case "frame":
         this.lastFrame = message;
@@ -382,7 +449,18 @@ export class RoomConnection {
       case "left":
         this.lastRoom = null;
         this.lastFrame = null;
+        this.lastClock = null;
         this.lastPending = null;
+        this.chatLog = [];
+        break;
+      case "chatLog":
+        this.chatLog = message.messages;
+        break;
+      case "turnClock":
+        this.lastClock = message.clock ? { clock: message.clock, at: performance.now() } : null;
+        break;
+      case "chat":
+        this.chatLog = [...this.chatLog, message.message].slice(-CHAT_HISTORY);
         break;
       case "error":
         // The one error a reconnect cannot fix. Retrying hides it behind
@@ -390,6 +468,12 @@ export class RoomConnection {
         // server refuses the handshake every time and the explanation is
         // never shown.
         if (message.code === "protocol-mismatch") this.incompatible = true;
+        break;
+      case "pong":
+        if (typeof message.sent === "number") {
+          const rtt = performance.now() - message.sent;
+          if (rtt >= 0) this.rtts = [...this.rtts, rtt].slice(-RTT_SAMPLES);
+        }
         break;
       case "superseded":
         // Recorded before the close event, which is where it is acted on.

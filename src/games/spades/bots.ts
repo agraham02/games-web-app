@@ -47,7 +47,7 @@ function bestOf(items: readonly PieceId[], score: (id: PieceId) => number, rng: 
  *  - an off-suit ace is close to a sure trick; a lone king much less so,
  *    a supported one (2+ cards in the suit) more so.
  */
-function estimateTricks(
+export function estimateTricks(
   hand: readonly PieceId[],
   rules: SpadesRules,
   tier: BotDifficulty = "steady",

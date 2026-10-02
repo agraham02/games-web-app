@@ -57,6 +57,8 @@ import {
   MAX_SEATS,
   MIN_SEATS,
   actableSeats,
+  SHOWDOWN_GRACE_MS,
+  SHOWDOWN_MS,
   amountToCall,
   awardPots,
   betRange,
@@ -608,6 +610,37 @@ function finalizeHand(
    Definition surface
    ============================================================ */
 
+/**
+ * What the turn timer plays for a player who did not act (see
+ * `GameDefinition.timeoutAction`): never anything that spends their chips.
+ * A check where one is free, a fold where it is not, a muck at a showdown.
+ */
+export function timeoutAction(state: PokerState, seat: SeatId): PokerAction | null {
+  if (currentSeat(state) !== seat) return null;
+  if (state.pendingShowdown) return { t: "muck" };
+  return amountToCall(state, seat) === 0 ? { t: "check" } : { t: "fold" };
+}
+
+/**
+ * A showdown's show-or-muck is mucked for whoever does not answer — by the
+ * session, not only the page (see `SHOWDOWN_MS`). Keyed by the hand, so it
+ * is one wait however often the table settles over it, and counted from
+ * when the frame that opened it has played: the page's bar only starts
+ * then, and an all-in runout before it takes about four seconds.
+ */
+export function deadline(
+  state: PokerState,
+  seat: SeatId,
+): { ms: number; action: PokerAction; key: string; afterPlayback: true } | null {
+  if (!state.pendingShowdown || currentSeat(state) !== seat) return null;
+  return {
+    ms: SHOWDOWN_MS + SHOWDOWN_GRACE_MS,
+    action: { t: "muck" },
+    key: `showdown:${state.hand}:${seat}`,
+    afterPlayback: true,
+  };
+}
+
 export function legalActions(state: PokerState, seat: SeatId): PokerAction[] {
   if (currentSeat(state) !== seat) return [];
 
@@ -831,6 +864,8 @@ export function createPoker(
     reduce,
     legalActions,
     validate,
+    timeoutAction,
+    deadline,
     pieces,
     placements,
     playerView,

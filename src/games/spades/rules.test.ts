@@ -3,7 +3,7 @@ import { createRng } from "@/engine/rng";
 import type { GameEvent, PieceId, SeatId } from "@/engine/types";
 import { BIG_JOKER_ID, LITTLE_JOKER_ID, sortHandForDisplay } from "@/games/_shared/cards";
 import { cardStrength, effectiveSuit, spadesDeck, type SpadesRules } from "./cards";
-import { createSpades, legalPlays, minLegalBid, mustBidBlind, reduce, startRound } from "./rules";
+import { createSpades, legalPlays, minLegalBid, mustBidBlind, reduce, startRound, timeoutAction } from "./rules";
 import { HIDDEN_CARD } from "./state";
 import type { SpadesState } from "./types";
 
@@ -731,5 +731,88 @@ describe("spades — the team votes on going blind", () => {
       blind: true,
       defer: false,
     });
+  });
+});
+
+/**
+ * What the turn timer plays for a person whose bid ran out (the user,
+ * 2026-10-02): never a nil, of either kind, and never a blind contract they
+ * did not choose. Each case first shows the bot's own move doing the risky
+ * thing there, so none of them can pass without testing anything.
+ */
+describe("spades — a bid made for somebody whose clock ran out", () => {
+  function behind(seed: number) {
+    const rng = createRng(seed);
+    const def = createSpades();
+    const state = { ...def.setup({ seats: 4, rng }), dealer: 3 as SeatId, scores: { 0: 0, 1: 100, 2: 0, 3: 100 } };
+    return { def, ...startRound(state, rng) };
+  }
+
+  it("bids the hand's count, at least one, where the bot would bid nil", () => {
+    let found = 0;
+    for (let seed = 1; seed < 500 && found < 3; seed++) {
+      const { def, state } = fresh(seed);
+      const bot = def.bots.steady.choose(def.playerView(state, 0), 0, createRng(seed));
+      if (bot.t !== "bid" || !bot.nil) continue;
+      found++;
+      const made = timeoutAction(state, 0)!;
+      expect(made).toMatchObject({ t: "bid", nil: false });
+      expect((made as { tricks: number }).tricks).toBeGreaterThanOrEqual(1);
+      expect(def.legalActions(state, 0)).toContainEqual(made);
+    }
+    expect(found, "no hand the bot bids nil on, so nothing was tested").toBeGreaterThan(0);
+  });
+
+  it("votes to look, deferring to a partner who has not voted yet", () => {
+    const { def, state } = behind(9);
+    expect(def.currentSeat(state)).toBe(0);
+    // Down 100: the bot would go blind for them, some of the time.
+    const bot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((seed) =>
+      def.bots.steady.choose(def.playerView(state, 0), 0, createRng(seed)),
+    );
+    expect(bot).toContainEqual(expect.objectContaining({ t: "blindVote", blind: true }));
+    expect(timeoutAction(state, 0)).toEqual({ t: "blindVote", seat: 0, blind: false, defer: true });
+  });
+
+  it("will not let a bot partner's vote take them blind", () => {
+    const { def, state } = behind(9);
+    // The bot first bidder wants to go blind; a bot's vote defers.
+    const s = reduce(state, { t: "blindVote", seat: 0, blind: true, defer: true }).state;
+    expect(def.currentSeat(s)).toBe(2);
+    // Deferring in turn would leave the first bidder's wish to decide.
+    const deferred = reduce(s, { t: "blindVote", seat: 2, blind: false, defer: true }).state;
+    expect(deferred.blindCall[2]).toBe(true);
+
+    const made = timeoutAction(s, 2)!;
+    expect(made).toEqual({ t: "blindVote", seat: 2, blind: false, defer: false });
+    expect(reduce(s, made).state.blindCall[2]).toBe(false);
+  });
+
+  it("never overrules a partner who is there and wants to go blind", () => {
+    const { state } = behind(9);
+    // A person's vote is firm.
+    const s = reduce(state, { t: "blindVote", seat: 0, blind: true, defer: false }).state;
+    const made = timeoutAction(s, 2)!;
+    expect(made).toMatchObject({ t: "blindVote", blind: false, defer: true });
+    expect(reduce(s, made).state.blindCall[2]).toBe(true);
+  });
+
+  it("makes the lowest blind bid where the team has gone blind, never a blind nil", () => {
+    const { def, state } = behind(9);
+    const s = teamVotes(state, true);
+    expect(def.currentSeat(s)).toBe(0);
+    const bot = [1, 2, 3, 4, 5, 6, 7, 8].map((seed) => def.bots.steady.choose(def.playerView(s, 0), 0, createRng(seed)));
+    expect(bot).toContainEqual({ t: "blindNil" });
+    const made = timeoutAction(s, 0)!;
+    expect(made).toEqual({ t: "blindBid", tricks: 6 });
+    expect(def.legalActions(s, 0)).toContainEqual(made);
+  });
+
+  it("leaves the play to the bot", () => {
+    const { state } = fresh();
+    let s = state;
+    for (const tricks of [3, 3, 4, 3]) ({ state: s } = reduce(s, { t: "bid", tricks, nil: false }));
+    expect(s.phase).toBe("play");
+    expect(timeoutAction(s, s.turn)).toBeNull();
   });
 });

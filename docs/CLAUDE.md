@@ -262,6 +262,93 @@ and holds the liar fixed when it measures difficulty: across a table of
 one tier, "lies caught" conflates being good at catching with being good
 at lying, and those two move in opposite directions.
 
+### A move that is no choice plays itself
+
+`GameDefinition.forcedMove?(state, seat)` names a move a live seat has no
+choice about, and the session makes it for them after `FORCED_MOVE_MS`
+(30s) — the user's call, 2026-09-29 (5s at first; 30s since 2026-10-01),
+offline and online alike. It rides the
+same deadline machinery as a game's own `deadline?()` (which wins where
+both answer), submitted through `submit` so `completeAction` still rolls
+LRC's dice, and keyed `forced:${seq}:${seat}` — `submit` emits a frame even
+for a move that animates nothing, so the key changes exactly when the
+position does and a re-settle over the same position resumes the countdown.
+Online the server adds what is still playing of the frame that handed the
+move over (`deadlineLeadMs`); offline the session settles after the
+animation, so there is nothing to add.
+
+**"One legal action" is not the rule, and must not become it.** A Spades
+singleton in the suit led, a domino hand with one tile that fits, and a
+Rummy draw where no depth of the pile fits the hand are all one legal
+action — and a move that lands exactly when the wait runs out tells the
+table so.
+A game names only what is forced for a reason everybody can already see: a
+last card, a draw or a pass, a roll, a stock draw from an EMPTY pile.
+`forcedMove.test.ts` holds every game to that across real matches, and
+counts the private one-move positions it met so it cannot pass vacuously.
+There is no countdown on screen for the same reason. A press arriving just
+after the move was made for them is dropped without a word
+(`autoPlayed`, `PLAYED_FOR_YOU`) — it was the same move. So is one
+arriving just after the turn timer made a move for them: the frame that
+made it has already said "You ran out of time", and a refusal on top
+was the same news twice, in red.
+
+### The turn timer is a deadline the session owns
+
+A room may time each move (the user, 2026-09-29: on in a new room at 30s,
+5–60s in steps of 5, fixed for a game). `GameSession` takes the length from
+the driver (`turnTimerMs`) and arms it in `scheduleDeadline` beside a forced
+move's (the sooner wins) whenever the game names no deadline of its own —
+Rummy's claim race, BS's window and Poker's show-or-muck keep theirs. The
+clock times every move, forced or not: since forced moves went to 30s
+(2026-10-01), a shorter clock runs out on a forced move like any other, with
+the toast and toward going idle, and the forced wait only decides a table
+whose clock is off or longer. Five things to know before touching it:
+
+- **When it starts.** After what is still playing of the frame that handed
+  the move over (`deadlineLeadMs`), plus the ready beat for a round's first
+  move (`READY_BEAT_MS`, shared from `motion/choreographer.ts`) — nobody's
+  seconds are spent watching a deal.
+- **It is never refilled.** Keyed `turn:${seq}:${seat}` and anchored with
+  the span it STARTED with: re-derived on a re-settle, a span that includes
+  a shrinking lead lost the elapsed part twice (fixed for forced moves too,
+  `d01f8b0`).
+- **What everybody is shown ends `TURN_GRACE_MS` before the session acts**,
+  so a move pressed as the ring empties still arrives. The wire carries
+  time LEFT (`turnClock.endsInMs`, measured at send), never a time of day,
+  and the client takes off half its smallest measured round trip (`pong`
+  echoes `sent`; `RoomConnection.oneWayMs`): two machines whose clocks
+  disagree still show the same ring. A late arrival is sent what is left.
+- **What is played is a bot's move, made as a bot makes one** — straight to
+  `reduce`, past `completeAction`, or a timed-out Spades Blind Nil vote
+  would be stamped a person's firm vote and overrule their partner. Poker
+  overrides it (`timeoutAction`): check if free, else fold, never chips.
+  So does Spades' bidding (2026-10-02): never a nil of either kind and
+  never a blind contract for somebody who is not there — the vote is
+  "look" (firm only beside a bot's deferring vote, so it never overrules
+  a partner who is there), a team already blind bids 6, and otherwise the
+  bot's count of the hand, at least one. A `timeoutAction` is played as a
+  bot's move is, so it must be legal as it stands.
+  The frame leads with "ran out of time" for everybody's toast and carries
+  `timedOut`.
+- **Two in a row and a bot takes the seat** (`markIdle`, a server-only room
+  command; `isSeatLive` is false for the idle). Two TURNS, not two clocks:
+  every move has its own clock, and a Rummy turn is a draw and a discard, so
+  counting clocks idled somebody after one turn away (`timedOutTurn`).
+  Started on the server, so it goes through `RoomRuntime.serverCommand`,
+  which re-sends the room — without that the player's own screen never
+  learns it (a test caught exactly that). "I'm back" (`resume`), entering
+  the game, or simply making a move gives it back; reconnecting alone does
+  not. Everybody idle ends the game, like everybody leaving.
+
+Tested in four layers: `turnTimer.test.ts` (to the millisecond; whole
+matches of every game with every seat silent, which can only end if every
+decision point has a move to make), `router.test.ts` (late attach, no
+refill, idle, late move), `scripts/ws-harness.ts` (real sockets, including
+a move landing inside the grace on a slow line), and an e2e with a 600ms
+round trip through `routeWebSocket`. Existing room tests that park on a
+silent player switch the timer off (`host()` in `router.test.ts`).
+
 ### The turn gate and the action gate are different questions
 
 `GameSession.submit` asks `legalActions(state, seat)` whether this seat
@@ -457,6 +544,20 @@ scorecard says who they are waiting on. It can never strand a table:
 while the leader is not at it, any seated player there may continue, and
 a leader who disconnects has already handed leadership on.
 
+**…and it deals itself after 20s** (`AUTO_CONTINUE_MS`, the user's call,
+2026-09-29, whether or not anything else is timed). The Continue button
+empties a `CountdownRing` over it and presses itself at zero, and everybody
+waiting sees the seconds; the end time is fixed once, as the card appears,
+so peeking at the table or the leader stepping away does not restart it.
+The server deals anyway `AUTO_CONTINUE_GRACE_MS` later, counted from when
+the card went up on screen (the frame's playback plus `ROUND_END_HOLD_MS`,
+both ends reading the same constant from `session/roundEnd.ts`) — the
+backstop for a leader whose tab is hidden or gone. `syncAutoContinue`
+clears it the moment a round is dealt; a leftover would deal the NEXT
+round early whenever that one ended inside the old twenty seconds, which
+only fast rounds reach — the test uses poker hands folded at once, because
+an LRC round never ends that fast and let the bug through.
+
 **The lobby's list is the seating plan** (`seatingPlan`): one row per
 seat, seat 1 first and clockwise from there, `null` for a seat a bot
 plays, then anybody past the last seat, who will watch. The leader drags
@@ -500,6 +601,93 @@ before asking `/api/rejoin`, or it is told about the game as it was.
 Every socket handler checks it is still the current socket, because a
 closed one goes on delivering its last frames and then its close.
 
+**The lobby holds nothing for anybody** (the user, 2026-09-29). Hanging up
+that way first says `bye`, and the server decides: a seat in a running
+game is kept (a bot plays it), anybody else leaves the room there and
+then. A refresh or a closed tab never runs that timer, and the server
+cannot tell those from a phone locking, so an unexpected drop gets
+`LOBBY_GRACE_MS` (20s) and then leaves like a Leave. The grace is silent —
+`viewFor` reports them connected until it runs out — and it lives in
+`RoomRuntime` (`maintainGrace`, re-derived after every command), not in the
+pure room, so a seat holder whose game ends while they are away gets a
+fresh 20s from then. A room is destroyed the moment its last member goes
+(`displace`); `EMPTY_ROOM_TTL_MS` is now only the backstop for a room held
+open by an unanswered knock, and knockers are told when any room goes
+(`onRoomDestroyed`). Joining a room nobody is left in makes you its
+leader, straight in even if it was private — there is nobody to ask.
+
+### Chat is the room's, and a hand can silence it
+
+A room has a chat (the user, 2026-09-29): a drawer from the right in the
+lobby and at the table — ONE `ChatSheet`, owned by `RoomScreen`, so a trip
+between the two neither closes it nor loses what was unread — with the
+quick replies in a sideways row directly above the field. In the lobby,
+what other people say also pops up as a toast that opens the chat
+(`chatToast`, the user, 2026-10-01); at the table, never a toast — it
+appears beside their pod (`SeatBubbles`). Neither ever shows your own. The rules live in `session/chat.ts`, shared by
+both ends: the server cleans and checks every message (controls, direction
+overrides and stacked accents out; 120 characters as a person counts them;
+five per ten seconds), and the composer counts and dims with the same
+functions, so it never offers what would be refused. The last fifty go to
+anybody arriving (`chatLog`), and `connection.ts` keeps them across the
+lobby ↔ table page swap.
+
+**Table talk.** While a partnership hand is played (Spades; dominoes in
+teams), whoever HOLDS a seat in it — at the table or stepped back to the
+lobby, since they still know their cards — may send only the table-safe
+quick replies (`RoomView.chat`, per viewer). Spectators and the lobby may
+say anything: they see no hidden cards. A quick reply travels by id, so
+the server, which decides what is safe, is the one that knows what it
+says. The room is rebroadcast the moment a hand starts or ends, because
+the mode rides on the room and not the frame.
+
+Things that bit, worth knowing before touching it:
+
+- **The sheet is portalled to `body`** (`InfoSheet layer="page"`): the
+  lobby has no `TableSurface`, and inside one a text field sits under
+  `select-none`, which iOS will not let you type into.
+- **The table's pan listens on the whole document by coordinates**, so the
+  sideways reply row over the hand strip was panning the hand. Anything
+  drawn over the table that takes a gesture of its own is marked
+  `data-pan-ignore` (`usePanZone`).
+- **The keyboard is measured, not obeyed**: `useKeyboardInset` reads the
+  visual viewport and pulls the sheet's bottom edge up, rather than setting
+  `interactive-widget=resizes-content`, which would re-lay the whole table
+  out under the chat whenever somebody typed.
+- **A bubble hangs below or above its pod, never beside it.** Beside put a
+  phone's high left seat's bubble into the toast lane. It is its own layer
+  at z-980 because `SeatRing` is a z-800 stacking context that opponents'
+  cards (up to 960) always cover.
+- **Only what is said LIVE pops up.** `useRoom.chatLiveAfter` marks where
+  the replayed log (`chatLog`: joining, reconnecting, the page swap) ends,
+  or every arrival would replay the room's past as toasts. And chat toasts
+  are put away when the lobby goes (`dismissChatToasts`): sonner replays
+  any toast still up into the next `Toaster` to mount, and the table mounts
+  its own.
+- **A mouse cannot swipe.** With the scrollbar hidden, the reply row was
+  out of reach on a desktop; `useSidewaysScroll` turns an up-and-down wheel
+  sideways and lets a mouse drag it (swallowing the click a drag ends on).
+  It snaps only under a coarse pointer — snapping fights both.
+
+### A photo is the room's, not the game's
+
+A member may add a photo for as long as they are in the room (the user,
+2026-09-29: no accounts, nothing kept past the session). The browser crops
+it to a centred square and shrinks it to a small JPEG itself
+(`room/photo.ts`), on every device through a plain file input — a phone's
+picker already offers the camera. The server checks the BYTES, never the
+label (JPEG or WebP magic only — an SVG called a JPEG is a script), keeps
+it in memory against the member (`RoomRuntime.photos`, not the pure room),
+and serves it at `photoUrl(id)` with `nosniff` and a sandboxing CSP. The
+id is random and new with every photo, so it is the version (cached for
+ever), and it is the only way to reach one — an `<img>` cannot send a
+token header, and a code-plus-session URL would be guessable. The roster
+carries only the id: `RoomView` goes to up to 24 people on every change.
+Pods get it through `GameHost`'s `seatExtras`, which lays room-only facts
+over what each game's `playerViews` built, so no game knows about photos.
+The browser keeps the picture for the session and offers it to the next
+room joined in it.
+
 ### Presence is table state, so it needs a frame
 
 `SeatView.away` marks a seat whose OWNER is not in it — read from
@@ -540,6 +728,15 @@ starts: on the winner's sheet (`summaryExtra`) and at the top of the lobby
 showdown is already won, and is paid); LRC counts only finished rounds.
 `SettleUp` says what changes HANDS, never "you're even" — a person who lost
 to a bot is not even, they just owe no person.
+
+**Closing the room** (the leader's, 2026-09-29) settles the same way:
+`closeRoom` stops a running game with a `stopSession` effect BEFORE its
+`close` effect, so the settlement exists by the time `closeOut` tells
+everybody — and it rides on that `left{room-closed, by, settlement}`,
+because the lobby that would have shown it is going too. `closeOut` lets
+go of each socket without closing it (a close reads as a network drop, and
+the client would reconnect straight past the news); the router then
+destroys the room, which tells anybody still knocking.
 
 ### Two questions, not one: who moved, and who are we waiting on
 

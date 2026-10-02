@@ -18,6 +18,8 @@ import { GAMES, GAME_IDS, gameEntry } from "./registry";
 import {
   applyCommand,
   createRoom,
+  holdsSeat,
+  isIdle,
   isSeatLive,
   makeCode,
   mayContinueRound,
@@ -155,14 +157,18 @@ describe("membership", () => {
 });
 
 describe("leadership", () => {
-  it("passes to the longest-standing connected member when the leader drops", () => {
-    let r = withMembers(["Sam", "Kofi"]);
+  /** A game running with the leader in a seat, which is what a drop takes the lead from. */
+  const seatedLeader = (others: string[]) =>
+    ok(spades(withMembers(others)), { t: "startGame" }, { actor: LEADER });
+
+  it("passes to the longest-standing connected member when a seated leader drops", () => {
+    let r = seatedLeader(["Sam", "Kofi"]);
     r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
     expect(r.leader).toBe("s-0"); // Sam joined before Kofi.
   });
 
   it("skips members who are themselves disconnected", () => {
-    let r = withMembers(["Sam", "Kofi"]);
+    let r = seatedLeader(["Sam", "Kofi"]);
     r = ok(r, { t: "setConnected", connected: false }, { actor: "s-0" });
     r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
     expect(r.leader).toBe("s-1");
@@ -171,10 +177,23 @@ describe("leadership", () => {
   it("does not hand leadership back when the old leader reconnects", () => {
     // Deliberate: yanking it out of the new leader's hands the moment a
     // phone reconnects is worse than asking them to hand it over.
-    let r = withMembers(["Sam"]);
+    let r = seatedLeader(["Sam"]);
     r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
     expect(r.leader).toBe("s-0");
     r = ok(r, { t: "setConnected", connected: true }, { actor: LEADER });
+    expect(r.leader).toBe("s-0");
+  });
+
+  it("keeps it for a leader who has only just dropped out of the lobby", () => {
+    // With no seat to hold they are in their silent `LOBBY_GRACE_MS`, shown
+    // as present — so the crown stays too, whatever else happens meanwhile.
+    // It passes on when the grace runs out, as a `leave`.
+    let r = withMembers(["Sam", "Kofi"]);
+    r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
+    expect(r.leader).toBe(LEADER);
+    r = ok(r, { t: "leave" }, { actor: "s-1" });
+    expect(r.leader, "somebody else leaving does not take it either").toBe(LEADER);
+    r = ok(r, { t: "leave" }, { actor: LEADER });
     expect(r.leader).toBe("s-0");
   });
 
@@ -183,6 +202,52 @@ describe("leadership", () => {
     r = ok(r, { t: "leave" }, { actor: LEADER });
     expect(r.leader).toBe("s-0");
     expect(r.members[LEADER]).toBeUndefined();
+  });
+
+  it("gives an emptied room to whoever walks in next", () => {
+    // The last one out has nobody to hand the lead to, so the room still
+    // names them; the next person in would otherwise be in a room nobody
+    // can start.
+    let r = ok(room(), { t: "leave" }, { actor: LEADER });
+    expect(r.members).toEqual({});
+    r = ok(r, { t: "join", name: "Late" }, { actor: "s-late" });
+    expect(r.leader).toBe("s-late");
+  });
+
+  it("lets the next person straight into an emptied private room", () => {
+    // There is nobody left to answer a knock.
+    let r = ok(room(), { t: "setPrivacy", privacy: "private" }, { actor: LEADER });
+    r = ok(r, { t: "leave" }, { actor: LEADER });
+    r = ok(r, { t: "join", name: "Late" }, { actor: "s-late" });
+    expect(r.pending).toEqual({});
+    expect(r.members["s-late"]).toBeDefined();
+    expect(r.leader).toBe("s-late");
+  });
+
+  it("still makes a newcomer knock while somebody is there to answer", () => {
+    let r = ok(room(), { t: "setPrivacy", privacy: "private" }, { actor: LEADER });
+    r = ok(r, { t: "join", name: "Knocker" }, { actor: "s-knock" });
+    expect(r.pending["s-knock"]).toBeDefined();
+    expect(r.leader).toBe(LEADER);
+  });
+
+  it("closes the room, stopping a game first so it can be settled", () => {
+    let r = spades(withMembers(["Sam"]));
+    r = ok(r, { t: "startGame" }, { actor: LEADER });
+    expect(applyCommand(r, { t: "closeRoom" }, { actor: "s-0", now: 2 })).toEqual({
+      ok: false,
+      error: "not-leader",
+    });
+    const res = applyCommand(r, { t: "closeRoom" }, { actor: LEADER, now: 2 });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.room.game).toBeNull();
+    // The order is the point: the stop settles money, the close carries it.
+    expect(res.effects.map((e) => e.t)).toEqual(["stopSession", "close"]);
+    expect(res.effects[1]).toEqual({ t: "close", by: "Ada" });
+  });
+
+  it("closes a lobby with nothing to stop", () => {
+    expect(effectsOf(room(), { t: "closeRoom" }, { actor: LEADER })).toEqual([{ t: "close", by: "Ada" }]);
   });
 
   it("lets a freshly promoted leader immediately use a leader-only power", () => {
@@ -520,6 +585,20 @@ describe("seats, presence and bots", () => {
     return ok(r, { t: "startGame" }, { actor: LEADER });
   }
 
+  it("says who has a seat waiting for them, whether or not they are at it", () => {
+    // The line between a member the room keeps while they are gone and one
+    // it lets go of after LOBBY_GRACE_MS.
+    const lobby = spades(withMembers(["Sam", "Kofi", "Jo", "Rui"]), 4);
+    expect(holdsSeat(lobby, LEADER)).toBe(false);
+
+    const r = ok(lobby, { t: "startGame" }, { actor: LEADER });
+    const away = ok(r, { t: "exitGame" }, { actor: LEADER });
+    expect(holdsSeat(away, LEADER), "stepped away, seat still theirs").toBe(true);
+    // Five people, four seats: whoever did not fit is only watching.
+    const watcher = seatingPlan(lobby)[4]!;
+    expect(holdsSeat(r, watcher)).toBe(false);
+  });
+
   it("counts a seat live only when its owner is connected AND at the table", () => {
     const r = started();
     expect(isSeatLive(r, 0)).toBe(true);
@@ -709,6 +788,98 @@ describe("settings coming off the wire", () => {
         ),
       ).toEqual({ ok: false, error: "game-not-online" });
     }
+  });
+});
+
+describe("the turn timer, as a room setting", () => {
+  it("is on in a new room, at thirty seconds", () => {
+    expect(room().turnTimer).toEqual({ on: true, seconds: 30 });
+  });
+
+  it("is the leader's to change, in steps of five from five to sixty", () => {
+    const r = withMembers(["Sam"]);
+    expect(applyCommand(r, { t: "setTurnTimer", seconds: 10 }, { actor: "s-0", now: 1 })).toEqual({
+      ok: false,
+      error: "not-leader",
+    });
+    const at = (seconds: number) => ok(r, { t: "setTurnTimer", seconds }, { actor: LEADER }).turnTimer.seconds;
+    expect(at(45)).toBe(45);
+    expect(at(12)).toBe(10); // snapped to a step
+    expect(at(2)).toBe(5);
+    expect(at(999)).toBe(60);
+    expect(applyCommand(r, { t: "setTurnTimer", seconds: Number.NaN }, { actor: LEADER, now: 1 })).toEqual({
+      ok: false,
+      error: "bad-turn-timer",
+    });
+  });
+
+  it("keeps its length while switched off, so switching it on restores it", () => {
+    let r = ok(room(), { t: "setTurnTimer", seconds: 20 }, { actor: LEADER });
+    r = ok(r, { t: "setTurnTimer", on: false }, { actor: LEADER });
+    expect(r.turnTimer).toEqual({ on: false, seconds: 20 });
+    r = ok(r, { t: "setTurnTimer", on: true }, { actor: LEADER });
+    expect(r.turnTimer).toEqual({ on: true, seconds: 20 });
+  });
+
+  it("is fixed while a game is running", () => {
+    let r = spades(withMembers(["Sam"]));
+    r = ok(r, { t: "startGame" }, { actor: LEADER });
+    expect(applyCommand(r, { t: "setTurnTimer", on: false }, { actor: LEADER, now: 2 })).toEqual({
+      ok: false,
+      error: "game-already-running",
+    });
+  });
+});
+
+describe("idle: the timer gave somebody's seat to a bot", () => {
+  function started(): Room {
+    const r = spades(withMembers(["Sam"]));
+    return ok(r, { t: "startGame" }, { actor: LEADER });
+  }
+
+  it("hands the seat to a bot, and says so", () => {
+    const r = started();
+    const seat = seatOf(r, "s-0")!;
+    const res = applyCommand(r, { t: "markIdle" }, { actor: "s-0", now: 2 });
+    if (!res.ok) throw new Error(res.error);
+    expect(isSeatLive(res.room, seat)).toBe(false);
+    expect(isIdle(res.room, "s-0")).toBe(true);
+    expect(res.effects).toContainEqual({ t: "notice", text: "A bot is playing for Sam" });
+  });
+
+  it("gives it back when they say they are back, or come back to the table", () => {
+    const idle = ok(started(), { t: "markIdle" }, { actor: "s-0" });
+    const seat = seatOf(idle, "s-0")!;
+    expect(isSeatLive(ok(idle, { t: "resume" }, { actor: "s-0" }), seat)).toBe(true);
+    expect(isSeatLive(ok(idle, { t: "enterGame" }, { actor: "s-0" }), seat)).toBe(true);
+  });
+
+  it("does NOT give it back on a reconnect alone", () => {
+    // A phone left on the table whose network flaps has not come back.
+    let r = ok(started(), { t: "markIdle" }, { actor: "s-0" });
+    r = ok(r, { t: "setConnected", connected: false }, { actor: "s-0" });
+    r = ok(r, { t: "setConnected", connected: true }, { actor: "s-0" });
+    expect(isIdle(r, "s-0")).toBe(true);
+  });
+
+  it("is not who the next round waits on", () => {
+    const r = ok(started(), { t: "markIdle" }, { actor: LEADER });
+    expect(mayContinueRound(r, LEADER)).toBe(false);
+    expect(mayContinueRound(r, "s-0")).toBe(true);
+  });
+
+  it("ends the game when everybody is idle — the user's call", () => {
+    let r = ok(started(), { t: "markIdle" }, { actor: "s-0" });
+    const res = applyCommand(r, { t: "markIdle" }, { actor: LEADER, now: 3 });
+    if (!res.ok) throw new Error(res.error);
+    r = res.room;
+    expect(r.game).toBeNull();
+    expect(res.effects).toContainEqual({ t: "stopSession", reason: "all-bots" });
+    expect(res.effects).toContainEqual({ t: "notice", text: "Everyone is away — game ended" });
+  });
+
+  it("is only for somebody holding a seat in a running game", () => {
+    expect(applyCommand(room(), { t: "markIdle" }, { actor: LEADER, now: 1 }).ok).toBe(false);
   });
 });
 

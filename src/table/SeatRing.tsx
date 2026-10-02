@@ -10,7 +10,7 @@
  * seat count on every device, so there is one pod shape, not three.
  */
 
-import { memo } from "react";
+import { memo, type CSSProperties } from "react";
 import { Bot } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
@@ -19,6 +19,7 @@ import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
 import { Avatar } from "@/ui/primitives/Avatar";
 import { Stats, type Stat, type StatLines } from "@/ui/primitives/Stats";
+import { CountdownRing } from "@/ui/primitives/CountdownRing";
 
 /** One labelled number on a pod: "Bid 4", "Cards 7" — see `Stats`. */
 export type SeatStat = Stat;
@@ -91,6 +92,31 @@ export interface SeatView {
    * always-visible ambient weight as `partner`.
    */
   away?: boolean;
+  /**
+   * Nobody owns this seat: a bot plays it, and from a person's table a
+   * bot named Kofi looks like a friend named Kofi (reported 2026-09-29,
+   * three friends at a Dominoes table). Only online, where the seat has
+   * no name of a person's; solo, every opponent is a bot and saying so
+   * on every pod would be noise. Never true together with `away`.
+   */
+  bot?: boolean;
+  /**
+   * Their photo (`photoUrl`), in a room where they took one — laid over by
+   * `GameHost`'s `seatExtras`, never by a game. Initials stay underneath.
+   */
+  photo?: string | null;
+  /**
+   * The last thing they said in the room's chat — shown beside the pod by
+   * `SeatBubbles` if it is new, never by the pod itself. Laid over by
+   * `seatExtras`, like `photo`.
+   */
+  bubble?: { id: number; text: string } | null;
+  /**
+   * The turn timer's clock on this seat's move: a ring round the pod that
+   * empties, green to amber at half to red at a fifth (the user, 2026-09-29).
+   * `endsAt` is by `Date.now()`. Laid over by `GameHost`, never by a game.
+   */
+  timer?: { key: string; totalMs: number; endsAt: number } | null;
 }
 
 /**
@@ -151,6 +177,10 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
  * its slot, so its avatar went off the top of the screen and its last line
  * sat under its own cards. "Away", "Partner" and a status word come first
  * — they change how the numbers read — and the numbers take what is left.
+ *
+ * The words share ONE line, so the numbers always keep at least one. Each
+ * had a line of its own until a bot partner (2026-10-01): "Bot" and
+ * "Partner" took both, and the pod never said what they bid or won.
  */
 const POD_LINES = 2;
 
@@ -159,7 +189,7 @@ const POD_LINES = 2;
  * `TableGeometry.tuck`), so the pod has to be opaque. Translucent, the white
  * backs of the cards behind it washed its stats out to grey on grey.
  */
-const SeatPod = memo(function SeatPod({
+export const SeatPod = memo(function SeatPod({
   view,
   density,
   solid,
@@ -170,30 +200,43 @@ const SeatPod = memo(function SeatPod({
 }) {
   const highlighted = view.active || view.winning;
   const s = POD_STYLES[density];
-  const said = (view.away ? 1 : 0) + (view.partner ? 1 : 0) + (view.status ? 1 : 0);
+  const tags = podTags(view);
   return (
     <motion.div
       initial={false}
       animate={{ scale: highlighted ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
-      className={`flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
+      className={`relative flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
         highlighted
           ? `${solid ? "bg-felt-950" : "bg-felt-950/70"} ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]`
           : `${solid ? "bg-felt-950" : "bg-felt-950/55"} ring-1 ring-brass-400/20`
       }`}
     >
+      {view.timer ? (
+        // ON the pod's own edge, not outside it: a side pod sits flush with
+        // the screen's edge on a phone, and a ring outside it lost that side
+        // to the table's clipping (seen in a screenshot).
+        <CountdownRing
+          key={view.timer.key}
+          totalMs={view.timer.totalMs}
+          endsAt={view.timer.endsAt}
+          radius="0.75rem"
+          offset={0}
+        />
+      ) : null}
       <div className="relative">
         <AnimatePresence>{view.winning ? <WinnerCrown /> : null}</AnimatePresence>
         <Avatar
           name={view.name}
           colour={view.colour}
           size={s.avatar}
+          src={view.photo}
           // The pod itself fades an eliminated seat; the avatar only greys.
           style={{ filter: view.eliminated ? "grayscale(1)" : undefined }}
         />
         {view.thinking ? <ThinkingRing /> : null}
         {view.badge ? <PositionBadge label={view.badge} /> : null}
-        {view.away ? <AwayBadge name={view.name} /> : null}
+        {view.away ? <AwayBadge name={view.name} /> : view.bot ? <BotBadge name={view.name} /> : null}
       </div>
 
       <div
@@ -208,33 +251,41 @@ const SeatPod = memo(function SeatPod({
         {view.name}
       </div>
 
-      {view.away ? (
-        // The status line, in `warn` rather than in the pod's ordinary
-        // muted tone: it has to be findable at a glance across a table,
-        // and it sits directly above the stats, whose labels are bone-400.
-        // Not `loss` — nothing has gone wrong, somebody is just not here.
-        <div
-          className={`max-w-full truncate ${s.meta} leading-none font-bold`}
-          style={{ color: "var(--color-warn)" }}
-        >
-          Away
+      {tags.length > 0 ? (
+        // A gap rather than " · " between the words: the dot and its spaces
+        // cost the 2px that clipped "Away Partner" on a laptop pod, and each
+        // word's own colour already tells them apart.
+        <div className={`flex max-w-full gap-1 ${s.meta} leading-none whitespace-nowrap`}>
+          {tags.map((tag, i) => (
+            <span
+              key={tag.text}
+              className={`${tag.className} ${i === tags.length - 1 ? "min-w-0 truncate" : "shrink-0"}`}
+              style={tag.style}
+            >
+              {tag.text}
+            </span>
+          ))}
         </div>
       ) : null}
 
-      {view.partner ? (
-        <div className={`max-w-full truncate ${s.meta} leading-none font-bold text-brass-300/90`}>
-          Partner
-        </div>
-      ) : null}
-
-      {view.status ? (
-        <div className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>{view.status}</div>
-      ) : null}
-
-      <Stats lines={view.stats ?? []} max={POD_LINES - said} className={s.meta} />
+      <Stats lines={view.stats ?? []} max={POD_LINES - (tags.length > 0 ? 1 : 0)} className={s.meta} />
     </motion.div>
   );
 });
+
+/** The words a pod carries before its numbers, in the order they read. */
+function podTags(view: SeatView): Array<{ text: string; className: string; style?: CSSProperties }> {
+  const tags: Array<{ text: string; className: string; style?: CSSProperties }> = [];
+  // "Away" in `warn` rather than in the pod's ordinary muted tone: it has
+  // to be findable at a glance across a table, and it sits directly above
+  // the stats, whose labels are bone-400. Not `loss` — nothing has gone
+  // wrong, somebody is just not here.
+  if (view.away) tags.push({ text: "Away", className: "font-bold", style: { color: "var(--color-warn)" } });
+  else if (view.bot) tags.push({ text: "Bot", className: "font-bold text-bone-300" });
+  if (view.partner) tags.push({ text: "Partner", className: "font-bold text-brass-300/90" });
+  if (view.status) tags.push({ text: view.status, className: "text-bone-400" });
+  return tags;
+}
 
 /**
  * Dealer/small-blind/big-blind marker — poker only; every other game
@@ -274,6 +325,20 @@ function PositionBadge({ label }: { label: "D" | "SB" | "BB" }) {
  */
 function AwayBadge({ name }: { name: string }) {
   const title = `${name} stepped away — a bot is playing this seat`;
+  return (
+    <div
+      aria-label={title}
+      title={title}
+      className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded-full bg-bone-200 text-felt-950 ring-1 ring-felt-950/60"
+    >
+      <Bot size={10} strokeWidth={2.5} aria-hidden />
+    </div>
+  );
+}
+
+/** The same marker for a seat with no person in it: this one is a bot. */
+function BotBadge({ name }: { name: string }) {
+  const title = `${name} is a bot`;
   return (
     <div
       aria-label={title}

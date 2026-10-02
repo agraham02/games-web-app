@@ -40,6 +40,8 @@ export interface LrcView {
    * nobody to step away. Supplied by `awayFrom(frame)`.
    */
   awayFor?: (seat: SeatId) => boolean;
+  /** Supplied by `botFrom(frame)`: a seat nobody owns, which a bot plays. */
+  botFor?: (seat: SeatId) => boolean;
 }
 
 /** Seat 0, against bots — every offline game. */
@@ -165,6 +167,7 @@ export function playerViews(view: LrcView, state: LrcState, live: Live): SeatVie
       thinking: cue.thinking,
       eliminated,
       away: view.awayFor?.(seat) ?? false,
+      bot: view.botFor?.(seat) ?? false,
     });
   }
   return out;

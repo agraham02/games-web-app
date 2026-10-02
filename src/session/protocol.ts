@@ -26,9 +26,10 @@
 import type { GameEvent, PieceId, PieceMeta, PlacementMap, SeatId } from "@/engine/types";
 import type { BotDifficulty } from "@/engine/types";
 import type { GameId, RawSettings } from "./registry";
-import type { Privacy, RoomCode, RoomError, SessionId } from "./room";
+import type { Privacy, RoomCode, RoomError, SessionId, TurnTimer } from "./room";
+import type { ChatMessage, ChatMode } from "./chat";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 3;
 
 /* ============================================================
    Client -> server
@@ -49,6 +50,16 @@ export type ClientMessage =
   | ({ t: "createRoom"; name: string } & Addressed)
   | ({ t: "joinRoom"; code: RoomCode; name: string } & Addressed)
   | ({ t: "leaveRoom" } & Addressed)
+  /**
+   * This tab is leaving the room's page on purpose — the back gesture, a
+   * link home — and is about to hang up. The server decides what that
+   * means: somebody holding a seat in a running game keeps it (a bot plays
+   * it, exactly as when they drop), anybody else leaves the room at once
+   * instead of waiting out `LOBBY_GRACE_MS`. A refresh or a closed tab
+   * never sends it, which is precisely the split wanted: those might be
+   * back in a moment.
+   */
+  | ({ t: "bye" } & Addressed)
   /** Take back a knock on a private room that has not been answered. */
   | ({ t: "withdraw" } & Addressed)
   | ({ t: "rename"; name: string } & Addressed)
@@ -71,10 +82,32 @@ export type ClientMessage =
   | ({ t: "enterGame"; as?: "player" | "spectator" } & Addressed)
   | ({ t: "exitGame" } & Addressed)
   | ({ t: "endGame" } & Addressed)
+  /** Leader only: closes the room for everybody in it. */
+  | ({ t: "closeRoom" } & Addressed)
+  /**
+   * Your own photo, as a small JPEG or WebP data URL the browser has already
+   * cropped (see `session/photo.ts`), or null to take it down.
+   */
+  | ({ t: "setPhoto"; image: string | null } & Addressed)
+  /**
+   * Something said to the room: typed `text`, or one of the `QUICK_REPLIES`
+   * by id — never both. A quick reply goes by id so the server, which
+   * decides what is table-safe, is the one that knows what it says.
+   */
+  | ({ t: "chat"; text?: string; quick?: string } & Addressed)
+  /** Leader only, between games: the turn timer on or off, and how long. */
+  | ({ t: "setTurnTimer"; on?: boolean; seconds?: number } & Addressed)
+  /** "I'm back" — after the turn timer handed your seat to a bot. */
+  | ({ t: "resume" } & Addressed)
   /** A move. `action` is the game's own action type, validated server-side. */
   | ({ t: "action"; action: unknown } & Addressed)
   | ({ t: "nextRound" } & Addressed)
-  | { t: "ping" };
+  /**
+   * `sent` is the client's own clock, echoed straight back in the `pong`,
+   * so the client can time the round trip — the only latency it needs to
+   * know, to show a turn clock that ends when the server's does.
+   */
+  | { t: "ping"; sent?: number };
 
 /* ============================================================
    Server -> client
@@ -95,6 +128,10 @@ export interface MemberView {
    */
   team: number | null;
   isLeader: boolean;
+  /** Their photo's id — fetch it from `photoUrl(id)` — or null for none. */
+  photo: string | null;
+  /** The turn timer has handed their seat to a bot until they come back. */
+  idle: boolean;
 }
 
 export interface RoomView {
@@ -138,6 +175,13 @@ export interface RoomView {
    * a game with no stake set, and before any game.
    */
   settlement: SettlementView | null;
+  /**
+   * Whether you may type, or only send the table-safe quick replies: the
+   * latter while a partnership hand you hold a seat in is being played.
+   */
+  chat: ChatMode;
+  /** Between games, what the next one will be played with. */
+  turnTimer: TurnTimer;
 }
 
 /**
@@ -227,7 +271,15 @@ export type ServerErrorCode =
    * move is ordinary — your view was a moment stale, or somebody beat
    * you to a claim — and the next frame already puts you right.
    */
-  | "move-refused";
+  | "move-refused"
+  /** Not a picture the server will keep: the wrong kind, or too big. */
+  | "photo-rejected"
+  /** Typed, or not table-safe, during a partnership hand you are in. */
+  | "chat-locked"
+  /** More than `CHAT_RATE` allows. */
+  | "chat-limited"
+  /** Empty once cleaned, too long, or a quick reply that does not exist. */
+  | "chat-invalid";
 
 /**
  * What each refusal says out loud.
@@ -281,6 +333,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "cannot-target-self": "that one only works on somebody else",
   "bad-seat-count": "that seat count does not fit this game",
   "bad-seat-plan": "that seating plan does not match who is here",
+  "bad-turn-timer": "that is not a length the turn timer can be",
   "room-full": "this room is full",
   "no-room": "you are not in a room",
   "bad-message": "that request could not be handled",
@@ -288,6 +341,10 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "rate-limited": "slow down",
   "move-refused": "that move is no longer available",
   "protocol-mismatch": "this page is out of date — reload to keep playing",
+  "photo-rejected": "that picture could not be used — try another",
+  "chat-locked": "no table talk during the hand — quick replies only",
+  "chat-limited": "a few messages at a time — try again in a moment",
+  "chat-invalid": "that message could not be sent",
 };
 
 export function errorText(code: ServerErrorCode): string {
@@ -322,6 +379,14 @@ export type ServerMessage =
        * answer a refused knock had.
        */
       reason: "left" | "kicked" | "room-closed" | "denied";
+      /** `room-closed` by its leader: who closed it. */
+      by?: string;
+      /**
+       * `room-closed`: who owes whom, when the last game was played for
+       * money. The room — and the lobby that showed this — is gone, so it
+       * travels with the news or nobody sees it.
+       */
+      settlement?: SettlementView | null;
     }
   /** Waiting on a private room's leader to decide. */
   | { t: "pending"; code: RoomCode }
@@ -353,7 +418,36 @@ export type ServerMessage =
    */
   | { t: "superseded" }
   | { t: "error"; code: ServerErrorCode; message: string; reqId?: string }
-  | { t: "pong" };
+  /** Somebody said something. To everybody in the room, lobby and table alike. */
+  | { t: "chat"; message: ChatMessage }
+  /**
+   * What has been said, up to `CHAT_HISTORY`, sent on joining or returning
+   * to a room — it replaces whatever the client had, which may be stale.
+   */
+  | { t: "chatLog"; messages: ChatMessage[] }
+  /**
+   * Whose move the table is waiting on, and how long they have — or null
+   * when nobody's clock is running. Sent when it changes, and with the time
+   * actually left to anybody arriving mid-move.
+   *
+   * Relative, never a time of day: `endsInMs` counts from the moment it was
+   * sent, so two machines whose clocks disagree still agree on it. The
+   * client takes off half a round trip. What anyone is shown ends
+   * `TURN_GRACE_MS` before the server acts, so a move made as the ring
+   * empties still arrives in time.
+   */
+  | { t: "turnClock"; clock: TurnClockView | null }
+  | { t: "pong"; sent?: number };
+
+export interface TurnClockView {
+  seat: SeatId;
+  /** Changes with the position: a new key is a new move's clock. */
+  key: string;
+  /** A full clock's worth, ms. */
+  totalMs: number;
+  /** Until the clock on screen runs out, from when this was sent. */
+  endsInMs: number;
+}
 
 /* ============================================================
    Parsing — everything below assumes the sender is hostile
@@ -386,7 +480,20 @@ export function parseClientMessage(raw: string): ClientMessage | null {
 
   switch (data.t) {
     case "ping":
-      return { t: "ping" };
+      return typeof data.sent === "number" && Number.isFinite(data.sent)
+        ? { t: "ping", sent: data.sent }
+        : { t: "ping" };
+
+    case "setTurnTimer": {
+      const on = typeof data.on === "boolean" ? data.on : undefined;
+      // Range and step are the room's to judge; this only proves a number.
+      const seconds = typeof data.seconds === "number" ? data.seconds : undefined;
+      if (on === undefined && seconds === undefined) return null;
+      return { t: "setTurnTimer", on, seconds, reqId };
+    }
+
+    case "bye":
+      return { t: "bye" };
 
     case "hello": {
       const token = str("token");
@@ -441,6 +548,23 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       };
     }
 
+    case "chat": {
+      const text = str("text");
+      const quick = str("quick");
+      // Exactly one, and nothing absurd: the real limits are applied to the
+      // cleaned text by the room, but a megabyte is refused unread.
+      if ((text === null) === (quick === null)) return null;
+      if (text !== null && text.length > 2_000) return null;
+      if (quick !== null && quick.length > 32) return null;
+      return text !== null ? { t: "chat", text, reqId } : { t: "chat", quick: quick!, reqId };
+    }
+
+    case "setPhoto": {
+      const image = data.image;
+      if (image !== null && typeof image !== "string") return null;
+      return { t: "setPhoto", image, reqId };
+    }
+
     case "arrangeSeats": {
       const plan = data.plan;
       if (!Array.isArray(plan) || plan.length > 64) return null;
@@ -467,6 +591,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case "startGame":
     case "exitGame":
     case "endGame":
+    case "closeRoom":
+    case "resume":
     case "nextRound":
       return { t: data.t, reqId };
 

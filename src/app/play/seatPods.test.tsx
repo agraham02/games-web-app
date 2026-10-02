@@ -18,12 +18,13 @@
 import { describe, expect, it } from "vitest";
 import type { GameDefinition, SeatId } from "@/engine/types";
 import type { FrameView } from "@/session/protocol";
-import { awayFrom } from "@/room/useOnlineRuntime";
+import { awayFrom, botFrom } from "@/room/useOnlineRuntime";
 import { GAMES, type GameId } from "@/session/registry";
 import { GameSession } from "@/session/GameSession";
 import { TestClock } from "@/session/clock";
 import type { GameRuntime } from "@/table/useGameRuntime";
-import type { SeatView } from "@/table/SeatRing";
+import { SeatPod, type SeatView } from "@/table/SeatRing";
+import { render } from "@testing-library/react";
 
 import { playerViews as bs, standings as bsStandings } from "./bs/table";
 import { standings as dominoesStandings } from "./dominoes/table";
@@ -59,12 +60,17 @@ function fakeLive(state: unknown): GameRuntime<unknown, unknown> {
 }
 
 /** Each game's own view object, pointed at one seat. */
-function viewFor(viewerSeat: SeatId, awayFor?: (seat: SeatId) => boolean) {
+function viewFor(
+  viewerSeat: SeatId,
+  awayFor?: (seat: SeatId) => boolean,
+  botFor?: (seat: SeatId) => boolean,
+) {
   return {
     viewerSeat,
     nameFor: (seat: SeatId) => `Seat ${seat}`,
     colourFor: () => "#fff",
     awayFor,
+    botFor,
   };
 }
 
@@ -79,17 +85,18 @@ type Caller = (
   state: unknown,
   seats: number,
   awayFor?: (seat: SeatId) => boolean,
+  botFor?: (seat: SeatId) => boolean,
 ) => SeatView[];
 
 const CALLERS: Record<GameId, Caller> = {
-  dominoes: (v, state, _s, away) => (dominoes as AnyFn)(viewFor(v, away), state, fakeLive(state)),
-  lrc: (v, state, _s, away) => (lrc as AnyFn)(viewFor(v, away), state, fakeLive(state)),
-  poker: (v, state, _s, away) => (poker as AnyFn)(viewFor(v, away), state, fakeLive(state)),
-  spades: (v, state, _s, away) => (spades as AnyFn)(viewFor(v, away), state, fakeLive(state)),
-  bs: (v, state, _s, away) => (bs as AnyFn)(viewFor(v, away), state, fakeLive(state)),
+  dominoes: (v, state, _s, away, bot) => (dominoes as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
+  lrc: (v, state, _s, away, bot) => (lrc as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
+  poker: (v, state, _s, away, bot) => (poker as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
+  spades: (v, state, _s, away, bot) => (spades as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
+  bs: (v, state, _s, away, bot) => (bs as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
   // Rummy curries the seat count; the rest read it off state.
-  rummy: (v, state, seats, away) =>
-    (rummy as AnyFn)(viewFor(v, away), seats)(state, fakeLive(state)),
+  rummy: (v, state, seats, away, bot) =>
+    (rummy as AnyFn)(viewFor(v, away, bot), seats)(state, fakeLive(state)),
 };
 
 /** A dealt table for one game, played far enough to have real hands. */
@@ -172,6 +179,33 @@ describe("a seat a bot has taken over", () => {
     expect(away(1)).toBe(false);
   });
 
+  // The other half (the user, 2026-09-29, three friends and a bot at a
+  // Dominoes table: "it's not letting me know that Kofi is a bot"): an
+  // empty chair is not ABANDONED, but it is still a bot, and its pod says so.
+  it("names a chair nobody ever sat in as a bot", () => {
+    const bot = botFrom(frame({ botSeats: [2, 3], seatNames: ["Ada", "Bo", null, null] }));
+    expect(bot(2)).toBe(true);
+    expect(bot(3)).toBe(true);
+  });
+
+  it("does not call a person's seat a bot, even while a bot is playing it", () => {
+    const bot = botFrom(frame({ botSeats: [2], seatNames: [null, "Ada", "Bo", null] }));
+    expect(bot(2)).toBe(false);
+    expect(bot(1)).toBe(false);
+  });
+
+  for (const gameId of Object.keys(SEATS) as GameId[]) {
+    it(`${gameId}: carries the bot flag onto the pod`, () => {
+      const seats = SEATS[gameId];
+      const state = dealt(gameId, seats);
+      const marked = CALLERS[gameId](0, state, seats, undefined, (seat) => seat === 1);
+      expect(marked.find((v) => v.seat === 1)?.bot, `${gameId} seat 1`).toBe(true);
+      expect(marked.find((v) => v.seat === 2)?.bot, `${gameId} seat 2`).toBe(false);
+      // Solo tables supply nothing, and say nothing.
+      expect(CALLERS[gameId](0, state, seats).every((v) => v.bot === false)).toBe(true);
+    });
+  }
+
   for (const gameId of Object.keys(SEATS) as GameId[]) {
     it(`${gameId}: carries the flag onto the pod`, () => {
       const seats = SEATS[gameId];
@@ -185,6 +219,28 @@ describe("a seat a bot has taken over", () => {
       // read as "nobody is away" rather than as undefined behaviour.
       const offline = CALLERS[gameId](0, state, seats);
       expect(offline.every((v) => v.away === false), `${gameId} offline`).toBe(true);
+    });
+  }
+
+  // The user, 2026-10-01: "my partner bot was not showing how much they bid
+  // and how much they won on their pod". "Bot" and "Partner" each took one
+  // of the pod's two lines, and the numbers got none.
+  for (const word of ["Bot", "Away"] as const) {
+    it(`spades: a partner marked ${word} still shows the bid`, () => {
+      const state = dealt("spades", 4);
+      const partnerSeat = (seat: SeatId) => seat === 2;
+      const views =
+        word === "Bot"
+          ? CALLERS.spades(0, state, 4, undefined, partnerSeat)
+          : CALLERS.spades(0, state, 4, partnerSeat);
+      const partner = views.find((v) => v.seat === 2)!;
+      expect(partner.partner).toBe(true);
+
+      const pod = render(<SeatPod view={partner} density="compact" solid={false} />);
+      expect(pod.getByText("Partner")).toBeTruthy();
+      expect(pod.getByText(word)).toBeTruthy();
+      expect(pod.getByText(/^Bid/)).toBeTruthy();
+      pod.unmount();
     });
   }
 });

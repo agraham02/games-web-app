@@ -607,7 +607,55 @@ export interface GameDefinition<S, A> {
      * which is right for a deadline that only ever spans its own turn.
      */
     key?: string;
+    /**
+     * Count `ms` from when the frame that opened this wait has finished
+     * playing on the player's screen, not from when it was sent — the
+     * driver adds what is left of that playback (`deadlineLeadMs`), as it
+     * does for the turn timer. For a wait whose page countdown only starts
+     * once the move is theirs: Poker's show-or-muck can open at the end of
+     * a four-second all-in runout, and timed from the broadcast it was
+     * mucked with two of the player's five seconds still on their bar.
+     * Give it a `key` as well: the lead shrinks as the frame plays, and
+     * only a keyed wait keeps the span it started with.
+     */
+    afterPlayback?: boolean;
   } | null;
+
+  /**
+   * A move so forced that waiting on a person to make it is only waiting:
+   * the driver plays it for a live seat that has not moved within
+   * `FORCED_MOVE_MS` (the user, 2026-09-29 — "the last card in hand in
+   * Spades, passing in Dominoes, rolling in LRC"). Return null for anything
+   * that is a choice.
+   *
+   * "Only one legal action" is NOT the test, and a game must not answer with
+   * `legalActions` alone. A Spades singleton in the suit led, or a domino
+   * hand with one tile that fits, is also one legal action — and a move that
+   * lands exactly when the wait runs out tells the table so. Name only what is
+   * forced for reasons everybody can already see: a last card (the count is
+   * public), a draw or a pass (making it says the same thing either way), a
+   * roll. A game's `deadline?()` takes precedence over this.
+   *
+   * Submitted through the session's own gate, like any deadline's action,
+   * so `completeAction` still resolves what it must (LRC's dice).
+   */
+  forcedMove?(state: S, seat: SeatId): A | null;
+
+  /**
+   * What to play for a live seat whose turn timer ran out, where the game
+   * has a better answer than its own bot. Return null (or leave it out) for
+   * the bot's move — the right answer almost everywhere.
+   *
+   * Poker is the exception (the user, 2026-09-29): an auto-play must never
+   * spend a person's chips, so it checks when that is free and folds when it
+   * is not, the rule every online card room uses. So is Spades' bidding
+   * (2026-10-02): never a nil or a blind contract for somebody who is not
+   * there to play it.
+   *
+   * Played as a bot's move is, straight to `reduce`, so it must be legal as
+   * it stands: nothing vets it on the way.
+   */
+  timeoutAction?(state: S, seat: SeatId): A | null;
 
   /**
    * How much dead air this particular turn deserves before the next one

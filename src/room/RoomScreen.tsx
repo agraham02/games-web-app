@@ -20,7 +20,7 @@
  * last one's exit.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { PieceId } from "@/engine/types";
@@ -34,7 +34,12 @@ import { ConnectionNotice } from "./ConnectionNotice";
 import { readSavedName, takeEntryIntent, type EntryIntent } from "./entry";
 import { Lobby } from "./Lobby";
 import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
+import { readSavedPhoto } from "./photo";
+import { ChatButton } from "./chat/ChatButton";
+import { ChatSheet } from "./chat/ChatSheet";
+import { chatToast, dismissChatToasts } from "./chat/chatToast";
 import { RoomStatusScreen } from "./RoomStatusScreen";
+import { SettleUp } from "./SettleUp";
 import { tableFor } from "./tables";
 import { useRoom, type RoomApi } from "./useRoom";
 import { statusLane } from "@/table/geometry";
@@ -128,10 +133,49 @@ export function RoomScreen({ code }: { code?: string }) {
   // form at the same URL — the invitation to the room just left, "You have
   // been invited to a room", which is the one place they had chosen not to
   // be. `replace`, so Back does not return to it either.
-  const leaving = api.phase === "idle" && api.farewell?.reason === "left";
+  //
+  // Closing the room yourself is a leave you asked for, too — unless it
+  // leaves money to square up, which everybody (the leader included) is
+  // shown before going anywhere.
+  const farewell = api.farewell;
+  const closedWithMoney =
+    api.phase === "idle" && farewell?.reason === "room-closed" && Boolean(farewell.settlement);
+  const leaving =
+    api.phase === "idle" &&
+    (farewell?.reason === "left" ||
+      (farewell?.reason === "room-closed" && farewell.byYou === true && !closedWithMoney));
   useEffect(() => {
     if (leaving) router.replace("/");
   }, [leaving, router]);
+
+  // A photo taken earlier in this session goes with the player to the next
+  // room (the user, 2026-09-29: for the session, never beyond). Once per
+  // room: taking it down again in this room clears the saved one too.
+  const carriedTo = useRef<string | null>(null);
+  const room = api.room;
+  const setPhoto = api.setPhoto;
+  useEffect(() => {
+    if (!room || carriedTo.current === room.code) return;
+    carriedTo.current = room.code;
+    const me = room.members.find((m) => m.session === room.you);
+    const saved = readSavedPhoto();
+    if (me && !me.photo && saved) setPhoto(saved);
+  }, [room, setPhoto]);
+
+  // The chat: one sheet for the lobby and the table, so a trip between the
+  // two neither closes it nor loses what was unread. "Unread" is what other
+  // people said since it was last put away, counted per room (a new room's
+  // messages start again from one).
+  const [chatOpen, setChatOpen] = useState(false);
+  const [seen, setSeen] = useState<{ code: string | null; id: number }>({ code: null, id: 0 });
+  const seenId = room && seen.code === room.code ? seen.id : 0;
+  const unread =
+    chatOpen || !room ? 0 : api.chat.filter((m) => m.id > seenId && m.session !== room.you).length;
+  const closeChat = () => {
+    setSeen({ code: room?.code ?? null, id: api.chat.at(-1)?.id ?? 0 });
+    setChatOpen(false);
+  };
+  const chatButton = <ChatButton unread={unread} onClick={() => setChatOpen(true)} />;
 
   // Keep the address bar honest. A room reached by code, created fresh, or
   // rejoined automatically on reconnect should all end up with the code in
@@ -170,10 +214,36 @@ export function RoomScreen({ code }: { code?: string }) {
             : api.phase === "idle"
               ? leaving
                 ? "leaving"
-                : "entry"
+                : closedWithMoney
+                  ? "closed"
+                  : "entry"
               : tableShowing
                 ? "table"
                 : "lobby";
+
+  // What other people say in the lobby pops up as a toast (`chatToast`) —
+  // only what is said while you are there to see it. Messages that came as
+  // history (`chatLiveAfter`), or while the chat was open or the table was
+  // up, are passed over rather than saved up for later, and opening the
+  // chat or starting the game puts away any still showing.
+  const toasted = useRef<{ code: string | null; id: number }>({ code: null, id: 0 });
+  const chat = api.chat;
+  const chatLiveAfter = api.chatLiveAfter;
+  const toastsWanted = screen === "lobby" && !chatOpen;
+  useEffect(() => {
+    if (!toastsWanted) dismissChatToasts();
+  }, [toastsWanted]);
+  useEffect(() => dismissChatToasts, []);
+  useEffect(() => {
+    if (!room) return;
+    if (toasted.current.code !== room.code) toasted.current = { code: room.code, id: 0 };
+    const from = Math.max(toasted.current.id, chatLiveAfter);
+    toasted.current.id = Math.max(from, chat.at(-1)?.id ?? 0);
+    if (!toastsWanted) return;
+    for (const m of chat) {
+      if (m.id > from && m.session !== room.you) chatToast(m, () => setChatOpen(true));
+    }
+  }, [chat, chatLiveAfter, room, toastsWanted]);
 
   return (
     <>
@@ -185,6 +255,23 @@ export function RoomScreen({ code }: { code?: string }) {
       <ConnectionNotice
         status={api.status}
         top={tableShowing && geometry ? statusLane(geometry) : undefined}
+        idle={tableShowing && Boolean(api.room?.members.find((m) => m.session === api.room?.you)?.idle)}
+        onResume={api.resumeSeat}
+      />
+
+      {/* The lobby's chat button, where the table keeps its own: top right.
+          Outside the screen's `Reveal`, whose transform would otherwise make
+          `fixed` mean "fixed to the fading screen". Within the lobby's top
+          padding, so it sits over nothing. */}
+      {screen === "lobby" ? <div className="fixed top-2 right-2 z-40">{chatButton}</div> : null}
+      <ChatSheet
+        open={chatOpen && room !== null}
+        onClose={closeChat}
+        messages={api.chat}
+        you={room?.you ?? ""}
+        mode={room?.chat ?? "open"}
+        onSend={api.sendChat}
+        refused={api.chatRefused}
       />
 
       {screen === "table" ? (
@@ -205,6 +292,7 @@ export function RoomScreen({ code }: { code?: string }) {
               onToggleHeld={toggleHeld}
               onClearHeld={() => setHeld([])}
               setHeld={setHeld}
+              corner={chatButton}
             />
           );
         })()
@@ -254,6 +342,21 @@ export function RoomScreen({ code }: { code?: string }) {
             />
           ) : screen === "leaving" ? (
             <RoomStatusScreen title="Leaving the room…" />
+          ) : screen === "closed" ? (
+            // The room and its lobby are gone, and with them the SettleUp
+            // that said who owes whom — so it is said here, once, for
+            // everybody who was in it.
+            <RoomStatusScreen
+              title="Room closed"
+              line={farewell?.byYou ? "You closed the room." : `${farewell?.by ?? "The leader"} closed the room.`}
+              action={
+                <SettleUp
+                  settlement={farewell!.settlement!}
+                  you={farewell?.you ?? ""}
+                  className="w-full max-w-xs text-left"
+                />
+              }
+            />
           ) : screen === "entry" ? (
             <EntryScreen api={api} urlCode={code} />
           ) : (
@@ -271,6 +374,7 @@ type Screen =
   | "acting"
   | "pending"
   | "leaving"
+  | "closed"
   | "entry"
   | "table"
   | "lobby";
@@ -332,7 +436,9 @@ function refusalOf(api: RoomApi): { notice?: string; name?: string; code?: strin
     case "kicked":
       return { notice: `You were removed from ${room}.` };
     case "room-closed":
-      return { notice: `${sentence(room)} has closed.` };
+      return {
+        notice: farewell?.by ? `${farewell.by} closed ${room}.` : `${sentence(room)} has closed.`,
+      };
     default:
       return {};
   }

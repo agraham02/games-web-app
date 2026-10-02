@@ -141,6 +141,8 @@ export default function PhasesLab() {
               title: "Bag warning",
               body: "Kofi is at 9 bags. One more triggers the −100 penalty.",
             }}
+            // A room's: the Continue button wears the countdown ring.
+            autoContinueMs={20_000}
             onContinue={() => setPhase("none")}
           />
 

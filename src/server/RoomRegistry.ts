@@ -26,6 +26,7 @@ import { createRoom, makeCode, type Room, type RoomCode, type SessionId } from "
 import { realClock, type Clock, type TimerHandle } from "@/session/clock";
 import { RoomRuntime } from "./RoomRuntime";
 import { log } from "./log";
+import type { StoredPhoto } from "./photo";
 
 /**
  * How long a room with nobody connected survives. Straight from the spec.
@@ -33,6 +34,11 @@ import { log } from "./log";
  * have zero connected members is everybody refreshing at once after a
  * deploy, and deleting the room out from under them would turn a blink into
  * a lost game.
+ *
+ * Mostly a backstop now. Each member who drops gets `LOBBY_GRACE_MS` (20s)
+ * and then leaves, and a room nobody is left in is destroyed on the spot
+ * (`displace`) — so an emptied room is normally gone well inside this. What
+ * it still catches is a room left holding only unanswered knocks.
  */
 export const EMPTY_ROOM_TTL_MS = 60_000;
 
@@ -61,6 +67,8 @@ export interface RegistryOptions {
   clock?: Clock;
   /** Seeded for tests; a real deployment wants a fresh one. */
   seed?: number;
+  /** How long a dropped lobby member is kept (`LOBBY_GRACE_MS` by default). */
+  graceMs?: number;
 }
 
 export class RoomRegistry {
@@ -69,14 +77,28 @@ export class RoomRegistry {
   /** Which room a session is in, so a socket message needs no room code. */
   private readonly located = new Map<SessionId, RoomCode>();
   private readonly reapers = new Map<RoomCode, TimerHandle>();
+  /** Told whenever a room goes, whatever the reason. See `onRoomDestroyed`. */
+  private readonly destroyListeners: Array<(code: RoomCode) => void> = [];
 
   private readonly clock: Clock;
   private readonly rng: Rng;
+  private readonly graceMs: number | undefined;
   private nextSession = 1;
 
   constructor(opts: RegistryOptions = {}) {
     this.clock = opts.clock ?? realClock;
     this.rng = createRng(opts.seed ?? randomSeed());
+    this.graceMs = opts.graceMs;
+  }
+
+  /**
+   * Hears about every room that is destroyed. The router needs it for the
+   * people knocking on a private room, who are not members and so are not
+   * attached to it: without being told, a knock on a room that had been
+   * reaped waited forever on an answer from nobody.
+   */
+  onRoomDestroyed(listener: (code: RoomCode) => void): void {
+    this.destroyListeners.push(listener);
   }
 
   /* ---------- identity ---------- */
@@ -147,6 +169,19 @@ export class RoomRegistry {
     return [...this.rooms.keys()];
   }
 
+  /**
+   * A member's photo by its id, in whichever room it is. Asked of every room
+   * rather than indexed: there are only ever a handful, and an index is one
+   * more thing to keep in step as members come and go.
+   */
+  findPhoto(id: string): StoredPhoto | null {
+    for (const runtime of this.rooms.values()) {
+      const photo = runtime.photoById(id);
+      if (photo) return photo;
+    }
+    return null;
+  }
+
   /* ---------- lifecycle ---------- */
 
   create(leader: SessionId, leaderName: string): RoomRuntime {
@@ -162,6 +197,8 @@ export class RoomRegistry {
       clock: this.clock,
       rng: this.rng,
       onEmpty: (c) => this.scheduleReap(c),
+      onDeparted: (s) => this.displace(s),
+      graceMs: this.graceMs,
     });
     this.rooms.set(code, runtime);
     this.located.set(leader, code);
@@ -175,8 +212,25 @@ export class RoomRegistry {
     this.cancelReap(code);
   }
 
+  /**
+   * Forgets which room a session is in — they have left it — and destroys
+   * that room if they were the last one in it.
+   *
+   * A room with no members is not a room anybody can come back to: its
+   * leader is gone, and the next person in would be joining a stranger's
+   * settings. It used to wait out `EMPTY_ROOM_TTL_MS` regardless. A knock
+   * still waiting on it keeps it for the reaper, which tells the knocker.
+   */
   displace(session: SessionId): void {
+    const code = this.located.get(session);
     this.located.delete(session);
+    if (!code) return;
+    const runtime = this.rooms.get(code);
+    if (!runtime) return;
+    const { members, pending } = runtime.room;
+    if (Object.keys(members).length === 0 && Object.keys(pending).length === 0) {
+      this.destroy(code);
+    }
   }
 
   private freshCode(): RoomCode {
@@ -244,6 +298,7 @@ export class RoomRegistry {
     runtime.dispose();
     this.rooms.delete(code);
     this.cancelReap(code);
+    for (const listener of this.destroyListeners) listener(code);
   }
 
   /** Test/shutdown affordance — leaves no timers behind. */

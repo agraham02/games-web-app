@@ -27,13 +27,16 @@
 import type { BotDifficulty, PieceId, PieceMeta, PlacementMap, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
 import { DEFAULT_TURN_HOLD_MS, GameSession, type SessionFrame } from "@/session/GameSession";
-import { playbackMs } from "@/motion/choreographer";
+import { READY_BEAT_MS, playbackMs } from "@/motion/choreographer";
 import { gameEntry, type GameId, type RawSettings } from "@/session/registry";
 import { piecesNamed, projectEvents, redactPlacements } from "@/session/redact";
 import {
   applyCommand,
   connectedCount,
+  holdsSeat,
+  isIdle,
   isSeatLive,
+  LOBBY_GRACE_MS,
   mayContinueRound,
   openSeats,
   seatOf,
@@ -53,10 +56,28 @@ import {
   resolveRoundWinningSeats,
   resolveWinningSeats,
 } from "@/session/structural";
-import type { FrameView, MemberView, RoomView, ServerMessage, SettlementView } from "@/session/protocol";
+import type {
+  FrameView,
+  MemberView,
+  RoomView,
+  ServerErrorCode,
+  ServerMessage,
+  SettlementView,
+} from "@/session/protocol";
 import { seatNets, settleUp, type Stint } from "@/session/settle";
-import type { Clock } from "@/session/clock";
+import type { Clock, TimerHandle } from "@/session/clock";
+import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
 import { log } from "./log";
+import { decodePhoto, newPhotoId, type StoredPhoto } from "./photo";
+import {
+  CHAT_HISTORY,
+  CHAT_RATE,
+  chatTextProblem,
+  cleanChatText,
+  quickReply,
+  type ChatMessage,
+  type ChatMode,
+} from "@/session/chat";
 
 /**
  * The seat a spectator "occupies". Every game's `placements` and
@@ -75,6 +96,14 @@ export const SPECTATOR_SEAT: SeatId = -1;
  */
 const BACKPRESSURE_BYTES = 256 * 1024;
 
+/**
+ * How long after a move is made for somebody — forced, or their clock ran
+ * out — their own press for that position still counts as arriving second
+ * rather than as a mistake (`GameSession.autoPlayed`). Generous against a
+ * slow phone, and far short of their next turn.
+ */
+const LATE_PRESS_MS = 3_000;
+
 export interface Connection {
   send(message: ServerMessage): void;
   close(): void;
@@ -88,6 +117,15 @@ export interface RoomRuntimeOptions {
   rng: Rng;
   /** Called when the room has no reason to exist any more. */
   onEmpty: (code: string) => void;
+  /**
+   * Called when a member has been let go of without asking — their
+   * `LOBBY_GRACE_MS` ran out — so whoever keeps the map of who is in which
+   * room can forget them. Leaving on purpose goes through the router, which
+   * does that itself.
+   */
+  onDeparted?: (session: SessionId) => void;
+  /** `LOBBY_GRACE_MS` unless a test (or a dev server) wants it shorter. */
+  graceMs?: number;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,7 +137,17 @@ export class RoomRuntime {
   private readonly clock: Clock;
   private readonly rng: Rng;
   private readonly onEmpty: (code: string) => void;
+  private readonly onDeparted: (session: SessionId) => void;
+  private readonly graceMs: number;
   private readonly connections = new Map<SessionId, Connection>();
+  /**
+   * Members who have dropped with nothing to hold, each with the timer that
+   * lets them go (`LOBBY_GRACE_MS`). Kept up to date after every command by
+   * `maintainGrace`, which asks what is true now rather than reacting to
+   * particular commands — so a game ending while a seat holder is away
+   * starts their clock too, with nobody having to remember that it should.
+   */
+  private readonly grace = new Map<SessionId, TimerHandle>();
 
   private session: AnySession | null = null;
   /**
@@ -114,6 +162,36 @@ export class RoomRuntime {
    * `startSession` for why the next bot turn is spaced by it.
    */
   private lastFramePlaybackMs = 0;
+  /** When that frame went out, so "still playing" can be asked later. */
+  private lastFrameAt = 0;
+  /** Whether it was a deal, whose start waits on each screen (`READY_BEAT_MS`). */
+  private lastFrameDealt = false;
+  /** The running game's turn timer, ms, or null — fixed when it starts. */
+  private turnMs: number | null = null;
+  /** Turn-timer timeouts in a row, by person. Two and a bot takes over. */
+  private readonly timeouts = new Map<SessionId, number>();
+  /**
+   * The seat whose turn, still running, has already had a timeout counted:
+   * a turn counts once however many moves it takes. See `countTimeout`.
+   */
+  private timedOutTurn: SeatId | null = null;
+  /** The clock the table was last told about (its key), so it is said once. */
+  private sentClockKey: string | null = null;
+  /** The next round, dealt if nobody continues in time. See `syncAutoContinue`. */
+  private continueTimer: TimerHandle | null = null;
+  /**
+   * Members' photos, by member. Kept here rather than on the room, which is
+   * a pure description that goes to every client; only the id goes out
+   * (`MemberView.photo`), and the bytes are fetched once by URL.
+   */
+  private readonly photos = new Map<SessionId, StoredPhoto>();
+  /** What has been said, newest last, at most `CHAT_HISTORY`. */
+  private chatLog: ChatMessage[] = [];
+  private nextChatId = 1;
+  /** When each person last spoke, for `CHAT_RATE`. */
+  private readonly chatTimes = new Map<SessionId, number[]>();
+  /** Whether a partnership hand was in play at the last frame. See `chatModeFor`. */
+  private handWasInPlay = false;
   /**
    * Who pays whom for the last game played for money (see `settle.ts`).
    * Worked out here because only the server still holds the position when
@@ -147,6 +225,8 @@ export class RoomRuntime {
     this.clock = opts.clock;
     this.rng = opts.rng;
     this.onEmpty = opts.onEmpty;
+    this.onDeparted = opts.onDeparted ?? (() => {});
+    this.graceMs = opts.graceMs ?? LOBBY_GRACE_MS;
   }
 
   get code(): string {
@@ -178,6 +258,8 @@ export class RoomRuntime {
     this.command(session, { t: "setConnected", connected: true });
     this.broadcastRoom();
     this.sendCurrentFrame(session);
+    // Always, even empty: it replaces whatever this client last heard.
+    this.send(session, { t: "chatLog", messages: this.chatLog });
   }
 
   /**
@@ -214,6 +296,40 @@ export class RoomRuntime {
   }
 
   /* ---------- commands ---------- */
+
+  /**
+   * Why a join would be refused, without joining: the same `applyCommand`
+   * the real one runs, its result thrown away. For the router, which must
+   * not take somebody out of the room they are in for a join that was never
+   * going to work (see `Router.joinRoom`).
+   */
+  joinRefusal(session: SessionId, name: string): RoomError | null {
+    const result = applyCommand(this.room, { t: "join", name }, {
+      actor: session,
+      now: this.clock.now(),
+      rng: this.rng,
+    });
+    return result.ok ? null : result.error;
+  }
+
+  /**
+   * A room command the SERVER starts — a grace running out, the turn timer
+   * marking somebody idle, a move that says "I'm back" — and the room sent
+   * to everybody after it.
+   *
+   * The router re-sends the room after every command a MESSAGE asks for.
+   * Nothing does for these, and each one used to carry its own
+   * `broadcastRoom()`: forgetting it once meant an idle player's own screen
+   * never learned it, so "I'm back" never appeared (caught by a test). Not
+   * folded into `command` itself, because the router has to choose its
+   * moment — a kicked player is told and let go of BEFORE the roster goes
+   * out, or it reaches them too.
+   */
+  private serverCommand(session: SessionId, command: RoomCommand): ReturnType<RoomRuntime["command"]> {
+    const result = this.command(session, command);
+    if (result.ok) this.broadcastRoom();
+    return result;
+  }
 
   /**
    * Runs one room command and carries out whatever it asks for.
@@ -278,8 +394,137 @@ export class RoomRuntime {
       this.session?.settled();
     }
 
+    this.maintainGrace();
+    this.syncTurnClock();
+    // Whoever has gone takes their photo with them.
+    for (const owner of this.photos.keys()) {
+      if (!this.room.members[owner]) this.photos.delete(owner);
+    }
     log.info("command", { room: this.code, session, event: command.t });
     return { ok: true };
+  }
+
+  /* ---------- chat ---------- */
+
+  /**
+   * Is a partnership hand being played right now? Between hands (the
+   * scorecard) and after the match, table talk is back.
+   */
+  private handInPlay(): boolean {
+    const session = this.session;
+    if (!session || !this.sessionGameId) return false;
+    if (!gameEntry(this.sessionGameId).teams(this.sessionSettings)) return false;
+    const state = session.snapshot();
+    return !session.definition.isOver(state) && !session.definition.isRoundOver?.(state);
+  }
+
+  /**
+   * Quick replies only, for anybody holding a seat in a partnership hand in
+   * play — whether or not they are at the table: somebody who stepped back
+   * to the lobby still knows their cards. Everybody else may type.
+   */
+  chatModeFor(session: SessionId): ChatMode {
+    return this.handInPlay() && holdsSeat(this.room, session) ? "quick-only" : "open";
+  }
+
+  /**
+   * Somebody said something. Cleaned, checked against the rules, and sent to
+   * everybody attached — the lobby as well as the table. Returns why it was
+   * refused, or null.
+   */
+  chat(session: SessionId, input: { text?: string; quick?: string }): ServerErrorCode | null {
+    const member = this.room.members[session];
+    if (!member) return "not-a-member";
+
+    const now = this.clock.now();
+    const recent = (this.chatTimes.get(session) ?? []).filter((t) => now - t < CHAT_RATE.windowMs);
+    if (recent.length >= CHAT_RATE.count) return "chat-limited";
+
+    const locked = this.chatModeFor(session) === "quick-only";
+    let text: string;
+    let quick: string | undefined;
+    if (input.quick !== undefined) {
+      const reply = quickReply(input.quick);
+      if (!reply) return "chat-invalid";
+      if (locked && !reply.tableSafe) return "chat-locked";
+      text = reply.text;
+      quick = reply.id;
+    } else {
+      if (locked) return "chat-locked";
+      text = cleanChatText(input.text ?? "");
+      if (chatTextProblem(text)) return "chat-invalid";
+    }
+
+    recent.push(now);
+    this.chatTimes.set(session, recent);
+    const message: ChatMessage = { id: this.nextChatId++, session, name: member.name, text, at: now };
+    if (quick) message.quick = quick;
+    this.chatLog = [...this.chatLog, message].slice(-CHAT_HISTORY);
+    for (const connection of this.connections.values()) this.push(connection, { t: "chat", message });
+    return null;
+  }
+
+  /* ---------- photos ---------- */
+
+  /**
+   * Sets (or, with null, removes) a member's photo. False when it is not a
+   * member or not a photo we will keep (`decodePhoto`). Every new photo gets
+   * a new id, so the old URL stops working and nobody is shown a stale one
+   * from their cache.
+   */
+  setPhoto(session: SessionId, image: unknown): boolean {
+    if (!this.room.members[session]) return false;
+    if (image === null) {
+      this.photos.delete(session);
+      return true;
+    }
+    const photo = decodePhoto(image);
+    if (!photo) return false;
+    this.photos.set(session, { id: newPhotoId(), ...photo });
+    return true;
+  }
+
+  /** The photo with this id, if a member of this room still has it. */
+  photoById(id: string): StoredPhoto | null {
+    for (const photo of this.photos.values()) if (photo.id === id) return photo;
+    return null;
+  }
+
+  /* ---------- letting go of the absent ---------- */
+
+  /** Gone, with nothing waiting for them: the ones `LOBBY_GRACE_MS` is for. */
+  private exposed(session: SessionId): boolean {
+    const member = this.room.members[session];
+    return Boolean(member) && !member!.connected && !holdsSeat(this.room, session);
+  }
+
+  private maintainGrace(): void {
+    for (const [session, handle] of this.grace) {
+      if (this.exposed(session)) continue;
+      this.clock.clearTimeout(handle);
+      this.grace.delete(session);
+    }
+    for (const session of Object.keys(this.room.members)) {
+      if (!this.exposed(session) || this.grace.has(session)) continue;
+      this.grace.set(
+        session,
+        this.clock.setTimeout(() => this.lapse(session), this.graceMs),
+      );
+    }
+  }
+
+  /**
+   * Their grace ran out: they leave, exactly as if they had pressed Leave —
+   * the same "X left" everybody would have seen, and leadership handed on.
+   */
+  private lapse(session: SessionId): void {
+    this.grace.delete(session);
+    // Re-asked rather than assumed. Every route back cancels the timer, but
+    // it costs nothing to be sure before removing somebody.
+    if (!this.exposed(session)) return;
+    if (!this.serverCommand(session, { t: "leave" }).ok) return;
+    log.info("member lapsed", { room: this.code, session });
+    this.onDeparted(session);
   }
 
   /**
@@ -317,7 +562,30 @@ export class RoomRuntime {
       case "notice":
         this.notify(effect.text);
         break;
+      case "close":
+        this.closeOut(effect.by);
+        break;
     }
+  }
+
+  /**
+   * Tells everybody attached that the room is gone, and lets go of their
+   * sockets WITHOUT closing them. The registry destroys the room next
+   * (the router does, once this command returns), and its `dispose` closes
+   * whatever is still attached — which a client reads as the network
+   * dropping, reconnects, and loses the screen that says why. The sockets
+   * stay open for whatever each person does next.
+   *
+   * Whatever was last settled goes with it: a game ended by closing has just
+   * been settled by the `stopSession` before this, and one finished earlier
+   * is still on the lobby's SettleUp, which is about to vanish with the room.
+   */
+  private closeOut(by: string): void {
+    const settlement = this.settlement;
+    for (const connection of this.connections.values()) {
+      this.push(connection, { t: "left", reason: "room-closed", by, settlement });
+    }
+    this.connections.clear();
   }
 
   /* ---------- the game ---------- */
@@ -331,6 +599,9 @@ export class RoomRuntime {
     this.stopSession();
     const definition = gameEntry(gameId).create(settings);
     this.previous = null;
+    this.turnMs = this.room.turnTimer.on ? this.room.turnTimer.seconds * 1000 : null;
+    this.timeouts.clear();
+    this.timedOutTurn = null;
     this.sessionGameId = gameId;
     this.sessionSettings = gameEntry(gameId).parse(settings);
     this.settlement = null;
@@ -385,18 +656,76 @@ export class RoomRuntime {
       turnHoldMs: (state, seat) =>
         this.lastFramePlaybackMs +
         (definition.turnHold?.(state, seat) ?? DEFAULT_TURN_HOLD_MS),
+      // A person cannot make a forced move while the frame that handed it to
+      // them is still playing on their screen, so their wait starts
+      // after it. What is LEFT of it, not all of it: a seat that comes live
+      // long after the frame went out has already watched it.
+      //
+      // A deal adds the beat each screen waits before starting one
+      // (`READY_BEAT_MS`): the first move of a round is not the player's to
+      // make until their own deal has begun, and then played.
+      deadlineLeadMs: () =>
+        Math.max(
+          0,
+          this.lastFrameAt +
+            this.lastFramePlaybackMs +
+            (this.lastFrameDealt ? READY_BEAT_MS : 0) -
+            this.clock.now(),
+        ),
+      turnTimerMs: () => this.turnMs,
       emit: (frame) => this.onFrame(frame),
     });
 
     this.session = session;
     this.previous = session.snapshot();
     session.start();
+    this.syncTurnClock();
   }
 
   private stopSession(): void {
+    this.clearAutoContinue();
+    this.timeouts.clear();
+    this.timedOutTurn = null;
     this.session?.dispose();
     this.session = null;
     this.previous = null;
+  }
+
+  /**
+   * Deals the next round if nobody has pressed Continue within
+   * `AUTO_CONTINUE_MS` of the scorecard appearing (the user, 2026-09-29).
+   *
+   * The leader's own screen sends Continue the moment its ring empties, so
+   * this is the backstop — for a leader whose tab is hidden (its timers
+   * throttled) or who has simply walked off. Counted from when the card
+   * shows on their screen: the last move still has to play, then the board
+   * is held (`ROUND_END_HOLD_MS`), and only then does the card go up.
+   */
+  private syncAutoContinue(): void {
+    const session = this.session;
+    const state = session?.snapshot();
+    const waiting =
+      session !== null &&
+      !session.definition.isOver(state) &&
+      Boolean(session.definition.isRoundOver?.(state));
+    if (!waiting) {
+      this.clearAutoContinue();
+      return;
+    }
+    if (this.continueTimer !== null) return;
+    this.continueTimer = this.clock.setTimeout(
+      () => {
+        this.continueTimer = null;
+        this.session?.nextRound();
+      },
+      this.lastFramePlaybackMs + ROUND_END_HOLD_MS + AUTO_CONTINUE_MS + AUTO_CONTINUE_GRACE_MS,
+    );
+  }
+
+  private clearAutoContinue(): void {
+    if (this.continueTimer === null) return;
+    this.clock.clearTimeout(this.continueTimer);
+    this.continueTimer = null;
   }
 
   /**
@@ -423,6 +752,8 @@ export class RoomRuntime {
     this.previous = after;
     // Before `settled()`, which is what reads it to schedule the next turn.
     this.lastFramePlaybackMs = playbackMs(frame.events);
+    this.lastFrameAt = this.clock.now();
+    this.lastFrameDealt = frame.dealtRound !== null;
     // Played to a winner: settle up now, while everyone is still at the
     // table to see it on the winner's sheet. Once — frames after the end
     // (a show or muck) must not settle, or broadcast, all over again.
@@ -432,6 +763,78 @@ export class RoomRuntime {
       this.broadcastRoom();
     }
     session.settled();
+    this.syncAutoContinue();
+    // A hand starting or ending changes what the people in it may say, and
+    // `RoomView.chat` rides on the room, not the frame.
+    const inPlay = this.handInPlay();
+    if (inPlay !== this.handWasInPlay) {
+      this.handWasInPlay = inPlay;
+      this.broadcastRoom();
+    }
+    if (frame.timedOut !== undefined) this.countTimeout(frame.timedOut);
+    // A turn a timeout was counted for is over once somebody else is on turn.
+    if (this.timedOutTurn !== null && session.definition.currentSeat(after) !== this.timedOutTurn) {
+      this.timedOutTurn = null;
+    }
+    this.syncTurnClock();
+  }
+
+  /* ---------- the turn timer ---------- */
+
+  /**
+   * The turn timer made somebody's move. Two turns in a row and they have
+   * walked away: a bot takes their seat until they come back (the user,
+   * 2026-09-29), through the same live-signature edge a disconnect takes,
+   * so the table moves on at a bot's pace rather than a timer's.
+   *
+   * Counted by TURN, not by clock. Every move has a clock of its own, and a
+   * turn can be several moves — Rummy's draw and then its discard, a run of
+   * Dominoes draws — so counting clocks made a single turn away from the
+   * table "two in a row": one silent Rummy turn each was enough to end a
+   * two-person game in its first round.
+   */
+  private countTimeout(seat: SeatId): void {
+    if (this.timedOutTurn === seat) return;
+    this.timedOutTurn = seat;
+    const owner = this.room.game?.seatOwner[seat];
+    if (!owner) return;
+    const count = (this.timeouts.get(owner) ?? 0) + 1;
+    this.timeouts.set(owner, count);
+    if (count >= 2) {
+      this.timeouts.delete(owner);
+      this.serverCommand(owner, { t: "markIdle" });
+    }
+  }
+
+  /**
+   * Tells the table whose clock is running, when that has changed. Read
+   * from the session after it has settled, so it is the final answer for
+   * the position: a clear followed at once by a re-arm is never sent.
+   */
+  private syncTurnClock(): void {
+    const clock = this.session?.turnClock ?? null;
+    const key = clock?.key ?? null;
+    if (key === this.sentClockKey) return;
+    this.sentClockKey = key;
+    for (const viewer of this.room.game?.present ?? []) this.sendTurnClock(viewer);
+  }
+
+  /** The clock as it stands now, to one person — with the time actually left. */
+  private sendTurnClock(viewer: SessionId): void {
+    const connection = this.connections.get(viewer);
+    if (!connection) return;
+    const clock = this.session?.turnClock ?? null;
+    this.push(connection, {
+      t: "turnClock",
+      clock: clock
+        ? {
+            seat: clock.seat,
+            key: clock.key,
+            totalMs: clock.totalMs,
+            endsInMs: Math.max(0, clock.endsAt - this.clock.now()),
+          }
+        : null,
+    });
   }
 
   /**
@@ -596,19 +999,48 @@ export class RoomRuntime {
       t: "frame",
       frame: this.buildFrame({ seq: 0, events: [], lastAction: null, dealtRound: null }, viewer, now, now),
     });
+    // Arriving mid-move: the clock as it stands, never a fresh one.
+    this.sendTurnClock(viewer);
   }
 
-  submitAction(session: SessionId, action: unknown): { ok: boolean; error?: string } {
+  /**
+   * A person's move. A refusal is `silent` when there is nothing to tell
+   * them: see `LATE_PRESS_MS`.
+   */
+  submitAction(
+    session: SessionId,
+    action: unknown,
+  ): { ok: true } | { ok: false; error: string; silent?: true } {
     if (!this.session) return { ok: false, error: "no-game-running" };
     const seat = seatOf(this.room, session);
     if (seat === null) return { ok: false, error: "not-in-game" };
     // A spectator has no seat, so they never reach here; a seated player
     // who is not on turn is refused by the session's own gate.
     const result = this.session.submit(seat, action);
-    if (!result.ok) return { ok: false, error: result.reason };
+    if (!result.ok) {
+      // A move made for them a moment ago, and this is their own press
+      // arriving second: their last card after its wait, or their move for
+      // the position their clock ran out on. Nothing more to tell them — a
+      // forced move was the one they pressed, and a timeout's frame already
+      // says "You ran out of time". A second red toast saying so again ("not
+      // your turn", or the same news in other words) only reads as a second
+      // problem. A press the game would not have taken there either is a
+      // refusal in its own right, and is answered.
+      if (this.session.autoPlayed(seat, LATE_PRESS_MS, action)) {
+        return { ok: false, error: result.reason, silent: true };
+      }
+      return { ok: false, error: result.reason };
+    }
+    // A move they made themselves: they are here.
+    this.timeouts.delete(session);
+    // And if the timer had given their seat to a bot, a move is also
+    // "I'm back" — the session's gate asks whose turn it is, not who is live.
+    if (isIdle(this.room, session)) this.serverCommand(session, { t: "resume" });
     if (!result.animated) this.session.settled();
+    this.syncTurnClock();
     return { ok: true };
   }
+
 
   nextRound(session: SessionId): boolean {
     if (!this.session) return false;
@@ -670,7 +1102,11 @@ export class RoomRuntime {
       return {
         session: m.session,
         name: m.name,
-        connected: m.connected,
+        // Silent, as the user asked: somebody inside their grace looks
+        // exactly as they did, and simply goes if it runs out.
+        connected: m.connected || this.grace.has(m.session),
+        photo: this.photos.get(m.session)?.id ?? null,
+        idle: isIdle(room, m.session),
         seat,
         spectating: Boolean(game?.present.includes(m.session)) && seat === null,
         // The seat decides the side: the one they hold in a running game,
@@ -699,6 +1135,8 @@ export class RoomRuntime {
       inGame: Boolean(game?.present.includes(session)),
       youMayContinue: mayContinueRound(room, session),
       settlement: this.settlement,
+      chat: this.chatModeFor(session),
+      turnTimer: room.turnTimer,
     };
   }
 
@@ -741,6 +1179,8 @@ export class RoomRuntime {
       liveSeats: this.room.game
         ? Array.from({ length: this.room.game.seats }, (_, i) => isSeatLive(this.room, i))
         : [],
+      turnClock: this.session?.turnClock ?? null,
+      timeouts: Object.fromEntries(this.timeouts),
       // Enough of the table for a test to assert that something did or did
       // not move, without publishing the actual cards — this endpoint is
       // dev-only, but a dump that casually included every hand would be
@@ -757,6 +1197,11 @@ export class RoomRuntime {
   }
 
   dispose(): void {
+    for (const handle of this.grace.values()) this.clock.clearTimeout(handle);
+    this.grace.clear();
+    this.photos.clear();
+    this.chatLog = [];
+    this.chatTimes.clear();
     this.stopSession();
     for (const connection of this.connections.values()) connection.close();
     this.connections.clear();
