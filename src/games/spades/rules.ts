@@ -59,7 +59,7 @@ import {
   spadesDeck,
   type SpadesRules,
 } from "./cards";
-import { spadesBots } from "./bots";
+import { estimateTricks, spadesBots } from "./bots";
 import {
   HIDDEN_CARD,
   isBlindEligible,
@@ -739,6 +739,38 @@ export function forcedMove(state: SpadesState, seat: SeatId): SpadesAction | nul
   return legal.length === 1 ? legal[0]! : null;
 }
 
+/**
+ * What the turn timer plays for a person whose bid ran out (see
+ * `GameDefinition.timeoutAction`): never a nil, of either kind, and never a
+ * blind contract they did not choose (the user, 2026-10-02).
+ *
+ * The bot's own bid is a fine guess for a hand, but it bids nil when the
+ * hand is weak, and its blind bid is a blind nil four times in ten — worth
+ * 100 and 200 either way, and lost by the first trick that falls to a
+ * player who is not there to duck it. So:
+ *
+ * - The blind vote is "look". It defers, so it never overrules a partner
+ *   who is there and wants to go blind — except beside a vote that already
+ *   defers (a bot's: a person's is made firm by `completeAction`), where
+ *   deferring would hand the call to the bot's own preference.
+ * - Where the team has gone blind anyway, the lowest blind bid, never a
+ *   blind nil.
+ * - Otherwise the bot's count of the hand, at least one.
+ *
+ * The exchange and the play are the bot's moves, as everywhere else.
+ */
+export function timeoutAction(state: SpadesState, seat: SeatId): SpadesAction | null {
+  if (state.phase !== "bid" || state.exchange) return null;
+  if (blindVoteOpen(state, seat)) {
+    const partnerVote = state.blindVotes[partnerOf(seat)];
+    return { t: "blindVote", seat, blind: false, defer: !partnerVote?.defer };
+  }
+  if (isHiddenFromSelf(state, seat)) return { t: "blindBid", tricks: 6 };
+  const floor = minLegalBid(state, seat);
+  const count = estimateTricks(state.hands[seat] ?? [], state.rules);
+  return { t: "bid", tricks: Math.min(13, Math.max(1, floor, count)), nil: false };
+}
+
 export function legalActions(state: SpadesState, seat: SeatId): SpadesAction[] {
   // Before the `currentSeat` gate: the vote is open to both partners at
   // once, and `currentSeat` can only name one of them.
@@ -942,6 +974,7 @@ export function createSpades(
     reduce,
     legalActions,
     forcedMove,
+    timeoutAction,
     validate: validateByEnumeration(legalActions),
     completeAction,
     pieces,

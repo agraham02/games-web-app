@@ -636,7 +636,12 @@ export interface GameDefinition<S, A> {
    *
    * Poker is the exception (the user, 2026-09-29): an auto-play must never
    * spend a person's chips, so it checks when that is free and folds when it
-   * is not, the rule every online card room uses.
+   * is not, the rule every online card room uses. So is Spades' bidding
+   * (2026-10-02): never a nil or a blind contract for somebody who is not
+   * there to play it.
+   *
+   * Played as a bot's move is, straight to `reduce`, so it must be legal as
+   * it stands: nothing vets it on the way.
    */
   timeoutAction?(state: S, seat: SeatId): A | null;
 

@@ -323,6 +323,12 @@ whose clock is off or longer. Five things to know before touching it:
   `reduce`, past `completeAction`, or a timed-out Spades Blind Nil vote
   would be stamped a person's firm vote and overrule their partner. Poker
   overrides it (`timeoutAction`): check if free, else fold, never chips.
+  So does Spades' bidding (2026-10-02): never a nil of either kind and
+  never a blind contract for somebody who is not there — the vote is
+  "look" (firm only beside a bot's deferring vote, so it never overrules
+  a partner who is there), a team already blind bids 6, and otherwise the
+  bot's count of the hand, at least one. A `timeoutAction` is played as a
+  bot's move is, so it must be legal as it stands.
   The frame leads with "ran out of time" for everybody's toast and carries
   `timedOut`.
 - **Two in a row and a bot takes the seat** (`markIdle`, a server-only room

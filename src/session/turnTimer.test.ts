@@ -282,13 +282,20 @@ describe("every game, with nobody pressing anything", () => {
         expect(events[0]).toMatchObject({ t: "announce", text: "ran out of time" });
       }
       if (gameId === "spades") {
-        // A timed-out Blind Nil vote is a bot's vote: it defers. Made
-        // through `submit`, it would have been stamped a person's firm vote.
-        const votes = timedOut
-          .map((f) => f.lastAction?.action as SpadesAction)
-          .filter((a): a is Extract<SpadesAction, { t: "blindVote" }> => a.t === "blindVote");
+        // Never a nil, of either kind, and never a vote to go blind, for
+        // somebody who was not there (the user, 2026-10-02: Spades'
+        // `timeoutAction`). Made through `submit` rather than played as a
+        // bot's move, the first vote would also have been stamped firm.
+        const made = timedOut.map((f) => f.lastAction?.action as SpadesAction);
+        const votes = made.filter((a): a is Extract<SpadesAction, { t: "blindVote" }> => a.t === "blindVote");
         expect(votes.length, "no blind vote was ever timed out, so nothing was tested").toBeGreaterThan(0);
-        for (const v of votes) expect(v.defer).toBe(true);
+        for (const v of votes) expect(v.blind).toBe(false);
+        const bids = made.filter((a) => a.t === "bid" || a.t === "blindBid" || a.t === "blindNil");
+        expect(bids.length, "no bid was ever timed out, so nothing was tested").toBeGreaterThan(0);
+        for (const bid of bids) {
+          expect(bid.t).not.toBe("blindNil");
+          if (bid.t === "bid") expect(bid).toMatchObject({ nil: false, tricks: expect.any(Number) });
+        }
       }
     });
   }
