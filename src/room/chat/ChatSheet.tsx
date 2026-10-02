@@ -31,6 +31,7 @@ import { InfoSheet } from "@/ui/disclosure";
 import { Button } from "@/ui/primitives/Button";
 import { tintFor } from "../Roster";
 import { useKeyboardInset } from "./useKeyboardInset";
+import { edgeFade, useSidewaysScroll } from "./useSidewaysScroll";
 
 /** Past this few characters left, the composer says how many. */
 const COUNT_FROM = 20;
@@ -101,17 +102,25 @@ function Composer({ mode, onSend }: { mode: ChatMode; onSend: ChatSheetProps["on
   const text = cleanChatText(draft);
   const left = CHAT_MAX_CHARS - charCount(text);
   const sendable = !locked && chatTextProblem(text) === null;
+  const { ref: rowRef, edges } = useSidewaysScroll<HTMLDivElement>();
+  const fade = edgeFade(edges);
 
   return (
     <div className="flex flex-col gap-2">
       <div
+        ref={rowRef}
         role="group"
         aria-label="Quick replies"
         // Sideways, and the table must not take the swipe (`usePanZone`).
         data-pan-ignore
-        // `scroll-px-4`: snapping otherwise lines the first reply up with the
-        // row's edge rather than its padding, flush against the sheet.
-        className="-mx-4 flex touch-pan-x snap-x scroll-px-4 gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]"
+        // Snaps under a finger only: a mouse wheel's small steps and a mouse
+        // drag would each be snapped back to where they started
+        // (`useSidewaysScroll`). `scroll-px-4`: snapping otherwise lines the
+        // first reply up with the row's edge rather than its padding.
+        className="-mx-4 flex touch-pan-x scroll-px-4 gap-1.5 overflow-x-auto px-4 pb-1 select-none [scrollbar-width:none] pointer-coarse:snap-x"
+        // Whichever end has more replies beyond it fades out, so a row cut
+        // off at the sheet's edge reads as one that goes on.
+        style={{ maskImage: fade, WebkitMaskImage: fade }}
       >
         {QUICK_REPLIES.map((q) => {
           const off = locked && !q.tableSafe;

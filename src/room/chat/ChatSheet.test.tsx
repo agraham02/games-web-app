@@ -88,3 +88,67 @@ describe("the chat sheet", () => {
     expect(screen.getByLabelText("Message")).toHaveAttribute("placeholder", "No table talk until the hand is over");
   });
 });
+
+/**
+ * On a desktop the quick replies past the first few were out of reach (the
+ * user, 2026-10-01): the scrollbar is hidden, a wheel scrolls up and down,
+ * and a mouse cannot swipe. jsdom lays nothing out, so the row is given a
+ * width and a scroll position to move.
+ */
+describe("the quick replies, with a mouse", () => {
+  function row() {
+    const el = screen.getByRole("group", { name: "Quick replies" });
+    let left = 0;
+    Object.defineProperty(el, "scrollWidth", { configurable: true, value: 800 });
+    Object.defineProperty(el, "clientWidth", { configurable: true, value: 300 });
+    Object.defineProperty(el, "scrollLeft", {
+      configurable: true,
+      get: () => left,
+      set: (v: number) => {
+        left = Math.max(0, Math.min(500, v));
+      },
+    });
+    return el;
+  }
+
+  function mouse(type: string, el: Element, clientX: number) {
+    const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button: 0 });
+    Object.defineProperty(e, "pointerType", { value: "mouse" });
+    Object.defineProperty(e, "pointerId", { value: 1 });
+    el.dispatchEvent(e);
+  }
+
+  it("scrolls sideways under an up-and-down wheel, and keeps the page still", () => {
+    sheet();
+    const el = row();
+    const kept = fireEvent.wheel(el, { deltaY: 120 });
+    expect(el.scrollLeft).toBe(120);
+    expect(kept, "the page should not scroll as well").toBe(false);
+  });
+
+  it("leaves a trackpad's own sideways swipe to the browser", () => {
+    sheet();
+    const el = row();
+    expect(fireEvent.wheel(el, { deltaX: 40, deltaY: 3 })).toBe(true);
+    expect(el.scrollLeft).toBe(0);
+  });
+
+  it("drags with a mouse, and letting go over a reply does not send it", () => {
+    const onSend = sheet();
+    const el = row();
+    const chip = within(el).getByText("Good luck!");
+    mouse("pointerdown", chip, 200);
+    mouse("pointermove", chip, 150);
+    mouse("pointermove", chip, 80);
+    expect(el.scrollLeft).toBe(120);
+    mouse("pointerup", chip, 80);
+    fireEvent.click(chip);
+    expect(onSend).not.toHaveBeenCalled();
+
+    // The next ordinary press is a press again.
+    mouse("pointerdown", chip, 80);
+    mouse("pointerup", chip, 80);
+    fireEvent.click(chip);
+    expect(onSend).toHaveBeenCalledWith({ quick: expect.any(String) });
+  });
+});
