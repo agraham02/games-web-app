@@ -57,11 +57,13 @@ import {
   SLAM_LAND_MS,
   SLAM_TIMING,
   SLAM_TIMING_FINAL,
+  PRESS_KEYFRAMES,
+  PRESS_TIMING,
   prefersReducedMotion,
   supportsHover,
   TRANSITIONS,
 } from "@/motion/presets";
-import { onSlam } from "./fx";
+import { noteTap, onPress, onSlam } from "./fx";
 
 /** Below this on-screen width, pips become mud — draw the simple face. */
 const DETAIL_THRESHOLD_PX = 52;
@@ -226,6 +228,18 @@ function useSlamFx() {
     [animate, scope],
   );
 
+  // A press answered before the server has (`emitPress`), on the same
+  // wrapper the slam uses, so it composes over wherever the piece sits.
+  useEffect(
+    () =>
+      onPress(({ piece }) => {
+        const target = scope.current?.querySelector<HTMLElement>(fxSelector(piece));
+        if (!target || prefersReducedMotion()) return;
+        void animate(target, PRESS_KEYFRAMES, PRESS_TIMING);
+      }),
+    [animate, scope],
+  );
+
   return scope;
 }
 
@@ -233,12 +247,19 @@ export function PieceLayer({ onPieceTap }: PieceLayerProps) {
   const ids = usePieceIds();
   const geometry = useGeometry();
   const scope = useSlamFx();
+  // Noted, so a move this tap makes can answer it on the piece (`recentTap`).
+  const tap = onPieceTap
+    ? (id: PieceId) => {
+        noteTap(id);
+        onPieceTap(id);
+      }
+    : undefined;
   if (!geometry) return null;
 
   return (
     <div className="piece-layer" ref={scope}>
       {ids.map((id) => (
-        <Piece key={id} id={id} onTap={onPieceTap} />
+        <Piece key={id} id={id} onTap={tap} />
       ))}
     </div>
   );

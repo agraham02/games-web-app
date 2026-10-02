@@ -98,6 +98,44 @@ describe("the dice overlay", () => {
     expect(shown()).toEqual(real);
   });
 
+  it("tumbles from the press, before the result is known, and lands on it when it comes", () => {
+    // Online the roll is the server's: the dice must not sit still for the
+    // round trip (the user, 2026-10-02).
+    render(<LrcControls view={view} live={live} />);
+    act(() => emitDice({ seat: 0, faces: null, count: 3 }));
+    expect(shown()).toHaveLength(3);
+    const seen = new Set<string>();
+    for (let t = 0; t < 2_000; t += 50) {
+      seen.add(shown().join("|"));
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+    }
+    // Still tumbling, well past an ordinary tumble: it is waiting.
+    expect(seen.size).toBeGreaterThan(2);
+    act(() => emitDice({ seat: 0, faces: ["L", "C", "R"] }));
+    act(() => {
+      vi.advanceTimersByTime(DURATION.diceTumble * 1000);
+    });
+    expect(shown()).toEqual(["die showing L", "die showing C", "die showing R"]);
+  });
+
+  it("stops tumbling a throw whose result never comes", () => {
+    render(<LrcControls view={view} live={live} />);
+    act(() => emitDice({ seat: 0, faces: null, count: 2 }));
+    const after = (ms: number) => {
+      for (let t = 0; t < ms; t += 100) {
+        act(() => {
+          vi.advanceTimersByTime(100);
+        });
+      }
+      return shown().join("|");
+    };
+    // Given up (and fading out): nothing moves any more.
+    const settled = after(10_000);
+    expect(after(1_000)).toBe(settled);
+  });
+
   it("shows the result without the tumble under reduced motion", () => {
     vi.stubGlobal("matchMedia", (media: string) => ({
       matches: media.includes("reduce"),

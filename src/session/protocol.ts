@@ -29,7 +29,7 @@ import type { GameId, RawSettings } from "./registry";
 import type { Privacy, RoomCode, RoomError, SessionId, TurnTimer } from "./room";
 import type { ChatMessage, ChatMode } from "./chat";
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /* ============================================================
    Client -> server
@@ -99,8 +99,16 @@ export type ClientMessage =
   | ({ t: "setTurnTimer"; on?: boolean; seconds?: number } & Addressed)
   /** "I'm back" — after the turn timer handed your seat to a bot. */
   | ({ t: "resume" } & Addressed)
-  /** A move. `action` is the game's own action type, validated server-side. */
-  | ({ t: "action"; action: unknown } & Addressed)
+  /**
+   * A move. `action` is the game's own action type, validated server-side.
+   *
+   * `n` and `epoch` name it, so the page that made it can tell when it has
+   * been dealt with (`FrameView.handled`) — the page shows its own moves
+   * before the server has answered (see `predict.ts`), and has to know
+   * which answer is which. `n` counts this page's moves; `epoch` is new
+   * with every page load, so a reload never mistakes an old count for new.
+   */
+  | ({ t: "action"; action: unknown; n?: number; epoch?: string } & Addressed)
   | ({ t: "nextRound" } & Addressed)
   /**
    * `sent` is the client's own clock, echoed straight back in the `pong`,
@@ -132,6 +140,8 @@ export interface MemberView {
   photo: string | null;
   /** The turn timer has handed their seat to a bot until they come back. */
   idle: boolean;
+  /** Their connection is slow right now (see `LinkMonitor`). */
+  weak: boolean;
 }
 
 export interface RoomView {
@@ -249,6 +259,21 @@ export interface FrameView {
    * the redaction elsewhere is protecting.
    */
   lastAction: { seat: SeatId; action: unknown } | null;
+  /**
+   * The newest of the recipient's own moves the server has dealt with,
+   * taken or refused — on every frame, so a position sent after a reconnect
+   * still answers a move whose own answer was lost with the old socket.
+   * Absent for somebody who has made no numbered move.
+   */
+  handled?: MoveTag;
+  /** On the one frame a move of the recipient's produced: that move's `n`. */
+  answers?: number;
+}
+
+/** Names one of a page's moves — see the `action` message. */
+export interface MoveTag {
+  epoch: string;
+  n: number;
 }
 
 export type ServerErrorCode =
@@ -417,7 +442,22 @@ export type ServerMessage =
    * exactly like the game desyncing.
    */
   | { t: "superseded" }
-  | { t: "error"; code: ServerErrorCode; message: string; reqId?: string }
+  | {
+      t: "error";
+      code: ServerErrorCode;
+      message: string;
+      reqId?: string;
+      /**
+       * A refused move's own tag, so the page that showed it can take it
+       * back (see `predict.ts`).
+       */
+      move?: MoveTag;
+      /**
+       * Nothing to say about it: the move pressed had just been made for
+       * them (see `LATE_PRESS_MS`). The page still takes back what it showed.
+       */
+      quiet?: true;
+    }
   /** Somebody said something. To everybody in the room, lobby and table alike. */
   | { t: "chat"; message: ChatMessage }
   /**
@@ -572,11 +612,16 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return { t: "arrangeSeats", plan: plan as (SessionId | null)[], reqId };
     }
 
-    case "action":
+    case "action": {
       // The action itself is the game's business: `legalActions` and the
       // seat gate in `GameSession.submit` decide, and neither of them can
-      // be usefully anticipated here.
-      return { t: "action", action: data.action, reqId };
+      // be usefully anticipated here. Its tag is ours, and only kept whole.
+      const n = typeof data.n === "number" && Number.isSafeInteger(data.n) && data.n >= 0 ? data.n : undefined;
+      const epoch = typeof data.epoch === "string" && data.epoch.length <= 32 ? data.epoch : undefined;
+      return n !== undefined && epoch !== undefined
+        ? { t: "action", action: data.action, n, epoch, reqId }
+        : { t: "action", action: data.action, reqId };
+    }
 
     case "enterGame":
       return {

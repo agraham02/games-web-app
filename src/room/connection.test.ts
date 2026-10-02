@@ -90,6 +90,67 @@ describe("timing the round trip", () => {
   });
 });
 
+describe("this end's link", () => {
+  beforeEach(() => {
+    sockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.useFakeTimers();
+    // The link is timed by `performance.now`, which fake timers leave alone.
+    vi.spyOn(performance, "now").mockImplementation(() => Date.now());
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function connected() {
+    const connection = new RoomConnection("token-link");
+    const heard: boolean[] = [];
+    connection.subscribe({ onMessage: () => {}, onStatus: () => {}, onLink: (weak) => heard.push(weak) });
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    /** Waits for the next ping, then answers it `rtt` later. */
+    const answerNext = (rtt: number) => {
+      const seen = socket.count("ping");
+      while (socket.count("ping") === seen) vi.advanceTimersByTime(100);
+      const ping = socket.sent.filter((m) => m.t === "ping").at(-1)!;
+      vi.advanceTimersByTime(rtt);
+      socket.onmessage?.({ data: JSON.stringify({ t: "pong", sent: ping.sent }) });
+    };
+    return { connection, socket, heard, answerNext };
+  }
+
+  it("turns slow when a ping goes unanswered, and fine when answers come quickly", () => {
+    const { connection, heard, answerNext } = connected();
+    expect(connection.weak).toBe(false);
+    // The first probe goes at 300ms; nobody answers it.
+    vi.advanceTimersByTime(300 + 1_500 + 500); // unanswered, and the next check
+    expect(connection.weak).toBe(true);
+    expect(heard).toEqual([true]);
+
+    for (let i = 0; i < 3; i++) answerNext(40);
+    expect(connection.weak).toBe(false);
+    expect(heard).toEqual([true, false]);
+  });
+
+  it("turns slow on slow answers too, not only on none", () => {
+    const { connection, answerNext } = connected();
+    for (let i = 0; i < 3; i++) answerNext(700);
+    expect(connection.weak).toBe(true);
+  });
+
+  it("starts each socket fine: the strip, not the icon, says it is reconnecting", () => {
+    const { connection, socket, heard } = connected();
+    vi.advanceTimersByTime(300 + 1_500 + 500); // unanswered, and the next check
+    expect(connection.weak).toBe(true);
+    socket.close();
+    expect(connection.weak).toBe(false);
+    expect(heard.at(-1)).toBe(false);
+  });
+});
+
 describe("the keepalive", () => {
   beforeEach(() => {
     sockets.length = 0;
@@ -124,9 +185,9 @@ describe("the keepalive", () => {
     const { socket } = connected();
     vi.advanceTimersByTime(60_000);
     expect(socket.count("ping")).toBeGreaterThan(0);
-    // Comfortably under a 60s idle timeout, and nowhere near the router's
-    // 120-per-10-seconds budget.
-    expect(socket.count("ping")).toBeLessThan(5);
+    // Every few seconds, since each one also times the link (2026-10-02) —
+    // and nowhere near the router's 120-per-10-seconds budget.
+    expect(socket.count("ping")).toBeLessThan(20);
   });
 
   it("does not queue pings while the socket is down", () => {

@@ -191,6 +191,15 @@ export interface GameSessionOptions<S, A> {
    */
   turnTimerMs?: () => number | null;
   /**
+   * What a seat's connection costs it, in ms — added to its turn clock and
+   * to a forced move's wait, so a slow link does not eat into the time a
+   * player has to think (the user, 2026-10-02). The server's measure of
+   * that seat's round trip; offline nothing. Not added to a game's own
+   * deadline: Rummy's claim race and BS's window are timed against bots,
+   * and stretching them for one seat would change who wins the race.
+   */
+  latencyMs?: (seat: SeatId) => number;
+  /**
    * When false a bot's turn is computed as soon as it is reachable but
    * never auto-revealed — the driver must call `advance()`. Dev affordance
    * for stepping a game one turn at a time.
@@ -722,8 +731,19 @@ export class GameSession<S, A> {
   private turnDeadline(seat: SeatId): { ms: number; key: string; totalMs: number } | null {
     const totalMs = this.opts.turnTimerMs?.() ?? null;
     if (totalMs === null) return null;
-    const lead = Math.max(0, this.opts.deadlineLeadMs?.() ?? 0);
+    const lead = this.leadFor(seat);
     return { ms: lead + totalMs + TURN_GRACE_MS, key: `turn:${this.seq}:${seat}`, totalMs };
+  }
+
+  /**
+   * How long from now until this seat can act: what is still playing on
+   * screens (`deadlineLeadMs`), and what its connection costs it
+   * (`latencyMs`). Counted once, when a wait starts — the anchor keeps it.
+   */
+  private leadFor(seat: SeatId): number {
+    return (
+      Math.max(0, this.opts.deadlineLeadMs?.() ?? 0) + Math.max(0, this.opts.latencyMs?.(seat) ?? 0)
+    );
   }
 
   /**
@@ -738,8 +758,7 @@ export class GameSession<S, A> {
   private forcedDeadline(seat: SeatId): { ms: number; action: A; key: string } | null {
     const action = this.definition.forcedMove?.(this.state, seat) ?? null;
     if (action === null) return null;
-    const lead = Math.max(0, this.opts.deadlineLeadMs?.() ?? 0);
-    return { ms: lead + FORCED_MOVE_MS, action, key: `forced:${this.seq}:${seat}` };
+    return { ms: this.leadFor(seat) + FORCED_MOVE_MS, action, key: `forced:${this.seq}:${seat}` };
   }
 
   /**

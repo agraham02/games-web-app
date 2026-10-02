@@ -24,6 +24,7 @@
  */
 
 import { Crown, Eye, GripVertical, UserMinus } from "lucide-react";
+import { WeakLinkIcon } from "@/ui/primitives/WeakLinkIcon";
 import { Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { MemberView } from "@/session/protocol";
@@ -356,6 +357,7 @@ function MemberCells({
           {m.isLeader ? (
             <Crown size={13} className="shrink-0 text-brass-300" aria-label="Party leader" />
           ) : null}
+          <WeakLinkIcon show={m.weak && m.connected} label={`${m.name}'s connection is slow`} size={13} className="shrink-0" />
         </span>
         <span className="truncate text-xs text-bone-400">
           {status}

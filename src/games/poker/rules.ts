@@ -869,6 +869,8 @@ export function createPoker(
     pieces,
     placements,
     playerView,
+    // Showing turns over cards; mucking ends a showdown other hands decide.
+    unpredictable: (_state, _seat, action) => action.t === "show" || action.t === "muck",
     currentSeat,
     isOver,
     startRound,

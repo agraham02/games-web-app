@@ -33,7 +33,7 @@ import { useTableStore } from "@/table/store";
 import type { SpadesState } from "@/games/spades/types";
 import { EMPTY_ROOM_TTL_MS, RoomRegistry } from "./RoomRegistry";
 import { LOBBY_GRACE_MS } from "@/session/room";
-import type { Connection } from "./RoomRuntime";
+import { MAX_LATENCY_ALLOWANCE_MS, type Connection } from "./RoomRuntime";
 import { makePeer, Router, type Peer } from "./router";
 
 /** Records everything sent, and can pretend to be a socket that has stalled. */
@@ -2104,5 +2104,163 @@ describe("the server, in process", () => {
       // And the room is still usable afterwards.
       expect(() => send(peer, { t: "rename", name: "Ada" })).not.toThrow();
     });
+  });
+});
+
+/** A socket whose link the test controls — see `LinkMonitor`. */
+class LinkedConnection extends FakeConnection {
+  rtt: number | null = null;
+  slow = false;
+  private readonly listeners = new Set<() => void>();
+  rttMs(): number | null {
+    return this.rtt;
+  }
+  weak(): boolean {
+    return this.slow;
+  }
+  onWeakChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  setWeak(weak: boolean): void {
+    this.slow = weak;
+    for (const listener of this.listeners) listener();
+  }
+}
+
+describe("a slow link", () => {
+  /** Ada and Bo at a timed Spades table, each on a socket the test controls. */
+  function table(adaRtt: number | null) {
+    const clock = new TestClock();
+    const registry = new RoomRegistry({ clock, seed: 4242 });
+    const router = new Router(registry, () => clock.now());
+    const say = (peer: Peer, message: unknown) => router.onMessage(peer, JSON.stringify(message));
+    const ada = new LinkedConnection();
+    ada.rtt = adaRtt;
+    const bo = new LinkedConnection();
+    const adaPeer = makePeer(ada, 0);
+    const boPeer = makePeer(bo, 0);
+    say(adaPeer, { t: "hello", token: "ada", protocol: PROTOCOL_VERSION });
+    say(adaPeer, { t: "createRoom", name: "Ada" });
+    const code = ada.last("room")!.room.code;
+    say(boPeer, { t: "hello", token: "bo", protocol: PROTOCOL_VERSION });
+    say(boPeer, { t: "joinRoom", code, name: "Bo" });
+    say(adaPeer, { t: "setTurnTimer", on: true, seconds: 5 });
+    say(adaPeer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+    return { clock, registry, say, ada, bo, adaPeer, code };
+  }
+
+  it("is shown to the whole room, once each time it changes", () => {
+    const t = table(null);
+    const rooms = () => [t.ada.all("room").length, t.bo.all("room").length];
+    const before = rooms();
+    t.ada.setWeak(true);
+    expect(rooms()).toEqual([before[0]! + 1, before[1]! + 1]);
+    const ada = registryMember(t.bo, "Ada");
+    expect(ada.weak).toBe(true);
+    expect(registryMember(t.bo, "Bo").weak).toBe(false);
+    t.ada.setWeak(false);
+    expect(registryMember(t.ada, "Ada").weak).toBe(false);
+  });
+
+  it("stops being heard once the socket has gone", () => {
+    const t = table(null);
+    t.say(t.adaPeer, { t: "leaveRoom" });
+    const count = t.bo.all("room").length;
+    t.ada.setWeak(true);
+    expect(t.bo.all("room").length, "a socket that left still broadcast").toBe(count);
+  });
+
+  it("adds its round trip to that seat's clock, capped, and to no one else's", () => {
+    // Played twice from the same seed: once on a good link, once with Ada's
+    // round trip far past the cap. Only Ada's clocks may differ, by the cap.
+    const firstClocks = (adaRtt: number | null) => {
+      const t = table(adaRtt);
+      t.say(t.adaPeer, { t: "startGame" });
+      const game = () => t.registry.get(t.code)!.room.game!;
+      const adaSession = t.registry.sessionFor("ada");
+      const seen: Record<string, number> = {};
+      for (let i = 0; i < 4_000 && Object.keys(seen).length < 2; i++) {
+        const c = t.ada.last("turnClock")?.clock;
+        if (c) {
+          const who = game().seatOwner[c.seat] === adaSession ? "ada" : "bo";
+          seen[who] ??= c.endsInMs + t.clock.now();
+        }
+        t.clock.advance(50);
+      }
+      return seen;
+    };
+    const fast = firstClocks(null);
+    const slow = firstClocks(60_000);
+    expect(Object.keys(fast).sort()).toEqual(["ada", "bo"]);
+    expect(slow.ada! - fast.ada!).toBe(MAX_LATENCY_ALLOWANCE_MS);
+    expect(slow.bo).toBe(fast.bo);
+  });
+});
+
+function registryMember(conn: FakeConnection, name: string) {
+  return conn.last("room")!.room.members.find((m) => m.name === name)!;
+}
+
+describe("numbered moves", () => {
+  /** Ada and Bo at Spades, the table stepped on until one of them is on turn. */
+  function onTurn() {
+    const clock = new TestClock();
+    const registry = new RoomRegistry({ clock, seed: 4242 });
+    const router = new Router(registry, () => clock.now());
+    const say = (peer: Peer, message: unknown) => router.onMessage(peer, JSON.stringify(message));
+    const people = ["ada", "bo"].map((token) => {
+      const conn = new FakeConnection();
+      const peer = makePeer(conn, 0);
+      say(peer, { t: "hello", token, protocol: PROTOCOL_VERSION });
+      return { token, conn, peer };
+    });
+    const [ada, bo] = people as [(typeof people)[0], (typeof people)[0]];
+    say(ada.peer, { t: "createRoom", name: "Ada" });
+    say(ada.peer, { t: "setTurnTimer", on: false });
+    say(bo.peer, { t: "joinRoom", code: ada.conn.last("room")!.room.code, name: "Bo" });
+    say(ada.peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+    say(ada.peer, { t: "startGame" });
+    const rules = createSpades();
+    for (let i = 0; i < 2_000; i++) {
+      const frame = ada.conn.last("frame")?.frame;
+      const seat = frame?.currentSeat;
+      const mover = people.find((p) => p.conn.last("frame")?.frame.seat === seat);
+      if (mover && seat !== null && seat !== undefined) {
+        const state = mover.conn.last("frame")!.frame.state as SpadesState;
+        if (rules.legalActions(state, seat).length > 0) {
+          const other = mover === ada ? bo : ada;
+          return { say, clock, rules, mover, other, seat, state };
+        }
+      }
+      clock.advance(50);
+    }
+    throw new Error("nobody came on turn");
+  }
+
+  it("tells the mover, and only the mover, which frame their move made", () => {
+    const t = onTurn();
+    const action = t.rules.legalActions(t.state, t.seat)[0]!;
+    t.say(t.mover.peer, { t: "action", action, n: 7, epoch: "e1" });
+    const mine = t.mover.conn.last("frame")!.frame;
+    expect(mine.answers).toBe(7);
+    expect(mine.handled).toEqual({ epoch: "e1", n: 7 });
+    const theirs = t.other.conn.last("frame")!.frame;
+    expect(theirs.answers).toBeUndefined();
+    expect(theirs.handled).toBeUndefined();
+    // Later frames still say it was dealt with, but answer nothing.
+    t.clock.advance(5_000);
+    const later = t.mover.conn.last("frame")!.frame;
+    expect(later.handled).toEqual({ epoch: "e1", n: 7 });
+    expect(later.answers).toBeUndefined();
+  });
+
+  it("hands a refused move's tag back, so the page can take back what it showed", () => {
+    const t = onTurn();
+    t.say(t.other.peer, { t: "action", action: { t: "play", card: "SA" }, n: 3, epoch: "e2" });
+    const refusal = t.other.conn.last("error")!;
+    expect(refusal.code).toBe("move-refused");
+    expect(refusal.move).toEqual({ epoch: "e2", n: 3 });
+    expect(refusal.quiet).toBeUndefined();
   });
 });

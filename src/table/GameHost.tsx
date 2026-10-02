@@ -303,6 +303,12 @@ export function GameHostView<S, A>({
   // doc). An effect, not a render-time write, for the same tearing
   // reason every other store write in this app avoids doing it inline —
   // see useChoreographer's own comment on exactly this.
+  // A move on its way that cannot be shown yet: the bar's buttons go off
+  // (`HandZone`) until it is answered.
+  useEffect(() => {
+    useTableStore.getState().setMoveInFlight(live.sending);
+  }, [live.sending]);
+  useEffect(() => () => useTableStore.getState().setMoveInFlight(false), []);
   const handLive = handActive ? handActive(live) : live.isHeroTurn;
   useEffect(() => {
     const store = useTableStore.getState();

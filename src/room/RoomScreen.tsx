@@ -31,6 +31,7 @@ import { Button } from "@/ui/primitives/Button";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { cleanCode } from "@/ui/primitives/TextField";
 import { ConnectionNotice } from "./ConnectionNotice";
+import { WeakLinkIcon } from "@/ui/primitives/WeakLinkIcon";
 import { readSavedName, takeEntryIntent, type EntryIntent } from "./entry";
 import { Lobby } from "./Lobby";
 import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
@@ -175,7 +176,21 @@ export function RoomScreen({ code }: { code?: string }) {
     setSeen({ code: room?.code ?? null, id: api.chat.at(-1)?.id ?? 0 });
     setChatOpen(false);
   };
-  const chatButton = <ChatButton unread={unread} onClick={() => setChatOpen(true)} />;
+  // Your own slow link, beside Chat in the top-right corner (the user,
+  // 2026-10-02). Only while connected: the Reconnecting strip owns the rest.
+  const chatButton = (
+    <>
+      <WeakLinkIcon
+        show={api.weakLink && api.status === "open"}
+        label="Your connection is slow"
+        size={18}
+        // A chip the size of the buttons beside it: bare, the glyph read as
+        // a stray dot in the corner (seen in Chrome, 2026-10-02).
+        className="h-8 w-8 rounded-full bg-felt-950/55 ring-1 ring-warn/40"
+      />
+      <ChatButton unread={unread} onClick={() => setChatOpen(true)} />
+    </>
+  );
 
   // Keep the address bar honest. A room reached by code, created fresh, or
   // rejoined automatically on reconnect should all end up with the code in
@@ -263,7 +278,7 @@ export function RoomScreen({ code }: { code?: string }) {
           Outside the screen's `Reveal`, whose transform would otherwise make
           `fixed` mean "fixed to the fading screen". Within the lobby's top
           padding, so it sits over nothing. */}
-      {screen === "lobby" ? <div className="fixed top-2 right-2 z-40">{chatButton}</div> : null}
+      {screen === "lobby" ? <div className="fixed top-2 right-2 z-40 flex gap-2">{chatButton}</div> : null}
       <ChatSheet
         open={chatOpen && room !== null}
         onClose={closeChat}

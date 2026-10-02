@@ -29,3 +29,30 @@ describe("SeatRing and the turn timer", () => {
     expect(container.querySelectorAll('[data-testid="countdown-ring"]')).toHaveLength(0);
   });
 });
+
+describe("SeatRing and a slow link", () => {
+  it("marks the pod of somebody whose connection is slow, and only theirs", () => {
+    const players: SeatView[] = [0, 1, 2, 3].map((seat) => ({
+      seat,
+      name: `P${seat}`,
+      colour: "red",
+      weakLink: seat === 1,
+    }));
+    const { getAllByRole } = render(<SeatRing players={players} />);
+    expect(getAllByRole("img", { name: /connection is slow/ }).map((e) => e.getAttribute("aria-label"))).toEqual([
+      "P1's connection is slow",
+    ]);
+  });
+
+  it("says nothing of the link once a bot is playing the seat", () => {
+    const players: SeatView[] = [0, 1, 2, 3].map((seat) => ({
+      seat,
+      name: `P${seat}`,
+      colour: "red",
+      weakLink: seat === 1,
+      away: seat === 1,
+    }));
+    const { queryAllByRole } = render(<SeatRing players={players} />);
+    expect(queryAllByRole("img", { name: /connection is slow/ })).toHaveLength(0);
+  });
+});

@@ -37,6 +37,7 @@ function table<S, A>(opts: {
   seed?: number;
   turnMs?: number | null;
   lead?: (now: number) => number;
+  latency?: (seat: SeatId) => number;
   isSeatLive?: (seat: SeatId) => boolean;
 }) {
   const clock = new TestClock();
@@ -50,6 +51,7 @@ function table<S, A>(opts: {
     turnHoldMs: () => 0,
     turnTimerMs: () => (opts.turnMs === undefined ? 5_000 : opts.turnMs),
     deadlineLeadMs: opts.lead ? () => opts.lead!(clock.now()) : undefined,
+    latencyMs: opts.latency,
     emit: (frame) => {
       frames.push(frame);
       session.settled();
@@ -131,6 +133,39 @@ describe("the turn timer, to the millisecond", () => {
     expect(session.snapshot(), "fired early").toBe(before);
     clock.advance(1);
     expect(session.snapshot()).not.toBe(before);
+  });
+
+  it("gives a slow connection its round trip back, on the clock everybody sees", () => {
+    // The user, 2026-10-02: a slow connection must not cost a player turn
+    // time. The move reaches them late and their answer comes back late.
+    const definition = createSpades();
+    const probe = table({ definition, seats: 4 });
+    probe.session.start();
+    const slow = definition.currentSeat(probe.session.snapshot())!;
+
+    const { clock, session } = table({
+      definition,
+      seats: 4,
+      latency: (seat) => (seat === slow ? 600 : 0),
+    });
+    session.start();
+    expect(session.turnClock!.endsAt).toBe(clock.now() + 600 + 5_000);
+    const before = session.snapshot();
+    clock.advance(600 + 5_000 + TURN_GRACE_MS - 1);
+    expect(session.snapshot(), "fired early").toBe(before);
+    clock.advance(1);
+    expect(session.snapshot()).not.toBe(before);
+    // The next seat's link is fine: no allowance.
+    expect(session.turnClock!.endsAt).toBe(clock.now() + 5_000);
+  });
+
+  it("counts a connection's allowance once, not again on every settle", () => {
+    const { clock, session } = table({ definition: createSpades(), seats: 4, latency: () => 600 });
+    session.start();
+    const endsAt = session.turnClock!.endsAt;
+    clock.advance(2_000);
+    session.settled();
+    expect(session.turnClock!.endsAt).toBe(endsAt);
   });
 
   it("is never armed for a bot, nor shown for one", () => {

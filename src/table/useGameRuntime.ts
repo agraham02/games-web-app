@@ -264,6 +264,13 @@ export interface GameRuntime<S, A> {
    * move" are opposite states and `busy` is true in both.
    */
   animating: boolean;
+  /**
+   * A move of the hero's is on its way and cannot be shown until it is
+   * answered (online only — see `session/predict.ts`). The action bar's
+   * buttons are off meanwhile (`HandZone`). Offline a move is answered in
+   * the same tick, so this is always false.
+   */
+  sending: boolean;
   /** Call with the hero's chosen action. Bot turns are handled internally. */
   submitAction: (action: A) => void;
   /** The runtime's own persistent rng. A human path needing randomness
@@ -578,6 +585,7 @@ export function useGameRuntime<S, A>(
     busy: choreographer.isPlaying || (!isOver && currentSeat !== HERO),
     currentSeat: isOver ? null : currentSeat,
     animating: choreographer.isPlaying,
+    sending: false,
     submitAction,
     rng: session.rng,
     skip: choreographer.skip,

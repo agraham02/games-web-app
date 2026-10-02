@@ -308,7 +308,12 @@ whose clock is off or longer. Five things to know before touching it:
 - **When it starts.** After what is still playing of the frame that handed
   the move over (`deadlineLeadMs`), plus the ready beat for a round's first
   move (`READY_BEAT_MS`, shared from `motion/choreographer.ts`) — nobody's
-  seconds are spent watching a deal.
+  seconds are spent watching a deal. Plus that seat's round trip
+  (`latencyMs`, from the server's own websocket pings, capped at 1.5s), so
+  a slow connection costs no turn time (2026-10-02). And a screen draws a
+  clock only once it has finished showing the move and names that seat on
+  turn (`useShownTurnClock`): the server arms it at broadcast, which put
+  the ring on the next person while a bot was still thinking.
 - **It is never refilled.** Keyed `turn:${seq}:${seat}` and anchored with
   the span it STARTED with: re-derived on a re-settle, a span that includes
   a shrinking lead lost the elapsed part twice (fixed for forced moves too,
@@ -348,6 +353,44 @@ refill, idle, late move), `scripts/ws-harness.ts` (real sockets, including
 a move landing inside the grace on a slow line), and an e2e with a 600ms
 round trip through `routeWebSocket`. Existing room tests that park on a
 silent player switch the timer off (`host()` in `router.test.ts`).
+
+### Your own move is shown before the server answers
+
+A move used to sit still for a round trip (the user's playtest on a weak
+connection, 2026-10-02). Now the page predicts its own moves — client-side
+prediction with server reconciliation, the standard netcode answer:
+
+- **`session/predict.ts`** runs the game's own `reduce` on the viewer's
+  state, which works because `playerView` keeps the state's shape with
+  placeholders for what is hidden. The *gesture* (the mover's own pieces
+  moving, plus a claim's toast when the whole move is known) plays at once;
+  the *state* is predicted only when no event names a hidden piece and the
+  round goes on. A race or a move `completeAction` rewrites opts out with
+  `GameDefinition.unpredictable`.
+- **`predict.test.ts` is the contract**: every game, played through the
+  real server, every prediction held to the frame that answers it, with a
+  floor on how many moves each game actually predicts. A new game, or a new
+  action, has to pass it — and if it cannot, opt the action out.
+- **The wire** (protocol 4): a move carries `{n, epoch}`; every frame tells
+  its viewer the newest move `handled`; the frame a move produced says
+  `answers`; a refusal hands the tag back (`quiet` when the move had just
+  been made for them, which used to be silent).
+- **`useOnlineRuntime`** draws the gesture through its own choreographer,
+  renders the predicted state (or locks input — `GameRuntime.sending`, which
+  `HandZone` turns into disabled buttons), strips what was shown from the
+  answering frame (`afterShown`), re-applies unanswered gestures over any
+  board adopted meanwhile, slides a refused move back, and stops believing
+  a move nobody answers in 8s. A move it cannot show still moves on the
+  press: the tapped piece dips (`emitPress`), LRC's dice tumble from Roll.
+
+### Frames stay whole; the socket is compressed
+
+A frame is a whole per-viewer snapshot (5–8KB of JSON in a card game), and
+that is load-bearing: a backed-up socket may DROP one, a lagging client
+trims its backlog, a reconnect sends one position — all safe only because
+any frame stands alone. So "smaller messages" is permessage-deflate with a
+32KB shared window (`wsServer.ts`), measured at 100–250 bytes a turn, ~30x.
+Delta frames would save 20–40% more and break that property; don't.
 
 ### The turn gate and the action gate are different questions
 

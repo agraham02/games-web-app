@@ -368,6 +368,8 @@ export function createLrc(target: number = LRC_DEFAULT_TARGET): GameDefinition<L
     // Bound to the state at submit time: the number of dice depends on how
     // many chips the seat still holds, which only the state knows.
     completeAction,
+    // The dice are rolled on the server (`completeAction`).
+    unpredictable: () => true,
     currentSeat,
     isOver,
     startRound,
