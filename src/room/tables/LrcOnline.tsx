@@ -35,7 +35,7 @@ import {
   type LrcView,
 } from "@/app/play/lrc/table";
 import { tintFor } from "../Roster";
-import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, autoContinueFor, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { SettleUp } from "../SettleUp";
 import { TableMenu } from "./TableMenu";
@@ -93,6 +93,7 @@ export function LrcOnline({ api, room, frame, corner }: OnlineTableProps) {
         gameTitle={GAMES[room.gameId ?? "lrc"].name}
         viewerSeat={frame.seat}
         serverDriven
+        autoContinueMs={autoContinueFor(room)}
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}

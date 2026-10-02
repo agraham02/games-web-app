@@ -61,6 +61,6 @@ describe("the quick replies", () => {
 
   it("leave something to say during a hand, and only the social things", () => {
     const safe = QUICK_REPLIES.filter((q) => q.tableSafe).map((q) => q.text);
-    expect(safe).toEqual(["😂", "👋", "Good luck!", "Thanks!", "brb", "Back!"]);
+    expect(safe).toEqual(["😂", "👋", "Good luck!", "Hurry up!", "brb", "I'm back!"]);
   });
 });

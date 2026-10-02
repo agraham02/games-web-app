@@ -66,7 +66,7 @@ import type {
 } from "@/session/protocol";
 import { seatNets, settleUp, type Stint } from "@/session/settle";
 import type { Clock, TimerHandle } from "@/session/clock";
-import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
+import { AUTO_CONTINUE_GRACE_MS, ROUND_END_HOLD_MS, autoContinueMsFor } from "@/session/roundEnd";
 import { log } from "./log";
 import { decodePhoto, newPhotoId, type StoredPhoto } from "./photo";
 import {
@@ -718,8 +718,14 @@ export class RoomRuntime {
         this.continueTimer = null;
         this.session?.nextRound();
       },
-      this.lastFramePlaybackMs + ROUND_END_HOLD_MS + AUTO_CONTINUE_MS + AUTO_CONTINUE_GRACE_MS,
+      this.lastFramePlaybackMs + ROUND_END_HOLD_MS + this.autoContinueMs() + AUTO_CONTINUE_GRACE_MS,
     );
+  }
+
+  /** What the scorecard waits: longer in a partnership game. See `autoContinueMsFor`. */
+  private autoContinueMs(): number {
+    const teams = this.sessionGameId ? gameEntry(this.sessionGameId).teams(this.sessionSettings) : false;
+    return autoContinueMsFor(teams);
   }
 
   private clearAutoContinue(): void {

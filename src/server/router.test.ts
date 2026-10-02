@@ -19,7 +19,12 @@ import { TestClock } from "@/session/clock";
 import { READY_BEAT_MS, playbackMs } from "@/motion/choreographer";
 import { DEFAULT_TURN_HOLD_MS, FORCED_MOVE_MS, TURN_GRACE_MS } from "@/session/GameSession";
 import { PROTOCOL_VERSION, type FrameView, type ServerMessage, type TurnClockView } from "@/session/protocol";
-import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
+import {
+  AUTO_CONTINUE_GRACE_MS,
+  AUTO_CONTINUE_MS,
+  AUTO_CONTINUE_TEAMS_MS,
+  ROUND_END_HOLD_MS,
+} from "@/session/roundEnd";
 import { createSpades } from "@/games/spades/rules";
 import { GAMES } from "@/session/registry";
 import type { PlacementMap } from "@/engine/types";
@@ -1180,11 +1185,11 @@ describe("the server, in process", () => {
       // LRC, because every move in it is forced: a room of people who never
       // press anything plays itself to each scorecard, and the only thing
       // left to wait on is Continue.
-      function table(gameId: "lrc" | "poker", settings: Record<string, unknown>) {
+      function table(gameId: "lrc" | "poker" | "spades", settings: Record<string, unknown>, seats = 3) {
         const h = host("p1");
         const p2 = peerFor("p2");
         send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
-        send(h.peer, { t: "selectGame", gameId, settings, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "selectGame", gameId, settings, seats, difficulty: "steady" });
         // When each frame went out: the server counts the scorecard's twenty
         // seconds from there, plus what that frame takes to play.
         const stamps: Array<{ at: number; frame: FrameView }> = [];
@@ -1267,6 +1272,35 @@ describe("the server, in process", () => {
         expect(roundOf(runtime), "dealt early, by the first scorecard's timer").toBe(second);
         clock.advance(1);
         expect(roundOf(runtime)).toBe(second + 1);
+      });
+
+      it("thirty seconds in a partnership game, where table talk comes back", () => {
+        // Two people play their first legal move; the bots play the rest.
+        const { h, p2, stamps, runtime } = table("spades", {}, 4);
+        const rules = GAMES.spades.create(GAMES.spades.parse({}));
+        const people = [h, p2];
+        let hit: { at: number; frame: FrameView } | undefined;
+        for (let i = 0; i < 20_000 && !hit; i++) {
+          hit = stamps.find((x) => x.frame.isRoundOver && !x.frame.isOver);
+          if (hit) break;
+          const seat = (runtime.debugDump().table as { currentSeat: number | null }).currentSeat;
+          const who = people.find((p) => p.conn.last("frame")?.frame.seat === seat);
+          if (who && seat !== null) {
+            const legal = rules.legalActions(who.conn.last("frame")!.frame.state as SpadesState, seat);
+            if (legal[0]) send(who.peer, { t: "action", action: legal[0] });
+          }
+          clock.advance(50);
+        }
+        expect(hit, "no hand ended").toBeDefined();
+        const round = roundOf(runtime);
+        const due = hit!.at + playbackMs(hit!.frame.events) + ROUND_END_HOLD_MS + AUTO_CONTINUE_GRACE_MS;
+
+        // Half a second either side: the point is thirty seconds, not twenty,
+        // and a bot's last frame measures a little differently from the hit's.
+        clock.advance(due + AUTO_CONTINUE_MS + 500 - clock.now());
+        expect(roundOf(runtime), "still waiting, past the twenty seconds other games get").toBe(round);
+        clock.advance(AUTO_CONTINUE_TEAMS_MS - AUTO_CONTINUE_MS);
+        expect(roundOf(runtime), "the next hand should have been dealt").toBe(round + 1);
       });
 
       it("leaves nothing behind when the leader ends the game during it", () => {

@@ -42,7 +42,8 @@ import { piecesNamed, redactPlacements, sentinelFor } from "@/session/redact";
 import { applyEventToTable } from "@/table/applyEvent";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
-import { ROUND_END_HOLD_MS } from "@/session/roundEnd";
+import { ROUND_END_HOLD_MS, autoContinueMsFor } from "@/session/roundEnd";
+import { GAMES } from "@/session/registry";
 
 /**
  * How many frames may pile up before the client stops watching history and
@@ -675,6 +676,15 @@ export function awayFrom(frame: FrameView): (seat: SeatId) => boolean {
 export function botFrom(frame: FrameView): (seat: SeatId) => boolean {
   const bots = new Set(frame.botSeats);
   return (seat) => bots.has(seat) && frame.seatNames[seat] == null;
+}
+
+/**
+ * How long this room's scorecard waits before the next round deals itself:
+ * the same answer the server counts to (`RoomRuntime.autoContinueMs`).
+ */
+export function autoContinueFor(room: RoomView): number {
+  const entry = room.gameId ? GAMES[room.gameId] : null;
+  return autoContinueMsFor(entry ? entry.teams(entry.parse(room.settings)) : false);
 }
 
 /**

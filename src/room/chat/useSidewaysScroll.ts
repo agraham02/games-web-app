@@ -25,7 +25,12 @@ import { useEffect, useRef, useState } from "react";
 /** How far a mouse moves, pressed, before the press is a drag. */
 const DRAG_FROM_PX = 5;
 
-export function useSidewaysScroll<T extends HTMLElement>() {
+/**
+ * `watch` is whatever decides what is in the row: when it changes the row is
+ * measured again, since a row that gains or loses items does not change size
+ * itself, and nothing else would notice its ends had moved.
+ */
+export function useSidewaysScroll<T extends HTMLElement>(watch?: unknown) {
   const ref = useRef<T>(null);
   const [edges, setEdges] = useState({ start: false, end: false });
 
@@ -98,7 +103,7 @@ export function useSidewaysScroll<T extends HTMLElement>() {
       el.removeEventListener("click", onClick, { capture: true });
       observer?.disconnect();
     };
-  }, []);
+  }, [watch]);
 
   return { ref, edges };
 }

@@ -37,7 +37,7 @@ import {
   DOMINO_SETTINGS,
 } from "@/app/play/dominoes/table";
 import { tintFor } from "../Roster";
-import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, autoContinueFor, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 import { useSeatExtras } from "./seatExtras";
@@ -119,6 +119,7 @@ export function DominoesOnline({
         gameTitle={GAMES[room.gameId ?? "dominoes"].name}
         viewerSeat={frame.seat}
         serverDriven
+        autoContinueMs={autoContinueFor(room)}
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}

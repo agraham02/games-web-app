@@ -545,7 +545,8 @@ while the leader is not at it, any seated player there may continue, and
 a leader who disconnects has already handed leadership on.
 
 **…and it deals itself after 20s** (`AUTO_CONTINUE_MS`, the user's call,
-2026-09-29, whether or not anything else is timed). The Continue button
+2026-09-29, whether or not anything else is timed; 30s in a partnership
+game, `AUTO_CONTINUE_TEAMS_MS`, 2026-10-02). The Continue button
 empties a `CountdownRing` over it and presses itself at zero, and everybody
 waiting sees the seconds; the end time is fixed once, as the card appears,
 so peeking at the table or the leader stepping away does not restart it.
@@ -639,7 +640,20 @@ quick replies (`RoomView.chat`, per viewer). Spectators and the lobby may
 say anything: they see no hidden cards. A quick reply travels by id, so
 the server, which decides what is safe, is the one that knows what it
 says. The room is rebroadcast the moment a hand starts or ends, because
-the mode rides on the room and not the frame.
+the mode rides on the room and not the frame. While it applies, the reply
+row holds only the table-safe replies — the rest are left out, not dimmed
+(the user, 2026-10-02), so there is nothing to scroll past that cannot be
+used.
+
+**The scorecard and the winner's screen are where it comes back**, so the
+chat button is on them (`PhaseSheet`'s `corner`, fed the table's own
+`corner` by `GameHost`): the card is a full-screen overlay above the table's
+corner buttons, which left chat unreachable at exactly the moment it opens.
+The chat sheet itself is portalled to `body`, above the card. In a
+partnership game the scorecard also waits 30s to deal itself, not 20
+(`autoContinueMsFor`; `RoomRuntime.autoContinueMs` on the server,
+`autoContinueFor(room)` on the client — the same answer, or the ring and
+the deal disagree).
 
 Things that bit, worth knowing before touching it:
 

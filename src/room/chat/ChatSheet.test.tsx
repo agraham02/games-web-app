@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage } from "@/session/chat";
+import { QUICK_REPLIES, type ChatMessage } from "@/session/chat";
 import { ChatSheet } from "./ChatSheet";
 
 afterEach(cleanup);
@@ -103,15 +103,20 @@ describe("the chat sheet", () => {
     expect(onSend).toHaveBeenCalledWith({ quick: "luck" });
   });
 
-  it("during a hand you are in, offers only the table-safe replies — dimmed, not gone", () => {
+  it("during a hand you are in, offers only the table-safe replies — the rest are not there to scroll past", () => {
     const onSend = sheet({ mode: "quick-only" });
     expect(screen.getByLabelText("Message")).toBeDisabled();
     const row = within(screen.getByRole("group", { name: "Quick replies" }));
-    expect(row.getByText("Nice one!")).toBeDisabled();
-    expect(row.getByText("👍")).toBeDisabled();
-    expect(row.getByText("Thanks!")).toBeEnabled();
-    fireEvent.click(row.getByText("Thanks!"));
-    expect(onSend).toHaveBeenCalledWith({ quick: "thanks" });
+    expect(row.queryByText("Nice one!")).toBeNull();
+    expect(row.queryByText("👍")).toBeNull();
+    const shown = row.getAllByRole("button");
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(QUICK_REPLIES.length);
+    // Exactly the table-safe ones, each of them working.
+    const safe = QUICK_REPLIES.filter((q) => q.tableSafe);
+    expect(shown.map((b) => b.textContent)).toEqual(safe.map((q) => q.text));
+    fireEvent.click(shown[0]!);
+    expect(onSend).toHaveBeenCalledWith({ quick: safe[0]!.id });
     expect(screen.getByLabelText("Message")).toHaveAttribute("placeholder", "No table talk until the hand is over");
   });
 });
