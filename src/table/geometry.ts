@@ -2285,12 +2285,37 @@ export function handFanMaxScroll(
   g: TableGeometry,
   count: number,
   floor: number = MIN_HAND_GAP_FRACTION,
+  tiles = false,
 ): number {
+  const fan = heroFan(g, tiles);
   return fanPanRange({
     count,
-    available: g.zones.hand.w,
-    size: g.handCard.w,
-    maxGap: g.handCard.w * 0.78,
-    minGap: g.handCard.w * floor,
+    available: fan.within.w,
+    size: fan.size,
+    maxGap: fan.maxGap,
+    minGap: fan.size * floor,
   });
+}
+
+/**
+ * The viewer's own hand as a fan: the strip it spreads across, how wide
+ * one piece is drawn, and the most it spreads. One answer for layout and
+ * for the pan's range, which must agree to the pixel.
+ *
+ * A domino rack stands its tiles edge to edge, and keeps clear of the
+ * boneyard, which shares the strip — on BOTH sides, so the hand stays
+ * centred on the zone (see layout's hand case). A card hand has the strip.
+ */
+export function heroFan(
+  g: TableGeometry,
+  tiles: boolean,
+): { within: Box; size: number; maxGap: number } {
+  if (!tiles) return { within: g.zones.hand, size: g.handCard.w, maxGap: g.handCard.w * 0.78 };
+  const gutter = g.zones.boneyard.w + 14;
+  const size = tileShortSide(g.handCard);
+  return {
+    within: { ...g.zones.hand, x: g.zones.hand.x + gutter, w: g.zones.hand.w - gutter * 2 },
+    size,
+    maxGap: size * 1.14,
+  };
 }
