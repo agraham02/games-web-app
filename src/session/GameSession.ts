@@ -190,7 +190,7 @@ export class GameSession<S, A> {
    * same wait resumes it rather than restarting it. See
    * `GameDefinition.deadline`'s `key`.
    */
-  private deadlineAnchor: { key: string; at: number } | null = null;
+  private deadlineAnchor: { key: string; at: number; ms: number } | null = null;
   /** The last forced move played for somebody, and when. See `playedFor`. */
   private lastForced: { seat: SeatId; at: number } | null = null;
   /** A bot turn that `settled()` has decided on but not yet revealed. */
@@ -551,13 +551,19 @@ export class GameSession<S, A> {
     // them again, which is a free extension for anybody who refreshes.
     // Games that give a key get the original span counted down; games
     // that do not keep the old behaviour exactly.
+    //
+    // Counted down from the span it was given when it STARTED, not the span
+    // the game or driver would give it now. A forced move's span includes
+    // what was left of the last frame's playback, and that shrinks as the
+    // frame plays: re-derived on a re-settle, the elapsed lead came off
+    // twice — once as time spent, once as lead gone.
     let ms = due.ms;
     if (due.key !== undefined) {
       const now = this.clock.now();
       if (this.deadlineAnchor?.key === due.key) {
-        ms = Math.max(0, due.ms - (now - this.deadlineAnchor.at));
+        ms = Math.max(0, this.deadlineAnchor.ms - (now - this.deadlineAnchor.at));
       } else {
-        this.deadlineAnchor = { key: due.key, at: now };
+        this.deadlineAnchor = { key: due.key, at: now, ms: due.ms };
       }
     } else {
       this.deadlineAnchor = null;

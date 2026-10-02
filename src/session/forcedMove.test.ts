@@ -117,7 +117,7 @@ describe("which moves are forced", () => {
 
 describe("a forced move plays itself", () => {
   /** An LRC table where every seat is a person who never presses anything. */
-  function silentLrc(opts: { lead?: number } = {}) {
+  function silentLrc(opts: { lead?: number | ((now: number) => number) } = {}) {
     const clock = new TestClock();
     const definition = createLrc(3);
     const session = new GameSession<LrcState, unknown>({
@@ -127,7 +127,10 @@ describe("a forced move plays itself", () => {
       clock,
       isSeatLive: () => true,
       turnHoldMs: () => 0,
-      deadlineLeadMs: opts.lead === undefined ? undefined : () => opts.lead!,
+      deadlineLeadMs:
+        opts.lead === undefined
+          ? undefined
+          : () => (typeof opts.lead === "function" ? opts.lead(clock.now()) : opts.lead!),
       emit: () => session.settled(),
     });
     return { clock, session, definition };
@@ -183,6 +186,22 @@ describe("a forced move plays itself", () => {
     clock.advance(3_000);
     session.settled();
     clock.advance(FORCED_MOVE_MS - 3_000);
+    expect(session.snapshot()).not.toBe(before);
+  });
+
+  it("counts down the span it first gave, even as the lead it included runs out", () => {
+    // What the server passes is what is LEFT of the frame's playback, which
+    // shrinks as time passes. A re-settle part-way through must not take
+    // the elapsed lead off twice — once as time spent, once as lead gone.
+    const { clock, session } = silentLrc({ lead: (now) => Math.max(0, 1_200 - now) });
+    session.start();
+    const before = session.snapshot();
+
+    clock.advance(600);
+    session.settled();
+    clock.advance(1_200 + FORCED_MOVE_MS - 600 - 1);
+    expect(session.snapshot(), "fired early").toBe(before);
+    clock.advance(1);
     expect(session.snapshot()).not.toBe(before);
   });
 
