@@ -448,12 +448,40 @@ describe("the room client", () => {
       });
       // Your own lines are not news to you.
       fireEvent.click(await screen.findByRole("button", { name: "Chat, 2 new" }));
-      expect(await screen.findByText("ready?")).toBeInTheDocument();
+      expect(within(await screen.findByRole("list", { name: "Messages" })).getByText("ready?")).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(await screen.findByRole("button", { name: "Chat" })).toBeInTheDocument();
       act(() => socket().deliver(msg(4, "bo", "one more")));
       expect(await screen.findByRole("button", { name: "Chat, 1 new" })).toBeInTheDocument();
+    });
+
+    // The user, 2026-10-01: "In the lobby, show the chat messages as a toast,
+    // instead of us having to open the chat window to see the messages as
+    // they come".
+    it("pops up what other people say — not your own words, and not what was said before you came", async () => {
+      await enterLobby();
+      const msg = (id: number, session: string, text: string) => ({
+        id,
+        session,
+        name: session === "me" ? "Ada" : "Bo",
+        text,
+        at: id,
+      });
+      socket().deliver({ t: "chatLog", messages: [msg(1, "bo", "earlier")] });
+      socket().deliver({ t: "chat", message: msg(2, "me", "hello") });
+      socket().deliver({ t: "chat", message: msg(3, "bo", "ready?") });
+
+      const toast = await screen.findByRole("button", { name: /^Bo: ready\?/ });
+      expect(screen.queryByRole("button", { name: /^Bo: earlier/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Ada: hello/ })).toBeNull();
+
+      // Tapping it opens the chat; while that is open there is nothing to pop up.
+      fireEvent.click(toast);
+      await screen.findByRole("list", { name: "Messages" });
+      socket().deliver({ t: "chat", message: msg(4, "bo", "anyone?") });
+      expect(within(screen.getByRole("list", { name: "Messages" })).getByText("anyone?")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Bo: anyone\?/ })).toBeNull();
     });
 
     it("sends what you type to the room", async () => {

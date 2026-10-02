@@ -247,11 +247,13 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    // In the lobby: Bo says hello, and Ada's chat button counts it.
+    // In the lobby: Bo says hello. It pops up on Ada's screen as a toast that
+    // opens the chat, and her chat button counts it.
     await bo.getByRole("button", { name: "Chat", exact: true }).click();
     await bo.getByRole("textbox", { name: "Message" }).fill("hello table");
     await bo.getByRole("button", { name: "Send" }).click();
-    await ada.getByRole("button", { name: "Chat, 1 new" }).click();
+    await expect(ada.getByRole("button", { name: "Chat, 1 new" })).toBeVisible();
+    await ada.getByRole("button", { name: /^Bo: hello table/ }).click();
     await expect(ada.getByRole("list", { name: "Messages" })).toContainText("hello table");
     // Exactly: the leader's lobby also has a "Close room".
     await ada.getByRole("button", { name: "Close", exact: true }).click();

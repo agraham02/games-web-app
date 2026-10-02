@@ -37,6 +37,7 @@ import { RoomEntryForm, type RoomEntryMode } from "./RoomEntryForm";
 import { readSavedPhoto } from "./photo";
 import { ChatButton } from "./chat/ChatButton";
 import { ChatSheet } from "./chat/ChatSheet";
+import { chatToast, dismissChatToasts } from "./chat/chatToast";
 import { RoomStatusScreen } from "./RoomStatusScreen";
 import { SettleUp } from "./SettleUp";
 import { tableFor } from "./tables";
@@ -219,6 +220,30 @@ export function RoomScreen({ code }: { code?: string }) {
               : tableShowing
                 ? "table"
                 : "lobby";
+
+  // What other people say in the lobby pops up as a toast (`chatToast`) —
+  // only what is said while you are there to see it. Messages that came as
+  // history (`chatLiveAfter`), or while the chat was open or the table was
+  // up, are passed over rather than saved up for later, and opening the
+  // chat or starting the game puts away any still showing.
+  const toasted = useRef<{ code: string | null; id: number }>({ code: null, id: 0 });
+  const chat = api.chat;
+  const chatLiveAfter = api.chatLiveAfter;
+  const toastsWanted = screen === "lobby" && !chatOpen;
+  useEffect(() => {
+    if (!toastsWanted) dismissChatToasts();
+  }, [toastsWanted]);
+  useEffect(() => dismissChatToasts, []);
+  useEffect(() => {
+    if (!room) return;
+    if (toasted.current.code !== room.code) toasted.current = { code: room.code, id: 0 };
+    const from = Math.max(toasted.current.id, chatLiveAfter);
+    toasted.current.id = Math.max(from, chat.at(-1)?.id ?? 0);
+    if (!toastsWanted) return;
+    for (const m of chat) {
+      if (m.id > from && m.session !== room.you) chatToast(m, () => setChatOpen(true));
+    }
+  }, [chat, chatLiveAfter, room, toastsWanted]);
 
   return (
     <>

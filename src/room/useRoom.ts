@@ -104,6 +104,13 @@ export interface RoomApi {
   setPhoto: (image: string | null) => void;
   /** What has been said in the room, oldest first, at most `CHAT_HISTORY`. */
   chat: ChatMessage[];
+  /**
+   * The newest message that arrived as HISTORY — the log replayed on
+   * joining, reconnecting or changing page — rather than as it was said.
+   * Anything after it is news; anything up to it was said before you got
+   * here, and popping it up as if it were new would replay the room's past.
+   */
+  chatLiveAfter: number;
   /** Says something: typed text, or a quick reply by id. */
   sendChat: (said: { text: string } | { quick: string }) => void;
   send: (message: ClientMessage) => void;
@@ -118,6 +125,7 @@ export function useRoom(): RoomApi {
   const [error, setError] = useState<{ code: ServerErrorCode; message: string } | null>(null);
   const [farewell, setFarewell] = useState<Farewell | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [chatLiveAfter, setChatLiveAfter] = useState(0);
   /** The room we are in or knocking on, for `farewell` to name. Read inside
    * the message handler, which is created once and would see stale state. */
   const codeRef = useRef<string | null>(null);
@@ -160,6 +168,7 @@ export function useRoom(): RoomApi {
             if (!message.inRoom) {
               inRoomRef.current = false;
               setChat([]);
+              setChatLiveAfter(0);
               setRoom(null);
               setFrame(null);
               lastSeq.current = -1;
@@ -217,6 +226,7 @@ export function useRoom(): RoomApi {
             setAwaitingRoom(false);
             inRoomRef.current = false;
             setChat([]);
+            setChatLiveAfter(0);
             setRoom(null);
             setFrame(null);
             setPendingCode(null);
@@ -239,6 +249,7 @@ export function useRoom(): RoomApi {
 
           case "chatLog":
             setChat(message.messages);
+            setChatLiveAfter(message.messages.at(-1)?.id ?? 0);
             break;
 
           case "chat":
@@ -355,8 +366,9 @@ export function useRoom(): RoomApi {
       },
       setPhoto: (image) => send({ t: "setPhoto", image }),
       chat,
+      chatLiveAfter,
       sendChat: (said) => send({ t: "chat", ...said }),
     }),
-    [phase, status, room, pendingCode, frame, error, farewell, chat, send, connection],
+    [phase, status, room, pendingCode, frame, error, farewell, chat, chatLiveAfter, send, connection],
   );
 }
