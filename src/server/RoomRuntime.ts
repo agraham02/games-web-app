@@ -172,6 +172,11 @@ export class RoomRuntime {
   private turnMs: number | null = null;
   /** Turn-timer timeouts in a row, by person. Two and a bot takes over. */
   private readonly timeouts = new Map<SessionId, number>();
+  /**
+   * The seat whose turn, still running, has already had a timeout counted:
+   * a turn counts once however many moves it takes. See `countTimeout`.
+   */
+  private timedOutTurn: SeatId | null = null;
   /** The clock the table was last told about (its key), so it is said once. */
   private sentClockKey: string | null = null;
   /** The next round, dealt if nobody continues in time. See `syncAutoContinue`. */
@@ -580,6 +585,7 @@ export class RoomRuntime {
     this.previous = null;
     this.turnMs = this.room.turnTimer.on ? this.room.turnTimer.seconds * 1000 : null;
     this.timeouts.clear();
+    this.timedOutTurn = null;
     this.sessionGameId = gameId;
     this.sessionSettings = gameEntry(gameId).parse(settings);
     this.settlement = null;
@@ -663,6 +669,7 @@ export class RoomRuntime {
   private stopSession(): void {
     this.clearAutoContinue();
     this.timeouts.clear();
+    this.timedOutTurn = null;
     this.session?.dispose();
     this.session = null;
     this.previous = null;
@@ -749,18 +756,30 @@ export class RoomRuntime {
       this.broadcastRoom();
     }
     if (frame.timedOut !== undefined) this.countTimeout(frame.timedOut);
+    // A turn a timeout was counted for is over once somebody else is on turn.
+    if (this.timedOutTurn !== null && session.definition.currentSeat(after) !== this.timedOutTurn) {
+      this.timedOutTurn = null;
+    }
     this.syncTurnClock();
   }
 
   /* ---------- the turn timer ---------- */
 
   /**
-   * The turn timer made somebody's move. Twice in a row and they have
+   * The turn timer made somebody's move. Two turns in a row and they have
    * walked away: a bot takes their seat until they come back (the user,
    * 2026-09-29), through the same live-signature edge a disconnect takes,
    * so the table moves on at a bot's pace rather than a timer's.
+   *
+   * Counted by TURN, not by clock. Every move has a clock of its own, and a
+   * turn can be several moves — Rummy's draw and then its discard, a run of
+   * Dominoes draws — so counting clocks made a single turn away from the
+   * table "two in a row": one silent Rummy turn each was enough to end a
+   * two-person game in its first round.
    */
   private countTimeout(seat: SeatId): void {
+    if (this.timedOutTurn === seat) return;
+    this.timedOutTurn = seat;
     const owner = this.room.game?.seatOwner[seat];
     if (!owner) return;
     const count = (this.timeouts.get(owner) ?? 0) + 1;

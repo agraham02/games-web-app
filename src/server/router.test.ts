@@ -1392,6 +1392,42 @@ describe("the server, in process", () => {
         expect((t.runtime.debugDump().liveSeats as boolean[])[seat]).toBe(true);
       });
 
+      it("counts a turn of several moves once: one silent Rummy turn is not two in a row", () => {
+        // Every move has its own clock, and a Rummy turn is at least two
+        // moves. Counting clocks marked somebody idle after a single turn
+        // away — and with both people at a two-person table doing that, the
+        // whole game ended in its first round.
+        const h = host("ada", { turnTimer: true });
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "setTurnTimer", on: true, seconds: 5 });
+        send(h.peer, { t: "selectGame", gameId: "rummy", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        const runtime = registry.get(h.code)!;
+        const boSeat = runtime.room.game!.seatOwner.indexOf(registry.sessionFor("bo"));
+        const onTurn = () => (runtime.debugDump().table as { currentSeat: number | null }).currentSeat;
+        const boTimedOut = () =>
+          bo.conn
+            .all("frame")
+            .filter(
+              (f) =>
+                f.frame.lastAction?.seat === boSeat &&
+                f.frame.events.some((e) => e.t === "announce" && e.text === "ran out of time"),
+            ).length;
+        const botTookBo = () => h.conn.all("notice").some((n) => n.text === "A bot is playing for Bo");
+
+        // Bo's first turn, every move of it run out, and over.
+        for (let i = 0; i < 5_000 && !(boTimedOut() >= 2 && onTurn() !== boSeat); i++) clock.advance(100);
+        expect(boTimedOut(), "a draw and a discard, at least").toBeGreaterThanOrEqual(2);
+        expect(onTurn()).not.toBe(boSeat);
+        expect(botTookBo(), "one turn away is not two in a row").toBe(false);
+
+        // The second turn they miss is.
+        const firstTurn = boTimedOut();
+        for (let i = 0; i < 5_000 && boTimedOut() === firstTurn; i++) clock.advance(100);
+        expect(botTookBo()).toBe(true);
+      });
+
       it("takes a move from somebody idle as their being back", () => {
         const t = timedSpades();
         const { person } = untilPersonOnTurn(t);
