@@ -157,14 +157,18 @@ describe("membership", () => {
 });
 
 describe("leadership", () => {
-  it("passes to the longest-standing connected member when the leader drops", () => {
-    let r = withMembers(["Sam", "Kofi"]);
+  /** A game running with the leader in a seat, which is what a drop takes the lead from. */
+  const seatedLeader = (others: string[]) =>
+    ok(spades(withMembers(others)), { t: "startGame" }, { actor: LEADER });
+
+  it("passes to the longest-standing connected member when a seated leader drops", () => {
+    let r = seatedLeader(["Sam", "Kofi"]);
     r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
     expect(r.leader).toBe("s-0"); // Sam joined before Kofi.
   });
 
   it("skips members who are themselves disconnected", () => {
-    let r = withMembers(["Sam", "Kofi"]);
+    let r = seatedLeader(["Sam", "Kofi"]);
     r = ok(r, { t: "setConnected", connected: false }, { actor: "s-0" });
     r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
     expect(r.leader).toBe("s-1");
@@ -173,10 +177,23 @@ describe("leadership", () => {
   it("does not hand leadership back when the old leader reconnects", () => {
     // Deliberate: yanking it out of the new leader's hands the moment a
     // phone reconnects is worse than asking them to hand it over.
-    let r = withMembers(["Sam"]);
+    let r = seatedLeader(["Sam"]);
     r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
     expect(r.leader).toBe("s-0");
     r = ok(r, { t: "setConnected", connected: true }, { actor: LEADER });
+    expect(r.leader).toBe("s-0");
+  });
+
+  it("keeps it for a leader who has only just dropped out of the lobby", () => {
+    // With no seat to hold they are in their silent `LOBBY_GRACE_MS`, shown
+    // as present — so the crown stays too, whatever else happens meanwhile.
+    // It passes on when the grace runs out, as a `leave`.
+    let r = withMembers(["Sam", "Kofi"]);
+    r = ok(r, { t: "setConnected", connected: false }, { actor: LEADER });
+    expect(r.leader).toBe(LEADER);
+    r = ok(r, { t: "leave" }, { actor: "s-1" });
+    expect(r.leader, "somebody else leaving does not take it either").toBe(LEADER);
+    r = ok(r, { t: "leave" }, { actor: LEADER });
     expect(r.leader).toBe("s-0");
   });
 

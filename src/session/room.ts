@@ -478,9 +478,18 @@ function nameOf(room: Room, session: SessionId): string {
  * about who is steering the room right now, and silently yanking it back
  * out of someone's hands the moment a phone reconnects would be worse than
  * asking them to hand it over.
+ *
+ * Nor does a leader lose it by dropping with no seat to hold. They are in
+ * their `LOBBY_GRACE_MS`, which the driver gives exactly those members, and
+ * look exactly as they did meanwhile — crown included. Taking it at the
+ * drop made a refresh a silent demotion: the crown jumped to somebody else
+ * while the old leader still showed as present, and was not theirs when
+ * they were back a second later. If the grace runs out they `leave`, and
+ * that hands it on.
  */
 function reassignLeader(room: Room): Room {
-  if (room.members[room.leader]?.connected) return room;
+  const leader = room.members[room.leader];
+  if (leader && (leader.connected || !holdsSeat(room, room.leader))) return room;
   const candidates = orderedMembers(room).filter((m) => m.session !== room.leader);
   const next = candidates.find((m) => m.connected) ?? candidates[0];
   if (!next) return room;

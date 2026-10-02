@@ -451,6 +451,26 @@ describe("the server, in process", () => {
       expect(conn.all("notice").map((n) => n.text)).not.toContain("Bo left");
     });
 
+    it("keeps the leader's crown through a refresh, and hands it on only if they never come back", () => {
+      // The crown moved at the drop, while the roster still showed the old
+      // leader as present: a refresh was a silent demotion (reproduced in a
+      // real browser).
+      const { peer, bo } = lobbyOfTwo();
+      router.onClose(peer);
+      expect(memberNamed(bo.conn, "Ada")?.isLeader).toBe(true);
+      expect(memberNamed(bo.conn, "Bo")?.isLeader).toBe(false);
+
+      clock.advance(1_500);
+      const back = peerFor("ada");
+      expect(back.conn.last("room")!.room.youAreLeader).toBe(true);
+
+      // Gone for good this time: the grace runs out, and Bo leads.
+      router.onClose(back.peer);
+      clock.advance(LOBBY_GRACE_MS);
+      expect(memberNamed(bo.conn, "Ada")).toBeUndefined();
+      expect(memberNamed(bo.conn, "Bo")?.isLeader).toBe(true);
+    });
+
     it("lets somebody who says bye go at once", () => {
       const { conn, bo, boSession } = lobbyOfTwo();
       send(bo.peer, { t: "bye" });

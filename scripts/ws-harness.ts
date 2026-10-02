@@ -522,14 +522,23 @@ async function main(): Promise<void> {
     assert(names.includes("Admitted"), `an approved member should be able to act; saw ${names}`);
   });
 
-  await scenario("leadership moves on when the leader drops, and the new one can act", async () => {
-    const a = await client(`t-lead-a-${Date.now()}`);
+  await scenario("a lobby leader keeps the lead through a drop, hands it on by leaving, and the new one can act", async () => {
+    const tokenA = `t-lead-a-${Date.now()}`;
+    const a = await client(tokenA);
     const code = await hostRoom(a, "First");
     const b = await client(`t-lead-b-${Date.now()}`);
     b.send({ t: "joinRoom", code, name: "Second" });
     await b.until((m) => m.t === "room");
 
+    // A drop is a refresh as far as anybody can tell: the silent lobby grace
+    // keeps them looking as they were, crown included.
     a.close();
+    await sleep(250);
+    const dropped = await dump(code);
+    assert(dropped.leader === a.session, `a dropped lobby leader should keep it; leader is ${dropped.leader}`);
+
+    const back = await client(tokenA);
+    back.send({ t: "leaveRoom" });
     await sleep(250);
 
     const state = await dump(code);
