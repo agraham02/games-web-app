@@ -20,6 +20,7 @@ import type {
   RoomView,
   ServerErrorCode,
   SettlementView,
+  TurnClockView,
 } from "@/session/protocol";
 import { announce } from "@/ui/disclosure";
 import { roomConnection, type ConnectionStatus } from "./connection";
@@ -56,6 +57,34 @@ export interface Farewell {
   byYou?: boolean;
   /** Who this player was in the room — `SettleUp` says "you" by it. */
   you?: string;
+}
+
+/**
+ * The turn timer's clock, on this machine's own time: when the clock that
+ * everybody is shown runs out, by `Date.now()`. Worked out as the message
+ * arrives — what the server said was left, less the time it took to get
+ * here (`RoomConnection.oneWayMs`) — so two machines whose clocks disagree
+ * still show the same ring.
+ */
+export interface LocalTurnClock {
+  seat: number;
+  key: string;
+  totalMs: number;
+  endsAt: number;
+}
+
+/** A clock as the server sent it, on this machine's time — see `LocalTurnClock`. */
+export function toLocalClock(
+  clock: TurnClockView,
+  receivedAt: number,
+  oneWayMs: number,
+): LocalTurnClock {
+  return {
+    seat: clock.seat,
+    key: clock.key,
+    totalMs: clock.totalMs,
+    endsAt: receivedAt + clock.endsInMs - oneWayMs,
+  };
 }
 
 export interface RoomApi {
@@ -101,6 +130,12 @@ export interface RoomApi {
   closeRoom: () => void;
   /** Your photo for this room (a small data URL — `photoFromFile`), or null to take it down. */
   setPhoto: (image: string | null) => void;
+  /** Whose move the turn timer is counting, and until when — or null. */
+  turnClock: LocalTurnClock | null;
+  /** "I'm back", after the turn timer handed your seat to a bot. */
+  resumeSeat: () => void;
+  /** Leader only, between games. */
+  setTurnTimer: (change: { on?: boolean; seconds?: number }) => void;
   send: (message: ClientMessage) => void;
 }
 
@@ -112,6 +147,7 @@ export function useRoom(): RoomApi {
   const [frame, setFrame] = useState<FrameView | null>(null);
   const [error, setError] = useState<{ code: ServerErrorCode; message: string } | null>(null);
   const [farewell, setFarewell] = useState<Farewell | null>(null);
+  const [turnClock, setTurnClock] = useState<LocalTurnClock | null>(null);
   /** The room we are in or knocking on, for `farewell` to name. Read inside
    * the message handler, which is created once and would see stale state. */
   const codeRef = useRef<string | null>(null);
@@ -153,6 +189,7 @@ export function useRoom(): RoomApi {
             // `no-room` into a screen that renders no error.
             if (!message.inRoom) {
               inRoomRef.current = false;
+              setTurnClock(null);
               setRoom(null);
               setFrame(null);
               lastSeq.current = -1;
@@ -181,6 +218,7 @@ export function useRoom(): RoomApi {
             // screen the next time they left one.
             setError(null);
             if (!message.room.gameRunning) {
+              setTurnClock(null);
               // The table is gone; anything still on screen from it is
               // stale. Clearing here rather than waiting for a frame is
               // what makes "the leader ended the game" land immediately.
@@ -209,6 +247,7 @@ export function useRoom(): RoomApi {
           case "left":
             setAwaitingRoom(false);
             inRoomRef.current = false;
+            setTurnClock(null);
             setRoom(null);
             setFrame(null);
             setPendingCode(null);
@@ -228,6 +267,12 @@ export function useRoom(): RoomApi {
             codeRef.current = null;
             closingRef.current = false;
             break;
+
+          case "turnClock": {
+            const c = message.clock;
+            setTurnClock(c ? toLocalClock(c, Date.now(), connection.oneWayMs()) : null);
+            break;
+          }
 
           case "notice":
             // Straight onto the existing toast seam, so a join or a
@@ -338,7 +383,10 @@ export function useRoom(): RoomApi {
         send({ t: "closeRoom" });
       },
       setPhoto: (image) => send({ t: "setPhoto", image }),
+      turnClock,
+      resumeSeat: () => send({ t: "resume" }),
+      setTurnTimer: (change) => send({ t: "setTurnTimer", ...change }),
     }),
-    [phase, status, room, pendingCode, frame, error, farewell, send, connection],
+    [phase, status, room, pendingCode, frame, error, farewell, turnClock, send, connection],
   );
 }

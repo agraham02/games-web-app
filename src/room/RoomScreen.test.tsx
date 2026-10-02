@@ -435,6 +435,21 @@ describe("the room client", () => {
       expect(screen.getAllByRole("button", { name: /photo/i })).toHaveLength(1);
     });
 
+    it("lets the leader switch the turn timer off, and change how long it is", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));
+      expect(socket().lastSent("setTurnTimer")).toMatchObject({ on: false });
+      fireEvent.click(screen.getByRole("button", { name: "More seconds per move" }));
+      expect(socket().lastSent("setTurnTimer")).toMatchObject({ seconds: 35 });
+    });
+
+    it("shows everybody else the timer as it is, but not to change", async () => {
+      await enterLobby({ youAreLeader: false, turnTimer: { on: true, seconds: 15 } });
+      expect(screen.getByText("15")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));
+      expect(socket().lastSent("setTurnTimer")).toBeUndefined();
+    });
+
     it("says who closed the room, on the form", async () => {
       await enterLobby({ youAreLeader: false });
       socket().deliver({ t: "left", reason: "room-closed", by: "Ada", settlement: null });

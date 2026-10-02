@@ -42,6 +42,54 @@ class FakeSocket {
   }
 }
 
+describe("timing the round trip", () => {
+  beforeEach(() => {
+    sockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("probes soon after connecting, timed, and keeps the quickest answer", () => {
+    const connection = new RoomConnection("token-rtt");
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    // An ordinary connection, before anything is known.
+    expect(connection.oneWayMs()).toBe(75);
+
+    vi.advanceTimersByTime(300);
+    const ping = socket.sent.find((m) => m.t === "ping")!;
+    expect(typeof ping.sent).toBe("number");
+
+    const answer = (rtt: number) => {
+      vi.spyOn(performance, "now").mockReturnValue((ping.sent as number) + rtt);
+      socket.onmessage?.({ data: JSON.stringify({ t: "pong", sent: ping.sent }) });
+      vi.restoreAllMocks();
+    };
+    answer(240);
+    expect(connection.oneWayMs()).toBe(120);
+    answer(600); // a slow one: the quickest still stands
+    expect(connection.oneWayMs()).toBe(120);
+  });
+
+  it("never believes a round trip worth more than a second each way", () => {
+    const connection = new RoomConnection("token-rtt-2");
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    vi.advanceTimersByTime(300);
+    const ping = socket.sent.find((m) => m.t === "ping")!;
+    vi.spyOn(performance, "now").mockReturnValue((ping.sent as number) + 9_000);
+    socket.onmessage?.({ data: JSON.stringify({ t: "pong", sent: ping.sent }) });
+    vi.restoreAllMocks();
+    expect(connection.oneWayMs()).toBe(1_000);
+  });
+});
+
 describe("the keepalive", () => {
   beforeEach(() => {
     sockets.length = 0;

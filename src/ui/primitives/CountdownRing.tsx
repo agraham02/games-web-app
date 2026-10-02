@@ -52,6 +52,7 @@ import {
   animate,
   motion,
   useMotionValue,
+  useMotionValueEvent,
   useTransform,
   type AnimationPlaybackControls,
   type MotionValue,
@@ -87,10 +88,16 @@ export interface CountdownRingProps {
   totalMs: number;
   /** When it empties, by `Date.now()`. Omitted: `totalMs` from mounting. */
   endsAt?: number;
-  /** The element's own corner radius plus `inset`, as CSS. */
+  /** The ring's outer corner radius, as CSS: the element's own, plus `offset`. */
   radius?: string;
-  /** How far outside the element, and how thick, in px. */
+  /** How thick, in px. */
   inset?: number;
+  /**
+   * How far outside the element it sits, in px — `inset` by default, just
+   * clear of the edge. 0 draws it on the element's own edge, for one that
+   * can sit against the side of the screen, where outside is cut off.
+   */
+  offset?: number;
 }
 
 /**
@@ -131,7 +138,7 @@ export function ringPath(
   return { d, length: 2 * (w - 2 * r) + 2 * (h - 2 * r) + 2 * Math.PI * r };
 }
 
-export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3 }: CountdownRingProps) {
+export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3, offset = inset }: CountdownRingProps) {
   const sweep = useCountdownSweep(totalMs, endsAt);
   const colour = useTransform(sweep, (v) => BAND_COLOUR[bandOf(v)]);
 
@@ -159,7 +166,7 @@ export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3 }:
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [radius, inset]);
+  }, [radius, inset, offset]);
 
   const path = box && box.width > 0 && box.height > 0 ? ringPath(box.width, box.height, box.radius, inset) : null;
   const length = useMotionValue(0);
@@ -173,11 +180,12 @@ export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3 }:
     <span
       ref={ref}
       aria-hidden
+      data-testid="countdown-ring"
       className="pointer-events-none absolute"
       // Just OUTSIDE the element, so it reads as a border around it rather
       // than as decoration painted on the face. The radius is here only to
       // be read back as pixels.
-      style={{ inset: -inset, borderRadius: radius }}
+      style={{ inset: -offset, borderRadius: radius }}
     >
       {path ? (
         <svg className="absolute inset-0 overflow-visible" width={box!.width} height={box!.height}>
@@ -195,11 +203,12 @@ export function CountdownRing({ totalMs, endsAt, radius = "9999px", inset = 3 }:
 }
 
 /**
- * How full a countdown is, 1 to 0, as a motion value. Held full while more
- * than a clock's worth is left, then linear; re-read from the time whenever
- * the tab is shown again.
+ * How full a countdown is, 1 to 0, as a motion value — what both the ring
+ * and the bar draw from, so they empty and change colour identically. Held
+ * full while more than a clock's worth is left, then linear; re-read from
+ * the time whenever the tab is shown again.
  */
-function useCountdownSweep(totalMs: number, endsAt?: number): MotionValue<number> {
+export function useCountdownSweep(totalMs: number, endsAt?: number): MotionValue<number> {
   const sweep = useMotionValue(1);
   useEffect(() => {
     const end = endsAt ?? Date.now() + totalMs;
@@ -226,4 +235,37 @@ function useCountdownSweep(totalMs: number, endsAt?: number): MotionValue<number
     };
   }, [endsAt, totalMs, sweep]);
   return sweep;
+}
+
+/**
+ * The same countdown as a line that shrinks toward its middle — your own
+ * clock at the foot of the table, where you have no pod for a ring to go
+ * round (the user, 2026-09-29: "a thin horizontal line at the very bottom
+ * of the screen"). `onDanger` fires once, as it turns red.
+ */
+export function CountdownBar({
+  totalMs,
+  endsAt,
+  onDanger,
+}: {
+  totalMs: number;
+  endsAt?: number;
+  onDanger?: () => void;
+}) {
+  const sweep = useCountdownSweep(totalMs, endsAt);
+  const colour = useTransform(sweep, (v) => BAND_COLOUR[bandOf(v)]);
+  const warned = useRef(false);
+  useMotionValueEvent(sweep, "change", (v) => {
+    if (warned.current || v <= 0 || v > DANGER_AT) return;
+    warned.current = true;
+    onDanger?.();
+  });
+  return (
+    <motion.div
+      aria-hidden
+      data-testid="countdown-bar"
+      className="h-full w-full origin-center"
+      style={{ scaleX: sweep, backgroundColor: colour }}
+    />
+  );
 }

@@ -120,6 +120,7 @@ export function DominoesOnline({
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        turnClock={api.turnClock}
         settings={DOMINO_SETTINGS}
         menuActions={
           <TableMenu

@@ -17,6 +17,11 @@
  *    real, it is just not being updated. A strip, never a blocker. It
  *    also waits a beat before appearing, so the common case (a sub-second
  *    reconnect) never flashes anything at all.
+ *  - **Idle** is not the socket at all, and shares the lane so the two
+ *    can never stack: the turn timer ran out on two of your moves in a
+ *    row and a bot is playing your seat (the user, 2026-09-29). The one
+ *    strip here with something to press — "I'm back" — because coming
+ *    back is the whole of the fix. Any move you make does it too.
  *  - **Incompatible** cannot resolve. The server refused the handshake
  *    because this page is built against a different wire, and every
  *    retry will be refused the same way. Nothing here works until the
@@ -40,10 +45,15 @@ const QUIET_MS = 1200;
 export function ConnectionNotice({
   status,
   top = 0,
+  idle = false,
+  onResume,
 }: {
   status: ConnectionStatus;
   /** Over a table, its status lane (`statusLane`) — below the top seat. */
   top?: number;
+  /** The turn timer has handed your seat to a bot. */
+  idle?: boolean;
+  onResume?: () => void;
 }) {
   /**
    * The status as it stood `QUIET_MS` ago, rather than a boolean "has it
@@ -83,8 +93,31 @@ export function ConnectionNotice({
 
   return (
     <AnimatePresence>
+      {idle && !lingering ? (
+        <motion.div
+          key="idle"
+          role="status"
+          className="pointer-events-none fixed inset-x-0 z-9400 flex justify-center p-2"
+          style={{ top }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1, transition: TRANSITIONS.uiEnter }}
+          exit={{ opacity: 0, transition: TRANSITIONS.uiExit }}
+        >
+          <span className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-felt-950/90 py-1 pr-1 pl-3 text-xs text-bone-200 shadow-lg backdrop-blur-sm">
+            A bot is playing for you
+            <button
+              type="button"
+              onClick={onResume}
+              className="rounded-full bg-linear-to-b from-brass-300 to-brass-500 px-3 py-1 font-bold text-felt-950"
+            >
+              I&apos;m back
+            </button>
+          </span>
+        </motion.div>
+      ) : null}
       {lingering ? (
         <motion.div
+          key="reconnecting"
           role="status"
           className="pointer-events-none fixed inset-x-0 z-9400 flex justify-center p-2"
           style={{ top }}

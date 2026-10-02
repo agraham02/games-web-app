@@ -111,6 +111,7 @@ export function RummyOnline({ api, room, frame }: OnlineTableProps) {
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        turnClock={api.turnClock}
         menuActions={
           <TableMenu
             code={room.code}

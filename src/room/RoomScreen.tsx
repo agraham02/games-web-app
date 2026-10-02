@@ -213,6 +213,8 @@ export function RoomScreen({ code }: { code?: string }) {
       <ConnectionNotice
         status={api.status}
         top={tableShowing && geometry ? statusLane(geometry) : undefined}
+        idle={tableShowing && Boolean(api.room?.members.find((m) => m.session === api.room?.you)?.idle)}
+        onResume={api.resumeSeat}
       />
 
       {screen === "table" ? (

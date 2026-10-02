@@ -53,6 +53,21 @@ const RETRY_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
 const KEEPALIVE_MS = 25_000;
 
 /**
+ * Two early pings after connecting, timed (`sent`), so the turn clock has a
+ * round trip to go on before the first keepalive would give it one.
+ */
+const PROBE_MS = [300, 2_000] as const;
+
+/** Round trips remembered; the smallest is the least delayed by anything else. */
+const RTT_SAMPLES = 5;
+
+/** One way, before anything has been measured: an ordinary connection. */
+const DEFAULT_ONE_WAY_MS = 75;
+
+/** Never trusted beyond this: one bad sample must not swallow a short clock. */
+const MAX_ONE_WAY_MS = 1_000;
+
+/**
  * `superseded` is a deliberate stop, not a failure: another tab for this
  * same identity took the connection, and retrying would start a fight
  * neither tab can win. It is the only status a reconnect will not
@@ -138,6 +153,9 @@ export class RoomConnection {
   private attempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private probeTimers: ReturnType<typeof setTimeout>[] = [];
+  /** Recent round trips, ms — see `oneWayMs`. */
+  private rtts: number[] = [];
   /** The hang-up scheduled for when no page is listening. See `closeWhenIdle`. */
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   /** Everyone waiting on `whenClosed`. */
@@ -325,18 +343,32 @@ export class RoomConnection {
 
   private startKeepalive(): void {
     this.stopKeepalive();
-    this.keepaliveTimer = setInterval(() => {
-      // Straight to the socket rather than through `send`, which would
-      // QUEUE a ping while disconnected and then deliver a burst of stale
-      // ones the moment the connection came back.
-      if (this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "ping" });
-    }, KEEPALIVE_MS);
+    // Straight to the socket rather than through `send`, which would QUEUE
+    // a ping while disconnected and then deliver a burst of stale ones the
+    // moment the connection came back. Timed, so every answer is a sample.
+    const ping = () => {
+      if (this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "ping", sent: performance.now() });
+    };
+    this.keepaliveTimer = setInterval(ping, KEEPALIVE_MS);
+    this.probeTimers = PROBE_MS.map((ms) => setTimeout(ping, ms));
   }
 
   private stopKeepalive(): void {
+    for (const t of this.probeTimers) clearTimeout(t);
+    this.probeTimers = [];
     if (this.keepaliveTimer === null) return;
     clearInterval(this.keepaliveTimer);
     this.keepaliveTimer = null;
+  }
+
+  /**
+   * How long a message takes to get here from the server, as best this end
+   * can tell: half the smallest recent round trip. What the turn clock takes
+   * off the time it is told, since that time was measured when it was sent.
+   */
+  oneWayMs(): number {
+    if (this.rtts.length === 0) return DEFAULT_ONE_WAY_MS;
+    return Math.min(MAX_ONE_WAY_MS, Math.min(...this.rtts) / 2);
   }
 
   private scheduleRetry(): void {
@@ -399,6 +431,12 @@ export class RoomConnection {
         // server refuses the handshake every time and the explanation is
         // never shown.
         if (message.code === "protocol-mismatch") this.incompatible = true;
+        break;
+      case "pong":
+        if (typeof message.sent === "number") {
+          const rtt = performance.now() - message.sent;
+          if (rtt >= 0) this.rtts = [...this.rtts, rtt].slice(-RTT_SAMPLES);
+        }
         break;
       case "superseded":
         // Recorded before the close event, which is where it is acted on.

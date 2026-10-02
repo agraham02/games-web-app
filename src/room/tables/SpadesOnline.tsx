@@ -114,6 +114,7 @@ export function SpadesOnline({
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        turnClock={api.turnClock}
         settings={SPADES_SETTINGS}
         menuActions={
           <TableMenu

@@ -107,6 +107,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        turnClock={api.turnClock}
         menuActions={
           <TableMenu
             code={room.code}
