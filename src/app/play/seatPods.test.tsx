@@ -23,7 +23,8 @@ import { GAMES, type GameId } from "@/session/registry";
 import { GameSession } from "@/session/GameSession";
 import { TestClock } from "@/session/clock";
 import type { GameRuntime } from "@/table/useGameRuntime";
-import type { SeatView } from "@/table/SeatRing";
+import { SeatPod, type SeatView } from "@/table/SeatRing";
+import { render } from "@testing-library/react";
 
 import { playerViews as bs, standings as bsStandings } from "./bs/table";
 import { standings as dominoesStandings } from "./dominoes/table";
@@ -218,6 +219,28 @@ describe("a seat a bot has taken over", () => {
       // read as "nobody is away" rather than as undefined behaviour.
       const offline = CALLERS[gameId](0, state, seats);
       expect(offline.every((v) => v.away === false), `${gameId} offline`).toBe(true);
+    });
+  }
+
+  // The user, 2026-10-01: "my partner bot was not showing how much they bid
+  // and how much they won on their pod". "Bot" and "Partner" each took one
+  // of the pod's two lines, and the numbers got none.
+  for (const word of ["Bot", "Away"] as const) {
+    it(`spades: a partner marked ${word} still shows the bid`, () => {
+      const state = dealt("spades", 4);
+      const partnerSeat = (seat: SeatId) => seat === 2;
+      const views =
+        word === "Bot"
+          ? CALLERS.spades(0, state, 4, undefined, partnerSeat)
+          : CALLERS.spades(0, state, 4, partnerSeat);
+      const partner = views.find((v) => v.seat === 2)!;
+      expect(partner.partner).toBe(true);
+
+      const pod = render(<SeatPod view={partner} density="compact" solid={false} />);
+      expect(pod.getByText("Partner")).toBeTruthy();
+      expect(pod.getByText(word)).toBeTruthy();
+      expect(pod.getByText(/^Bid/)).toBeTruthy();
+      pod.unmount();
     });
   }
 });

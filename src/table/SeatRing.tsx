@@ -10,7 +10,7 @@
  * seat count on every device, so there is one pod shape, not three.
  */
 
-import { memo } from "react";
+import { memo, type CSSProperties } from "react";
 import { Bot } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import type { SeatId } from "@/engine/types";
@@ -164,6 +164,10 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
  * its slot, so its avatar went off the top of the screen and its last line
  * sat under its own cards. "Away", "Partner" and a status word come first
  * — they change how the numbers read — and the numbers take what is left.
+ *
+ * The words share ONE line, so the numbers always keep at least one. Each
+ * had a line of its own until a bot partner (2026-10-01): "Bot" and
+ * "Partner" took both, and the pod never said what they bid or won.
  */
 const POD_LINES = 2;
 
@@ -172,7 +176,7 @@ const POD_LINES = 2;
  * `TableGeometry.tuck`), so the pod has to be opaque. Translucent, the white
  * backs of the cards behind it washed its stats out to grey on grey.
  */
-const SeatPod = memo(function SeatPod({
+export const SeatPod = memo(function SeatPod({
   view,
   density,
   solid,
@@ -183,7 +187,7 @@ const SeatPod = memo(function SeatPod({
 }) {
   const highlighted = view.active || view.winning;
   const s = POD_STYLES[density];
-  const said = (view.away || view.bot ? 1 : 0) + (view.partner ? 1 : 0) + (view.status ? 1 : 0);
+  const tags = podTags(view);
   return (
     <motion.div
       initial={false}
@@ -222,37 +226,41 @@ const SeatPod = memo(function SeatPod({
         {view.name}
       </div>
 
-      {view.away ? (
-        // The status line, in `warn` rather than in the pod's ordinary
-        // muted tone: it has to be findable at a glance across a table,
-        // and it sits directly above the stats, whose labels are bone-400.
-        // Not `loss` — nothing has gone wrong, somebody is just not here.
-        <div
-          className={`max-w-full truncate ${s.meta} leading-none font-bold`}
-          style={{ color: "var(--color-warn)" }}
-        >
-          Away
+      {tags.length > 0 ? (
+        // A gap rather than " · " between the words: the dot and its spaces
+        // cost the 2px that clipped "Away Partner" on a laptop pod, and each
+        // word's own colour already tells them apart.
+        <div className={`flex max-w-full gap-1 ${s.meta} leading-none whitespace-nowrap`}>
+          {tags.map((tag, i) => (
+            <span
+              key={tag.text}
+              className={`${tag.className} ${i === tags.length - 1 ? "min-w-0 truncate" : "shrink-0"}`}
+              style={tag.style}
+            >
+              {tag.text}
+            </span>
+          ))}
         </div>
       ) : null}
 
-      {view.bot ? (
-        <div className={`max-w-full truncate ${s.meta} leading-none font-bold text-bone-300`}>Bot</div>
-      ) : null}
-
-      {view.partner ? (
-        <div className={`max-w-full truncate ${s.meta} leading-none font-bold text-brass-300/90`}>
-          Partner
-        </div>
-      ) : null}
-
-      {view.status ? (
-        <div className={`max-w-full truncate ${s.meta} leading-none text-bone-400`}>{view.status}</div>
-      ) : null}
-
-      <Stats lines={view.stats ?? []} max={POD_LINES - said} className={s.meta} />
+      <Stats lines={view.stats ?? []} max={POD_LINES - (tags.length > 0 ? 1 : 0)} className={s.meta} />
     </motion.div>
   );
 });
+
+/** The words a pod carries before its numbers, in the order they read. */
+function podTags(view: SeatView): Array<{ text: string; className: string; style?: CSSProperties }> {
+  const tags: Array<{ text: string; className: string; style?: CSSProperties }> = [];
+  // "Away" in `warn` rather than in the pod's ordinary muted tone: it has
+  // to be findable at a glance across a table, and it sits directly above
+  // the stats, whose labels are bone-400. Not `loss` — nothing has gone
+  // wrong, somebody is just not here.
+  if (view.away) tags.push({ text: "Away", className: "font-bold", style: { color: "var(--color-warn)" } });
+  else if (view.bot) tags.push({ text: "Bot", className: "font-bold text-bone-300" });
+  if (view.partner) tags.push({ text: "Partner", className: "font-bold text-brass-300/90" });
+  if (view.status) tags.push({ text: view.status, className: "text-bone-400" });
+  return tags;
+}
 
 /**
  * Dealer/small-blind/big-blind marker — poker only; every other game
