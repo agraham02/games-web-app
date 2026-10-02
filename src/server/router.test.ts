@@ -2201,3 +2201,66 @@ describe("a slow link", () => {
 function registryMember(conn: FakeConnection, name: string) {
   return conn.last("room")!.room.members.find((m) => m.name === name)!;
 }
+
+describe("numbered moves", () => {
+  /** Ada and Bo at Spades, the table stepped on until one of them is on turn. */
+  function onTurn() {
+    const clock = new TestClock();
+    const registry = new RoomRegistry({ clock, seed: 4242 });
+    const router = new Router(registry, () => clock.now());
+    const say = (peer: Peer, message: unknown) => router.onMessage(peer, JSON.stringify(message));
+    const people = ["ada", "bo"].map((token) => {
+      const conn = new FakeConnection();
+      const peer = makePeer(conn, 0);
+      say(peer, { t: "hello", token, protocol: PROTOCOL_VERSION });
+      return { token, conn, peer };
+    });
+    const [ada, bo] = people as [(typeof people)[0], (typeof people)[0]];
+    say(ada.peer, { t: "createRoom", name: "Ada" });
+    say(ada.peer, { t: "setTurnTimer", on: false });
+    say(bo.peer, { t: "joinRoom", code: ada.conn.last("room")!.room.code, name: "Bo" });
+    say(ada.peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+    say(ada.peer, { t: "startGame" });
+    const rules = createSpades();
+    for (let i = 0; i < 2_000; i++) {
+      const frame = ada.conn.last("frame")?.frame;
+      const seat = frame?.currentSeat;
+      const mover = people.find((p) => p.conn.last("frame")?.frame.seat === seat);
+      if (mover && seat !== null && seat !== undefined) {
+        const state = mover.conn.last("frame")!.frame.state as SpadesState;
+        if (rules.legalActions(state, seat).length > 0) {
+          const other = mover === ada ? bo : ada;
+          return { say, clock, rules, mover, other, seat, state };
+        }
+      }
+      clock.advance(50);
+    }
+    throw new Error("nobody came on turn");
+  }
+
+  it("tells the mover, and only the mover, which frame their move made", () => {
+    const t = onTurn();
+    const action = t.rules.legalActions(t.state, t.seat)[0]!;
+    t.say(t.mover.peer, { t: "action", action, n: 7, epoch: "e1" });
+    const mine = t.mover.conn.last("frame")!.frame;
+    expect(mine.answers).toBe(7);
+    expect(mine.handled).toEqual({ epoch: "e1", n: 7 });
+    const theirs = t.other.conn.last("frame")!.frame;
+    expect(theirs.answers).toBeUndefined();
+    expect(theirs.handled).toBeUndefined();
+    // Later frames still say it was dealt with, but answer nothing.
+    t.clock.advance(5_000);
+    const later = t.mover.conn.last("frame")!.frame;
+    expect(later.handled).toEqual({ epoch: "e1", n: 7 });
+    expect(later.answers).toBeUndefined();
+  });
+
+  it("hands a refused move's tag back, so the page can take back what it showed", () => {
+    const t = onTurn();
+    t.say(t.other.peer, { t: "action", action: { t: "play", card: "SA" }, n: 3, epoch: "e2" });
+    const refusal = t.other.conn.last("error")!;
+    expect(refusal.code).toBe("move-refused");
+    expect(refusal.move).toEqual({ epoch: "e2", n: 3 });
+    expect(refusal.quiet).toBeUndefined();
+  });
+});

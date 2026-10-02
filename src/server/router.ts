@@ -187,7 +187,11 @@ export class Router {
 
     switch (message.t) {
       case "action": {
-        const result = runtime.submitAction(session, message.action);
+        const tag =
+          message.n !== undefined && message.epoch !== undefined
+            ? { epoch: message.epoch, n: message.n }
+            : undefined;
+        const result = runtime.submitAction(session, message.action, tag);
         if (!result.ok) {
           // An out-of-turn or illegal move is an ordinary answer, not a
           // disconnect. The client's own view is stale or its user was
@@ -201,9 +205,18 @@ export class Router {
           //
           // Except the one refusal that is not a disagreement: the move
           // they pressed had just been made for them (a forced move's wait,
-          // or their clock, ran out). Their screen is already right.
-          if (result.silent) return;
-          this.fail(peer, "move-refused", moveRefusedText(result.error), message.reqId);
+          // or their clock, ran out). Nothing to say — but a page that
+          // already showed the move it pressed has to take it back, so a
+          // numbered move is still answered, quietly.
+          if (result.silent && !tag) return;
+          peer.connection.send({
+            t: "error",
+            code: "move-refused",
+            message: moveRefusedText(result.error),
+            reqId: message.reqId,
+            ...(tag ? { move: tag } : {}),
+            ...(result.silent ? { quiet: true as const } : {}),
+          });
         }
         return;
       }

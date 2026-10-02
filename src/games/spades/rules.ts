@@ -977,6 +977,13 @@ export function createSpades(
     timeoutAction,
     validate: validateByEnumeration(legalActions),
     completeAction,
+    // A blind vote is rewritten by `completeAction`; the exchange hands
+    // cards across a partnership. Wait for the server on both.
+    unpredictable: (_state, _seat, action) =>
+      action.t === "blindVote" ||
+      action.t === "skipExchange" ||
+      action.t === "exchangeGive" ||
+      action.t === "exchangeTake",
     pieces,
     placements,
     playerView,

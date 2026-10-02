@@ -1152,6 +1152,8 @@ export function createRummy(
     placements,
     playerView,
     completeAction,
+    // A claim is a race somebody else may win.
+    unpredictable: (_state, _seat, action) => action.t === "claim" || action.t === "passClaim",
     deadline,
     turnHold,
     currentSeat,

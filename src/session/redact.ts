@@ -207,7 +207,7 @@ export function piecesNamed(
  * keeps `faceUp: false` regardless — its stand-in has no face to show,
  * and this must never be the thing that reveals one.
  */
-function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
+export function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
   if (event.t === "play") {
     // A play is judged against the board only while the piece is still
     // where the play put it. Spades' exchange lands in the discard and

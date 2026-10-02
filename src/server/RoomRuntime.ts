@@ -59,6 +59,7 @@ import {
 import type {
   FrameView,
   MemberView,
+  MoveTag,
   RoomView,
   ServerErrorCode,
   ServerMessage,
@@ -153,6 +154,14 @@ export class RoomRuntime {
   private readonly onDeparted: (session: SessionId) => void;
   private readonly graceMs: number;
   private readonly connections = new Map<SessionId, Connection>();
+  /**
+   * Each person's newest numbered move the server has dealt with, taken or
+   * refused (`FrameView.handled`). Kept for the life of the room: a page
+   * that reconnects is told on its very next frame.
+   */
+  private readonly handled = new Map<SessionId, MoveTag>();
+  /** The move being taken right now, so the frame it produces can say so. */
+  private answering: { session: SessionId; n: number } | null = null;
   /** Stops listening to each attached socket's link (see `watchLink`). */
   private readonly linkWatch = new Map<SessionId, () => void>();
   /**
@@ -1036,7 +1045,19 @@ export class RoomRuntime {
       seatNames,
       botSeats,
       lastAction: safeLastAction(frame.lastAction, truthAfter),
+      ...this.moveTagsFor(viewer),
     };
+  }
+
+  /**
+   * What this viewer is told about their own moves on this frame: the newest
+   * dealt with, and — on the frame that move produced — which one it was.
+   * See `FrameView.handled`.
+   */
+  private moveTagsFor(viewer: SessionId): Pick<FrameView, "handled" | "answers"> {
+    const handled = this.handled.get(viewer);
+    if (!handled) return {};
+    return this.answering?.session === viewer ? { handled, answers: this.answering.n } : { handled };
   }
 
   /** Re-sends the table's current position to one viewer — the whole of reconnection. */
@@ -1066,13 +1087,23 @@ export class RoomRuntime {
   submitAction(
     session: SessionId,
     action: unknown,
+    tag?: MoveTag,
   ): { ok: true } | { ok: false; error: string; silent?: true } {
+    // Dealt with from here on, whichever way it goes: recorded first, so
+    // the frame the move produces already says so.
+    if (tag) this.handled.set(session, tag);
     if (!this.session) return { ok: false, error: "no-game-running" };
     const seat = seatOf(this.room, session);
     if (seat === null) return { ok: false, error: "not-in-game" };
     // A spectator has no seat, so they never reach here; a seated player
     // who is not on turn is refused by the session's own gate.
-    const result = this.session.submit(seat, action);
+    this.answering = tag ? { session, n: tag.n } : null;
+    let result: ReturnType<AnySession["submit"]>;
+    try {
+      result = this.session.submit(seat, action);
+    } finally {
+      this.answering = null;
+    }
     if (!result.ok) {
       // A move made for them a moment ago, and this is their own press
       // arriving second: their last card after its wait, or their move for
