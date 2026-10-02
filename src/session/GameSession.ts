@@ -622,7 +622,13 @@ export class GameSession<S, A> {
     // Liveness is the session's to know, and a race's deadline can depend
     // on it: Rummy's ring is the soonest BOT's arrival, never another
     // person's (see `claimDeadlineMs`).
-    const own = this.definition.deadline?.(this.state, seat, (s) => this.isLive(s)) ?? null;
+    const asked = this.definition.deadline?.(this.state, seat, (s) => this.isLive(s)) ?? null;
+    // Counted from the end of the frame's playback where the game asks (see
+    // `afterPlayback`), as the turn timer and a forced move always are.
+    const own =
+      asked?.afterPlayback === true
+        ? { ...asked, ms: asked.ms + Math.max(0, this.opts.deadlineLeadMs?.() ?? 0) }
+        : asked;
     const forced = own ? null : this.forcedDeadline(seat);
     const turn = own ? null : this.turnDeadline(seat);
     // A forced move and a turn clock can both apply; the sooner wins. The

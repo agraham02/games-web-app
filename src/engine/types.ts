@@ -607,6 +607,18 @@ export interface GameDefinition<S, A> {
      * which is right for a deadline that only ever spans its own turn.
      */
     key?: string;
+    /**
+     * Count `ms` from when the frame that opened this wait has finished
+     * playing on the player's screen, not from when it was sent — the
+     * driver adds what is left of that playback (`deadlineLeadMs`), as it
+     * does for the turn timer. For a wait whose page countdown only starts
+     * once the move is theirs: Poker's show-or-muck can open at the end of
+     * a four-second all-in runout, and timed from the broadcast it was
+     * mucked with two of the player's five seconds still on their bar.
+     * Give it a `key` as well: the lead shrinks as the frame plays, and
+     * only a keyed wait keeps the span it started with.
+     */
+    afterPlayback?: boolean;
   } | null;
 
   /**

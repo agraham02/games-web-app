@@ -206,6 +206,37 @@ describe("what is played", () => {
     expect(session.snapshot()).not.toBe(before);
   });
 
+  it("starts the showdown's clock once the runout before it has played", () => {
+    // An all-in runout is ~4s of burns and flips in the frame that opens the
+    // showdown (3,950ms measured), and the page's five seconds only start
+    // when it has played. Timed from the broadcast, the server mucked with
+    // two of them still on the player's bar, and refused their Show.
+    const runout = 3_950;
+    const definition = createPoker(1_000, 20);
+    const { clock, session } = table({
+      definition,
+      seats: 3,
+      turnMs: null,
+      lead: (now) => Math.max(0, runout - now),
+    });
+    const base = session.snapshot();
+    const seat: SeatId = 1;
+    session.adoptState({
+      ...base,
+      pendingShowdown: { winningSeats: [0], order: [seat], pendingDeltas: {}, contested: [0, seat] },
+    } as PokerState);
+    session.settled();
+    const before = session.snapshot();
+
+    // Re-settled part-way through, as a liveness edge does: still the span it began with.
+    clock.advance(1_000);
+    session.settled();
+    clock.advance(runout + SHOWDOWN_MS + SHOWDOWN_GRACE_MS - 1_000 - 1);
+    expect(session.snapshot(), "mucked before the player's own five seconds were up").toBe(before);
+    clock.advance(1);
+    expect(session.snapshot()).not.toBe(before);
+  });
+
   it("leaves a race's own clock alone: Rummy's claim window passes on time", () => {
     const definition = createRummy({ target: 200 });
     const { clock, session, frames } = table({ definition, seats: 4 });

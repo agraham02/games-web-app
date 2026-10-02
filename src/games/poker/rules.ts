@@ -624,11 +624,21 @@ export function timeoutAction(state: PokerState, seat: SeatId): PokerAction | nu
 /**
  * A showdown's show-or-muck is mucked for whoever does not answer — by the
  * session, not only the page (see `SHOWDOWN_MS`). Keyed by the hand, so it
- * is one wait however often the table settles over it.
+ * is one wait however often the table settles over it, and counted from
+ * when the frame that opened it has played: the page's bar only starts
+ * then, and an all-in runout before it takes about four seconds.
  */
-export function deadline(state: PokerState, seat: SeatId): { ms: number; action: PokerAction; key: string } | null {
+export function deadline(
+  state: PokerState,
+  seat: SeatId,
+): { ms: number; action: PokerAction; key: string; afterPlayback: true } | null {
   if (!state.pendingShowdown || currentSeat(state) !== seat) return null;
-  return { ms: SHOWDOWN_MS + SHOWDOWN_GRACE_MS, action: { t: "muck" }, key: `showdown:${state.hand}:${seat}` };
+  return {
+    ms: SHOWDOWN_MS + SHOWDOWN_GRACE_MS,
+    action: { t: "muck" },
+    key: `showdown:${state.hand}:${seat}`,
+    afterPlayback: true,
+  };
 }
 
 export function legalActions(state: PokerState, seat: SeatId): PokerAction[] {
