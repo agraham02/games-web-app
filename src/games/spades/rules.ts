@@ -731,7 +731,7 @@ export function isOver(state: SpadesState): boolean {
 /**
  * The last card in hand, and nothing else (see `GameDefinition.forcedMove`).
  * A singleton in the suit led is just as forced, but played the moment the
- * five seconds are up it would tell the table it was a singleton.
+ * wait is up it would tell the table it was a singleton.
  */
 export function forcedMove(state: SpadesState, seat: SeatId): SpadesAction | null {
   if (state.phase !== "play" || (state.hands[seat]?.length ?? 0) !== 1) return null;

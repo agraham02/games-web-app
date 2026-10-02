@@ -960,7 +960,7 @@ describe("the server, in process", () => {
     });
 
     describe("a forced move, made for somebody who does not make it", () => {
-      it("rolls for a silent LRC player at five seconds, and takes their late press quietly", () => {
+      it("rolls for a silent LRC player once the wait is up, and takes their late press quietly", () => {
         const h = host("p1");
         const p2 = peerFor("p2");
         send(p2.peer, { t: "joinRoom", code: h.code, name: "Second" });
@@ -974,7 +974,7 @@ describe("the server, in process", () => {
         expect(owner, "the opening roll should be a person's").not.toBeNull();
         const who = owner === registry.sessionFor("p1") ? h : p2;
 
-        // Their five seconds start once the deal that handed them the turn
+        // Their wait starts once the deal that handed them the turn
         // has played on their screen — the server's own measure of it.
         const frames = h.conn.all("frame");
         expect(frames, "only the deal has happened").toHaveLength(1);
@@ -983,7 +983,7 @@ describe("the server, in process", () => {
 
         const before = table().fingerprint;
         clock.advance(lead + FORCED_MOVE_MS - 1);
-        expect(table().fingerprint, "nothing before the five seconds are up").toBe(before);
+        expect(table().fingerprint, "nothing before the wait is up").toBe(before);
         clock.advance(1);
         expect(table().fingerprint, "the roll should have been made for them").not.toBe(before);
 

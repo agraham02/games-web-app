@@ -55,12 +55,13 @@ export const DEFAULT_TURN_HOLD_MS = 900;
 
 /**
  * How long a person gets to make a move that is no choice at all before it
- * is made for them — `GameDefinition.forcedMove` (the user, 2026-09-29).
+ * is made for them — `GameDefinition.forcedMove` (the user, 2026-09-29;
+ * five seconds at first, thirty since 2026-10-01).
  * Counted from when they could first make it: offline that is when the
  * session settles, after the animation; online the driver adds how long
  * the frame that handed it over takes to play (`deadlineLeadMs`).
  */
-export const FORCED_MOVE_MS = 5_000;
+export const FORCED_MOVE_MS = 30_000;
 
 /**
  * One batch of things that happened, handed to whoever is driving.
@@ -145,7 +146,7 @@ export interface GameSessionOptions<S, A> {
   /**
    * How long from now until a live seat can actually act — the driver's
    * estimate of what is still playing on their screen. Added to a forced
-   * move's `FORCED_MOVE_MS`, so the five seconds are theirs rather than
+   * move's `FORCED_MOVE_MS`, so the wait is theirs rather than
    * spent watching the move that handed them the turn.
    *
    * Offline it is nothing: the browser settles when the animation has
@@ -586,7 +587,7 @@ export class GameSession<S, A> {
    * Keyed by the emitted-frame counter: `submit` emits even for a move that
    * animates nothing, so `seq` changes exactly when the position does, and a
    * re-settle for the same position — somebody else dropping or coming back
-   * — resumes this countdown instead of handing out a fresh five seconds.
+   * — resumes this countdown instead of handing out a fresh one.
    */
   private forcedDeadline(seat: SeatId): { ms: number; action: A; key: string } | null {
     const action = this.definition.forcedMove?.(this.state, seat) ?? null;

@@ -9,12 +9,12 @@
  *
  * - WHICH moves. "Exactly one legal action" is not the rule: a Spades
  *   singleton in the suit led is one legal action too, and a card that
- *   lands at exactly five seconds tells the table it was a singleton. So
+ *   lands exactly when the wait runs out tells the table it was a singleton. So
  *   every game's `forcedMove` is held, across real matches, to answering
  *   only when the move is both the only legal one AND forced for a reason
  *   the whole table can already see — and the private cases are counted, so
  *   a test that never met one cannot pass.
- * - WHEN. Five seconds from when the player could first move, never
+ * - WHEN. `FORCED_MOVE_MS` from when the player could first move, never
  *   refilled by the table settling again over the same position.
  */
 
@@ -136,7 +136,7 @@ describe("a forced move plays itself", () => {
     return { clock, session, definition };
   }
 
-  it("after exactly five seconds, and not a moment before", () => {
+  it("after exactly FORCED_MOVE_MS, and not a moment before", () => {
     const { clock, session } = silentLrc();
     session.start();
     const before = session.snapshot();
@@ -148,7 +148,7 @@ describe("a forced move plays itself", () => {
     expect(session.snapshot()).not.toBe(before);
   });
 
-  it("gives the five seconds after whatever is still playing", () => {
+  it("starts the wait after whatever is still playing", () => {
     const { clock, session } = silentLrc({ lead: 1_200 });
     session.start();
     const before = session.snapshot();
@@ -167,7 +167,7 @@ describe("a forced move plays itself", () => {
     expect(session.submit(seat, { t: "roll", dice: [] }).ok).toBe(true);
     const afterPress = session.snapshot();
 
-    // The next seat's own five seconds start from the press, not from the
+    // The next seat's own wait starts from the press, not from the
     // first seat's deadline.
     clock.advance(FORCED_MOVE_MS - 1);
     expect(session.snapshot()).toBe(afterPress);

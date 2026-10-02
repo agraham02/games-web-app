@@ -619,7 +619,7 @@ export interface GameDefinition<S, A> {
    * "Only one legal action" is NOT the test, and a game must not answer with
    * `legalActions` alone. A Spades singleton in the suit led, or a domino
    * hand with one tile that fits, is also one legal action — and a move that
-   * lands at exactly five seconds tells the table so. Name only what is
+   * lands exactly when the wait runs out tells the table so. Name only what is
    * forced for reasons everybody can already see: a last card (the count is
    * public), a draw or a pass (making it says the same thing either way), a
    * roll. A game's `deadline?()` takes precedence over this.

@@ -266,7 +266,8 @@ at lying, and those two move in opposite directions.
 
 `GameDefinition.forcedMove?(state, seat)` names a move a live seat has no
 choice about, and the session makes it for them after `FORCED_MOVE_MS`
-(5s) — the user's call, 2026-09-29, offline and online alike. It rides the
+(30s) — the user's call, 2026-09-29 (5s at first; 30s since 2026-10-01),
+offline and online alike. It rides the
 same deadline machinery as a game's own `deadline?()` (which wins where
 both answer), submitted through `submit` so `completeAction` still rolls
 LRC's dice, and keyed `forced:${seq}:${seat}` — `submit` emits a frame even
@@ -279,7 +280,8 @@ animation, so there is nothing to add.
 **"One legal action" is not the rule, and must not become it.** A Spades
 singleton in the suit led, a domino hand with one tile that fits, and a
 Rummy draw where no depth of the pile fits the hand are all one legal
-action — and a move that lands at exactly five seconds tells the table so.
+action — and a move that lands exactly when the wait runs out tells the
+table so.
 A game names only what is forced for a reason everybody can already see: a
 last card, a draw or a pass, a roll, a stock draw from an EMPTY pile.
 `forcedMove.test.ts` holds every game to that across real matches, and

@@ -523,7 +523,7 @@ export class RoomRuntime {
         this.lastFramePlaybackMs +
         (definition.turnHold?.(state, seat) ?? DEFAULT_TURN_HOLD_MS),
       // A person cannot make a forced move while the frame that handed it to
-      // them is still playing on their screen, so their five seconds start
+      // them is still playing on their screen, so their wait starts
       // after it. What is LEFT of it, not all of it: a seat that comes live
       // long after the frame went out has already watched it.
       deadlineLeadMs: () =>
