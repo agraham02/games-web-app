@@ -199,8 +199,8 @@ export class Router {
           // decide which of the two is worth interrupting somebody over.
           //
           // Except the one refusal that is not a disagreement: the move
-          // they pressed had just been made for them (a forced move's five
-          // seconds ran out). Their screen is already right.
+          // they pressed had just been made for them (a forced move's wait
+          // ran out). Their screen is already right.
           if (result.error === PLAYED_FOR_YOU) return;
           this.fail(peer, "move-refused", moveRefusedText(result.error), message.reqId);
         }
