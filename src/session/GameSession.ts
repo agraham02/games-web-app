@@ -625,8 +625,12 @@ export class GameSession<S, A> {
     const own = this.definition.deadline?.(this.state, seat, (s) => this.isLive(s)) ?? null;
     const forced = own ? null : this.forcedDeadline(seat);
     const turn = own ? null : this.turnDeadline(seat);
-    // A forced move and a turn clock can both apply; the sooner wins. A
-    // forced move is never later (FORCED_MOVE_MS is the timer's minimum).
+    // A forced move and a turn clock can both apply; the sooner wins. The
+    // timer times every move, forced or not, so under a clock shorter than
+    // FORCED_MOVE_MS a forced move runs out of time like any other (and
+    // counts toward going idle); the forced wait is the backstop for a table
+    // with the timer off or longer. At a tie the forced move goes first: the
+    // turn's own deadline carries the grace on top.
     const kind: "own" | "forced" | "turn" | null = own
       ? "own"
       : forced && (!turn || forced.ms <= turn.ms)
@@ -670,8 +674,8 @@ export class GameSession<S, A> {
       this.deadlineAnchor = null;
     }
     // What everybody is shown, while the turn timer is on: the turn's own
-    // clock, or a forced move's five seconds, which is the sooner and is
-    // public anyway. A game's own wait draws its own ring.
+    // clock, or a forced move's wait where that is the sooner — it is public
+    // anyway. A game's own wait draws its own ring.
     const anchor = this.deadlineAnchor;
     const timerOn = (this.opts.turnTimerMs?.() ?? null) !== null;
     if (anchor && timerOn && kind !== "own") {

@@ -274,10 +274,9 @@ describe("every game, with nobody pressing anything", () => {
       if (gameId !== "poker") expect(definition.isOver(session.snapshot())).toBe(true);
 
       const timedOut = frames.filter((f) => f.timedOut !== undefined);
-      // LRC's only move is a roll, which is forced: it is made at
-      // FORCED_MOVE_MS, before the turn clock could run out, so there it is
-      // the forced rule that carries the game — and it ended above.
-      if (gameId !== "lrc") expect(timedOut.length, "nothing was ever played for anybody").toBeGreaterThan(0);
+      // LRC included: its only move is a roll, which is forced, but the
+      // clock here (5s) runs out long before FORCED_MOVE_MS would play it.
+      expect(timedOut.length, "nothing was ever played for anybody").toBeGreaterThan(0);
       for (const f of timedOut) {
         const events = f.events as GameEvent[];
         expect(events[0]).toMatchObject({ t: "announce", text: "ran out of time" });

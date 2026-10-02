@@ -296,8 +296,11 @@ A room may time each move (the user, 2026-09-29: on in a new room at 30s,
 5–60s in steps of 5, fixed for a game). `GameSession` takes the length from
 the driver (`turnTimerMs`) and arms it in `scheduleDeadline` beside a forced
 move's (the sooner wins) whenever the game names no deadline of its own —
-Rummy's claim race, BS's window and Poker's show-or-muck keep theirs. Five
-things to know before touching it:
+Rummy's claim race, BS's window and Poker's show-or-muck keep theirs. The
+clock times every move, forced or not: since forced moves went to 30s
+(2026-10-01), a shorter clock runs out on a forced move like any other, with
+the toast and toward going idle, and the forced wait only decides a table
+whose clock is off or longer. Five things to know before touching it:
 
 - **When it starts.** After what is still playing of the frame that handed
   the move over (`deadlineLeadMs`), plus the ready beat for a round's first
