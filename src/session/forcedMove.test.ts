@@ -210,10 +210,10 @@ describe("a forced move plays itself", () => {
     session.start();
     const seat = definition.currentSeat(session.snapshot())!;
     clock.advance(FORCED_MOVE_MS);
-    expect(session.playedFor(seat, 3_000)).toBe(true);
-    expect(session.playedFor((seat + 1) % 3, 3_000)).toBe(false);
+    expect(session.autoPlayed(seat, 3_000)).toBe("forced");
+    expect(session.autoPlayed((seat + 1) % 3, 3_000)).toBeNull();
     clock.advance(3_001);
-    expect(session.playedFor(seat, 3_000)).toBe(false);
+    expect(session.autoPlayed(seat, 3_000)).toBeNull();
   });
 
   it("plays a whole table of silent people to the end", () => {

@@ -630,6 +630,17 @@ export interface GameDefinition<S, A> {
   forcedMove?(state: S, seat: SeatId): A | null;
 
   /**
+   * What to play for a live seat whose turn timer ran out, where the game
+   * has a better answer than its own bot. Return null (or leave it out) for
+   * the bot's move — the right answer almost everywhere.
+   *
+   * Poker is the exception (the user, 2026-09-29): an auto-play must never
+   * spend a person's chips, so it checks when that is free and folds when it
+   * is not, the rule every online card room uses.
+   */
+  timeoutAction?(state: S, seat: SeatId): A | null;
+
+  /**
    * How much dead air this particular turn deserves before the next one
    * is revealed. Return undefined — as almost every game always should —
    * to leave it to the driver.

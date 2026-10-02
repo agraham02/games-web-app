@@ -19,6 +19,7 @@ import {
   applyCommand,
   createRoom,
   holdsSeat,
+  isIdle,
   isSeatLive,
   makeCode,
   mayContinueRound,
@@ -770,6 +771,98 @@ describe("settings coming off the wire", () => {
         ),
       ).toEqual({ ok: false, error: "game-not-online" });
     }
+  });
+});
+
+describe("the turn timer, as a room setting", () => {
+  it("is on in a new room, at thirty seconds", () => {
+    expect(room().turnTimer).toEqual({ on: true, seconds: 30 });
+  });
+
+  it("is the leader's to change, in steps of five from five to sixty", () => {
+    const r = withMembers(["Sam"]);
+    expect(applyCommand(r, { t: "setTurnTimer", seconds: 10 }, { actor: "s-0", now: 1 })).toEqual({
+      ok: false,
+      error: "not-leader",
+    });
+    const at = (seconds: number) => ok(r, { t: "setTurnTimer", seconds }, { actor: LEADER }).turnTimer.seconds;
+    expect(at(45)).toBe(45);
+    expect(at(12)).toBe(10); // snapped to a step
+    expect(at(2)).toBe(5);
+    expect(at(999)).toBe(60);
+    expect(applyCommand(r, { t: "setTurnTimer", seconds: Number.NaN }, { actor: LEADER, now: 1 })).toEqual({
+      ok: false,
+      error: "bad-turn-timer",
+    });
+  });
+
+  it("keeps its length while switched off, so switching it on restores it", () => {
+    let r = ok(room(), { t: "setTurnTimer", seconds: 20 }, { actor: LEADER });
+    r = ok(r, { t: "setTurnTimer", on: false }, { actor: LEADER });
+    expect(r.turnTimer).toEqual({ on: false, seconds: 20 });
+    r = ok(r, { t: "setTurnTimer", on: true }, { actor: LEADER });
+    expect(r.turnTimer).toEqual({ on: true, seconds: 20 });
+  });
+
+  it("is fixed while a game is running", () => {
+    let r = spades(withMembers(["Sam"]));
+    r = ok(r, { t: "startGame" }, { actor: LEADER });
+    expect(applyCommand(r, { t: "setTurnTimer", on: false }, { actor: LEADER, now: 2 })).toEqual({
+      ok: false,
+      error: "game-already-running",
+    });
+  });
+});
+
+describe("idle: the timer gave somebody's seat to a bot", () => {
+  function started(): Room {
+    const r = spades(withMembers(["Sam"]));
+    return ok(r, { t: "startGame" }, { actor: LEADER });
+  }
+
+  it("hands the seat to a bot, and says so", () => {
+    const r = started();
+    const seat = seatOf(r, "s-0")!;
+    const res = applyCommand(r, { t: "markIdle" }, { actor: "s-0", now: 2 });
+    if (!res.ok) throw new Error(res.error);
+    expect(isSeatLive(res.room, seat)).toBe(false);
+    expect(isIdle(res.room, "s-0")).toBe(true);
+    expect(res.effects).toContainEqual({ t: "notice", text: "A bot is playing for Sam" });
+  });
+
+  it("gives it back when they say they are back, or come back to the table", () => {
+    const idle = ok(started(), { t: "markIdle" }, { actor: "s-0" });
+    const seat = seatOf(idle, "s-0")!;
+    expect(isSeatLive(ok(idle, { t: "resume" }, { actor: "s-0" }), seat)).toBe(true);
+    expect(isSeatLive(ok(idle, { t: "enterGame" }, { actor: "s-0" }), seat)).toBe(true);
+  });
+
+  it("does NOT give it back on a reconnect alone", () => {
+    // A phone left on the table whose network flaps has not come back.
+    let r = ok(started(), { t: "markIdle" }, { actor: "s-0" });
+    r = ok(r, { t: "setConnected", connected: false }, { actor: "s-0" });
+    r = ok(r, { t: "setConnected", connected: true }, { actor: "s-0" });
+    expect(isIdle(r, "s-0")).toBe(true);
+  });
+
+  it("is not who the next round waits on", () => {
+    const r = ok(started(), { t: "markIdle" }, { actor: LEADER });
+    expect(mayContinueRound(r, LEADER)).toBe(false);
+    expect(mayContinueRound(r, "s-0")).toBe(true);
+  });
+
+  it("ends the game when everybody is idle — the user's call", () => {
+    let r = ok(started(), { t: "markIdle" }, { actor: "s-0" });
+    const res = applyCommand(r, { t: "markIdle" }, { actor: LEADER, now: 3 });
+    if (!res.ok) throw new Error(res.error);
+    r = res.room;
+    expect(r.game).toBeNull();
+    expect(res.effects).toContainEqual({ t: "stopSession", reason: "all-bots" });
+    expect(res.effects).toContainEqual({ t: "notice", text: "Everyone is away — game ended" });
+  });
+
+  it("is only for somebody holding a seat in a running game", () => {
+    expect(applyCommand(room(), { t: "markIdle" }, { actor: LEADER, now: 1 }).ok).toBe(false);
   });
 });
 

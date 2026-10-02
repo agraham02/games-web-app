@@ -349,3 +349,23 @@ export function tailMs(events: readonly GameEvent[], opts: ChoreographOptions = 
   }
   return Math.max(0, end - start);
 }
+
+/**
+ * How long the table sits on screen, dealt-out and still, before the first
+ * thing moves.
+ *
+ * A player who has just arrived should see the felt and the deck before
+ * cards start leaving it, not join an animation already underway. It is
+ * measured from the table mounting on THIS screen, which is what makes it
+ * per-player: the server broadcasts a frame and moves on, each client
+ * starts its own deal when its own table is up, and a slow load delays
+ * only the person loading.
+ *
+ * Long enough for the piece layer to have measured itself and painted the
+ * deck; short enough not to read as a stall. Zero under reduced motion.
+ */
+//
+// Lives here, beside `playbackMs`, because the server needs it too: the
+// first move of a round cannot be made before the deal has started on that
+// player's screen, so the turn timer counts it in (`RoomRuntime`).
+export const READY_BEAT_MS = 450;

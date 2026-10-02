@@ -64,6 +64,29 @@ export const DEFAULT_TURN_HOLD_MS = 900;
 export const FORCED_MOVE_MS = 30_000;
 
 /**
+ * How much longer than the clock on screen the session waits before it
+ * makes a timed-out move. The clock a person is shown ends here; a move
+ * they make as it empties still has a round trip to travel. The same
+ * allowance Rummy's claim race gives (`CLAIM_GRACE_MS`).
+ */
+export const TURN_GRACE_MS = 900;
+
+/**
+ * Whose move the turn timer is counting, and when the clock everybody is
+ * shown runs out — in the session clock's time. The session acts
+ * `TURN_GRACE_MS` after `endsAt`; a forced move, which is no choice, acts
+ * at `endsAt` exactly.
+ */
+export interface TurnClock {
+  seat: SeatId;
+  /** New with every position: a new key is a new clock. */
+  key: string;
+  /** A full clock's worth. */
+  totalMs: number;
+  endsAt: number;
+}
+
+/**
  * One batch of things that happened, handed to whoever is driving.
  *
  * Deliberately NOT carrying the resulting state. The driver reads
@@ -86,6 +109,12 @@ export interface SessionFrame<A> {
    * of appearing once it has already finished.
    */
   dealtRound: number | null;
+  /**
+   * Set on the move the turn timer made for this seat, because they did not
+   * make one in time — what a driver counts to decide that somebody has
+   * walked away.
+   */
+  timedOut?: SeatId;
 }
 
 export type SubmitResult =
@@ -155,6 +184,13 @@ export interface GameSessionOptions<S, A> {
    */
   deadlineLeadMs?: () => number;
   /**
+   * The turn timer: how long a live seat gets for each move, or null for as
+   * long as it likes. The driver's (a room's setting); offline never passes
+   * one. A game's own `deadline?()` takes precedence — Rummy's claim race
+   * and BS's challenge window keep their own clocks.
+   */
+  turnTimerMs?: () => number | null;
+  /**
    * When false a bot's turn is computed as soon as it is reachable but
    * never auto-revealed — the driver must call `advance()`. Dev affordance
    * for stepping a game one turn at a time.
@@ -192,8 +228,10 @@ export class GameSession<S, A> {
    * `GameDefinition.deadline`'s `key`.
    */
   private deadlineAnchor: { key: string; at: number; ms: number } | null = null;
-  /** The last forced move played for somebody, and when. See `playedFor`. */
-  private lastForced: { seat: SeatId; at: number } | null = null;
+  /** The last move made for somebody, and why. See `autoPlayed`. */
+  private lastAuto: { seat: SeatId; at: number; kind: "forced" | "timeout" } | null = null;
+  /** The clock being shown for the move in hand, if the turn timer is on. */
+  private shownClock: TurnClock | null = null;
   /** A bot turn that `settled()` has decided on but not yet revealed. */
   private pending: S | null = null;
   private disposed = false;
@@ -265,8 +303,20 @@ export class GameSession<S, A> {
     this.opts.turnHoldMs = turnHoldMs;
   }
 
-  private emit(events: GameEvent[], dealtRound: number | null): void {
-    this.opts.emit?.({ seq: ++this.seq, events, lastAction: this.last, dealtRound });
+  private emit(events: GameEvent[], dealtRound: number | null, timedOut?: SeatId): void {
+    const frame: SessionFrame<A> = { seq: ++this.seq, events, lastAction: this.last, dealtRound };
+    if (timedOut !== undefined) frame.timedOut = timedOut;
+    this.opts.emit?.(frame);
+  }
+
+  /**
+   * The turn timer's clock for the move the table is waiting on, or null.
+   * A pull rather than a callback: every arm and clear happens inside
+   * `settled()`, so a driver that reads this after settling sees the final
+   * answer and never a clear-then-rearm flicker.
+   */
+  get turnClock(): TurnClock | null {
+    return this.shownClock;
   }
 
   /**
@@ -397,20 +447,60 @@ export class GameSession<S, A> {
     const seat = this.definition.currentSeat(current);
     if (seat === null || this.isLive(seat)) return;
 
-    const tier = this.opts.difficulty?.[seat] ?? "steady";
-    const bot = this.definition.bots[tier];
+    const bot = this.botFor(seat);
     // The REDACTED state, never the real one: a bot for seat N sees
     // view(N) and nothing more. `reduce` still runs against the truth —
     // the bot only CHOOSES from what it can legitimately see.
     const view = this.definition.playerView(current, seat);
     const thinkMs = bot.thinkMs(view, seat, this.rng);
     const action = bot.choose(view, seat, this.rng);
-    const { state: next, events } = this.definition.reduce(current, action);
-    this.state = next;
-    this.last = { seat, action };
     // `think` rides first in the same batch, so playback waits out that
     // beat before the move itself animates.
-    this.emit([{ t: "think", seat, ms: thinkMs }, ...events], null);
+    this.playFor(seat, action, [{ t: "think", seat, ms: thinkMs }]);
+  }
+
+  private botFor(seat: SeatId) {
+    return this.definition.bots[this.opts.difficulty?.[seat] ?? "steady"];
+  }
+
+  /**
+   * Makes a move for a seat as a BOT makes one: straight to `reduce`, past
+   * `validate` and `completeAction`, which exist to vet what arrives off a
+   * socket. That difference is load-bearing for a timed-out move — Spades'
+   * `completeAction` stamps any submitted Blind Nil vote as a person's firm
+   * choice, so a vote made for somebody who never voted would overrule their
+   * partner; the bot's own `defer` is the honest answer.
+   */
+  private playFor(seat: SeatId, action: A, lead: GameEvent[], timedOut?: SeatId): void {
+    const { state: next, events } = this.definition.reduce(this.state, action);
+    this.state = next;
+    this.last = { seat, action };
+    this.emit([...lead, ...events], null, timedOut);
+  }
+
+  /**
+   * The turn timer ran out on a live seat: make their move for them — the
+   * game's `timeoutAction` where it has one (Poker checks or folds, never
+   * spending a player's chips), else what a bot would play — and say so.
+   */
+  private expireTurn(seat: SeatId): void {
+    if (this.disposed) return;
+    const state = this.state;
+    if (this.definition.isOver(state) || this.definition.isRoundOver?.(state)) return;
+    if (this.definition.currentSeat(state) !== seat || !this.isLive(seat)) return;
+    const action =
+      this.definition.timeoutAction?.(state, seat) ??
+      this.botFor(seat).choose(this.definition.playerView(state, seat), seat, this.rng);
+    this.clearHold();
+    this.lastAuto = { seat, at: this.clock.now(), kind: "timeout" };
+    // The table's toast — "Ada ran out of time", "You ran out of time" — so
+    // a move nobody saw them make explains itself (the user, 2026-10-01).
+    this.playFor(
+      seat,
+      action,
+      [{ t: "announce", seat, actor: seat, text: "ran out of time", tone: "info", selfTone: "bad" }],
+      seat,
+    );
   }
 
   /**
@@ -533,12 +623,22 @@ export class GameSession<S, A> {
     // on it: Rummy's ring is the soonest BOT's arrival, never another
     // person's (see `claimDeadlineMs`).
     const own = this.definition.deadline?.(this.state, seat, (s) => this.isLive(s)) ?? null;
-    const due = own ?? this.forcedDeadline(seat);
-    if (!due) {
+    const forced = own ? null : this.forcedDeadline(seat);
+    const turn = own ? null : this.turnDeadline(seat);
+    // A forced move and a turn clock can both apply; the sooner wins. A
+    // forced move is never later (FORCED_MOVE_MS is the timer's minimum).
+    const kind: "own" | "forced" | "turn" | null = own
+      ? "own"
+      : forced && (!turn || forced.ms <= turn.ms)
+        ? "forced"
+        : turn
+          ? "turn"
+          : null;
+    const due = kind === "own" ? own : kind === "forced" ? forced : kind === "turn" ? turn : null;
+    if (!due || !kind) {
       this.deadlineAnchor = null;
       return;
     }
-    const forced = own === null;
 
     // How long is actually LEFT of this wait, not how long it was worth
     // when it started.
@@ -569,15 +669,47 @@ export class GameSession<S, A> {
     } else {
       this.deadlineAnchor = null;
     }
+    // What everybody is shown, while the turn timer is on: the turn's own
+    // clock, or a forced move's five seconds, which is the sooner and is
+    // public anyway. A game's own wait draws its own ring.
+    const anchor = this.deadlineAnchor;
+    const timerOn = (this.opts.turnTimerMs?.() ?? null) !== null;
+    if (anchor && timerOn && kind !== "own") {
+      const shownMs = kind === "turn" ? anchor.ms - TURN_GRACE_MS : anchor.ms;
+      this.shownClock = {
+        seat,
+        key: anchor.key,
+        totalMs: kind === "turn" ? turn!.totalMs : FORCED_MOVE_MS,
+        endsAt: anchor.at + shownMs,
+      };
+    }
+
     this.deadlineTimer = this.clock.setTimeout(() => {
       this.deadlineTimer = null;
+      if (kind === "turn") {
+        this.expireTurn(seat);
+        return;
+      }
       // Through `submit`, not `reduce`, so an action that has become
       // illegal in the meantime is refused exactly as a client's would be
       // — the seat may have acted a moment before this fired.
-      const result = this.submit(seat, due.action);
-      if (result.ok && forced) this.lastForced = { seat, at: this.clock.now() };
+      const result = this.submit(seat, (due as { action: A }).action);
+      if (result.ok && kind === "forced") this.lastAuto = { seat, at: this.clock.now(), kind: "forced" };
       if (result.ok && !result.animated) this.settled();
     }, ms);
+  }
+
+  /**
+   * The turn timer's wait for a live seat's move: `turnTimerMs` once the
+   * frame that handed them the move has played (`deadlineLeadMs`), and
+   * `TURN_GRACE_MS` more before acting, for the round trip. Keyed like a
+   * forced move's, so a re-settle over the same position resumes it.
+   */
+  private turnDeadline(seat: SeatId): { ms: number; key: string; totalMs: number } | null {
+    const totalMs = this.opts.turnTimerMs?.() ?? null;
+    if (totalMs === null) return null;
+    const lead = Math.max(0, this.opts.deadlineLeadMs?.() ?? 0);
+    return { ms: lead + totalMs + TURN_GRACE_MS, key: `turn:${this.seq}:${seat}`, totalMs };
   }
 
   /**
@@ -597,19 +729,17 @@ export class GameSession<S, A> {
   }
 
   /**
-   * Was a forced move played for this seat within the last `withinMs`?
+   * Was a move made for this seat within the last `withinMs`, and why?
    *
-   * For a driver deciding what to say about a refusal: a person who pressed
+   * For a driver deciding what to say about a refusal. A person who pressed
    * their last card a moment after it was played for them made the same
    * move, and telling them "it is not your turn" would be both true and
-   * baffling.
+   * baffling ("forced"). One whose clock ran out may have meant something
+   * else, and should hear that time ran out ("timeout").
    */
-  playedFor(seat: SeatId, withinMs: number): boolean {
-    return (
-      this.lastForced !== null &&
-      this.lastForced.seat === seat &&
-      this.clock.now() - this.lastForced.at <= withinMs
-    );
+  autoPlayed(seat: SeatId, withinMs: number): "forced" | "timeout" | null {
+    const last = this.lastAuto;
+    return last && last.seat === seat && this.clock.now() - last.at <= withinMs ? last.kind : null;
   }
 
   /**
@@ -628,6 +758,7 @@ export class GameSession<S, A> {
   }
 
   private clearDeadline(): void {
+    this.shownClock = null;
     if (this.deadlineTimer === null) return;
     this.clock.clearTimeout(this.deadlineTimer);
     this.deadlineTimer = null;
