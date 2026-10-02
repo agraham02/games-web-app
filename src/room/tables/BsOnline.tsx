@@ -108,6 +108,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld, corner 
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}
+        turnClock={api.turnClock}
         menuActions={
           <TableMenu
             code={room.code}

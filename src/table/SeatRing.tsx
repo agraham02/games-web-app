@@ -19,6 +19,7 @@ import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
 import { Avatar } from "@/ui/primitives/Avatar";
 import { Stats, type Stat, type StatLines } from "@/ui/primitives/Stats";
+import { CountdownRing } from "@/ui/primitives/CountdownRing";
 
 /** One labelled number on a pod: "Bid 4", "Cards 7" — see `Stats`. */
 export type SeatStat = Stat;
@@ -110,6 +111,12 @@ export interface SeatView {
    * `seatExtras`, like `photo`.
    */
   bubble?: { id: number; text: string } | null;
+  /**
+   * The turn timer's clock on this seat's move: a ring round the pod that
+   * empties, green to amber at half to red at a fifth (the user, 2026-09-29).
+   * `endsAt` is by `Date.now()`. Laid over by `GameHost`, never by a game.
+   */
+  timer?: { key: string; totalMs: number; endsAt: number } | null;
 }
 
 /**
@@ -199,12 +206,24 @@ export const SeatPod = memo(function SeatPod({
       initial={false}
       animate={{ scale: highlighted ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
-      className={`flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
+      className={`relative flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
         highlighted
           ? `${solid ? "bg-felt-950" : "bg-felt-950/70"} ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]`
           : `${solid ? "bg-felt-950" : "bg-felt-950/55"} ring-1 ring-brass-400/20`
       }`}
     >
+      {view.timer ? (
+        // ON the pod's own edge, not outside it: a side pod sits flush with
+        // the screen's edge on a phone, and a ring outside it lost that side
+        // to the table's clipping (seen in a screenshot).
+        <CountdownRing
+          key={view.timer.key}
+          totalMs={view.timer.totalMs}
+          endsAt={view.timer.endsAt}
+          radius="0.75rem"
+          offset={0}
+        />
+      ) : null}
       <div className="relative">
         <AnimatePresence>{view.winning ? <WinnerCrown /> : null}</AnimatePresence>
         <Avatar

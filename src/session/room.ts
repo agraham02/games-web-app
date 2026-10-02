@@ -80,6 +80,30 @@ export const MAX_ROOM_MEMBERS = 24;
 export const LOBBY_GRACE_MS = 20_000;
 
 /**
+ * The turn timer (the user, 2026-09-29): how long a person has to make each
+ * move before one is made for them. On in every new room at 30 seconds; the
+ * leader may switch it off or pick 5 to 60 seconds in steps of 5, and it is
+ * fixed for the length of a game.
+ */
+export const TURN_TIMER_DEFAULT_S = 30;
+export const TURN_TIMER_MIN_S = 5;
+export const TURN_TIMER_MAX_S = 60;
+export const TURN_TIMER_STEP_S = 5;
+
+export interface TurnTimer {
+  on: boolean;
+  /** Kept while it is off, so switching it back on restores it. */
+  seconds: number;
+}
+
+/** A requested length, snapped to a step and clamped, or null if it is not a number. */
+export function cleanTurnSeconds(raw: unknown): number | null {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  const stepped = Math.round(raw / TURN_TIMER_STEP_S) * TURN_TIMER_STEP_S;
+  return Math.max(TURN_TIMER_MIN_S, Math.min(TURN_TIMER_MAX_S, stepped));
+}
+
+/**
  * Codes are uppercase and skip I and O, which are the two letters people
  * reliably mistype as 1 and 0 when reading a code off someone else's
  * screen. 24^4 is still 331,776 rooms.
@@ -119,6 +143,13 @@ export interface GameParticipation {
    * they then have to re-enter.
    */
   present: SessionId[];
+  /**
+   * Seat holders who let the turn timer run out twice in a row: a bot plays
+   * for them, exactly as when they drop, until they say they are back (or
+   * simply make a move). They are still connected and still looking at the
+   * table — which is why this is its own list rather than `present`.
+   */
+  idle?: SessionId[];
 }
 
 export interface Room {
@@ -141,6 +172,8 @@ export interface Room {
    * has, so joins, departures and a change of game need no bookkeeping.
    */
   seatPlan?: (SessionId | null)[];
+  /** See `TurnTimer`. */
+  turnTimer: TurnTimer;
 }
 
 export type RoomError =
@@ -159,6 +192,7 @@ export type RoomError =
   | "cannot-target-self"
   | "bad-seat-count"
   | "bad-seat-plan"
+  | "bad-turn-timer"
   | "room-full";
 
 export type RoomEffect =
@@ -215,6 +249,15 @@ export type RoomCommand =
   | { t: "endGame" }
   /** Leader only: ends the room itself, for everybody in it. */
   | { t: "closeRoom" }
+  /** Leader only, between games: the turn timer on or off, and how long. */
+  | { t: "setTurnTimer"; on?: boolean; seconds?: number }
+  /**
+   * Server only, never from the wire: the actor let the turn timer run out
+   * twice in a row (`RoomRuntime` counts). A bot takes their seat.
+   */
+  | { t: "markIdle" }
+  /** The actor is back at their seat after being marked idle. */
+  | { t: "resume" }
   | { t: "setConnected"; connected: boolean };
 
 export interface RoomContext {
@@ -259,6 +302,7 @@ export function createRoom(opts: {
     seats: 0,
     difficulty: "steady",
     game: null,
+    turnTimer: { on: true, seconds: TURN_TIMER_DEFAULT_S },
   };
 }
 
@@ -340,7 +384,12 @@ export function isSeatLive(room: Room, seat: SeatId): boolean {
   const owner = game.seatOwner[seat];
   if (!owner) return false;
   const member = room.members[owner];
-  return Boolean(member?.connected) && game.present.includes(owner);
+  return Boolean(member?.connected) && game.present.includes(owner) && !isIdle(room, owner);
+}
+
+/** Marked idle by the turn timer: a bot is playing their seat. See `idle`. */
+export function isIdle(room: Room, session: SessionId): boolean {
+  return room.game?.idle?.includes(session) ?? false;
 }
 
 /**
@@ -356,7 +405,10 @@ export function isSeatLive(room: Room, seat: SeatId): boolean {
 export function mayContinueRound(room: Room, session: SessionId): boolean {
   const game = room.game;
   if (!game) return false;
-  const here = (s: SessionId) => Boolean(room.members[s]?.connected) && game.present.includes(s);
+  // Idle is not here: a leader the turn timer has given up on cannot be
+  // what the table waits on.
+  const here = (s: SessionId) =>
+    Boolean(room.members[s]?.connected) && game.present.includes(s) && !isIdle(room, s);
   if (session === room.leader) return here(session);
   if (here(room.leader)) return false;
   return seatOf(room, session) !== null && here(session);
@@ -448,8 +500,15 @@ function releaseFromGame(room: Room, session: SessionId): Room {
       ...room.game,
       seatOwner: room.game.seatOwner.map((o) => (o === session ? null : o)),
       present: room.game.present.filter((s) => s !== session),
+      idle: room.game.idle?.filter((s) => s !== session),
     },
   };
+}
+
+/** Takes a session off the idle list, if it is on it. */
+function clearIdle(room: Room, session: SessionId): Room {
+  if (!room.game || !isIdle(room, session)) return room;
+  return { ...room, game: { ...room.game, idle: room.game.idle!.filter((s) => s !== session) } };
 }
 
 /**
@@ -460,11 +519,11 @@ function releaseFromGame(room: Room, session: SessionId): Room {
  * back-out, a kick or a leave, and a bot table playing on to a winner in an
  * empty room is nobody's idea of a running game.
  */
-function endIfAllBots(room: Room, effects: RoomEffect[]): Room {
+function endIfAllBots(room: Room, effects: RoomEffect[], why = "Everyone left — game ended"): Room {
   if (!room.game) return room;
   for (let i = 0; i < room.game.seats; i++) if (isSeatLive(room, i)) return room;
   effects.push({ t: "stopSession", reason: "all-bots" });
-  effects.push({ t: "notice", text: "Everyone left — game ended" });
+  effects.push({ t: "notice", text: why });
   return { ...room, game: null };
 }
 
@@ -831,14 +890,15 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
 
       // Already seated: this is a reclaim, and it must not cost them the
       // seat they own. Being present again is the whole of it — the bot
-      // stops playing because `isSeatLive` starts answering true.
-      if (game.present.includes(actor)) return { ok: true, room, effects };
+      // stops playing because `isSeatLive` starts answering true. Asking
+      // to come in is also saying they are back, if the timer said not.
+      if (game.present.includes(actor)) return { ok: true, room: clearIdle(room, actor), effects };
 
       const mine = game.seatOwner.indexOf(actor);
       if (mine !== -1) {
         return {
           ok: true,
-          room: { ...room, game: { ...game, present: [...game.present, actor] } },
+          room: clearIdle({ ...room, game: { ...game, present: [...game.present, actor] } }, actor),
           effects: [{ t: "notice", text: `${nameOf(room, actor)} came back` }],
         };
       }
@@ -873,10 +933,13 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
 
       // Presence goes, the seat claim stays — a bot picks the hand up and
       // holds it until they come back.
-      let next: Room = {
-        ...room,
-        game: { ...room.game, present: room.game.present.filter((s) => s !== actor) },
-      };
+      let next: Room = clearIdle(
+        {
+          ...room,
+          game: { ...room.game, present: room.game.present.filter((s) => s !== actor) },
+        },
+        actor,
+      );
       const seat = seatOf(room, actor);
       effects.push({
         t: "notice",
@@ -898,6 +961,41 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
           { t: "notice", text: "The game was ended" },
         ],
       };
+    }
+
+    case "setTurnTimer": {
+      const err = requireLeader();
+      if (err) return fail(err);
+      // Fixed for the length of a game, like the game's own options: the
+      // session was built with it.
+      if (room.game) return fail("game-already-running");
+      let seconds = room.turnTimer.seconds;
+      if (command.seconds !== undefined) {
+        const clean = cleanTurnSeconds(command.seconds);
+        if (clean === null) return fail("bad-turn-timer");
+        seconds = clean;
+      }
+      const on = typeof command.on === "boolean" ? command.on : room.turnTimer.on;
+      return { ok: true, room: { ...room, turnTimer: { on, seconds } }, effects };
+    }
+
+    case "markIdle": {
+      if (!room.game || !holdsSeat(room, actor) || isIdle(room, actor)) return fail("not-in-game");
+      let next: Room = {
+        ...room,
+        game: { ...room.game, idle: [...(room.game.idle ?? []), actor] },
+      };
+      effects.push({ t: "notice", text: `A bot is playing for ${nameOf(room, actor)}` });
+      // The user's call (2026-10-01): a table nobody real is playing ends,
+      // whether they left or simply walked away from it.
+      next = endIfAllBots(next, effects, "Everyone is away — game ended");
+      return { ok: true, room: next, effects };
+    }
+
+    case "resume": {
+      if (!isIdle(room, actor)) return { ok: true, room, effects };
+      effects.push({ t: "notice", text: `${nameOf(room, actor)} is back` });
+      return { ok: true, room: clearIdle(room, actor), effects };
     }
 
     case "closeRoom": {

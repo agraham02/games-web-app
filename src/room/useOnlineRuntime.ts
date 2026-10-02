@@ -34,7 +34,7 @@ import { createRng, type Rng } from "@/engine/rng";
 import { botName } from "@/games/_shared/botIdentity";
 import { useChoreographer } from "@/motion/useChoreographer";
 import { prefersReducedMotion } from "@/motion/presets";
-import { playbackMs, tailMs } from "@/motion/choreographer";
+import { READY_BEAT_MS, playbackMs, tailMs } from "@/motion/choreographer";
 import type { FrameView, RoomView } from "@/session/protocol";
 import { announce } from "@/ui/disclosure";
 import { composeAnnounce } from "@/session/announce";
@@ -69,21 +69,8 @@ const CATCH_UP_FRAMES = 2;
  */
 const CATCH_UP_MS = 2500;
 
-/**
- * How long the table sits on screen, dealt-out and still, before the first
- * thing moves.
- *
- * A player who has just arrived should see the felt and the deck before
- * cards start leaving it, not join an animation already underway. It is
- * measured from the table mounting on THIS screen, which is what makes it
- * per-player: the server broadcasts a frame and moves on, each client
- * starts its own deal when its own table is up, and a slow load delays
- * only the person loading.
- *
- * Long enough for the piece layer to have measured itself and painted the
- * deck; short enough not to read as a stall. Zero under reduced motion.
- */
-export const READY_BEAT_MS = 450;
+// Shared with the server, which counts it into the first move's clock.
+export { READY_BEAT_MS } from "@/motion/choreographer";
 
 const DEFAULT_END_HOLD_MS = 1200;
 const ROUND_INTRO_HOLD_MS = 3000;

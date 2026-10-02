@@ -143,7 +143,8 @@ export class Router {
     }
 
     if (message.t === "ping") {
-      peer.connection.send({ t: "pong" });
+      // Echoed, so the client can time the round trip (`clockSync`).
+      peer.connection.send(message.sent === undefined ? { t: "pong" } : { t: "pong", sent: message.sent });
       return;
     }
 
@@ -603,6 +604,10 @@ function toCommand(message: ClientMessage): RoomCommand | null {
       return { t: "exitGame" };
     case "endGame":
       return { t: "endGame" };
+    case "setTurnTimer":
+      return { t: "setTurnTimer", on: message.on, seconds: message.seconds };
+    case "resume":
+      return { t: "resume" };
     default:
       return null;
   }

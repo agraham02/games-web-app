@@ -26,7 +26,7 @@
 import type { GameEvent, PieceId, PieceMeta, PlacementMap, SeatId } from "@/engine/types";
 import type { BotDifficulty } from "@/engine/types";
 import type { GameId, RawSettings } from "./registry";
-import type { Privacy, RoomCode, RoomError, SessionId } from "./room";
+import type { Privacy, RoomCode, RoomError, SessionId, TurnTimer } from "./room";
 import type { ChatMessage, ChatMode } from "./chat";
 
 export const PROTOCOL_VERSION = 3;
@@ -95,10 +95,19 @@ export type ClientMessage =
    * decides what is table-safe, is the one that knows what it says.
    */
   | ({ t: "chat"; text?: string; quick?: string } & Addressed)
+  /** Leader only, between games: the turn timer on or off, and how long. */
+  | ({ t: "setTurnTimer"; on?: boolean; seconds?: number } & Addressed)
+  /** "I'm back" — after the turn timer handed your seat to a bot. */
+  | ({ t: "resume" } & Addressed)
   /** A move. `action` is the game's own action type, validated server-side. */
   | ({ t: "action"; action: unknown } & Addressed)
   | ({ t: "nextRound" } & Addressed)
-  | { t: "ping" };
+  /**
+   * `sent` is the client's own clock, echoed straight back in the `pong`,
+   * so the client can time the round trip — the only latency it needs to
+   * know, to show a turn clock that ends when the server's does.
+   */
+  | { t: "ping"; sent?: number };
 
 /* ============================================================
    Server -> client
@@ -121,6 +130,8 @@ export interface MemberView {
   isLeader: boolean;
   /** Their photo's id — fetch it from `photoUrl(id)` — or null for none. */
   photo: string | null;
+  /** The turn timer has handed their seat to a bot until they come back. */
+  idle: boolean;
 }
 
 export interface RoomView {
@@ -169,6 +180,8 @@ export interface RoomView {
    * latter while a partnership hand you hold a seat in is being played.
    */
   chat: ChatMode;
+  /** Between games, what the next one will be played with. */
+  turnTimer: TurnTimer;
 }
 
 /**
@@ -320,6 +333,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "cannot-target-self": "that one only works on somebody else",
   "bad-seat-count": "that seat count does not fit this game",
   "bad-seat-plan": "that seating plan does not match who is here",
+  "bad-turn-timer": "that is not a length the turn timer can be",
   "room-full": "this room is full",
   "no-room": "you are not in a room",
   "bad-message": "that request could not be handled",
@@ -411,7 +425,29 @@ export type ServerMessage =
    * to a room — it replaces whatever the client had, which may be stale.
    */
   | { t: "chatLog"; messages: ChatMessage[] }
-  | { t: "pong" };
+  /**
+   * Whose move the table is waiting on, and how long they have — or null
+   * when nobody's clock is running. Sent when it changes, and with the time
+   * actually left to anybody arriving mid-move.
+   *
+   * Relative, never a time of day: `endsInMs` counts from the moment it was
+   * sent, so two machines whose clocks disagree still agree on it. The
+   * client takes off half a round trip. What anyone is shown ends
+   * `TURN_GRACE_MS` before the server acts, so a move made as the ring
+   * empties still arrives in time.
+   */
+  | { t: "turnClock"; clock: TurnClockView | null }
+  | { t: "pong"; sent?: number };
+
+export interface TurnClockView {
+  seat: SeatId;
+  /** Changes with the position: a new key is a new move's clock. */
+  key: string;
+  /** A full clock's worth, ms. */
+  totalMs: number;
+  /** Until the clock on screen runs out, from when this was sent. */
+  endsInMs: number;
+}
 
 /* ============================================================
    Parsing — everything below assumes the sender is hostile
@@ -444,7 +480,17 @@ export function parseClientMessage(raw: string): ClientMessage | null {
 
   switch (data.t) {
     case "ping":
-      return { t: "ping" };
+      return typeof data.sent === "number" && Number.isFinite(data.sent)
+        ? { t: "ping", sent: data.sent }
+        : { t: "ping" };
+
+    case "setTurnTimer": {
+      const on = typeof data.on === "boolean" ? data.on : undefined;
+      // Range and step are the room's to judge; this only proves a number.
+      const seconds = typeof data.seconds === "number" ? data.seconds : undefined;
+      if (on === undefined && seconds === undefined) return null;
+      return { t: "setTurnTimer", on, seconds, reqId };
+    }
 
     case "bye":
       return { t: "bye" };
@@ -546,6 +592,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case "exitGame":
     case "endGame":
     case "closeRoom":
+    case "resume":
     case "nextRound":
       return { t: data.t, reqId };
 

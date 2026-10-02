@@ -20,6 +20,7 @@ import type {
   RoomView,
   ServerErrorCode,
   SettlementView,
+  TurnClockView,
 } from "@/session/protocol";
 import { CHAT_HISTORY, type ChatMessage } from "@/session/chat";
 import { announce } from "@/ui/disclosure";
@@ -57,6 +58,34 @@ export interface Farewell {
   byYou?: boolean;
   /** Who this player was in the room — `SettleUp` says "you" by it. */
   you?: string;
+}
+
+/**
+ * The turn timer's clock, on this machine's own time: when the clock that
+ * everybody is shown runs out, by `Date.now()`. Worked out as the message
+ * arrives — what the server said was left, less the time it took to get
+ * here (`RoomConnection.oneWayMs`) — so two machines whose clocks disagree
+ * still show the same ring.
+ */
+export interface LocalTurnClock {
+  seat: number;
+  key: string;
+  totalMs: number;
+  endsAt: number;
+}
+
+/** A clock as the server sent it, on this machine's time — see `LocalTurnClock`. */
+export function toLocalClock(
+  clock: TurnClockView,
+  receivedAt: number,
+  oneWayMs: number,
+): LocalTurnClock {
+  return {
+    seat: clock.seat,
+    key: clock.key,
+    totalMs: clock.totalMs,
+    endsAt: receivedAt + clock.endsInMs - oneWayMs,
+  };
 }
 
 export interface RoomApi {
@@ -113,6 +142,12 @@ export interface RoomApi {
   chatLiveAfter: number;
   /** Says something: typed text, or a quick reply by id. */
   sendChat: (said: { text: string } | { quick: string }) => void;
+  /** Whose move the turn timer is counting, and until when — or null. */
+  turnClock: LocalTurnClock | null;
+  /** "I'm back", after the turn timer handed your seat to a bot. */
+  resumeSeat: () => void;
+  /** Leader only, between games. */
+  setTurnTimer: (change: { on?: boolean; seconds?: number }) => void;
   send: (message: ClientMessage) => void;
 }
 
@@ -126,6 +161,7 @@ export function useRoom(): RoomApi {
   const [farewell, setFarewell] = useState<Farewell | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [chatLiveAfter, setChatLiveAfter] = useState(0);
+  const [turnClock, setTurnClock] = useState<LocalTurnClock | null>(null);
   /** The room we are in or knocking on, for `farewell` to name. Read inside
    * the message handler, which is created once and would see stale state. */
   const codeRef = useRef<string | null>(null);
@@ -169,6 +205,7 @@ export function useRoom(): RoomApi {
               inRoomRef.current = false;
               setChat([]);
               setChatLiveAfter(0);
+              setTurnClock(null);
               setRoom(null);
               setFrame(null);
               lastSeq.current = -1;
@@ -197,6 +234,7 @@ export function useRoom(): RoomApi {
             // screen the next time they left one.
             setError(null);
             if (!message.room.gameRunning) {
+              setTurnClock(null);
               // The table is gone; anything still on screen from it is
               // stale. Clearing here rather than waiting for a frame is
               // what makes "the leader ended the game" land immediately.
@@ -227,6 +265,7 @@ export function useRoom(): RoomApi {
             inRoomRef.current = false;
             setChat([]);
             setChatLiveAfter(0);
+            setTurnClock(null);
             setRoom(null);
             setFrame(null);
             setPendingCode(null);
@@ -255,6 +294,11 @@ export function useRoom(): RoomApi {
           case "chat":
             setChat((log) => [...log, message.message].slice(-CHAT_HISTORY));
             break;
+          case "turnClock": {
+            const c = message.clock;
+            setTurnClock(c ? toLocalClock(c, Date.now(), connection.oneWayMs()) : null);
+            break;
+          }
 
           case "notice":
             // Straight onto the existing toast seam, so a join or a
@@ -368,7 +412,23 @@ export function useRoom(): RoomApi {
       chat,
       chatLiveAfter,
       sendChat: (said) => send({ t: "chat", ...said }),
+      turnClock,
+      resumeSeat: () => send({ t: "resume" }),
+      setTurnTimer: (change) => send({ t: "setTurnTimer", ...change }),
     }),
-    [phase, status, room, pendingCode, frame, error, farewell, chat, chatLiveAfter, send, connection],
+    [
+      phase,
+      status,
+      room,
+      pendingCode,
+      frame,
+      error,
+      farewell,
+      chat,
+      chatLiveAfter,
+      turnClock,
+      send,
+      connection,
+    ],
   );
 }

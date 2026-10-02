@@ -91,6 +91,9 @@ function playedFrames(gameId: "spades" | "bs" = "spades", turns = 30): FrameView
   const bo = makePeer(boConn, 0);
   say(ada, { t: "hello", token: "ada", protocol: PROTOCOL_VERSION });
   say(ada, { t: "createRoom", name: "Ada" });
+  // Off: this drains the loop with both people silent between their moves,
+  // and the turn timer (on in a new room) would make those moves for them.
+  say(ada, { t: "setTurnTimer", on: false });
   const code = (adaConn.sent.find((m) => m.t === "room") as Extract<ServerMessage, { t: "room" }>).room.code;
   say(bo, { t: "hello", token: "bo", protocol: PROTOCOL_VERSION });
   say(bo, { t: "joinRoom", code, name: "Bo" });

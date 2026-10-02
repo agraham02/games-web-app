@@ -82,8 +82,8 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     you: "me",
     youAreLeader: true,
     members: [
-      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true, photo: null },
-      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false, photo: null },
+      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true, photo: null, idle: false },
+      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false, photo: null, idle: false },
     ],
     seatPlan: ["me", "bo", null, null],
     pending: [],
@@ -97,6 +97,7 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     youMayContinue: true,
     settlement: null,
     chat: "open",
+    turnTimer: { on: true, seconds: 30 },
     ...over,
   };
 }
@@ -491,6 +492,21 @@ describe("the room client", () => {
       fireEvent.change(field, { target: { value: "shall we?" } });
       fireEvent.submit(field.closest("form")!);
       expect(socket().lastSent("chat")).toMatchObject({ text: "shall we?" });
+    });
+
+    it("lets the leader switch the turn timer off, and change how long it is", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));
+      expect(socket().lastSent("setTurnTimer")).toMatchObject({ on: false });
+      fireEvent.click(screen.getByRole("button", { name: "More seconds per move" }));
+      expect(socket().lastSent("setTurnTimer")).toMatchObject({ seconds: 35 });
+    });
+
+    it("shows everybody else the timer as it is, but not to change", async () => {
+      await enterLobby({ youAreLeader: false, turnTimer: { on: true, seconds: 15 } });
+      expect(screen.getByText("15")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));
+      expect(socket().lastSent("setTurnTimer")).toBeUndefined();
     });
 
     it("says who closed the room, on the form", async () => {

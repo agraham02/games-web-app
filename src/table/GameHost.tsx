@@ -20,6 +20,7 @@ import type { SeatView } from "./SeatRing";
 import { TableSurface } from "./TableSurface";
 import { SeatRing } from "./SeatRing";
 import { SeatBubbles } from "./SeatBubbles";
+import { CountdownBar } from "@/ui/primitives/CountdownRing";
 import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
@@ -178,6 +179,12 @@ export interface GameHostProps<S, A> {
    */
   seatExtras?: (seat: SeatId) => Partial<SeatView>;
   /**
+   * A room's turn timer: whose move it is counting, and when the clock runs
+   * out (by `Date.now()`). Another seat's goes round its pod; the viewer's
+   * own, who has no pod, is a line along the very foot of the table.
+   */
+  turnClock?: { seat: SeatId; key: string; totalMs: number; endsAt: number } | null;
+  /**
    * Under the standings on the winner's sheet — a room's settle-up, for a
    * game played for money (`SettleUp`).
    */
@@ -255,6 +262,7 @@ export function GameHostView<S, A>({
   turnSeat,
   continueWaiting,
   seatExtras,
+  turnClock,
   summaryExtra,
   roundNoun = "Round",
   children,
@@ -318,9 +326,14 @@ export function GameHostView<S, A>({
   const winningSeats = live.winningSeats ?? live.roundWinningSeats;
   const seatViews = players(live.state, live).map((view) => {
     const room = seatExtras?.(view.seat);
-    const seen = room ? { ...view, ...room } : view;
+    let seen = room ? { ...view, ...room } : view;
+    if (turnClock && turnClock.seat === view.seat) seen = { ...seen, timer: turnClock };
     return winningSeats?.includes(view.seat) ? { ...seen, winning: true } : seen;
   });
+  // The viewer's own clock. Not a spectator's (`viewerSeat` null): they
+  // have no move to make.
+  const ownClock =
+    turnClock && viewerSeat !== null && turnClock.seat === (viewerSeat ?? HERO) ? turnClock : null;
   const board = standings
     ? standings(live.state, live, seatViews)
     : winLoseStandings(live.state, live, seatViews, viewerSeat);
@@ -386,6 +399,20 @@ export function GameHostView<S, A>({
     >
       <SeatRing players={seatViews} />
       <SeatBubbles players={seatViews} />
+      {ownClock ? (
+        // The very foot of the table, over the hand if need be (the user's
+        // call): thin, and taps go straight through it.
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-1800 h-1">
+          <CountdownBar
+            key={ownClock.key}
+            totalMs={ownClock.totalMs}
+            endsAt={ownClock.endsAt}
+            onDanger={() => {
+              if (settingValues.vibration !== false) navigator.vibrate?.(60);
+            }}
+          />
+        </div>
+      ) : null}
       <HeroWinFlourish
         show={
           // A spectator has no side to celebrate, so confetti for one would

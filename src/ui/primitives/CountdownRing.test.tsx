@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
-import { CountdownRing, ringPath } from "./CountdownRing";
+import { MotionGlobalConfig } from "motion/react";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { CountdownBar, CountdownRing, bandOf, ringFraction, ringPath } from "./CountdownRing";
 
 afterEach(cleanup);
 
@@ -104,5 +105,52 @@ describe("CountdownRing", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("a countdown's fill", () => {
+  it("is full until a clock's worth is left, then empties to the end", () => {
+    // 5s of clock, ending at 10_000: still full at 4_000 (6s left, the lead).
+    expect(ringFraction(4_000, 10_000, 5_000)).toBe(1);
+    expect(ringFraction(5_000, 10_000, 5_000)).toBe(1);
+    expect(ringFraction(7_500, 10_000, 5_000)).toBe(0.5);
+    expect(ringFraction(10_000, 10_000, 5_000)).toBe(0);
+    expect(ringFraction(12_000, 10_000, 5_000)).toBe(0);
+  });
+
+  it("starts part-empty when it is first seen late — a refresh, a slow frame", () => {
+    expect(ringFraction(9_000, 10_000, 5_000)).toBeCloseTo(0.2);
+  });
+
+  it("turns amber at half and red at a fifth, the user's thresholds", () => {
+    expect(bandOf(1)).toBe("safe");
+    expect(bandOf(0.51)).toBe("safe");
+    expect(bandOf(0.5)).toBe("warn");
+    expect(bandOf(0.21)).toBe("warn");
+    expect(bandOf(0.2)).toBe("danger");
+    expect(bandOf(0)).toBe("danger");
+  });
+});
+
+describe("CountdownBar", () => {
+  // Here only: the ring's own test needs a clock that is held, not skipped.
+  beforeAll(() => {
+    MotionGlobalConfig.skipAnimations = true;
+  });
+  afterAll(() => {
+    MotionGlobalConfig.skipAnimations = false;
+  });
+
+  it("warns once, on turning red", () => {
+    // Arriving with a tenth left: already red.
+    const onDanger = vi.fn();
+    render(<CountdownBar totalMs={5_000} endsAt={Date.now() + 500} onDanger={onDanger} />);
+    expect(onDanger).toHaveBeenCalledTimes(1);
+  });
+
+  it("says nothing while there is time", () => {
+    const onDanger = vi.fn();
+    render(<CountdownBar totalMs={5_000} endsAt={Date.now() + 60_000} onDanger={onDanger} />);
+    expect(onDanger).not.toHaveBeenCalled();
   });
 });

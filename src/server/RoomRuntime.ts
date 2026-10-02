@@ -27,13 +27,14 @@
 import type { BotDifficulty, PieceId, PieceMeta, PlacementMap, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
 import { DEFAULT_TURN_HOLD_MS, GameSession, type SessionFrame } from "@/session/GameSession";
-import { playbackMs } from "@/motion/choreographer";
+import { READY_BEAT_MS, playbackMs } from "@/motion/choreographer";
 import { gameEntry, type GameId, type RawSettings } from "@/session/registry";
 import { piecesNamed, projectEvents, redactPlacements } from "@/session/redact";
 import {
   applyCommand,
   connectedCount,
   holdsSeat,
+  isIdle,
   isSeatLive,
   LOBBY_GRACE_MS,
   mayContinueRound,
@@ -165,6 +166,14 @@ export class RoomRuntime {
   private lastFramePlaybackMs = 0;
   /** When that frame went out, so "still playing" can be asked later. */
   private lastFrameAt = 0;
+  /** Whether it was a deal, whose start waits on each screen (`READY_BEAT_MS`). */
+  private lastFrameDealt = false;
+  /** The running game's turn timer, ms, or null — fixed when it starts. */
+  private turnMs: number | null = null;
+  /** Turn-timer timeouts in a row, by person. Two and a bot takes over. */
+  private readonly timeouts = new Map<SessionId, number>();
+  /** The clock the table was last told about (its key), so it is said once. */
+  private sentClockKey: string | null = null;
   /** The next round, dealt if nobody continues in time. See `syncAutoContinue`. */
   private continueTimer: TimerHandle | null = null;
   /**
@@ -349,6 +358,7 @@ export class RoomRuntime {
     }
 
     this.maintainGrace();
+    this.syncTurnClock();
     // Whoever has gone takes their photo with them.
     for (const owner of this.photos.keys()) {
       if (!this.room.members[owner]) this.photos.delete(owner);
@@ -553,6 +563,8 @@ export class RoomRuntime {
     this.stopSession();
     const definition = gameEntry(gameId).create(settings);
     this.previous = null;
+    this.turnMs = this.room.turnTimer.on ? this.room.turnTimer.seconds * 1000 : null;
+    this.timeouts.clear();
     this.sessionGameId = gameId;
     this.sessionSettings = gameEntry(gameId).parse(settings);
     this.settlement = null;
@@ -611,18 +623,31 @@ export class RoomRuntime {
       // them is still playing on their screen, so their wait starts
       // after it. What is LEFT of it, not all of it: a seat that comes live
       // long after the frame went out has already watched it.
+      //
+      // A deal adds the beat each screen waits before starting one
+      // (`READY_BEAT_MS`): the first move of a round is not the player's to
+      // make until their own deal has begun, and then played.
       deadlineLeadMs: () =>
-        Math.max(0, this.lastFrameAt + this.lastFramePlaybackMs - this.clock.now()),
+        Math.max(
+          0,
+          this.lastFrameAt +
+            this.lastFramePlaybackMs +
+            (this.lastFrameDealt ? READY_BEAT_MS : 0) -
+            this.clock.now(),
+        ),
+      turnTimerMs: () => this.turnMs,
       emit: (frame) => this.onFrame(frame),
     });
 
     this.session = session;
     this.previous = session.snapshot();
     session.start();
+    this.syncTurnClock();
   }
 
   private stopSession(): void {
     this.clearAutoContinue();
+    this.timeouts.clear();
     this.session?.dispose();
     this.session = null;
     this.previous = null;
@@ -690,6 +715,7 @@ export class RoomRuntime {
     // Before `settled()`, which is what reads it to schedule the next turn.
     this.lastFramePlaybackMs = playbackMs(frame.events);
     this.lastFrameAt = this.clock.now();
+    this.lastFrameDealt = frame.dealtRound !== null;
     // Played to a winner: settle up now, while everyone is still at the
     // table to see it on the winner's sheet. Once — frames after the end
     // (a show or muck) must not settle, or broadcast, all over again.
@@ -707,6 +733,62 @@ export class RoomRuntime {
       this.handWasInPlay = inPlay;
       this.broadcastRoom();
     }
+    if (frame.timedOut !== undefined) this.countTimeout(frame.timedOut);
+    this.syncTurnClock();
+  }
+
+  /* ---------- the turn timer ---------- */
+
+  /**
+   * The turn timer made somebody's move. Twice in a row and they have
+   * walked away: a bot takes their seat until they come back (the user,
+   * 2026-09-29), through the same live-signature edge a disconnect takes,
+   * so the table moves on at a bot's pace rather than a timer's.
+   */
+  private countTimeout(seat: SeatId): void {
+    const owner = this.room.game?.seatOwner[seat];
+    if (!owner) return;
+    const count = (this.timeouts.get(owner) ?? 0) + 1;
+    this.timeouts.set(owner, count);
+    if (count >= 2) {
+      this.timeouts.delete(owner);
+      this.command(owner, { t: "markIdle" });
+      // Started here, not by a message, so nothing else re-sends the room:
+      // without this their own screen never learns it, and "I'm back" never
+      // appears (found by the test that asserts it does).
+      this.broadcastRoom();
+    }
+  }
+
+  /**
+   * Tells the table whose clock is running, when that has changed. Read
+   * from the session after it has settled, so it is the final answer for
+   * the position: a clear followed at once by a re-arm is never sent.
+   */
+  private syncTurnClock(): void {
+    const clock = this.session?.turnClock ?? null;
+    const key = clock?.key ?? null;
+    if (key === this.sentClockKey) return;
+    this.sentClockKey = key;
+    for (const viewer of this.room.game?.present ?? []) this.sendTurnClock(viewer);
+  }
+
+  /** The clock as it stands now, to one person — with the time actually left. */
+  private sendTurnClock(viewer: SessionId): void {
+    const connection = this.connections.get(viewer);
+    if (!connection) return;
+    const clock = this.session?.turnClock ?? null;
+    this.push(connection, {
+      t: "turnClock",
+      clock: clock
+        ? {
+            seat: clock.seat,
+            key: clock.key,
+            totalMs: clock.totalMs,
+            endsInMs: Math.max(0, clock.endsAt - this.clock.now()),
+          }
+        : null,
+    });
   }
 
   /**
@@ -871,6 +953,8 @@ export class RoomRuntime {
       t: "frame",
       frame: this.buildFrame({ seq: 0, events: [], lastAction: null, dealtRound: null }, viewer, now, now),
     });
+    // Arriving mid-move: the clock as it stands, never a fresh one.
+    this.sendTurnClock(viewer);
   }
 
   submitAction(session: SessionId, action: unknown): { ok: boolean; error?: string } {
@@ -881,14 +965,28 @@ export class RoomRuntime {
     // who is not on turn is refused by the session's own gate.
     const result = this.session.submit(seat, action);
     if (!result.ok) {
-      // Their last card, a moment after it was played for them: the same
-      // move, arriving second. Nothing to tell them.
-      if (this.session.playedFor(seat, LATE_PRESS_MS)) return { ok: false, error: PLAYED_FOR_YOU };
+      // A move made for them a moment ago, and this is their own press
+      // arriving second: their last card after its wait, or anything once
+      // their clock ran out. Nothing more to tell them — a forced move was
+      // the one they pressed, and a timeout's frame already says "You ran
+      // out of time". A second red toast saying so again ("not your turn",
+      // or the same news in other words) only reads as a second problem.
+      if (this.session.autoPlayed(seat, LATE_PRESS_MS)) return { ok: false, error: PLAYED_FOR_YOU };
       return { ok: false, error: result.reason };
     }
+    // A move they made themselves: they are here.
+    this.timeouts.delete(session);
+    // And if the timer had given their seat to a bot, a move is also
+    // "I'm back" — the session's gate asks whose turn it is, not who is live.
+    if (isIdle(this.room, session)) {
+      this.command(session, { t: "resume" });
+      this.broadcastRoom();
+    }
     if (!result.animated) this.session.settled();
+    this.syncTurnClock();
     return { ok: true };
   }
+
 
   nextRound(session: SessionId): boolean {
     if (!this.session) return false;
@@ -954,6 +1052,7 @@ export class RoomRuntime {
         // exactly as they did, and simply goes if it runs out.
         connected: m.connected || this.grace.has(m.session),
         photo: this.photos.get(m.session)?.id ?? null,
+        idle: isIdle(room, m.session),
         seat,
         spectating: Boolean(game?.present.includes(m.session)) && seat === null,
         // The seat decides the side: the one they hold in a running game,
@@ -983,6 +1082,7 @@ export class RoomRuntime {
       youMayContinue: mayContinueRound(room, session),
       settlement: this.settlement,
       chat: this.chatModeFor(session),
+      turnTimer: room.turnTimer,
     };
   }
 
@@ -1025,6 +1125,8 @@ export class RoomRuntime {
       liveSeats: this.room.game
         ? Array.from({ length: this.room.game.seats }, (_, i) => isSeatLive(this.room, i))
         : [],
+      turnClock: this.session?.turnClock ?? null,
+      timeouts: Object.fromEntries(this.timeouts),
       // Enough of the table for a test to assert that something did or did
       // not move, without publishing the actual cards — this endpoint is
       // dev-only, but a dump that casually included every hand would be

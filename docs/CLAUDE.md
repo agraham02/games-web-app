@@ -288,7 +288,57 @@ last card, a draw or a pass, a roll, a stock draw from an EMPTY pile.
 counts the private one-move positions it met so it cannot pass vacuously.
 There is no countdown on screen for the same reason. A press arriving just
 after the move was made for them is dropped without a word
-(`playedFor`, `PLAYED_FOR_YOU`) — it was the same move.
+(`autoPlayed`, `PLAYED_FOR_YOU`) — it was the same move. So is one
+arriving just after the turn timer made a move for them: the frame that
+made it has already said "You ran out of time", and a refusal on top
+was the same news twice, in red.
+
+### The turn timer is a deadline the session owns
+
+A room may time each move (the user, 2026-09-29: on in a new room at 30s,
+5–60s in steps of 5, fixed for a game). `GameSession` takes the length from
+the driver (`turnTimerMs`) and arms it in `scheduleDeadline` beside a forced
+move's (the sooner wins) whenever the game names no deadline of its own —
+Rummy's claim race, BS's window and Poker's show-or-muck keep theirs. The
+clock times every move, forced or not: since forced moves went to 30s
+(2026-10-01), a shorter clock runs out on a forced move like any other, with
+the toast and toward going idle, and the forced wait only decides a table
+whose clock is off or longer. Five things to know before touching it:
+
+- **When it starts.** After what is still playing of the frame that handed
+  the move over (`deadlineLeadMs`), plus the ready beat for a round's first
+  move (`READY_BEAT_MS`, shared from `motion/choreographer.ts`) — nobody's
+  seconds are spent watching a deal.
+- **It is never refilled.** Keyed `turn:${seq}:${seat}` and anchored with
+  the span it STARTED with: re-derived on a re-settle, a span that includes
+  a shrinking lead lost the elapsed part twice (fixed for forced moves too,
+  `d01f8b0`).
+- **What everybody is shown ends `TURN_GRACE_MS` before the session acts**,
+  so a move pressed as the ring empties still arrives. The wire carries
+  time LEFT (`turnClock.endsInMs`, measured at send), never a time of day,
+  and the client takes off half its smallest measured round trip (`pong`
+  echoes `sent`; `RoomConnection.oneWayMs`): two machines whose clocks
+  disagree still show the same ring. A late arrival is sent what is left.
+- **What is played is a bot's move, made as a bot makes one** — straight to
+  `reduce`, past `completeAction`, or a timed-out Spades Blind Nil vote
+  would be stamped a person's firm vote and overrule their partner. Poker
+  overrides it (`timeoutAction`): check if free, else fold, never chips.
+  The frame leads with "ran out of time" for everybody's toast and carries
+  `timedOut`.
+- **Two in a row and a bot takes the seat** (`markIdle`, a server-only room
+  command; `isSeatLive` is false for the idle). Started on the server, so
+  the room must be rebroadcast by hand or the player's own screen never
+  learns it — a test caught exactly that. "I'm back" (`resume`), entering
+  the game, or simply making a move gives it back; reconnecting alone does
+  not. Everybody idle ends the game, like everybody leaving.
+
+Tested in four layers: `turnTimer.test.ts` (to the millisecond; whole
+matches of every game with every seat silent, which can only end if every
+decision point has a move to make), `router.test.ts` (late attach, no
+refill, idle, late move), `scripts/ws-harness.ts` (real sockets, including
+a move landing inside the grace on a slow line), and an e2e with a 600ms
+round trip through `routeWebSocket`. Existing room tests that park on a
+silent player switch the timer off (`host()` in `router.test.ts`).
 
 ### The turn gate and the action gate are different questions
 

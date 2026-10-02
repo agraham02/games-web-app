@@ -96,6 +96,7 @@ export function LrcOnline({ api, room, frame, corner }: OnlineTableProps) {
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}
+        turnClock={api.turnClock}
         summaryExtra={room.settlement ? <SettleUp settlement={room.settlement} you={room.you} /> : undefined}
         menuActions={
           <TableMenu

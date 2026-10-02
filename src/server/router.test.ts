@@ -16,9 +16,9 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { TestClock } from "@/session/clock";
-import { playbackMs } from "@/motion/choreographer";
-import { DEFAULT_TURN_HOLD_MS, FORCED_MOVE_MS } from "@/session/GameSession";
-import { PROTOCOL_VERSION, type FrameView, type ServerMessage } from "@/session/protocol";
+import { READY_BEAT_MS, playbackMs } from "@/motion/choreographer";
+import { DEFAULT_TURN_HOLD_MS, FORCED_MOVE_MS, TURN_GRACE_MS } from "@/session/GameSession";
+import { PROTOCOL_VERSION, type FrameView, type ServerMessage, type TurnClockView } from "@/session/protocol";
 import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
 import { createSpades } from "@/games/spades/rules";
 import { GAMES } from "@/session/registry";
@@ -83,10 +83,17 @@ describe("the server, in process", () => {
     router.onMessage(peer, JSON.stringify(message));
   }
 
-  function host(token = "host"): { peer: Peer; conn: FakeConnection; code: string } {
+  function host(token = "host", opts: { turnTimer?: boolean } = {}): { peer: Peer; conn: FakeConnection; code: string } {
     const { peer, conn } = peerFor(token);
     send(peer, { t: "createRoom", name: "Ada" });
     const code = conn.last("room")!.room.code;
+    // Off unless a test is about it. A new room has it on (30s), and most of
+    // these tests park the table on a person who never moves and then
+    // `drain()` — which with the timer running would make their moves for
+    // them, mark them idle, and end the game: not what they are testing.
+    if (!opts.turnTimer) send(peer, { t: "setTurnTimer", on: false });
+    conn.clear();
+    send(peer, { t: "rename", name: "Ada" });
     return { peer, conn, code };
   }
 
@@ -1129,10 +1136,11 @@ describe("the server, in process", () => {
         const who = owner === registry.sessionFor("p1") ? h : p2;
 
         // Their wait starts once the deal that handed them the turn
-        // has played on their screen — the server's own measure of it.
+        // has started on their screen (`READY_BEAT_MS`) and played — the
+        // server's own measure of it.
         const frames = h.conn.all("frame");
         expect(frames, "only the deal has happened").toHaveLength(1);
-        const lead = playbackMs(frames[0]!.frame.events);
+        const lead = READY_BEAT_MS + playbackMs(frames[0]!.frame.events);
         expect(lead, "the deal takes time to watch").toBeGreaterThan(0);
 
         const before = table().fingerprint;
@@ -1250,6 +1258,176 @@ describe("the server, in process", () => {
         clock.advance(dueAt(hit) - clock.now() + 1_000);
         expect(runtime.room.game).toBeNull();
         expect(stamps.length, "no deal for a game that has ended").toBe(framesAfter);
+      });
+    });
+
+    describe("the turn timer", () => {
+      /**
+       * Spades with two people at five seconds a move, every message
+       * stamped with the clock when it was SENT — the server counts from
+       * there, and so must the test.
+       */
+      function timedSpades() {
+        const h = host("ada", { turnTimer: true });
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "setTurnTimer", on: true, seconds: 5 });
+        send(h.peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+        const people = [
+          { peer: h.peer, conn: h.conn, session: registry.sessionFor("ada") },
+          { peer: bo.peer, conn: bo.conn, session: registry.sessionFor("bo") },
+        ];
+        const clocks: Array<{ at: number; clock: TurnClockView | null; to: string }> = [];
+        for (const p of people) {
+          const deliver = p.conn.send.bind(p.conn);
+          p.conn.send = (m: ServerMessage) => {
+            if (m.t === "turnClock") clocks.push({ at: clock.now(), clock: m.clock, to: p.session });
+            deliver(m);
+          };
+        }
+        send(h.peer, { t: "startGame" });
+        const runtime = registry.get(h.code)!;
+        return { h, bo, people, clocks, runtime, rules: createSpades() };
+      }
+      type Timed = ReturnType<typeof timedSpades>;
+
+      const tableOf = (t: Timed) => t.runtime.debugDump().table as { currentSeat: number | null; fingerprint: string };
+
+      /** Steps the bots along until a person is on turn and has been told their clock. */
+      function untilPersonOnTurn(t: Timed) {
+        for (let i = 0; i < 2_000; i++) {
+          const seat = tableOf(t).currentSeat;
+          const owner = seat === null ? null : t.runtime.room.game!.seatOwner[seat];
+          const person = t.people.find((p) => p.session === owner);
+          const told = [...t.clocks].reverse().find((c) => c.to === owner);
+          if (person && told?.clock && told.clock.seat === seat) return { seat: seat!, person, told };
+          clock.advance(50);
+        }
+        throw new Error("never reached a person's turn");
+      }
+
+      const playFirstLegal = (t: Timed, who: Timed["people"][number], seat: number) => {
+        const legal = t.rules.legalActions(who.conn.last("frame")!.frame.state as SpadesState, seat);
+        send(who.peer, { t: "action", action: legal[0] });
+      };
+
+      it("tells the table whose clock it is, and makes the move when it runs out", () => {
+        const t = timedSpades();
+        const { seat, told } = untilPersonOnTurn(t);
+        expect(told.clock!.totalMs).toBe(5_000);
+        // Everybody at the table is told, not only the person on turn.
+        expect(new Set(t.clocks.filter((c) => c.clock?.key === told.clock!.key).map((c) => c.to)).size).toBe(2);
+
+        const due = told.at + told.clock!.endsInMs + TURN_GRACE_MS;
+        const before = tableOf(t).fingerprint;
+        clock.advance(due - clock.now() - 1);
+        expect(tableOf(t).fingerprint, "inside the grace the move is still theirs").toBe(before);
+        clock.advance(1);
+        expect(tableOf(t).currentSeat).not.toBe(seat);
+        const said = t.people[0]!.conn.all("frame").flatMap((f) => f.frame.events);
+        expect(said).toContainEqual(expect.objectContaining({ t: "announce", text: "ran out of time" }));
+      });
+
+      it("takes a press that lands just after the clock ran out without a second word", () => {
+        // The frame that made the move already told them ("You ran out of
+        // time"); a refusal toast on top was the same news twice, in red.
+        const t = timedSpades();
+        const { seat, person, told } = untilPersonOnTurn(t);
+        const legal = t.rules.legalActions(person.conn.last("frame")!.frame.state as SpadesState, seat);
+        clock.advance(told.at + told.clock!.endsInMs + TURN_GRACE_MS - clock.now());
+        expect(tableOf(t).currentSeat, "the clock should have made the move").not.toBe(seat);
+
+        const errors = person.conn.all("error").length;
+        send(person.peer, { t: "action", action: legal[0] });
+        expect(person.conn.all("error")).toHaveLength(errors);
+      });
+
+      it("tells somebody arriving mid-move the time actually left, and does not refill it", () => {
+        // Somebody else dropping and coming back is a liveness edge, which
+        // re-settles the table — the classic way to refill a clock.
+        const t = timedSpades();
+        const { told, person } = untilPersonOnTurn(t);
+        const other = t.people.find((p) => p !== person)!;
+        const due = told.at + told.clock!.endsInMs + TURN_GRACE_MS;
+
+        clock.advance(1_500);
+        router.onClose(other.peer);
+        clock.advance(1_000);
+        const back = peerFor(other.session === registry.sessionFor("ada") ? "ada" : "bo");
+        const arrived = back.conn.last("turnClock")!.clock!;
+        expect(arrived.key).toBe(told.clock!.key);
+        expect(arrived.endsInMs).toBe(told.at + told.clock!.endsInMs - clock.now());
+
+        const before = tableOf(t).fingerprint;
+        clock.advance(due - clock.now() - 1);
+        expect(tableOf(t).fingerprint, "the clock was refilled").toBe(before);
+        clock.advance(1);
+        expect(tableOf(t).fingerprint).not.toBe(before);
+      });
+
+      it("gives the seat to a bot after two in a row, until they say they are back", () => {
+        const t = timedSpades();
+        const first = untilPersonOnTurn(t);
+        const who = first.person;
+        let timedOut = 0;
+        for (let i = 0; i < 400 && timedOut < 2; i++) {
+          const now = untilPersonOnTurn(t);
+          if (now.person === who) {
+            clock.advance(now.told.at + now.told.clock!.endsInMs + TURN_GRACE_MS - clock.now());
+            timedOut++;
+          } else {
+            playFirstLegal(t, now.person, now.seat);
+          }
+        }
+        expect(timedOut).toBe(2);
+        const game = t.runtime.room.game!;
+        const seat = game.seatOwner.indexOf(who.session);
+        expect(game.idle).toContain(who.session);
+        expect(t.runtime.debugDump().liveSeats).toEqual(expect.arrayContaining([false]));
+        expect((t.runtime.debugDump().liveSeats as boolean[])[seat]).toBe(false);
+        expect(who.conn.last("room")!.room.members.find((m) => m.session === who.session)!.idle).toBe(true);
+
+        send(who.peer, { t: "resume" });
+        expect(t.runtime.room.game!.idle).not.toContain(who.session);
+        expect((t.runtime.debugDump().liveSeats as boolean[])[seat]).toBe(true);
+      });
+
+      it("takes a move from somebody idle as their being back", () => {
+        const t = timedSpades();
+        const { person } = untilPersonOnTurn(t);
+        // Two timeouts, as above, in fewer words: straight to idle.
+        t.runtime.command(person.session, { t: "markIdle" });
+        t.runtime.broadcastRoom();
+        expect(person.conn.last("room")!.room.members.find((m) => m.session === person.session)!.idle).toBe(true);
+        const seat = t.runtime.room.game!.seatOwner.indexOf(person.session);
+        for (let i = 0; i < 4_000 && tableOf(t).currentSeat !== seat; i++) {
+          const on = tableOf(t).currentSeat;
+          const other = t.people.find((p) => p !== person && t.runtime.room.game!.seatOwner[on ?? -1] === p.session);
+          if (other && on !== null) playFirstLegal(t, other, on);
+          clock.advance(10);
+        }
+        expect(tableOf(t).currentSeat).toBe(seat);
+        playFirstLegal(t, person, seat);
+        expect(t.runtime.room.game!.idle).not.toContain(person.session);
+        // And their screen is told, so the "I'm back" pill goes.
+        expect(person.conn.last("room")!.room.members.find((m) => m.session === person.session)!.idle).toBe(false);
+      });
+
+      it("ends the game when everybody has walked away", () => {
+        const t = timedSpades();
+        for (let i = 0; i < 400 && t.runtime.room.game; i++) {
+          const seat = tableOf(t).currentSeat;
+          if (seat !== null && t.runtime.room.game.seatOwner[seat]) clock.advance(10_000);
+          else clock.advance(50);
+        }
+        expect(t.runtime.room.game).toBeNull();
+        expect(t.people[0]!.conn.all("notice").map((n) => n.text)).toContain("Everyone is away — game ended");
+      });
+
+      it("cannot be changed while a game is running", () => {
+        const t = timedSpades();
+        send(t.h.peer, { t: "setTurnTimer", on: false });
+        expect(t.h.conn.last("error")?.code).toBe("game-already-running");
       });
     });
 

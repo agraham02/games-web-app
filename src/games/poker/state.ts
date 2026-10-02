@@ -17,6 +17,16 @@ import type { PokerState, PokerStreet, PotLayer } from "./types";
 export const MIN_SEATS = 2;
 export const MAX_SEATS = 10;
 
+/**
+ * How long a player at a showdown has to show before their hand is mucked
+ * for them — the real convention: mucked unless actively shown. The page
+ * mucks when its own five seconds run out; the session does it
+ * `SHOWDOWN_GRACE_MS` later whatever the page is doing, because a hidden
+ * tab's timers barely run and the table used to wait on it.
+ */
+export const SHOWDOWN_MS = 5_000;
+export const SHOWDOWN_GRACE_MS = 900;
+
 /* ============================================================
    Seat walks
    ============================================================ */

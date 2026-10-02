@@ -101,6 +101,7 @@ export function PokerOnline({ api, room, frame, corner }: OnlineTableProps) {
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}
+        turnClock={api.turnClock}
         summaryExtra={room.settlement ? <SettleUp settlement={room.settlement} you={room.you} /> : undefined}
         live={live}
         players={(state, l) => playerViews(view, state, l)}
