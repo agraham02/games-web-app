@@ -43,7 +43,7 @@ import {
   RUMMY_SETTINGS,
 } from "@/app/play/rummy/table";
 import { tintFor } from "../Roster";
-import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, autoContinueFor, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 import { useSeatExtras } from "./seatExtras";
@@ -109,6 +109,7 @@ export function RummyOnline({ api, room, frame, corner }: OnlineTableProps) {
         gameTitle={GAMES[room.gameId ?? "rummy"].name}
         viewerSeat={frame.seat}
         serverDriven
+        autoContinueMs={autoContinueFor(room)}
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}

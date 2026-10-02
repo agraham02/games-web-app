@@ -43,7 +43,7 @@ import {
   BS_SETTINGS,
 } from "@/app/play/bs/table";
 import { tintFor } from "../Roster";
-import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, autoContinueFor, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 import { useSeatExtras } from "./seatExtras";
@@ -105,6 +105,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld, corner 
         gameTitle={GAMES[room.gameId ?? "bs"].name}
         viewerSeat={frame.seat}
         serverDriven
+        autoContinueMs={autoContinueFor(room)}
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}

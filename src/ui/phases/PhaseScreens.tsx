@@ -267,6 +267,7 @@ export function RoundEndScorecard({
   waiting,
   target,
   autoContinueMs,
+  corner,
 }: {
   show: boolean;
   eyebrow: string;
@@ -291,6 +292,8 @@ export function RoundEndScorecard({
    * card waits for the player.
    */
   autoContinueMs?: number;
+  /** See `PhaseSheet`'s. */
+  corner?: React.ReactNode;
 }) {
   // Lowered to a strip, so the table under it can be read — a showdown's
   // board, the last trick, the melds. Every new card opens full.
@@ -330,7 +333,7 @@ export function RoundEndScorecard({
   const groups = groupScoreRows(rows).sort((a, b) => (b[0]?.total ?? 0) - (a[0]?.total ?? 0));
 
   return (
-    <PhaseSheet show={show} strip={peek}>
+    <PhaseSheet show={show} strip={peek} corner={corner}>
       {peek ? (
         <div className="flex items-center justify-between gap-3">
           <span className="min-w-0 truncate font-display text-lg tracking-wide text-brass-300">
@@ -342,7 +345,10 @@ export function RoundEndScorecard({
         </div>
       ) : (
         <>
-          <div className="flex flex-col items-center gap-1.5 pt-2">
+          {/* `px-9` with the chat button: it sits in this corner, and a long
+              title ("Jo wins with Two pair, Kings and Queens") would run
+              under it. */}
+          <div className={`flex flex-col items-center gap-1.5 pt-2 ${corner ? "px-9" : ""}`}>
             <span className="eyebrow">{eyebrow}</span>
             <h2 className="font-display text-2xl tracking-wider text-brass-300">{title}</h2>
             {target !== undefined ? (
@@ -511,6 +517,7 @@ export function GameEndSummary({
   stats,
   onRematch,
   onLobby,
+  corner,
   children,
 }: {
   show: boolean;
@@ -521,11 +528,13 @@ export function GameEndSummary({
   stats?: ReadonlyArray<{ label: string; value: string }>;
   onRematch?: () => void;
   onLobby?: () => void;
+  /** See `PhaseSheet`'s. */
+  corner?: React.ReactNode;
   /** Under the standings: a room's settle-up, for a game played for money. */
   children?: React.ReactNode;
 }) {
   return (
-    <PhaseSheet show={show}>
+    <PhaseSheet show={show} corner={corner}>
       <div
         aria-hidden
         className="pointer-events-none absolute -top-24 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full"
@@ -634,11 +643,17 @@ export function GameEndSummary({
 function PhaseSheet({
   show,
   strip = false,
+  corner,
   children,
 }: {
   show: boolean;
   /** Lowered to a bar at the bottom, with no backdrop over the table. */
   strip?: boolean;
+  /**
+   * In the card's top-right corner: the chat button, which the table keeps
+   * in the same corner but which this sheet covers (and dims) while it is up.
+   */
+  corner?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -664,6 +679,7 @@ function PhaseSheet({
             exit={{ y: 24, opacity: 0 }}
             transition={TRANSITIONS.ui}
           >
+            {strip || !corner ? null : <div className="absolute top-3 right-3 z-10">{corner}</div>}
             {children}
           </motion.div>
         </motion.div>

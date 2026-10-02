@@ -8,7 +8,7 @@
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { continueWaitingFor } from "@/room/useOnlineRuntime";
+import { autoContinueFor, continueWaitingFor } from "@/room/useOnlineRuntime";
 import type { RoomView } from "@/session/protocol";
 import { RoundEndScorecard } from "./PhaseScreens";
 
@@ -89,6 +89,48 @@ describe("a room's scorecard deals the next round itself", () => {
     const { onContinue } = card({ auto: undefined });
     act(() => vi.advanceTimersByTime(60_000));
     expect(onContinue).not.toHaveBeenCalled();
+  });
+});
+
+describe("the chat button on a summary", () => {
+  it("is on the card, where the table's own is covered", () => {
+    render(
+      <RoundEndScorecard
+        show
+        eyebrow="Round 1"
+        title="Bo takes the round"
+        rows={[]}
+        corner={<button type="button">Chat</button>}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+  });
+
+  it("is left out of the strip, where the table's own is uncovered", () => {
+    render(
+      <RoundEndScorecard
+        show
+        eyebrow="Round 1"
+        title="Bo takes the round"
+        rows={[]}
+        corner={<button type="button">Chat</button>}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Look at the table" }));
+    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+  });
+});
+
+describe("how long a room's scorecard waits", () => {
+  const room = (gameId: string, settings: Record<string, unknown> = {}) =>
+    ({ gameId, settings }) as unknown as RoomView;
+
+  it("is thirty seconds where table talk comes back, twenty elsewhere", () => {
+    expect(autoContinueFor(room("spades"))).toBe(30_000);
+    expect(autoContinueFor(room("dominoes", { mode: "caribbean", teams: true }))).toBe(30_000);
+    expect(autoContinueFor(room("dominoes", { mode: "caribbean", teams: false }))).toBe(20_000);
+    expect(autoContinueFor(room("dominoes"))).toBe(20_000);
+    for (const id of ["poker", "rummy", "bs", "lrc"]) expect(autoContinueFor(room(id))).toBe(20_000);
   });
 });
 

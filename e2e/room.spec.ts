@@ -266,7 +266,8 @@ test.describe("a room, in real browsers", () => {
     // Mid-hand, Bo may send only the table-safe replies...
     await bo.getByRole("button", { name: /^Chat/ }).click();
     await expect(bo.getByRole("textbox", { name: "Message" })).toBeDisabled();
-    await expect(bo.getByRole("group", { name: "Quick replies" }).getByRole("button", { name: "Nice one!" })).toBeDisabled();
+    // ...the others are not there at all, rather than dimmed.
+    await expect(bo.getByRole("group", { name: "Quick replies" }).getByRole("button", { name: "Nice one!" })).toHaveCount(0);
     await bo.getByRole("group", { name: "Quick replies" }).getByRole("button", { name: "Good luck!" }).click();
     // ...and it lands beside Bo's pod on Ada's table, not as a toast.
     await expect(ada.getByRole("status").filter({ hasText: "Good luck!" })).toBeVisible();

@@ -12,8 +12,9 @@
  *
  * During a partnership hand you are in, only the table-safe quick replies
  * can be sent (`ChatMode`): the field is disabled with the reason as its
- * placeholder, and the other replies are dimmed, not hidden — the row does
- * not rearrange itself under a thumb that learned where things are.
+ * placeholder, and the row holds just those replies — the others are left
+ * out rather than dimmed, so there is nothing to scroll past that cannot be
+ * used (the user, 2026-10-02).
  */
 
 import { SendHorizontal } from "lucide-react";
@@ -114,7 +115,7 @@ function Composer({
   const problem = chatTextProblem(text);
   const sendable = !locked && problem === null;
   const countId = useId();
-  const { ref: rowRef, edges } = useSidewaysScroll<HTMLDivElement>();
+  const { ref: rowRef, edges } = useSidewaysScroll<HTMLDivElement>(locked);
   const fade = edgeFade(edges);
 
   // The field empties on Send, before the room has answered, so a message
@@ -144,25 +145,25 @@ function Composer({
         // drag would each be snapped back to where they started
         // (`useSidewaysScroll`). `scroll-px-4`: snapping otherwise lines the
         // first reply up with the row's edge rather than its padding.
-        className="-mx-4 flex touch-pan-x scroll-px-4 gap-1.5 overflow-x-auto px-4 pb-1 select-none [scrollbar-width:none] pointer-coarse:snap-x"
+        //
+        // `py-1`: an `overflow-x-auto` box clips on both axes, and a chip's
+        // 1px ring sits OUTSIDE it — with no room above, the top of every
+        // chip was cut off. `-my-1` takes the room back out of the layout.
+        className="-mx-4 -my-1 flex touch-pan-x scroll-px-4 gap-1.5 overflow-x-auto px-4 py-1 select-none [scrollbar-width:none] pointer-coarse:snap-x"
         // Whichever end has more replies beyond it fades out, so a row cut
         // off at the sheet's edge reads as one that goes on.
         style={{ maskImage: fade, WebkitMaskImage: fade }}
       >
-        {QUICK_REPLIES.map((q) => {
-          const off = locked && !q.tableSafe;
-          return (
-            <button
-              key={q.id}
-              type="button"
-              disabled={off}
-              onClick={() => onSend({ quick: q.id })}
-              className="shrink-0 snap-start rounded-full bg-bone-50/8 px-3 py-1.5 text-sm whitespace-nowrap text-bone-100 ring-1 ring-bone-50/14 hover:bg-bone-50/14 disabled:brightness-50 disabled:grayscale"
-            >
-              {q.text}
-            </button>
-          );
-        })}
+        {QUICK_REPLIES.filter((q) => !locked || q.tableSafe).map((q) => (
+          <button
+            key={q.id}
+            type="button"
+            onClick={() => onSend({ quick: q.id })}
+            className="shrink-0 snap-start rounded-full bg-bone-50/8 px-3 py-1.5 text-sm whitespace-nowrap text-bone-100 ring-1 ring-bone-50/14 hover:bg-bone-50/14"
+          >
+            {q.text}
+          </button>
+        ))}
       </div>
 
       <form

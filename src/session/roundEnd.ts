@@ -19,6 +19,18 @@ export const ROUND_END_HOLD_MS = 1_000;
 export const AUTO_CONTINUE_MS = 20_000;
 
 /**
+ * The same, in a partnership game (the user, 2026-10-02): the scorecard is
+ * where table talk comes back (`ChatMode`), and ten seconds more is what it
+ * takes to say anything.
+ */
+export const AUTO_CONTINUE_TEAMS_MS = 30_000;
+
+/** How long this room's scorecard waits — see the two above. */
+export function autoContinueMsFor(teams: boolean): number {
+  return teams ? AUTO_CONTINUE_TEAMS_MS : AUTO_CONTINUE_MS;
+}
+
+/**
  * How much later than the ring on screen the server deals anyway. The
  * leader's own screen sends Continue when its ring empties, so the round
  * normally starts on time; this is the backstop for a leader whose tab is

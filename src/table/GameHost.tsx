@@ -128,6 +128,12 @@ export interface GameHostProps<S, A> {
    */
   serverDriven?: boolean;
   /**
+   * How long a room's scorecard waits before the next round deals itself
+   * (`autoContinueFor`). Only read when `serverDriven`: a game on this
+   * device waits for its one player.
+   */
+  autoContinueMs?: number;
+  /**
    * The game's own in-game settings — the player's preferences, changeable
    * mid-game from the Settings button (see `gameSettings.tsx`). Every table
    * also gets `TABLE_SETTINGS` (Sound, Vibration), so the button is always
@@ -255,6 +261,7 @@ export function GameHostView<S, A>({
   onLobby,
   viewerSeat,
   serverDriven,
+  autoContinueMs,
   settings,
   menuActions,
   corner,
@@ -447,7 +454,10 @@ export function GameHostView<S, A>({
         waiting={continueWaiting}
         // A room's round deals itself if nobody continues; a game on this
         // device waits for its one player.
-        autoContinueMs={serverDriven ? AUTO_CONTINUE_MS : undefined}
+        autoContinueMs={serverDriven ? (autoContinueMs ?? AUTO_CONTINUE_MS) : undefined}
+        // The chat button, which the card covers: summaries are where table
+        // talk comes back (`ChatMode`), so it has to be reachable on them.
+        corner={corner}
       />
 
       <GameEndSummary
@@ -459,6 +469,7 @@ export function GameHostView<S, A>({
         stats={stats?.(live.state, live)}
         onRematch={onRematch}
         onLobby={onLobby}
+        corner={corner}
       >
         {summaryExtra}
       </GameEndSummary>

@@ -39,7 +39,7 @@ import {
   SPADES_SETTINGS,
 } from "@/app/play/spades/table";
 import { tintFor } from "../Roster";
-import { awayFrom, botFrom, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
+import { awayFrom, botFrom, autoContinueFor, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
 import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 import { useSeatExtras } from "./seatExtras";
@@ -113,6 +113,7 @@ export function SpadesOnline({
         gameTitle={GAMES[room.gameId ?? "spades"].name}
         viewerSeat={frame.seat}
         serverDriven
+        autoContinueMs={autoContinueFor(room)}
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
         corner={corner}

@@ -57,12 +57,13 @@ export interface QuickReply {
 
 /**
  * The row above the keyboard. Emoji first — one tap, no reading — then
- * words. Table-safe means purely social: a laugh, a wave, good luck,
- * thanks, stepping away and back. Nothing that can react to a partner's
- * card ("Nice one!", 👍, 😬) or hurry them.
+ * words. Table-safe means purely social: a laugh, a wave, good luck, a
+ * nudge, stepping away and back. Nothing that can react to a partner's
+ * card ("Nice one!", 👍, 😬).
  */
 export const QUICK_REPLIES: readonly QuickReply[] = [
-  { id: "thumbs", text: "👍", tableSafe: false },
+  { id: "thumbs-up", text: "👍", tableSafe: false },
+  { id: "thumbs-down", text: "👎", tableSafe: false },
   { id: "clap", text: "👏", tableSafe: false },
   { id: "laugh", text: "😂", tableSafe: true },
   { id: "wow", text: "😮", tableSafe: false },
@@ -71,17 +72,19 @@ export const QUICK_REPLIES: readonly QuickReply[] = [
   { id: "please", text: "🙏", tableSafe: false },
   { id: "deal", text: "🤝", tableSafe: false },
   { id: "wave", text: "👋", tableSafe: true },
+  { id: "mad", text: "😡", tableSafe: false },
+  { id: "money", text: "🤑", tableSafe: false },
   { id: "luck", text: "Good luck!", tableSafe: true },
   { id: "nice", text: "Nice one!", tableSafe: false },
   { id: "played", text: "Well played", tableSafe: false },
   { id: "gg", text: "Good game", tableSafe: false },
-  { id: "thanks", text: "Thanks!", tableSafe: true },
+  { id: "thanks", text: "Thanks!", tableSafe: false },
   { id: "sorry", text: "Sorry!", tableSafe: false },
   { id: "oops", text: "Oops", tableSafe: false },
-  { id: "hurry", text: "Hurry up 😅", tableSafe: false },
+  { id: "hurry", text: "Hurry up!", tableSafe: true },
   { id: "again", text: "One more?", tableSafe: false },
   { id: "brb", text: "brb", tableSafe: true },
-  { id: "back", text: "Back!", tableSafe: true },
+  { id: "back", text: "I'm back!", tableSafe: true },
 ];
 
 export function quickReply(id: string): QuickReply | null {
