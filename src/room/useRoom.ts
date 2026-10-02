@@ -140,8 +140,15 @@ export interface RoomApi {
    * here, and popping it up as if it were new would replay the room's past.
    */
   chatLiveAfter: number;
-  /** Says something: typed text, or a quick reply by id. */
-  sendChat: (said: { text: string } | { quick: string }) => void;
+  /** Says something: typed text, or a quick reply by id. Returns its `reqId`. */
+  sendChat: (said: { text: string } | { quick: string }) => string;
+  /**
+   * The `reqId` of the latest message the room refused (too many too fast,
+   * or table talk once a hand had begun), so the composer can put back what
+   * was typed. Only the latest send is tracked: an older one's text is not
+   * worth restoring over a newer one.
+   */
+  chatRefused: string | null;
   /** Whose move the turn timer is counting, and until when — or null. */
   turnClock: LocalTurnClock | null;
   /** "I'm back", after the turn timer handed your seat to a bot. */
@@ -188,6 +195,9 @@ export function useRoom(): RoomApi {
    * is the entry screen's to hear even from inside a room — see `error`.
    */
   const attemptRef = useRef<string | null>(null);
+  /** The `reqId` of the latest message said, until the room answers it. */
+  const chatReqRef = useRef<string | null>(null);
+  const [chatRefused, setChatRefused] = useState<string | null>(null);
   const [greeted, setGreeted] = useState(false);
   /**
    * The server said this identity is still in a room, and the room itself
@@ -365,6 +375,12 @@ export function useRoom(): RoomApi {
             // stops waiting into is the room they are still in.
             const answersAttempt = message.reqId !== undefined && message.reqId === attemptRef.current;
             if (answersAttempt) attemptRef.current = null;
+            // A message the room would not take: toasted below like any
+            // refusal, and handed back to the composer to restore.
+            if (message.reqId !== undefined && message.reqId === chatReqRef.current) {
+              chatReqRef.current = null;
+              setChatRefused(message.reqId);
+            }
             if (inRoomRef.current) {
               announce(message.message, "bad");
               if (!answersAttempt) break;
@@ -451,7 +467,13 @@ export function useRoom(): RoomApi {
       setPhoto: (image) => send({ t: "setPhoto", image }),
       chat,
       chatLiveAfter,
-      sendChat: (said) => send({ t: "chat", ...said }),
+      sendChat: (said) => {
+        const reqId = nextReqId();
+        chatReqRef.current = reqId;
+        send({ t: "chat", ...said, reqId });
+        return reqId;
+      },
+      chatRefused,
       turnClock,
       resumeSeat: () => send({ t: "resume" }),
       setTurnTimer: (change) => send({ t: "setTurnTimer", ...change }),
@@ -466,6 +488,7 @@ export function useRoom(): RoomApi {
       farewell,
       chat,
       chatLiveAfter,
+      chatRefused,
       turnClock,
       send,
       connection,

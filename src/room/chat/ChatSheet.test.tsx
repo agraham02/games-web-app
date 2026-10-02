@@ -56,18 +56,45 @@ describe("the chat sheet", () => {
     const field = screen.getByLabelText("Message");
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     fireEvent.change(field, { target: { value: "x".repeat(125) } });
-    expect(screen.getByText("5 too many")).toBeTruthy();
+    expect(screen.getByText("125/120").parentElement, "over the limit, in red").toHaveClass("text-loss");
     fireEvent.submit(field.closest("form")!);
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("counts down only near the limit", () => {
+  it("counts what will be sent against the limit, as x/Y, always", () => {
     sheet();
     const field = screen.getByLabelText("Message");
-    fireEvent.change(field, { target: { value: "x".repeat(50) } });
-    expect(screen.queryByText(/left$/)).toBeNull();
-    fireEvent.change(field, { target: { value: "x".repeat(110) } });
-    expect(screen.getByText("10 left")).toBeTruthy();
+    expect(screen.getByText("0/120")).toBeTruthy();
+    // Counted as it will be sent: cleaned, and in characters a person counts.
+    fireEvent.change(field, { target: { value: "  good   game  " } });
+    expect(screen.getByText("9/120")).toBeTruthy();
+    fireEvent.change(field, { target: { value: "gg 🇬🇧" } });
+    expect(screen.getByText("4/120")).toBeTruthy();
+    // Read with the field, in words.
+    expect(field).toHaveAccessibleDescription("4 of 120 characters");
+  });
+
+  it("has nothing to count while only quick replies may be sent", () => {
+    sheet({ mode: "quick-only" });
+    expect(screen.queryByText(/\/120$/)).toBeNull();
+  });
+
+  it("puts back a message the room refused, unless something new was started", () => {
+    const onSend = vi.fn().mockReturnValueOnce("r1").mockReturnValueOnce("r2");
+    const props = { open: true, onClose: () => {}, messages: [], you: "me", mode: "open" as const, onSend };
+    const { rerender } = render(<ChatSheet {...props} refused={null} />);
+    const field = screen.getByLabelText("Message") as HTMLInputElement;
+
+    fireEvent.change(field, { target: { value: "one more?" } });
+    fireEvent.submit(field.closest("form")!);
+    expect(field.value).toBe("");
+    rerender(<ChatSheet {...props} refused="r1" />);
+    expect(field.value, "a refused message comes back to be sent again").toBe("one more?");
+
+    fireEvent.submit(field.closest("form")!);
+    fireEvent.change(field, { target: { value: "never mind" } });
+    rerender(<ChatSheet {...props} refused="r2" />);
+    expect(field.value, "never over what is being typed now").toBe("never mind");
   });
 
   it("sends a quick reply by its id", () => {

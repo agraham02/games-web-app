@@ -17,7 +17,7 @@
  */
 
 import { SendHorizontal } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   CHAT_MAX_CHARS,
   QUICK_REPLIES,
@@ -33,9 +33,6 @@ import { tintFor } from "../Roster";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { edgeFade, useSidewaysScroll } from "./useSidewaysScroll";
 
-/** Past this few characters left, the composer says how many. */
-const COUNT_FROM = 20;
-
 export interface ChatSheetProps {
   open: boolean;
   onClose: () => void;
@@ -43,10 +40,13 @@ export interface ChatSheetProps {
   /** Your session, so your own lines read "You". */
   you: string;
   mode: ChatMode;
-  onSend: (said: { text: string } | { quick: string }) => void;
+  /** Says it, and returns the request's id — what `refused` names. */
+  onSend: (said: { text: string } | { quick: string }) => string;
+  /** The id of the latest message the room refused (`RoomApi.chatRefused`). */
+  refused?: string | null;
 }
 
-export function ChatSheet({ open, onClose, messages, you, mode, onSend }: ChatSheetProps) {
+export function ChatSheet({ open, onClose, messages, you, mode, onSend, refused = null }: ChatSheetProps) {
   const inset = useKeyboardInset(open);
   return (
     <InfoSheet
@@ -56,7 +56,7 @@ export function ChatSheet({ open, onClose, messages, you, mode, onSend }: ChatSh
       layer="page"
       onClose={onClose}
       inset={inset}
-      footer={<Composer mode={mode} onSend={onSend} />}
+      footer={<Composer mode={mode} onSend={onSend} refused={refused} />}
     >
       <Log messages={messages} you={you} />
     </InfoSheet>
@@ -96,14 +96,41 @@ function Log({ messages, you }: { messages: readonly ChatMessage[]; you: string 
   );
 }
 
-function Composer({ mode, onSend }: { mode: ChatMode; onSend: ChatSheetProps["onSend"] }) {
+function Composer({
+  mode,
+  onSend,
+  refused,
+}: {
+  mode: ChatMode;
+  onSend: ChatSheetProps["onSend"];
+  refused: string | null;
+}) {
   const [draft, setDraft] = useState("");
   const locked = mode === "quick-only";
+  // Counted as it will be sent and judged: cleaned, in characters as a
+  // person counts them (`charCount`). Too long by bytes counts as too long.
   const text = cleanChatText(draft);
-  const left = CHAT_MAX_CHARS - charCount(text);
-  const sendable = !locked && chatTextProblem(text) === null;
+  const count = charCount(text);
+  const problem = chatTextProblem(text);
+  const sendable = !locked && problem === null;
+  const countId = useId();
   const { ref: rowRef, edges } = useSidewaysScroll<HTMLDivElement>();
   const fade = edgeFade(edges);
+
+  // The field empties on Send, before the room has answered, so a message
+  // it refuses (too many too fast; table talk once a hand has begun) would
+  // be gone. Kept until then, and put back if refused — unless something
+  // new has been started in the field meanwhile. Followed during render
+  // rather than in an effect: it is state following a prop.
+  const [sent, setSent] = useState<{ id: string; draft: string } | null>(null);
+  const [answered, setAnswered] = useState(refused);
+  if (refused !== answered) {
+    setAnswered(refused);
+    if (sent && refused === sent.id) {
+      if (draft === "") setDraft(sent.draft);
+      setSent(null);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -143,21 +170,42 @@ function Composer({ mode, onSend }: { mode: ChatMode; onSend: ChatSheetProps["on
         onSubmit={(e) => {
           e.preventDefault();
           if (!sendable) return;
-          onSend({ text });
+          setSent({ id: onSend({ text }), draft });
           setDraft("");
         }}
       >
-        <input
-          aria-label="Message"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          disabled={locked}
-          placeholder={locked ? "No table talk until the hand is over" : "Say something"}
-          enterKeyHint="send"
-          autoComplete="off"
-          // 16px, or iOS zooms the page in on focus.
-          className="min-w-0 flex-1 rounded-lg bg-felt-950/60 px-3 py-2.5 text-base text-bone-50 ring-1 ring-bone-50/14 outline-none placeholder:text-bone-500 focus:ring-2 focus:ring-brass-400 disabled:opacity-60"
-        />
+        {/* The box is the wrapper, so the count sits inside it, in flow,
+            after the text. */}
+        <div
+          className={`flex min-w-0 flex-1 items-center rounded-lg bg-felt-950/60 ring-1 ring-bone-50/14 focus-within:ring-2 focus-within:ring-brass-400 ${locked ? "opacity-60" : ""}`}
+        >
+          <input
+            aria-label="Message"
+            aria-describedby={locked ? undefined : countId}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={locked}
+            placeholder={locked ? "No table talk until the hand is over" : "Say something"}
+            enterKeyHint="send"
+            autoComplete="off"
+            // 16px, or iOS zooms the page in on focus.
+            className="min-w-0 flex-1 bg-transparent py-2.5 pl-3 text-base text-bone-50 outline-none placeholder:text-bone-500"
+          />
+          {/* Locked, the placeholder already says why there is nothing to count. */}
+          {locked ? null : (
+            <span
+              id={countId}
+              className={`shrink-0 px-3 text-[11px] tabular-nums ${problem === "too-long" ? "text-loss" : "text-bone-400"}`}
+            >
+              <span aria-hidden>
+                {count}/{CHAT_MAX_CHARS}
+              </span>
+              <span className="sr-only">
+                {count} of {CHAT_MAX_CHARS} characters
+              </span>
+            </span>
+          )}
+        </div>
         <Button
           type="submit"
           tone="primary"
@@ -169,16 +217,6 @@ function Composer({ mode, onSend }: { mode: ChatMode; onSend: ChatSheetProps["on
           <SendHorizontal size={16} aria-hidden />
         </Button>
       </form>
-      {/* Locked, the field's own placeholder already says why and until
-          when; a note under it said the same thing again. */}
-      {!locked && left <= COUNT_FROM ? (
-        <p
-          className={`text-right text-[11px] ${left < 0 ? "text-loss" : "text-bone-400"}`}
-          aria-live="polite"
-        >
-          {left < 0 ? `${-left} too many` : `${left} left`}
-        </p>
-      ) : null}
     </div>
   );
 }

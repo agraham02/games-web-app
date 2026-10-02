@@ -494,6 +494,21 @@ describe("the room client", () => {
       expect(socket().lastSent("chat")).toMatchObject({ text: "shall we?" });
     });
 
+    it("gives back what you typed when the room will not take it", async () => {
+      // The field emptied on Send, so "too many messages, try again in a
+      // moment" also threw away the message it was about.
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      const field = (await screen.findByLabelText("Message")) as HTMLInputElement;
+      fireEvent.change(field, { target: { value: "shall we?" } });
+      fireEvent.submit(field.closest("form")!);
+      expect(field.value).toBe("");
+
+      const reqId = socket().lastSent("chat")!.reqId as string;
+      socket().deliver({ t: "error", code: "chat-limited", message: "try again in a moment", reqId });
+      expect(field.value).toBe("shall we?");
+    });
+
     it("lets the leader switch the turn timer off, and change how long it is", async () => {
       await enterLobby();
       fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));

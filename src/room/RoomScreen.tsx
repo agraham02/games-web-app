@@ -271,6 +271,7 @@ export function RoomScreen({ code }: { code?: string }) {
         you={room?.you ?? ""}
         mode={room?.chat ?? "open"}
         onSend={api.sendChat}
+        refused={api.chatRefused}
       />
 
       {screen === "table" ? (
