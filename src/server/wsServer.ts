@@ -39,6 +39,28 @@ interface Tracked {
 /** Hard transport ceiling, well above anything the protocol sends. */
 const MAX_FRAME_BYTES = 128 * 1024;
 
+/**
+ * Compression, negotiated with every browser (permessage-deflate).
+ *
+ * A frame is a whole per-viewer snapshot — 5–8KB of JSON in a card game —
+ * and almost all of it is the same as the frame before: the placements and
+ * piece meta barely move between turns. With the window carried from one
+ * message to the next, a turn costs 100–250 bytes on the wire instead
+ * (measured 2026-10-02, every game, ~30x). That is the whole of "smaller
+ * messages": delta frames would save a further 20–40% and break the rule
+ * that any frame stands alone, which dropping one for a backed-up socket
+ * and catching up after a reconnect both rely on.
+ *
+ * The full 32KB window, because the redundancy is a whole frame back: at
+ * 8KB (13 bits) a Spades turn came out at 845 bytes rather than 228. The
+ * cost is ~300KB of zlib state per open socket. Messages too small to gain
+ * anything (a pong, a clock) go as they are.
+ */
+const COMPRESSION = {
+  zlibDeflateOptions: { memLevel: 8, level: 6 },
+  threshold: 256,
+} as const;
+
 export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry): () => void {
   const wss = new WebSocketServer({
     noServer: true,
@@ -46,8 +68,9 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
     // buffered and stringified, so on its own it refuses a 100MB payload
     // only after holding 100MB (which is `ws`'s default). Capping here
     // means the transport drops it without ever assembling it. Generous
-    // against real traffic: a turn is a few hundred bytes.
+    // against real traffic: what a client sends is a few hundred bytes.
     maxPayload: MAX_FRAME_BYTES,
+    perMessageDeflate: COMPRESSION,
   });
   const router = new Router(registry, () => realClock.now());
   const tracked = new Map<WebSocket, Tracked>();
