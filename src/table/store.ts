@@ -81,6 +81,12 @@ interface TableState {
    */
   hintsShown: boolean;
   /**
+   * A move of this player's is on its way and the page cannot show it yet
+   * (`GameRuntime.sending`): the action bar's buttons are off until the
+   * server answers, so nothing is pressed twice. Synced in by GameHost.
+   */
+  moveInFlight: boolean;
+  /**
    * Pan offset, in px, of the discard pile's own fan — how far it has
    * been dragged past what fits. See geometry.ts's compress-then-pan
    * note: a fan compresses only down to a floor, and everything past
@@ -166,6 +172,7 @@ interface TableState {
   setHeroHoverIndex(index: number | null): void;
   setHeroTurnActive(active: boolean): void;
   setHintsShown(shown: boolean): void;
+  setMoveInFlight(sending: boolean): void;
   setDiscardScroll(px: number | null): void;
   setHandScroll(px: number | null): void;
   setHandFloor(floor: number): void;
@@ -233,6 +240,7 @@ export const useTableStore = create<TableState>((set) => {
     heroHoverIndex: null,
     heroTurnActive: true,
     hintsShown: true,
+    moveInFlight: false,
     discardScroll: null,
     discardCount: 0,
     handScroll: null,
@@ -339,6 +347,9 @@ export const useTableStore = create<TableState>((set) => {
     setHintsShown: (shown) =>
       set((s) => (s.hintsShown === shown ? s : { hintsShown: shown })),
 
+    setMoveInFlight: (sending) =>
+      set((s) => (s.moveInFlight === sending ? s : { moveInFlight: sending })),
+
     setDiscardScroll: (px) =>
       set((s) => (s.discardScroll === px ? s : { discardScroll: px })),
 
@@ -408,6 +419,9 @@ export const useHeroTurnActive = (enabled: boolean) =>
  */
 export const useHintsShown = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.hintsShown : true));
+
+/** See `TableState.moveInFlight`. */
+export const useMoveInFlight = () => useTableStore((s) => s.moveInFlight);
 
 /**
  * Pan/count slices, all on the same enabled-gated pattern as the two

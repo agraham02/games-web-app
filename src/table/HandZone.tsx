@@ -55,7 +55,7 @@
  */
 
 import { handHeaderHeight } from "./geometry";
-import { useGeometry } from "./store";
+import { useGeometry, useMoveInFlight } from "./store";
 
 // Re-exported: callers reserved the band by hand before the surface did.
 export { HAND_HEADER_H, HAND_HEADER_H_SHORT, handHeaderHeight } from "./geometry";
@@ -101,6 +101,9 @@ export function BandNote({ children }: { children: React.ReactNode }) {
 
 export function HandZone({ left, center, right, bar, panel, overHand = false }: HandZoneProps) {
   const geometry = useGeometry();
+  // A move on its way that the page cannot show yet: its buttons are off
+  // until the server answers, so BS! or Rummy! is never sent twice.
+  const sending = useMoveInFlight();
   if (!geometry) return null;
 
   const hand = geometry.zones.hand;
@@ -126,15 +129,24 @@ export function HandZone({ left, center, right, bar, panel, overHand = false }: 
     >
       {/* The panel takes the hand's whole width, not the row's cap: a
           decision laid out as one row on a laptop (Poker's) needs more. */}
-      {panel ? <div className="pointer-events-auto flex w-full justify-center px-3 pt-2">{panel}</div> : null}
+      {panel ? (
+        <fieldset
+          disabled={sending}
+          className="pointer-events-auto flex w-full min-w-0 justify-center px-3 pt-2 transition-opacity"
+          style={{ opacity: sending ? 0.6 : 1 }}
+        >
+          {panel}
+        </fieldset>
+      ) : null}
       <div className="flex w-full max-w-3xl flex-col px-3">
         {bar ? (
-          <div
-            className="pointer-events-auto flex w-full min-w-0 items-center justify-center gap-2"
-            style={{ minHeight: rowH }}
+          <fieldset
+            disabled={sending}
+            className="pointer-events-auto flex w-full min-w-0 items-center justify-center gap-2 transition-opacity"
+            style={{ minHeight: rowH, opacity: sending ? 0.6 : 1 }}
           >
             {bar}
-          </div>
+          </fieldset>
         ) : (
           <div
             className="grid items-center gap-2"

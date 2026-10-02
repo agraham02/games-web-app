@@ -1,5 +1,5 @@
 /**
- * One-shot flourishes — the slam, and LRC's dice.
+ * One-shot flourishes — the slam, LRC's dice, and a press answered.
  *
  * **Why this is not the table store.** Everything in `store.ts` is table
  * STATE: where a piece is, whether it is face up, what it is doing. It
@@ -44,10 +44,17 @@ export function emitSlam(fx: SlamFx): void {
   for (const listener of listeners) listener(fx);
 }
 
-/** Dice thrown — see the `dice` event. */
+/**
+ * Dice thrown — see the `dice` event. `faces: null` is a throw whose result
+ * is not known yet: the player pressed Roll, and the server rolls (see
+ * `predict.ts`). The dice tumble from the press until the real `dice`
+ * event lands them.
+ */
 export interface DiceFx {
   seat: number;
-  faces: string[];
+  faces: string[] | null;
+  /** How many dice, for a throw whose faces are not known yet. */
+  count?: number;
 }
 
 const diceListeners = new Set<(fx: DiceFx) => void>();
@@ -61,4 +68,43 @@ export function onDice(listener: (fx: DiceFx) => void): () => void {
 
 export function emitDice(fx: DiceFx): void {
   for (const listener of diceListeners) listener(fx);
+}
+
+/**
+ * A piece pressed for a move whose result the page cannot know yet — a
+ * card off the stock, a tile off the boneyard (see `predict.ts`). It
+ * nudges at once, so the press is answered on this screen even while the
+ * server decides what it was; the move itself follows with the frame.
+ */
+export interface PressFx {
+  piece: PieceId;
+}
+
+const pressListeners = new Set<(fx: PressFx) => void>();
+
+export function onPress(listener: (fx: PressFx) => void): () => void {
+  pressListeners.add(listener);
+  return () => {
+    pressListeners.delete(listener);
+  };
+}
+
+export function emitPress(fx: PressFx): void {
+  for (const listener of pressListeners) listener(fx);
+}
+
+/**
+ * The piece last tapped, and when — so a move made from a tap can nudge it
+ * without every game threading the id through. Noted by `PieceLayer`, read
+ * by whoever makes the move, within a moment of the tap.
+ */
+let lastTap: { piece: PieceId; at: number } | null = null;
+
+export function noteTap(piece: PieceId): void {
+  lastTap = { piece, at: Date.now() };
+}
+
+/** The piece tapped within `withinMs`, if any. */
+export function recentTap(withinMs: number): PieceId | null {
+  return lastTap && Date.now() - lastTap.at <= withinMs ? lastTap.piece : null;
 }

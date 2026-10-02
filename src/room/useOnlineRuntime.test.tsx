@@ -19,6 +19,7 @@
 import { StrictMode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GameEvent } from "@/engine/types";
 import { createSpades } from "@/games/spades/rules";
 import type { SpadesAction, SpadesState } from "@/games/spades/types";
 import { TestClock } from "@/session/clock";
@@ -908,15 +909,15 @@ describe("your own move, shown before the server answers", () => {
 });
 
 describe("afterShown", () => {
-  const play = { t: "play", piece: "SA", from: 0, to: "trick", faceUp: true } as const;
-  const collect = { t: "collect", pieces: ["SA"], to: 0 } as const;
+  const play: GameEvent = { t: "play", piece: "SA", from: 0, to: "trick", faceUp: true };
+  const collect: GameEvent = { t: "collect", pieces: ["SA"], to: 0 };
 
   it("plays only what was not already shown", () => {
     expect(afterShown([{ ...play }, collect], [play])).toEqual([collect]);
   });
 
   it("plays the whole frame when the prediction was wrong", () => {
-    const other = { ...play, piece: "SK" };
+    const other: GameEvent = { t: "play", piece: "SK", from: 0, to: "trick", faceUp: true };
     expect(afterShown([other, collect], [play])).toEqual([other, collect]);
   });
 });

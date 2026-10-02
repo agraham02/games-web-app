@@ -41,6 +41,7 @@ import { announce } from "@/ui/disclosure";
 import { composeAnnounce } from "@/session/announce";
 import { piecesNamed, redactPlacements, sentinelFor } from "@/session/redact";
 import { applyEventToTable } from "@/table/applyEvent";
+import { emitPress, recentTap } from "@/table/fx";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { ROUND_END_HOLD_MS, autoContinueMsFor } from "@/session/roundEnd";
@@ -81,6 +82,9 @@ export { READY_BEAT_MS } from "@/motion/choreographer";
  * a move through `FrameView.handled` well inside this.
  */
 const UNANSWERED_MS = 8_000;
+
+/** A tap this soon before a move is the tap that made it. */
+const PRESS_WINDOW_MS = 400;
 
 /** A move this page has shown and the server has not yet answered. */
 interface Pending {
@@ -777,6 +781,11 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     if (prediction && prediction.gesture.length > 0) {
       gesturing.current = true;
       gestures.push(prediction.gesture);
+    } else {
+      // Nothing to show of it yet — a card off the stock, a tile off the
+      // boneyard — but the press is still answered, on what was pressed.
+      const pressed = recentTap(PRESS_WINDOW_MS);
+      if (pressed) emitPress({ piece: pressed });
     }
     opts.submit(action, { epoch, n });
   };
@@ -883,6 +892,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // "A turn is on screen" until something has played, so no pod lights
     // for a seat that has not, yet, been asked to do anything.
     animating: moving || boardPending || !started,
+    sending: waiting,
     submitAction,
     rng,
     skip: choreographer.skip,
