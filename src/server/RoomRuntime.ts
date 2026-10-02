@@ -55,12 +55,28 @@ import {
   resolveRoundWinningSeats,
   resolveWinningSeats,
 } from "@/session/structural";
-import type { FrameView, MemberView, RoomView, ServerMessage, SettlementView } from "@/session/protocol";
+import type {
+  FrameView,
+  MemberView,
+  RoomView,
+  ServerErrorCode,
+  ServerMessage,
+  SettlementView,
+} from "@/session/protocol";
 import { seatNets, settleUp, type Stint } from "@/session/settle";
 import type { Clock, TimerHandle } from "@/session/clock";
 import { AUTO_CONTINUE_GRACE_MS, AUTO_CONTINUE_MS, ROUND_END_HOLD_MS } from "@/session/roundEnd";
 import { log } from "./log";
 import { decodePhoto, newPhotoId, type StoredPhoto } from "./photo";
+import {
+  CHAT_HISTORY,
+  CHAT_RATE,
+  chatTextProblem,
+  cleanChatText,
+  quickReply,
+  type ChatMessage,
+  type ChatMode,
+} from "@/session/chat";
 
 /**
  * The seat a spectator "occupies". Every game's `placements` and
@@ -157,6 +173,13 @@ export class RoomRuntime {
    * (`MemberView.photo`), and the bytes are fetched once by URL.
    */
   private readonly photos = new Map<SessionId, StoredPhoto>();
+  /** What has been said, newest last, at most `CHAT_HISTORY`. */
+  private chatLog: ChatMessage[] = [];
+  private nextChatId = 1;
+  /** When each person last spoke, for `CHAT_RATE`. */
+  private readonly chatTimes = new Map<SessionId, number[]>();
+  /** Whether a partnership hand was in play at the last frame. See `chatModeFor`. */
+  private handWasInPlay = false;
   /**
    * Who pays whom for the last game played for money (see `settle.ts`).
    * Worked out here because only the server still holds the position when
@@ -223,6 +246,8 @@ export class RoomRuntime {
     this.command(session, { t: "setConnected", connected: true });
     this.broadcastRoom();
     this.sendCurrentFrame(session);
+    // Always, even empty: it replaces whatever this client last heard.
+    this.send(session, { t: "chatLog", messages: this.chatLog });
   }
 
   /**
@@ -330,6 +355,66 @@ export class RoomRuntime {
     }
     log.info("command", { room: this.code, session, event: command.t });
     return { ok: true };
+  }
+
+  /* ---------- chat ---------- */
+
+  /**
+   * Is a partnership hand being played right now? Between hands (the
+   * scorecard) and after the match, table talk is back.
+   */
+  private handInPlay(): boolean {
+    const session = this.session;
+    if (!session || !this.sessionGameId) return false;
+    if (!gameEntry(this.sessionGameId).teams(this.sessionSettings)) return false;
+    const state = session.snapshot();
+    return !session.definition.isOver(state) && !session.definition.isRoundOver?.(state);
+  }
+
+  /**
+   * Quick replies only, for anybody holding a seat in a partnership hand in
+   * play — whether or not they are at the table: somebody who stepped back
+   * to the lobby still knows their cards. Everybody else may type.
+   */
+  chatModeFor(session: SessionId): ChatMode {
+    return this.handInPlay() && holdsSeat(this.room, session) ? "quick-only" : "open";
+  }
+
+  /**
+   * Somebody said something. Cleaned, checked against the rules, and sent to
+   * everybody attached — the lobby as well as the table. Returns why it was
+   * refused, or null.
+   */
+  chat(session: SessionId, input: { text?: string; quick?: string }): ServerErrorCode | null {
+    const member = this.room.members[session];
+    if (!member) return "not-a-member";
+
+    const now = this.clock.now();
+    const recent = (this.chatTimes.get(session) ?? []).filter((t) => now - t < CHAT_RATE.windowMs);
+    if (recent.length >= CHAT_RATE.count) return "chat-limited";
+
+    const locked = this.chatModeFor(session) === "quick-only";
+    let text: string;
+    let quick: string | undefined;
+    if (input.quick !== undefined) {
+      const reply = quickReply(input.quick);
+      if (!reply) return "chat-invalid";
+      if (locked && !reply.tableSafe) return "chat-locked";
+      text = reply.text;
+      quick = reply.id;
+    } else {
+      if (locked) return "chat-locked";
+      text = cleanChatText(input.text ?? "");
+      if (chatTextProblem(text)) return "chat-invalid";
+    }
+
+    recent.push(now);
+    this.chatTimes.set(session, recent);
+    const message: ChatMessage = { id: this.nextChatId++, session, name: member.name, text, at: now };
+    if (quick) message.quick = quick;
+    this.chatLog = [...this.chatLog, message].slice(-CHAT_HISTORY);
+    for (const connection of this.connections.values()) this.push(connection, { t: "chat", message });
+    return null;
   }
 
   /* ---------- photos ---------- */
@@ -615,6 +700,13 @@ export class RoomRuntime {
     }
     session.settled();
     this.syncAutoContinue();
+    // A hand starting or ending changes what the people in it may say, and
+    // `RoomView.chat` rides on the room, not the frame.
+    const inPlay = this.handInPlay();
+    if (inPlay !== this.handWasInPlay) {
+      this.handWasInPlay = inPlay;
+      this.broadcastRoom();
+    }
   }
 
   /**
@@ -890,6 +982,7 @@ export class RoomRuntime {
       inGame: Boolean(game?.present.includes(session)),
       youMayContinue: mayContinueRound(room, session),
       settlement: this.settlement,
+      chat: this.chatModeFor(session),
     };
   }
 
@@ -951,6 +1044,8 @@ export class RoomRuntime {
     for (const handle of this.grace.values()) this.clock.clearTimeout(handle);
     this.grace.clear();
     this.photos.clear();
+    this.chatLog = [];
+    this.chatTimes.clear();
     this.stopSession();
     for (const connection of this.connections.values()) connection.close();
     this.connections.clear();

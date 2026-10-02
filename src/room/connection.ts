@@ -22,6 +22,7 @@
  */
 
 import type { ClientMessage, ServerMessage } from "@/session/protocol";
+import { CHAT_HISTORY, type ChatMessage } from "@/session/chat";
 import { PROTOCOL_VERSION } from "@/session/protocol";
 
 export const TOKEN_KEY = "table-games.session-token";
@@ -133,6 +134,12 @@ export class RoomConnection {
    * entry screen while the leader still had their request.
    */
   lastPending: unknown = null;
+  /**
+   * What has been said in the room, as the server last told it plus
+   * everything since — replayed as one `chatLog`, so moving between the
+   * lobby and the table does not empty the chat.
+   */
+  chatLog: ChatMessage[] = [];
 
   private socket: WebSocket | null = null;
   private attempt = 0;
@@ -183,6 +190,7 @@ export class RoomConnection {
     if (this.lastRoom) listener.onMessage(this.lastRoom as ServerMessage);
     if (this.lastFrame) listener.onMessage(this.lastFrame as ServerMessage);
     if (this.lastPending) listener.onMessage(this.lastPending as ServerMessage);
+    if (this.lastRoom) listener.onMessage({ t: "chatLog", messages: this.chatLog });
     listener.onStatus(this.status);
     return () => {
       this.listeners.delete(listener);
@@ -228,6 +236,7 @@ export class RoomConnection {
       this.lastRoom = null;
       this.lastFrame = null;
       this.lastPending = null;
+      this.chatLog = [];
       this.queue.length = 0;
       this.close();
     }, 0);
@@ -367,6 +376,7 @@ export class RoomConnection {
         if (!message.inRoom) {
           this.lastRoom = null;
           this.lastFrame = null;
+          this.chatLog = [];
           // A knock does not survive the socket that made it: the server
           // drops its `awaiting` entry when that socket closes, so a
           // request cached across a reconnect is one nobody can answer.
@@ -392,6 +402,13 @@ export class RoomConnection {
         this.lastRoom = null;
         this.lastFrame = null;
         this.lastPending = null;
+        this.chatLog = [];
+        break;
+      case "chatLog":
+        this.chatLog = message.messages;
+        break;
+      case "chat":
+        this.chatLog = [...this.chatLog, message.message].slice(-CHAT_HISTORY);
         break;
       case "error":
         // The one error a reconnect cannot fix. Retrying hides it behind

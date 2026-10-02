@@ -49,6 +49,7 @@ export function DominoesOnline({
   held,
   onToggleHeld,
   onClearHeld,
+  corner,
 }: OnlineTableProps) {
   const definition = useMemo(() => {
     const entry = GAMES[room.gameId ?? "dominoes"];
@@ -107,7 +108,7 @@ export function DominoesOnline({
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
-  const seatExtras = useSeatExtras(room);
+  const seatExtras = useSeatExtras(room, api.chat);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (
@@ -120,6 +121,7 @@ export function DominoesOnline({
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        corner={corner}
         settings={DOMINO_SETTINGS}
         menuActions={
           <TableMenu

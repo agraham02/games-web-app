@@ -48,7 +48,7 @@ import type { OnlineTableProps } from "../tables";
 import { TableMenu } from "./TableMenu";
 import { useSeatExtras } from "./seatExtras";
 
-export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: OnlineTableProps) {
+export function BsOnline({ api, room, frame, held, onClearHeld, setHeld, corner }: OnlineTableProps) {
   // Through the shared rule, not a bare toggle. `RoomScreen` owns WHERE the
   // selection lives (so it survives a trip to the lobby); what a tap means is
   // a rules question with one answer, and it lives next to `onPieceTap` in
@@ -93,7 +93,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
   // Only ever null for a moment before there is a frame at all: the table is
   // drawn from the first frame, and its deal plays once this player's own
   // table is up.
-  const seatExtras = useSeatExtras(room);
+  const seatExtras = useSeatExtras(room, api.chat);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
   return (
@@ -107,6 +107,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld }: Onlin
         serverDriven
         continueWaiting={continueWaitingFor(room)}
         seatExtras={seatExtras}
+        corner={corner}
         menuActions={
           <TableMenu
             code={room.code}

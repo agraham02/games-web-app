@@ -5,7 +5,8 @@
  * reach for — the short version is: pick the lowest one that works.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { X } from "lucide-react";
 import { Toaster, toast } from "sonner";
@@ -117,6 +118,9 @@ export function InfoSheet({
   onClose,
   side = "bottom",
   children,
+  layer = "surface",
+  footer,
+  inset,
 }: {
   open: boolean;
   title: string;
@@ -124,9 +128,28 @@ export function InfoSheet({
   /** The edge it slides in from — put it on the side its button is on. */
   side?: SheetSide;
   children: React.ReactNode;
+  /**
+   * Where it is drawn. `surface` (the default) is inside the table, so it
+   * dims the table and nothing else. `page` is over the whole page, portalled
+   * to `body` — for a sheet that has to work with no table under it (the
+   * chat, which the lobby has too), and that must escape the table's
+   * `select-none`, under which a text field cannot be typed into on iOS.
+   */
+  layer?: "surface" | "page";
+  /**
+   * Pinned under the content, which then scrolls on its own: the chat's
+   * composer, which has to stay put while the messages above it move.
+   */
+  footer?: ReactNode;
+  /**
+   * Pulls the sheet's top and bottom edges in, in px — how the chat keeps
+   * its composer above the on-screen keyboard (`useKeyboardInset`).
+   */
+  inset?: { top: number; bottom: number };
 }) {
   const placement = SHEET_PLACEMENT[side];
   const shown = placement.hidden.x !== undefined ? { x: 0 } : { y: 0 };
+  const position = layer === "page" ? "fixed" : "absolute";
 
   useEffect(() => {
     if (!open) return;
@@ -137,14 +160,16 @@ export function InfoSheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  return (
+  const tree = (
     <AnimatePresence>
       {open ? (
         <motion.div
           key="backdrop"
           aria-hidden
           data-testid="sheet-backdrop"
-          className="absolute inset-0 z-2150 bg-felt-950/60"
+          // Not the table's to pan: see `usePanZone`.
+          data-pan-ignore
+          className={`${position} inset-0 z-2150 bg-felt-950/60`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -156,13 +181,17 @@ export function InfoSheet({
         <motion.aside
           key="sheet"
           aria-label={title}
-          className={`absolute z-2200 overflow-y-auto border-brass-400/30 bg-linear-to-b from-felt-800/95 to-felt-900 p-4 backdrop-blur-lg ${placement.className}`}
+          data-pan-ignore
+          className={`${position} z-2200 border-brass-400/30 bg-linear-to-b from-felt-800/95 to-felt-900 p-4 backdrop-blur-lg ${
+            footer ? "flex flex-col overflow-hidden" : "overflow-y-auto"
+          } ${placement.className}`}
+          style={inset ? { top: inset.top, bottom: inset.bottom } : undefined}
           initial={placement.hidden}
           animate={shown}
           exit={placement.hidden}
           transition={TRANSITIONS.ui}
         >
-          <header className="mb-3 flex items-center justify-between">
+          <header className="mb-3 flex shrink-0 items-center justify-between">
             <h3 className="font-display text-[15px] tracking-wide text-brass-300">
               {title}
             </h3>
@@ -175,11 +204,20 @@ export function InfoSheet({
               <X size={16} />
             </button>
           </header>
-          {children}
+          {footer ? (
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+              <div className="shrink-0 pt-3">{footer}</div>
+            </>
+          ) : (
+            children
+          )}
         </motion.aside>
       ) : null}
     </AnimatePresence>
   );
+  if (layer === "page") return typeof document === "undefined" ? null : createPortal(tree, document.body);
+  return tree;
 }
 
 /* ============================================================

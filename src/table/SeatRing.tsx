@@ -104,6 +104,12 @@ export interface SeatView {
    * `GameHost`'s `seatExtras`, never by a game. Initials stay underneath.
    */
   photo?: string | null;
+  /**
+   * The last thing they said in the room's chat — shown beside the pod by
+   * `SeatBubbles` if it is new, never by the pod itself. Laid over by
+   * `seatExtras`, like `photo`.
+   */
+  bubble?: { id: number; text: string } | null;
 }
 
 /**

@@ -220,6 +220,160 @@ describe("the server, in process", () => {
     });
   });
 
+  describe("chat", () => {
+    function lobbyOfTwo() {
+      const h = host("ada");
+      const bo = peerFor("bo");
+      send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+      return { ...h, bo };
+    }
+
+    it("reaches everybody in the room, cleaned, with who said it", () => {
+      const { conn, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "chat", text: "  hello\n\n there  " });
+      for (const who of [conn, bo.conn]) {
+        expect(who.last("chat")!.message).toMatchObject({ name: "Bo", text: "hello there" });
+      }
+    });
+
+    it("sends a quick reply by what it says, not what the client claims", () => {
+      const { conn, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "chat", quick: "luck" });
+      expect(conn.last("chat")!.message).toMatchObject({ text: "Good luck!", quick: "luck" });
+      send(bo.peer, { t: "chat", quick: "made-up" });
+      expect(bo.conn.last("error")?.code).toBe("chat-invalid");
+    });
+
+    it("refuses nothing and too much", () => {
+      const { bo } = lobbyOfTwo();
+      send(bo.peer, { t: "chat", text: "   " });
+      expect(bo.conn.last("error")?.code).toBe("chat-invalid");
+      send(bo.peer, { t: "chat", text: "x".repeat(121) });
+      expect(bo.conn.last("error")?.code).toBe("chat-invalid");
+      expect(bo.conn.all("chat")).toHaveLength(0);
+    });
+
+    it("keeps a flood down, and lets the talker back in after a moment", () => {
+      const { conn, bo } = lobbyOfTwo();
+      for (let i = 0; i < 6; i++) send(bo.peer, { t: "chat", text: `m${i}` });
+      expect(conn.all("chat")).toHaveLength(5);
+      expect(bo.conn.last("error")?.code).toBe("chat-limited");
+      clock.advance(10_000);
+      send(bo.peer, { t: "chat", text: "later" });
+      expect(conn.last("chat")!.message.text).toBe("later");
+    });
+
+    it("tells somebody arriving what has been said", () => {
+      const { peer, code } = lobbyOfTwo();
+      send(peer, { t: "chat", text: "before you came" });
+      const cy = peerFor("cy");
+      send(cy.peer, { t: "joinRoom", code, name: "Cy" });
+      expect(cy.conn.last("chatLog")!.messages.map((m) => m.text)).toEqual(["before you came"]);
+    });
+
+    it("hears nothing from somebody still knocking", () => {
+      const { peer, conn, code } = host("ada");
+      send(peer, { t: "setPrivacy", privacy: "private" });
+      const knocker = peerFor("knock");
+      send(knocker.peer, { t: "joinRoom", code, name: "Knock" });
+      send(knocker.peer, { t: "chat", text: "let me in" });
+      expect(knocker.conn.last("error")?.code).toBe("no-room");
+      expect(conn.all("chat")).toHaveLength(0);
+    });
+
+    describe("table talk in a partnership hand", () => {
+      /** Spades, both people seated: a partnership game. */
+      function spadesHand() {
+        const h = host("ada");
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        return { ...h, bo };
+      }
+
+      it("limits the players in it to the table-safe quick replies", () => {
+        const { peer, conn, bo } = spadesHand();
+        expect(conn.last("room")!.room.chat).toBe("quick-only");
+
+        send(peer, { t: "chat", text: "I have the ace" });
+        expect(conn.last("error")?.code).toBe("chat-locked");
+        send(peer, { t: "chat", quick: "nice" });
+        expect(conn.last("error")?.code).toBe("chat-locked");
+        send(peer, { t: "chat", quick: "luck" });
+        expect(bo.conn.last("chat")!.message.text).toBe("Good luck!");
+      });
+
+      it("lets somebody who is only watching say what they like", () => {
+        const { conn, code } = spadesHand();
+        const cy = peerFor("cy");
+        send(cy.peer, { t: "joinRoom", code, name: "Cy" });
+        send(cy.peer, { t: "enterGame", as: "spectator" });
+        expect(cy.conn.last("room")!.room.chat).toBe("open");
+        send(cy.peer, { t: "chat", text: "great game to watch" });
+        expect(conn.last("chat")!.message.text).toBe("great game to watch");
+      });
+
+      it("still holds somebody who stepped back to the lobby — they know their cards", () => {
+        const { peer, conn } = spadesHand();
+        send(peer, { t: "exitGame" });
+        send(peer, { t: "chat", text: "psst" });
+        expect(conn.last("error")?.code).toBe("chat-locked");
+      });
+
+      it("gives table talk back when the hand is over", () => {
+        // Played out for real: each person takes their first legal action
+        // whenever it is their turn, and the bots do the rest.
+        const { peer, conn, bo, code } = spadesHand();
+        const rules = createSpades();
+        const people = [{ peer, conn }, bo];
+        for (let i = 0; i < 20_000 && !conn.last("frame")!.frame.isRoundOver; i++) {
+          const seat = (registry.get(code)!.debugDump().table as { currentSeat: number | null }).currentSeat;
+          const who = people.find((p) => p.conn.last("frame")?.frame.seat === seat);
+          if (who && seat !== null) {
+            const legal = rules.legalActions(who.conn.last("frame")!.frame.state as SpadesState, seat);
+            if (legal[0]) send(who.peer, { t: "action", action: legal[0] });
+          }
+          clock.advance(100);
+        }
+        expect(conn.last("frame")!.frame.isRoundOver, "the hand should have been played out").toBe(true);
+        expect(conn.last("room")!.room.chat, "the room is told the moment it opens").toBe("open");
+        send(peer, { t: "chat", text: "well that went badly" });
+        expect(bo.conn.last("chat")!.message.text).toBe("well that went badly");
+      });
+
+      it("does not apply to a game without partners", () => {
+        const h = host("ada");
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "selectGame", gameId: "poker", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        expect(h.conn.last("room")!.room.chat).toBe("open");
+        send(h.peer, { t: "chat", text: "all in" });
+        expect(bo.conn.last("chat")!.message.text).toBe("all in");
+      });
+
+      it("applies to dominoes played in teams, and only then", () => {
+        const teams = (on: boolean) => {
+          const h = host(`d-${on}`);
+          const bo = peerFor(`d-bo-${on}`);
+          send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+          send(h.peer, {
+            t: "selectGame",
+            gameId: "dominoes",
+            settings: { mode: "caribbean", teams: on },
+            seats: 4,
+            difficulty: "steady",
+          });
+          send(h.peer, { t: "startGame" });
+          return h.conn.last("room")!.room.chat;
+        };
+        expect(teams(true)).toBe("quick-only");
+        expect(teams(false)).toBe("open");
+      });
+    });
+  });
+
   describe("photos", () => {
     const jpeg = `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(64)]).toString("base64")}`;
 

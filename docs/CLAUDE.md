@@ -557,6 +557,59 @@ open by an unanswered knock, and knockers are told when any room goes
 (`onRoomDestroyed`). Joining a room nobody is left in makes you its
 leader, straight in even if it was private — there is nobody to ask.
 
+### Chat is the room's, and a hand can silence it
+
+A room has a chat (the user, 2026-09-29): a drawer from the right in the
+lobby and at the table — ONE `ChatSheet`, owned by `RoomScreen`, so a trip
+between the two neither closes it nor loses what was unread — with the
+quick replies in a sideways row directly above the field. In the lobby,
+what other people say also pops up as a toast that opens the chat
+(`chatToast`, the user, 2026-10-01); at the table, never a toast — it
+appears beside their pod (`SeatBubbles`). Neither ever shows your own. The rules live in `session/chat.ts`, shared by
+both ends: the server cleans and checks every message (controls, direction
+overrides and stacked accents out; 120 characters as a person counts them;
+five per ten seconds), and the composer counts and dims with the same
+functions, so it never offers what would be refused. The last fifty go to
+anybody arriving (`chatLog`), and `connection.ts` keeps them across the
+lobby ↔ table page swap.
+
+**Table talk.** While a partnership hand is played (Spades; dominoes in
+teams), whoever HOLDS a seat in it — at the table or stepped back to the
+lobby, since they still know their cards — may send only the table-safe
+quick replies (`RoomView.chat`, per viewer). Spectators and the lobby may
+say anything: they see no hidden cards. A quick reply travels by id, so
+the server, which decides what is safe, is the one that knows what it
+says. The room is rebroadcast the moment a hand starts or ends, because
+the mode rides on the room and not the frame.
+
+Things that bit, worth knowing before touching it:
+
+- **The sheet is portalled to `body`** (`InfoSheet layer="page"`): the
+  lobby has no `TableSurface`, and inside one a text field sits under
+  `select-none`, which iOS will not let you type into.
+- **The table's pan listens on the whole document by coordinates**, so the
+  sideways reply row over the hand strip was panning the hand. Anything
+  drawn over the table that takes a gesture of its own is marked
+  `data-pan-ignore` (`usePanZone`).
+- **The keyboard is measured, not obeyed**: `useKeyboardInset` reads the
+  visual viewport and pulls the sheet's bottom edge up, rather than setting
+  `interactive-widget=resizes-content`, which would re-lay the whole table
+  out under the chat whenever somebody typed.
+- **A bubble hangs below or above its pod, never beside it.** Beside put a
+  phone's high left seat's bubble into the toast lane. It is its own layer
+  at z-980 because `SeatRing` is a z-800 stacking context that opponents'
+  cards (up to 960) always cover.
+- **Only what is said LIVE pops up.** `useRoom.chatLiveAfter` marks where
+  the replayed log (`chatLog`: joining, reconnecting, the page swap) ends,
+  or every arrival would replay the room's past as toasts. And chat toasts
+  are put away when the lobby goes (`dismissChatToasts`): sonner replays
+  any toast still up into the next `Toaster` to mount, and the table mounts
+  its own.
+- **A mouse cannot swipe.** With the scrollbar hidden, the reply row was
+  out of reach on a desktop; `useSidewaysScroll` turns an up-and-down wheel
+  sideways and lets a mouse drag it (swallowing the click a drag ends on).
+  It snaps only under a coarse pointer — snapping fights both.
+
 ### A photo is the room's, not the game's
 
 A member may add a photo for as long as they are in the room (the user,
