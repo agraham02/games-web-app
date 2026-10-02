@@ -37,6 +37,7 @@ import {
   type SettingValues,
 } from "./gameSettings";
 import { useSlamFeedback } from "./slamFeedback";
+import { useShownTurnClock } from "./shownTurnClock";
 import {
   GameEndSummary,
   RoundEndScorecard,
@@ -331,16 +332,18 @@ export function GameHostView<S, A>({
   // (Dominoes cut-throat, LRC) and correctly crowns BOTH partners when a
   // partnership game scores a round — team dominoes, the first to do so.
   const winningSeats = live.winningSeats ?? live.roundWinningSeats;
+  // Not before the seat is on turn on THIS screen — see `useShownTurnClock`.
+  const shownClock = useShownTurnClock(turnClock, live);
   const seatViews = players(live.state, live).map((view) => {
     const room = seatExtras?.(view.seat);
     let seen = room ? { ...view, ...room } : view;
-    if (turnClock && turnClock.seat === view.seat) seen = { ...seen, timer: turnClock };
+    if (shownClock && shownClock.seat === view.seat) seen = { ...seen, timer: shownClock };
     return winningSeats?.includes(view.seat) ? { ...seen, winning: true } : seen;
   });
   // The viewer's own clock. Not a spectator's (`viewerSeat` null): they
   // have no move to make.
   const ownClock =
-    turnClock && viewerSeat !== null && turnClock.seat === (viewerSeat ?? HERO) ? turnClock : null;
+    shownClock && viewerSeat !== null && shownClock.seat === (viewerSeat ?? HERO) ? shownClock : null;
   const board = standings
     ? standings(live.state, live, seatViews)
     : winLoseStandings(live.state, live, seatViews, viewerSeat);
