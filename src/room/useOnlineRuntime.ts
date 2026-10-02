@@ -249,6 +249,15 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     null,
   );
   /**
+   * The same fact as `pendingReset`, for rendering: the move is still
+   * landing, so it is not the next player's turn on this screen yet. The
+   * settled position carries this player's `dimmed` marks, so a turn that
+   * opened at `settle` lifted the hand a beat before the cards it cannot
+   * play dimmed (the user, 2026-10-02). Opening it with the board makes
+   * both one step — and the turn clock waits for the same moment.
+   */
+  const [boardPending, setBoardPending] = useState(false);
+  /**
    * Set from a board adoption that `jump`ed a piece until React has DRAWN
    * it; the next batch waits. A jump remounts the piece where it belongs,
    * and a play of that same piece landing in the same render remounted it
@@ -270,6 +279,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     if (!pending) return;
     pendingReset.current = null;
     clearTimeout(pending.timer);
+    setBoardPending(false);
     adoptBoard(pending.frame);
   };
 
@@ -320,6 +330,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
         pump();
       }, tail);
       pendingReset.current = { frame: current, timer };
+      setBoardPending(true);
     } else {
       adoptBoard(current);
     }
@@ -598,7 +609,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     replaceState: () => {
       /* Server-authoritative. Nothing a client wrote here would survive. */
     },
-    isHeroTurn: myTurn && !shown.isOver && !choreographer.isPlaying,
+    isHeroTurn: myTurn && !shown.isOver && !choreographer.isPlaying && !boardPending,
     isOver: shown.isOver,
     winner: shown.winner,
     winningSeats: shown.winningSeats,
@@ -610,7 +621,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     dealingRound,
     nextRound: opts.nextRound,
     autoAdvance: true,
-    busy: choreographer.isPlaying || !myTurn || !started,
+    busy: choreographer.isPlaying || boardPending || !myTurn || !started,
     // Off the SETTLED frame, deliberately. `applied` lags the newest
     // frame by exactly one animation, so during a move this still names
     // the seat making it, and it only advances once that move has
@@ -618,7 +629,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     currentSeat: shown.isOver ? null : shown.currentSeat,
     // "A turn is on screen" until something has played, so no pod lights
     // for a seat that has not, yet, been asked to do anything.
-    animating: choreographer.isPlaying || !started,
+    animating: choreographer.isPlaying || boardPending || !started,
     submitAction: (action) => opts.submit(action),
     rng,
     skip: choreographer.skip,

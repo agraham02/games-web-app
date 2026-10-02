@@ -589,6 +589,43 @@ describe("a face-down play, online", () => {
     vi.unstubAllGlobals();
   });
 
+  it("opens a turn and dims what it cannot play in one step", () => {
+    // The turn opened when the move landed and the board, which carries the
+    // `dimmed` marks, was adopted after the card finished flying: with Hints
+    // on the hand grew first and dimmed a beat later (the user, 2026-10-02).
+    const frames = playedFrames();
+    let current = frames[0]!;
+    const { result, rerender } = renderHook(() =>
+      useOnlineRuntime<SpadesState, SpadesAction>({
+        frame: current,
+        submit: () => {},
+        nextRound: () => {},
+        initial: () => openingPosition(definition, 4, current.seat),
+      }),
+    );
+    for (let i = 0; i < 40; i++) tick(500);
+
+    let turnsWithDims = 0;
+    for (const frame of frames.slice(1)) {
+      current = frame;
+      rerender();
+      for (let t = 0; t < 8000; t += 20) {
+        tick(20);
+        if (!result.current!.isHeroTurn) continue;
+        const onTable = useTableStore.getState().placements;
+        const mine = Object.entries(frame.placements).filter(
+          ([, p]) => p.zone === "hand" && p.seat === frame.seat,
+        );
+        if (mine.some(([, p]) => p.dimmed)) turnsWithDims++;
+        for (const [id, p] of mine) {
+          expect(Boolean(onTable[id]?.dimmed), `${id} at ${t}ms`).toBe(Boolean(p.dimmed));
+        }
+        break;
+      }
+    }
+    expect(turnsWithDims, "the viewer never had a card to dim").toBeGreaterThan(0);
+  });
+
   it("lets another player's card fly to the pile before the board is adopted", () => {
     // Reported in BS, seen in Chrome: the viewer's own plays flew and nobody
     // else's did. An opponent's card is a stand-in named by its SLOT in the
