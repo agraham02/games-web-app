@@ -29,6 +29,7 @@ export function useSeatExtras(
       for (let i = chat.length - 1; i >= 0 && !said; i--) if (chat[i]!.session === m.session) said = chat[i];
       extras.set(m.seat, {
         ...(m.photo ? { photo: photoUrl(m.photo) } : {}),
+        ...(m.weak && m.connected ? { weakLink: true } : {}),
         ...(said ? { bubble: { id: said.id, text: said.text } } : {}),
       });
     }

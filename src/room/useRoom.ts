@@ -91,6 +91,8 @@ export function toLocalClock(
 export interface RoomApi {
   phase: RoomPhase;
   status: ConnectionStatus;
+  /** This end's link is slow right now — see `RoomConnection.weak`. */
+  weakLink: boolean;
   room: RoomView | null;
   /** The code we are waiting on approval for, while `phase === "pending"`. */
   pendingCode: string | null;
@@ -173,6 +175,7 @@ function nextReqId(): string {
 export function useRoom(): RoomApi {
   const connection = useMemo(() => roomConnection(), []);
   const [status, setStatus] = useState<ConnectionStatus>(connection.status);
+  const [weakLink, setWeakLink] = useState(connection.weak);
   const [room, setRoom] = useState<RoomView | null>(null);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [frame, setFrame] = useState<FrameView | null>(null);
@@ -215,6 +218,7 @@ export function useRoom(): RoomApi {
   useEffect(() => {
     const off = connection.subscribe({
       onStatus: setStatus,
+      onLink: setWeakLink,
       onMessage: (message) => {
         switch (message.t) {
           case "hello":
@@ -475,6 +479,7 @@ export function useRoom(): RoomApi {
       },
       chatRefused,
       turnClock,
+      weakLink,
       resumeSeat: () => send({ t: "resume" }),
       setTurnTimer: (change) => send({ t: "setTurnTimer", ...change }),
     }),
@@ -490,6 +495,7 @@ export function useRoom(): RoomApi {
       chatLiveAfter,
       chatRefused,
       turnClock,
+      weakLink,
       send,
       connection,
     ],

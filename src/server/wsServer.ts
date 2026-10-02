@@ -16,6 +16,7 @@ import type { ServerMessage } from "@/session/protocol";
 import type { Connection } from "./RoomRuntime";
 import type { RoomRegistry } from "./RoomRegistry";
 import { makePeer, Router, type Peer } from "./router";
+import { LinkMonitor } from "@/session/link";
 import { log } from "./log";
 
 /**
@@ -31,9 +32,22 @@ const HEARTBEAT_MS = 30_000;
 
 export const WS_PATH = "/ws";
 
+/**
+ * How often each socket's link is timed — a websocket ping, which the
+ * browser answers on its own, so a busy or backgrounded page cannot skew it.
+ * A few bytes each. Separate from the heartbeat above, which is about
+ * whether a socket is there at all; this is about how well it is.
+ */
+const PROBE_MS = 3_000;
+/** How often silence is checked for (see `STALL_MS`). */
+const LINK_TICK_MS = 500;
+
 interface Tracked {
   peer: Peer;
   alive: boolean;
+  link: LinkMonitor;
+  /** Told when `link.weak` changes. */
+  listeners: Set<() => void>;
 }
 
 /** Hard transport ceiling, well above anything the protocol sends. */
@@ -100,13 +114,30 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
         }
       },
       bufferedAmount: () => ws.bufferedAmount,
+      rttMs: () => entry.link.rttMs(),
+      weak: () => entry.link.weak,
+      onWeakChange(listener) {
+        entry.listeners.add(listener);
+        return () => entry.listeners.delete(listener);
+      },
     };
 
-    const entry: Tracked = { peer: makePeer(connection, realClock.now()), alive: true };
+    const entry: Tracked = {
+      peer: makePeer(connection, realClock.now()),
+      alive: true,
+      link: new LinkMonitor(),
+      listeners: new Set(),
+    };
     tracked.set(ws, entry);
 
-    ws.on("pong", () => {
+    ws.on("pong", (data: Buffer) => {
       entry.alive = true;
+      // A timed probe carries its id; the heartbeat's own ping carries
+      // nothing, and answers nothing here.
+      const id = Number(data.toString());
+      if (data.length > 0 && Number.isFinite(id) && entry.link.answered(id, realClock.now())) {
+        for (const listener of entry.listeners) listener();
+      }
     });
 
     ws.on("message", (data) => {
@@ -147,10 +178,31 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
   // Never hold the process open just to keep pinging.
   heartbeat.unref?.();
 
+  let probeId = 0;
+  let ticks = 0;
+  const linkTimer = setInterval(() => {
+    const now = realClock.now();
+    const probing = ++ticks % Math.round(PROBE_MS / LINK_TICK_MS) === 0;
+    if (probing) probeId++;
+    for (const [ws, entry] of tracked) {
+      if (probing && ws.readyState === ws.OPEN) {
+        entry.link.sent(probeId, now);
+        try {
+          ws.ping(String(probeId));
+        } catch {
+          // Gone; the heartbeat cleans it up.
+        }
+      }
+      if (entry.link.tick(now)) for (const listener of entry.listeners) listener();
+    }
+  }, LINK_TICK_MS);
+  linkTimer.unref?.();
+
   log.info("websocket server attached", { event: WS_PATH });
 
   return () => {
     clearInterval(heartbeat);
+    clearInterval(linkTimer);
     for (const ws of tracked.keys()) ws.terminate();
     tracked.clear();
     wss.close();

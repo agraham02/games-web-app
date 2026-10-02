@@ -132,6 +132,8 @@ export interface MemberView {
   photo: string | null;
   /** The turn timer has handed their seat to a bot until they come back. */
   idle: boolean;
+  /** Their connection is slow right now (see `LinkMonitor`). */
+  weak: boolean;
 }
 
 export interface RoomView {

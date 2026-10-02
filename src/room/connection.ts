@@ -24,6 +24,7 @@
 import type { ClientMessage, ServerMessage, TurnClockView } from "@/session/protocol";
 import { CHAT_HISTORY, type ChatMessage } from "@/session/chat";
 import { PROTOCOL_VERSION } from "@/session/protocol";
+import { LinkMonitor } from "@/session/link";
 
 export const TOKEN_KEY = "table-games.session-token";
 
@@ -50,8 +51,15 @@ const RETRY_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
  *
  * Comfortably under a 60-second idle timeout, and nothing next to the
  * router's own 120-messages-per-10-seconds budget.
+ *
+ * Every five seconds rather than every twenty-five since 2026-10-02: each
+ * ping is also a sample of the link, and a slow link has to show on your
+ * own screen within a few seconds to be worth showing (`LinkMonitor`).
  */
-const KEEPALIVE_MS = 25_000;
+const KEEPALIVE_MS = 5_000;
+
+/** How often an unanswered ping is checked for (see `STALL_MS`). */
+const LINK_TICK_MS = 500;
 
 /**
  * Two early pings after connecting, timed (`sent`), so the turn clock has a
@@ -87,6 +95,8 @@ export type ConnectionStatus =
 export interface ConnectionListener {
   onMessage: (message: ServerMessage) => void;
   onStatus: (status: ConnectionStatus) => void;
+  /** This end's link turned slow, or fine again — see `RoomConnection.weak`. */
+  onLink?: (weak: boolean) => void;
 }
 
 /**
@@ -169,6 +179,9 @@ export class RoomConnection {
   private probeTimers: ReturnType<typeof setTimeout>[] = [];
   /** Recent round trips, ms — see `oneWayMs`. */
   private rtts: number[] = [];
+  /** This socket's link, judged as the server judges everyone's. */
+  private link = new LinkMonitor();
+  private linkTimer: ReturnType<typeof setInterval> | null = null;
   /** The hang-up scheduled for when no page is listening. See `closeWhenIdle`. */
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   /** Everyone waiting on `whenClosed`. */
@@ -368,18 +381,46 @@ export class RoomConnection {
     // a ping while disconnected and then deliver a burst of stale ones the
     // moment the connection came back. Timed, so every answer is a sample.
     const ping = () => {
-      if (this.socket?.readyState === WebSocket.OPEN) this.raw({ t: "ping", sent: performance.now() });
+      if (this.socket?.readyState !== WebSocket.OPEN) return;
+      const sent = performance.now();
+      this.link.sent(sent, sent);
+      this.raw({ t: "ping", sent });
     };
     this.keepaliveTimer = setInterval(ping, KEEPALIVE_MS);
     this.probeTimers = PROBE_MS.map((ms) => setTimeout(ping, ms));
+    this.linkTimer = setInterval(() => {
+      if (this.link.tick(performance.now())) this.linkChanged();
+    }, LINK_TICK_MS);
   }
 
   private stopKeepalive(): void {
     for (const t of this.probeTimers) clearTimeout(t);
     this.probeTimers = [];
+    if (this.linkTimer !== null) clearInterval(this.linkTimer);
+    this.linkTimer = null;
+    // A new socket starts with a clean slate: a ping the old one never
+    // answered is not a stall on this one. And while there is no socket the
+    // "Reconnecting" strip says so; a slow-link icon on top would say it twice.
+    const wasWeak = this.link.weak;
+    this.link = new LinkMonitor();
+    if (wasWeak) this.linkChanged();
     if (this.keepaliveTimer === null) return;
     clearInterval(this.keepaliveTimer);
     this.keepaliveTimer = null;
+  }
+
+  /**
+   * Whether this end's link is slow right now: a slow round trip, or a ping
+   * unanswered for a while. Shown as an icon in the table's corner, the
+   * same judgement the server makes for everybody's pod (`LinkMonitor`).
+   */
+  get weak(): boolean {
+    return this.link.weak;
+  }
+
+  private linkChanged(): void {
+    const weak = this.link.weak;
+    for (const listener of this.listeners) listener.onLink?.(weak);
   }
 
   /**
@@ -471,8 +512,10 @@ export class RoomConnection {
         break;
       case "pong":
         if (typeof message.sent === "number") {
-          const rtt = performance.now() - message.sent;
+          const now = performance.now();
+          const rtt = now - message.sent;
           if (rtt >= 0) this.rtts = [...this.rtts, rtt].slice(-RTT_SAMPLES);
+          if (this.link.answered(message.sent, now)) this.linkChanged();
         }
         break;
       case "superseded":
