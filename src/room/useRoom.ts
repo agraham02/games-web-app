@@ -151,6 +151,18 @@ export interface RoomApi {
   send: (message: ClientMessage) => void;
 }
 
+let lastReqId = 0;
+
+/**
+ * A `reqId` for a message whose refusal needs matching to it. Unique within
+ * the page, which is all it has to be: a refusal only ever comes back down
+ * the socket that carried the request.
+ */
+function nextReqId(): string {
+  lastReqId += 1;
+  return `r${lastReqId}`;
+}
+
 export function useRoom(): RoomApi {
   const connection = useMemo(() => roomConnection(), []);
   const [status, setStatus] = useState<ConnectionStatus>(connection.status);
@@ -171,6 +183,11 @@ export function useRoom(): RoomApi {
   const youRef = useRef<string | null>(null);
   /** This player asked to close the room, so its `room-closed` is theirs. */
   const closingRef = useRef(false);
+  /**
+   * The `reqId` of the make or join still waiting on an answer. Its refusal
+   * is the entry screen's to hear even from inside a room — see `error`.
+   */
+  const attemptRef = useRef<string | null>(null);
   const [greeted, setGreeted] = useState(false);
   /**
    * The server said this identity is still in a room, and the room itself
@@ -202,6 +219,9 @@ export function useRoom(): RoomApi {
             // room that no longer existed, every button on it answering
             // `no-room` into a screen that renders no error.
             if (!message.inRoom) {
+              // Anything refused while a room was on screen was about that
+              // room (see `error`), and that room is gone.
+              if (inRoomRef.current) setError(null);
               inRoomRef.current = false;
               setChat([]);
               setChatLiveAfter(0);
@@ -218,7 +238,8 @@ export function useRoom(): RoomApi {
             }
             break;
 
-          case "room":
+          case "room": {
+            const arrived = !inRoomRef.current || codeRef.current !== message.room.code;
             setAwaitingRoom(false);
             inRoomRef.current = true;
             youRef.current = message.room.you;
@@ -229,10 +250,14 @@ export function useRoom(): RoomApi {
             // Whatever was last refused, it is moot: we are in a room and
             // the server is talking to us. Nothing else ever cleared this,
             // so a failed join left "no room with that code" sitting under
-            // the code field long after a later join had worked, and a
-            // refusal from inside a room greeted the player on the entry
-            // screen the next time they left one.
-            setError(null);
+            // the code field long after a later join had worked.
+            //
+            // On ARRIVING in a room, not on every update of the one we are
+            // in: a join refused from inside a room is stored for the screen
+            // waiting on it (see `error`), and an unrelated roster change
+            // batched into the same render would wipe it before that screen
+            // saw it.
+            if (arrived) setError(null);
             if (!message.room.gameRunning) {
               setTurnClock(null);
               // The table is gone; anything still on screen from it is
@@ -242,6 +267,7 @@ export function useRoom(): RoomApi {
               lastSeq.current = -1;
             }
             break;
+          }
 
           case "frame":
             // `seq` 0 is a position, not a step — the server sends one on
@@ -263,6 +289,9 @@ export function useRoom(): RoomApi {
           case "left":
             setAwaitingRoom(false);
             inRoomRef.current = false;
+            // A refusal heard inside the room (see `error`) is not what the
+            // entry screen should greet them with now; the farewell is.
+            setError(null);
             setChat([]);
             setChatLiveAfter(0);
             setTurnClock(null);
@@ -329,9 +358,16 @@ export function useRoom(): RoomApi {
             // A Start refused because somebody had just dropped (they look
             // present through their silent `LOBBY_GRACE_MS`) said nothing
             // at all.
+            //
+            // Except the answer to a make or join (matched by `reqId`): a
+            // screen is waiting on that one ("Joining ZZZZ…"), and only a
+            // stored error tells it to stop. Toasted as well, since what it
+            // stops waiting into is the room they are still in.
+            const answersAttempt = message.reqId !== undefined && message.reqId === attemptRef.current;
+            if (answersAttempt) attemptRef.current = null;
             if (inRoomRef.current) {
               announce(message.message, "bad");
-              break;
+              if (!answersAttempt) break;
             }
             setAwaitingRoom(false);
             setError({ code: message.code, message: message.message });
@@ -381,12 +417,16 @@ export function useRoom(): RoomApi {
       createRoom: (name) => {
         setError(null);
         setFarewell(null);
-        send({ t: "createRoom", name });
+        const reqId = nextReqId();
+        attemptRef.current = reqId;
+        send({ t: "createRoom", name, reqId });
       },
       joinRoom: (code, name) => {
         setError(null);
         setFarewell(null);
-        send({ t: "joinRoom", code: code.toUpperCase(), name });
+        const reqId = nextReqId();
+        attemptRef.current = reqId;
+        send({ t: "joinRoom", code: code.toUpperCase(), name, reqId });
       },
       leaveRoom: () => send({ t: "leaveRoom" }),
       withdraw: () => send({ t: "withdraw" }),

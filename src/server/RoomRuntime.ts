@@ -295,6 +295,21 @@ export class RoomRuntime {
   /* ---------- commands ---------- */
 
   /**
+   * Why a join would be refused, without joining: the same `applyCommand`
+   * the real one runs, its result thrown away. For the router, which must
+   * not take somebody out of the room they are in for a join that was never
+   * going to work (see `Router.joinRoom`).
+   */
+  joinRefusal(session: SessionId, name: string): RoomError | null {
+    const result = applyCommand(this.room, { t: "join", name }, {
+      actor: session,
+      now: this.clock.now(),
+      rng: this.rng,
+    });
+    return result.ok ? null : result.error;
+  }
+
+  /**
    * Runs one room command and carries out whatever it asks for.
    *
    * Serialised by construction — this is ordinary synchronous JavaScript,

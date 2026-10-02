@@ -518,7 +518,20 @@ export class Router {
     // Checked before joining, not after: a client that skips the UI and
     // sends `joinRoom` while already seated somewhere would otherwise be a
     // member of two rooms at once, holding a seat in each.
-    if (this.registry.roomOf(session) !== runtime) this.leaveCurrentRoom(peer, session);
+    //
+    // But only once the join is known to work. Leaving first and THEN being
+    // refused — a full room, a name already taken there — left somebody in
+    // no room at all while their screen still showed the one they had been
+    // in, every button on it answering "you are not in a room". A refused
+    // join leaves them where they were, like a code with no room behind it.
+    if (this.registry.roomOf(session) !== runtime) {
+      const refused = runtime.joinRefusal(session, name);
+      if (refused) {
+        this.fail(peer, refused, errorText(refused), reqId);
+        return;
+      }
+      this.leaveCurrentRoom(peer, session);
+    }
 
     const result = runtime.command(session, { t: "join", name });
     if (!result.ok) {

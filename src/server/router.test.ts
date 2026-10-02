@@ -1879,6 +1879,26 @@ describe("the server, in process", () => {
       expect(registry.roomOf(registry.sessionFor("wanderer"))!.code).toBe(b.code);
     });
 
+    it("leaves somebody in their room when the one they asked to join turns them away", () => {
+      // It took them out of A first and was THEN refused by B — here, a name
+      // B already has — which left them in no room at all while their screen
+      // still showed A, every button on it answering "you are not in a room".
+      const a = host("owner-a");
+      const b = host("owner-b");
+      const wanderer = peerFor("wanderer");
+      send(wanderer.peer, { t: "joinRoom", code: a.code, name: "Wanderer" });
+      wanderer.conn.clear();
+
+      send(wanderer.peer, { t: "joinRoom", code: b.code, name: "Ada", reqId: "r7" });
+
+      // Answered with the request it answers, so the screen waiting on it stops.
+      expect(wanderer.conn.last("error")).toMatchObject({ code: "name-taken", reqId: "r7" });
+      const session = registry.sessionFor("wanderer");
+      expect(registry.roomOf(session)!.code).toBe(a.code);
+      expect(registry.get(a.code)!.room.members[session]).toBeDefined();
+      expect(a.conn.all("notice").map((n) => n.text)).not.toContain("Wanderer left");
+    });
+
     it("answers a Continue from somebody with no seat", () => {
       // It returned nothing at all, so the press was simply swallowed.
       const h = host("p1");

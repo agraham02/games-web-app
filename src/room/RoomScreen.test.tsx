@@ -621,6 +621,36 @@ describe("the room client", () => {
     expect(screen.getByLabelText(/your name/i)).toHaveValue("Ada");
   });
 
+  it("stops waiting on a join refused while still in a room, and goes back to that room", async () => {
+    // Somebody still in ABCD pressed Join on the home page with a code that
+    // has no room behind it. The refusal arrives while ABCD is on screen, and
+    // used to go only to a toast: nothing told "Joining WXYZ…" to stop, so it
+    // never did (reproduced in a real browser).
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "join", code: "WXYZ" }),
+    );
+    render(
+      <StrictMode>
+        <RoomScreen code="WXYZ" />
+      </StrictMode>,
+    );
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+    socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    socket().deliver({ t: "room", room: roomView() });
+    await waitFor(() => expect(socket().lastSent("joinRoom")).toMatchObject({ code: "WXYZ" }));
+    expect(screen.getByText("Joining WXYZ…")).toBeInTheDocument();
+
+    const reqId = socket().lastSent("joinRoom")!.reqId;
+    expect(reqId).toEqual(expect.any(String));
+    socket().deliver({ t: "error", code: "no-such-room", message: "no room with that code", reqId: reqId as string });
+
+    expect(await screen.findByText("ABCD")).toBeInTheDocument();
+    expect(screen.queryByText("Joining WXYZ…")).toBeNull();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/room/ABCD"));
+  });
+
   it("keeps a turned-down knock on the form, with the room ready to ask again", async () => {
     await arrive("WXYZ");
     socket().deliver({ t: "pending", code: "WXYZ" });
