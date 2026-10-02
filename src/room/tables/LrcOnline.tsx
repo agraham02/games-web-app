@@ -49,7 +49,10 @@ export function LrcOnline({ api, room, frame, corner }: OnlineTableProps) {
 
   const live = useOnlineRuntime<LrcState, LrcAction>({
     frame,
-    submit: (action) => api.send({ t: "action", action }),
+    submit: (action, tag) => api.send({ t: "action", action, ...tag }),
+    // Your own moves, shown before the server answers (`predict.ts`).
+    definition,
+    refused: api.refusedMove,
     nextRound: () => api.send({ t: "nextRound" }),
     // The undealt table, so the opening deal has a deck to fly from.
     initial: () => openingPosition(definition, room.seats, frame.seat),
