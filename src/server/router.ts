@@ -25,7 +25,7 @@ import {
 } from "@/session/protocol";
 import { isGameId } from "@/session/registry";
 import { holdsSeat, type RoomCommand, type SessionId } from "@/session/room";
-import { PLAYED_FOR_YOU, type Connection } from "./RoomRuntime";
+import type { Connection } from "./RoomRuntime";
 import type { RoomRegistry } from "./RoomRegistry";
 import { log } from "./log";
 
@@ -200,9 +200,9 @@ export class Router {
           // decide which of the two is worth interrupting somebody over.
           //
           // Except the one refusal that is not a disagreement: the move
-          // they pressed had just been made for them (a forced move's wait
-          // ran out). Their screen is already right.
-          if (result.error === PLAYED_FOR_YOU) return;
+          // they pressed had just been made for them (a forced move's wait,
+          // or their clock, ran out). Their screen is already right.
+          if (result.silent) return;
           this.fail(peer, "move-refused", moveRefusedText(result.error), message.reqId);
         }
         return;

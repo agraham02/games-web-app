@@ -1362,6 +1362,44 @@ describe("the server, in process", () => {
         expect(person.conn.all("error")).toHaveLength(errors);
       });
 
+      it("answers a move that would not have been taken before the clock ran out either", () => {
+        // Rummy: the clock draws for them and they are still on turn. A late
+        // Draw is their press for the position it ran out on, and is let go;
+        // an invalid meld tried in the same breath is a mistake of its own
+        // and gets its "no" — it used to be swallowed with the late press.
+        const h = host("ada", { turnTimer: true });
+        const bo = peerFor("bo");
+        send(bo.peer, { t: "joinRoom", code: h.code, name: "Bo" });
+        send(h.peer, { t: "setTurnTimer", on: true, seconds: 5 });
+        send(h.peer, { t: "selectGame", gameId: "rummy", settings: {}, seats: 3, difficulty: "steady" });
+        send(h.peer, { t: "startGame" });
+        const runtime = registry.get(h.code)!;
+        const people = [
+          { peer: h.peer, conn: h.conn, seat: runtime.room.game!.seatOwner.indexOf(registry.sessionFor("ada")) },
+          { peer: bo.peer, conn: bo.conn, seat: runtime.room.game!.seatOwner.indexOf(registry.sessionFor("bo")) },
+        ];
+        const drewFor = () =>
+          people.find((p) => {
+            const f = p.conn.last("frame")?.frame;
+            return (
+              f?.lastAction?.seat === p.seat &&
+              (f.lastAction.action as { t: string }).t.startsWith("draw") &&
+              f.events.some((e) => e.t === "announce" && e.text === "ran out of time")
+            );
+          });
+        for (let i = 0; i < 5_000 && !drewFor(); i++) clock.advance(50);
+        const person = drewFor()!;
+        expect(person, "the clock never drew for anybody").toBeDefined();
+
+        const errors = person.conn.all("error").length;
+        send(person.peer, { t: "action", action: { t: "drawStock" } });
+        expect(person.conn.all("error"), "a late Draw is let go").toHaveLength(errors);
+
+        send(person.peer, { t: "action", action: { t: "layNewMeld", cards: ["no-such-card"] } });
+        expect(person.conn.all("error")).toHaveLength(errors + 1);
+        expect(person.conn.last("error")!.code).toBe("move-refused");
+      });
+
       it("tells somebody arriving mid-move the time actually left, and does not refill it", () => {
         // Somebody else dropping and coming back is a liveness edge, which
         // re-settles the table — the classic way to refill a clock.

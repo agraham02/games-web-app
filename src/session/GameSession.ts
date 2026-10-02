@@ -228,8 +228,11 @@ export class GameSession<S, A> {
    * `GameDefinition.deadline`'s `key`.
    */
   private deadlineAnchor: { key: string; at: number; ms: number } | null = null;
-  /** The last move made for somebody, and why. See `autoPlayed`. */
-  private lastAuto: { seat: SeatId; at: number; kind: "forced" | "timeout" } | null = null;
+  /**
+   * The last move made for somebody, why, and the position it was made
+   * from. See `autoPlayed`.
+   */
+  private lastAuto: { seat: SeatId; at: number; kind: "forced" | "timeout"; before: S } | null = null;
   /** The clock being shown for the move in hand, if the turn timer is on. */
   private shownClock: TurnClock | null = null;
   /** A bot turn that `settled()` has decided on but not yet revealed. */
@@ -492,7 +495,7 @@ export class GameSession<S, A> {
       this.definition.timeoutAction?.(state, seat) ??
       this.botFor(seat).choose(this.definition.playerView(state, seat), seat, this.rng);
     this.clearHold();
-    this.lastAuto = { seat, at: this.clock.now(), kind: "timeout" };
+    this.lastAuto = { seat, at: this.clock.now(), kind: "timeout", before: state };
     // The table's toast — "Ada ran out of time", "You ran out of time" — so
     // a move nobody saw them make explains itself (the user, 2026-10-01).
     this.playFor(
@@ -703,8 +706,9 @@ export class GameSession<S, A> {
       // Through `submit`, not `reduce`, so an action that has become
       // illegal in the meantime is refused exactly as a client's would be
       // — the seat may have acted a moment before this fired.
+      const before = this.state;
       const result = this.submit(seat, (due as { action: A }).action);
-      if (result.ok && kind === "forced") this.lastAuto = { seat, at: this.clock.now(), kind: "forced" };
+      if (result.ok && kind === "forced") this.lastAuto = { seat, at: this.clock.now(), kind: "forced", before };
       if (result.ok && !result.animated) this.settled();
     }, ms);
   }
@@ -739,17 +743,28 @@ export class GameSession<S, A> {
   }
 
   /**
-   * Was a move made for this seat within the last `withinMs`, and why?
+   * Was `action` — just refused — this seat's own press of a move made for
+   * them within the last `withinMs`, arriving second? And if so, why was
+   * the move made?
    *
    * For a driver deciding what to say about a refusal. A person who pressed
    * their last card a moment after it was played for them made the same
    * move, and telling them "it is not your turn" would be both true and
    * baffling ("forced"). One whose clock ran out ("timeout") has already
    * been told so by the frame that made the move.
+   *
+   * Only a press aimed at the position the move was made FROM: one the game
+   * would have taken there. Anything else is a refusal in its own right,
+   * however soon it came — an invalid meld tried just after the clock drew
+   * for them, still on turn, deserves its "no" like any other.
    */
-  autoPlayed(seat: SeatId, withinMs: number): "forced" | "timeout" | null {
+  autoPlayed(seat: SeatId, withinMs: number, action: A): "forced" | "timeout" | null {
     const last = this.lastAuto;
-    return last && last.seat === seat && this.clock.now() - last.at <= withinMs ? last.kind : null;
+    if (!last || last.seat !== seat || this.clock.now() - last.at > withinMs) return null;
+    const wouldHaveTaken =
+      this.definition.legalActions(last.before, seat).length > 0 &&
+      !this.definition.validate?.(last.before, seat, action);
+    return wouldHaveTaken ? last.kind : null;
   }
 
   /**

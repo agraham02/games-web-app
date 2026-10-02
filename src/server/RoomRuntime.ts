@@ -97,14 +97,12 @@ export const SPECTATOR_SEAT: SeatId = -1;
 const BACKPRESSURE_BYTES = 256 * 1024;
 
 /**
- * How long after a forced move is played for somebody their own press of it
- * still counts as the same move, arriving second (`GameSession.playedFor`).
- * Generous against a slow phone, and far short of their next turn.
+ * How long after a move is made for somebody — forced, or their clock ran
+ * out — their own press for that position still counts as arriving second
+ * rather than as a mistake (`GameSession.autoPlayed`). Generous against a
+ * slow phone, and far short of their next turn.
  */
 const LATE_PRESS_MS = 3_000;
-
-/** The refusal that is not one: see `LATE_PRESS_MS`. The router says nothing. */
-export const PLAYED_FOR_YOU = "played-for-you";
 
 export interface Connection {
   send(message: ServerMessage): void;
@@ -991,7 +989,14 @@ export class RoomRuntime {
     this.sendTurnClock(viewer);
   }
 
-  submitAction(session: SessionId, action: unknown): { ok: boolean; error?: string } {
+  /**
+   * A person's move. A refusal is `silent` when there is nothing to tell
+   * them: see `LATE_PRESS_MS`.
+   */
+  submitAction(
+    session: SessionId,
+    action: unknown,
+  ): { ok: true } | { ok: false; error: string; silent?: true } {
     if (!this.session) return { ok: false, error: "no-game-running" };
     const seat = seatOf(this.room, session);
     if (seat === null) return { ok: false, error: "not-in-game" };
@@ -1000,12 +1005,16 @@ export class RoomRuntime {
     const result = this.session.submit(seat, action);
     if (!result.ok) {
       // A move made for them a moment ago, and this is their own press
-      // arriving second: their last card after its wait, or anything once
-      // their clock ran out. Nothing more to tell them — a forced move was
-      // the one they pressed, and a timeout's frame already says "You ran
-      // out of time". A second red toast saying so again ("not your turn",
-      // or the same news in other words) only reads as a second problem.
-      if (this.session.autoPlayed(seat, LATE_PRESS_MS)) return { ok: false, error: PLAYED_FOR_YOU };
+      // arriving second: their last card after its wait, or their move for
+      // the position their clock ran out on. Nothing more to tell them — a
+      // forced move was the one they pressed, and a timeout's frame already
+      // says "You ran out of time". A second red toast saying so again ("not
+      // your turn", or the same news in other words) only reads as a second
+      // problem. A press the game would not have taken there either is a
+      // refusal in its own right, and is answered.
+      if (this.session.autoPlayed(seat, LATE_PRESS_MS, action)) {
+        return { ok: false, error: result.reason, silent: true };
+      }
       return { ok: false, error: result.reason };
     }
     // A move they made themselves: they are here.
