@@ -163,6 +163,47 @@ describe("the keepalive", () => {
  * as long as both tabs were open, and at any instant one of them was
  * holding a dead socket. That looks exactly like the game desyncing.
  */
+describe("a remount in the middle of a move", () => {
+  beforeEach(() => {
+    sockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeSocket);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("is told the turn clock with what is left of it, and not one from a game that has ended", () => {
+    // The server says a clock only when it changes, so a page that mounted
+    // mid-move (from `/room` to `/room/ABCD`) showed no ring for that move.
+    const connection = new RoomConnection("token-clock");
+    connection.connect();
+    const socket = sockets[sockets.length - 1]!;
+    socket.onopen?.();
+    const deliver = (m: unknown) => socket.onmessage?.({ data: JSON.stringify(m) });
+    const now = vi.spyOn(performance, "now").mockReturnValue(10_000);
+    deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    deliver({ t: "room", room: { code: "ABCD", gameRunning: true } });
+    deliver({ t: "frame", frame: { seq: 3 } });
+    deliver({ t: "turnClock", clock: { seat: 1, key: "turn:3:1", totalMs: 30_000, endsInMs: 20_000 } });
+
+    now.mockReturnValue(16_000);
+    const seen: { t: string; clock?: unknown }[] = [];
+    connection.subscribe({ onMessage: (m) => seen.push(m), onStatus: () => {} });
+    expect(seen.find((m) => m.t === "turnClock")?.clock).toEqual({
+      seat: 1,
+      key: "turn:3:1",
+      totalMs: 30_000,
+      endsInMs: 14_000,
+    });
+
+    deliver({ t: "room", room: { code: "ABCD", gameRunning: false } });
+    const later: { t: string }[] = [];
+    connection.subscribe({ onMessage: (m) => later.push(m), onStatus: () => {} });
+    expect(later.some((m) => m.t === "turnClock")).toBe(false);
+  });
+});
+
 describe("being replaced by another tab", () => {
   beforeEach(() => {
     sockets.length = 0;

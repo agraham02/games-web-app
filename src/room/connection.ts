@@ -21,7 +21,7 @@
  * accidental back button. Memory does not survive any of those.
  */
 
-import type { ClientMessage, ServerMessage } from "@/session/protocol";
+import type { ClientMessage, ServerMessage, TurnClockView } from "@/session/protocol";
 import { CHAT_HISTORY, type ChatMessage } from "@/session/chat";
 import { PROTOCOL_VERSION } from "@/session/protocol";
 
@@ -155,6 +155,12 @@ export class RoomConnection {
    * lobby and the table does not empty the chat.
    */
   chatLog: ChatMessage[] = [];
+  /**
+   * The turn clock as last told, and when (`performance.now()`). Replayed
+   * with what is left of it: the server only says again when the clock
+   * changes, so a remount mid-move otherwise showed no ring at all.
+   */
+  private lastClock: { clock: TurnClockView; at: number } | null = null;
 
   private socket: WebSocket | null = null;
   private attempt = 0;
@@ -207,6 +213,11 @@ export class RoomConnection {
     }
     if (this.lastRoom) listener.onMessage(this.lastRoom as ServerMessage);
     if (this.lastFrame) listener.onMessage(this.lastFrame as ServerMessage);
+    if (this.lastFrame && this.lastClock) {
+      const { clock, at } = this.lastClock;
+      const endsInMs = Math.max(0, clock.endsInMs - (performance.now() - at));
+      listener.onMessage({ t: "turnClock", clock: { ...clock, endsInMs } });
+    }
     if (this.lastPending) listener.onMessage(this.lastPending as ServerMessage);
     if (this.lastRoom) listener.onMessage({ t: "chatLog", messages: this.chatLog });
     listener.onStatus(this.status);
@@ -253,6 +264,7 @@ export class RoomConnection {
       this.session = null;
       this.lastRoom = null;
       this.lastFrame = null;
+      this.lastClock = null;
       this.lastPending = null;
       this.chatLog = [];
       this.queue.length = 0;
@@ -408,6 +420,7 @@ export class RoomConnection {
         if (!message.inRoom) {
           this.lastRoom = null;
           this.lastFrame = null;
+          this.lastClock = null;
           this.chatLog = [];
           // A knock does not survive the socket that made it: the server
           // drops its `awaiting` entry when that socket closes, so a
@@ -425,7 +438,10 @@ export class RoomConnection {
         this.lastPending = null;
         // A room view supersedes any frame from a game that is no longer
         // running, or the next mount would replay a table nobody is at.
-        if (!message.room.gameRunning) this.lastFrame = null;
+        if (!message.room.gameRunning) {
+          this.lastFrame = null;
+          this.lastClock = null;
+        }
         break;
       case "frame":
         this.lastFrame = message;
@@ -433,11 +449,15 @@ export class RoomConnection {
       case "left":
         this.lastRoom = null;
         this.lastFrame = null;
+        this.lastClock = null;
         this.lastPending = null;
         this.chatLog = [];
         break;
       case "chatLog":
         this.chatLog = message.messages;
+        break;
+      case "turnClock":
+        this.lastClock = message.clock ? { clock: message.clock, at: performance.now() } : null;
         break;
       case "chat":
         this.chatLog = [...this.chatLog, message.message].slice(-CHAT_HISTORY);
