@@ -288,7 +288,10 @@ last card, a draw or a pass, a roll, a stock draw from an EMPTY pile.
 counts the private one-move positions it met so it cannot pass vacuously.
 There is no countdown on screen for the same reason. A press arriving just
 after the move was made for them is dropped without a word
-(`playedFor`, `PLAYED_FOR_YOU`) — it was the same move.
+(`autoPlayed`, `PLAYED_FOR_YOU`) — it was the same move. So is one
+arriving just after the turn timer made a move for them: the frame that
+made it has already said "You ran out of time", and a refusal on top
+was the same news twice, in red.
 
 ### The turn timer is a deadline the session owns
 

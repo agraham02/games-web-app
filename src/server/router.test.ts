@@ -1174,6 +1174,20 @@ describe("the server, in process", () => {
         expect(said).toContainEqual(expect.objectContaining({ t: "announce", text: "ran out of time" }));
       });
 
+      it("takes a press that lands just after the clock ran out without a second word", () => {
+        // The frame that made the move already told them ("You ran out of
+        // time"); a refusal toast on top was the same news twice, in red.
+        const t = timedSpades();
+        const { seat, person, told } = untilPersonOnTurn(t);
+        const legal = t.rules.legalActions(person.conn.last("frame")!.frame.state as SpadesState, seat);
+        clock.advance(told.at + told.clock!.endsInMs + TURN_GRACE_MS - clock.now());
+        expect(tableOf(t).currentSeat, "the clock should have made the move").not.toBe(seat);
+
+        const errors = person.conn.all("error").length;
+        send(person.peer, { t: "action", action: legal[0] });
+        expect(person.conn.all("error")).toHaveLength(errors);
+      });
+
       it("tells somebody arriving mid-move the time actually left, and does not refill it", () => {
         // Somebody else dropping and coming back is a liveness edge, which
         // re-settles the table — the classic way to refill a clock.
@@ -1195,19 +1209,6 @@ describe("the server, in process", () => {
         expect(tableOf(t).fingerprint, "the clock was refilled").toBe(before);
         clock.advance(1);
         expect(tableOf(t).fingerprint).not.toBe(before);
-      });
-
-      it("tells a move that arrives just after one was made for them that time ran out", () => {
-        const t = timedSpades();
-        const { seat, told, person } = untilPersonOnTurn(t);
-        const stale = person.conn.last("frame")!.frame.state as SpadesState;
-        clock.advance(told.at + told.clock!.endsInMs + TURN_GRACE_MS - clock.now());
-        person.conn.clear();
-        send(person.peer, { t: "action", action: t.rules.legalActions(stale, seat)[0] });
-        expect(person.conn.last("error")).toMatchObject({
-          code: "move-refused",
-          message: "time ran out — a move was played for you",
-        });
       });
 
       it("gives the seat to a bot after two in a row, until they say they are back", () => {

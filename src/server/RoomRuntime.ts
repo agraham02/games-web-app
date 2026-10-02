@@ -873,13 +873,13 @@ export class RoomRuntime {
     // who is not on turn is refused by the session's own gate.
     const result = this.session.submit(seat, action);
     if (!result.ok) {
-      const auto = this.session.autoPlayed(seat, LATE_PRESS_MS);
-      // Their last card, a moment after it was played for them: the same
-      // move, arriving second. Nothing to tell them.
-      if (auto === "forced") return { ok: false, error: PLAYED_FOR_YOU };
-      // Their clock ran out just before this arrived: say so, rather than
-      // "not your turn", which is true and baffling.
-      if (auto === "timeout") return { ok: false, error: "timed-out" };
+      // A move made for them a moment ago, and this is their own press
+      // arriving second: their last card after its wait, or anything once
+      // their clock ran out. Nothing more to tell them — a forced move was
+      // the one they pressed, and a timeout's frame already says "You ran
+      // out of time". A second red toast saying so again ("not your turn",
+      // or the same news in other words) only reads as a second problem.
+      if (this.session.autoPlayed(seat, LATE_PRESS_MS)) return { ok: false, error: PLAYED_FOR_YOU };
       return { ok: false, error: result.reason };
     }
     // A move they made themselves: they are here.

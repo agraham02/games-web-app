@@ -738,8 +738,8 @@ export class GameSession<S, A> {
    * For a driver deciding what to say about a refusal. A person who pressed
    * their last card a moment after it was played for them made the same
    * move, and telling them "it is not your turn" would be both true and
-   * baffling ("forced"). One whose clock ran out may have meant something
-   * else, and should hear that time ran out ("timeout").
+   * baffling ("forced"). One whose clock ran out ("timeout") has already
+   * been told so by the frame that made the move.
    */
   autoPlayed(seat: SeatId, withinMs: number): "forced" | "timeout" | null {
     const last = this.lastAuto;

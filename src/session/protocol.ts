@@ -292,7 +292,6 @@ export const MOVE_REFUSED_TEXT: Record<string, string> = {
   "round-over": "the round is already over",
   "no-game-running": "no game is running",
   "not-in-game": "you are not at the table",
-  "timed-out": "time ran out — a move was played for you",
 };
 
 /** The readable form of a refusal, falling back to something sayable. */
