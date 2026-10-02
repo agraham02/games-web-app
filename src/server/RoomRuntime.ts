@@ -313,6 +313,25 @@ export class RoomRuntime {
   }
 
   /**
+   * A room command the SERVER starts — a grace running out, the turn timer
+   * marking somebody idle, a move that says "I'm back" — and the room sent
+   * to everybody after it.
+   *
+   * The router re-sends the room after every command a MESSAGE asks for.
+   * Nothing does for these, and each one used to carry its own
+   * `broadcastRoom()`: forgetting it once meant an idle player's own screen
+   * never learned it, so "I'm back" never appeared (caught by a test). Not
+   * folded into `command` itself, because the router has to choose its
+   * moment — a kicked player is told and let go of BEFORE the roster goes
+   * out, or it reaches them too.
+   */
+  private serverCommand(session: SessionId, command: RoomCommand): ReturnType<RoomRuntime["command"]> {
+    const result = this.command(session, command);
+    if (result.ok) this.broadcastRoom();
+    return result;
+  }
+
+  /**
    * Runs one room command and carries out whatever it asks for.
    *
    * Serialised by construction — this is ordinary synchronous JavaScript,
@@ -503,9 +522,8 @@ export class RoomRuntime {
     // Re-asked rather than assumed. Every route back cancels the timer, but
     // it costs nothing to be sure before removing somebody.
     if (!this.exposed(session)) return;
-    if (!this.command(session, { t: "leave" }).ok) return;
+    if (!this.serverCommand(session, { t: "leave" }).ok) return;
     log.info("member lapsed", { room: this.code, session });
-    this.broadcastRoom();
     this.onDeparted(session);
   }
 
@@ -784,11 +802,7 @@ export class RoomRuntime {
     this.timeouts.set(owner, count);
     if (count >= 2) {
       this.timeouts.delete(owner);
-      this.command(owner, { t: "markIdle" });
-      // Started here, not by a message, so nothing else re-sends the room:
-      // without this their own screen never learns it, and "I'm back" never
-      // appears (found by the test that asserts it does).
-      this.broadcastRoom();
+      this.serverCommand(owner, { t: "markIdle" });
     }
   }
 
@@ -1021,10 +1035,7 @@ export class RoomRuntime {
     this.timeouts.delete(session);
     // And if the timer had given their seat to a bot, a move is also
     // "I'm back" — the session's gate asks whose turn it is, not who is live.
-    if (isIdle(this.room, session)) {
-      this.command(session, { t: "resume" });
-      this.broadcastRoom();
-    }
+    if (isIdle(this.room, session)) this.serverCommand(session, { t: "resume" });
     if (!result.animated) this.session.settled();
     this.syncTurnClock();
     return { ok: true };

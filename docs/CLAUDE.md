@@ -334,9 +334,10 @@ whose clock is off or longer. Five things to know before touching it:
 - **Two in a row and a bot takes the seat** (`markIdle`, a server-only room
   command; `isSeatLive` is false for the idle). Two TURNS, not two clocks:
   every move has its own clock, and a Rummy turn is a draw and a discard, so
-  counting clocks idled somebody after one turn away (`timedOutTurn`). Started on the server, so
-  the room must be rebroadcast by hand or the player's own screen never
-  learns it — a test caught exactly that. "I'm back" (`resume`), entering
+  counting clocks idled somebody after one turn away (`timedOutTurn`).
+  Started on the server, so it goes through `RoomRuntime.serverCommand`,
+  which re-sends the room — without that the player's own screen never
+  learns it (a test caught exactly that). "I'm back" (`resume`), entering
   the game, or simply making a move gives it back; reconnecting alone does
   not. Everybody idle ends the game, like everybody leaving.
 
