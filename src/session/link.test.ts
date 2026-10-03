@@ -47,6 +47,21 @@ describe("LinkMonitor", () => {
     expect(link.weak).toBe(false);
   });
 
+  it("says when silence would become a stall, and keeps the quickest round trip", () => {
+    const link = new LinkMonitor();
+    expect(link.stallAt()).toBeNull();
+    expect(link.minRttMs()).toBeNull();
+    const now = pings(link, [120, 80, 300]);
+    expect(link.minRttMs()).toBe(80);
+    expect(link.stallAt()).toBeNull();
+    link.sent(50, now);
+    link.sent(51, now + 100);
+    // The oldest unanswered ping is the one that counts.
+    expect(link.stallAt()).toBe(now + STALL_MS);
+    link.answered(50, now + 200);
+    expect(link.stallAt()).toBe(now + 100 + STALL_MS);
+  });
+
   it("says when it changed, and only then", () => {
     const link = new LinkMonitor();
     link.sent(1, 0);

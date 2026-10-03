@@ -39,8 +39,6 @@ export const WS_PATH = "/ws";
  * whether a socket is there at all; this is about how well it is.
  */
 const PROBE_MS = 3_000;
-/** How often silence is checked for (see `STALL_MS`). */
-const LINK_TICK_MS = 500;
 
 interface Tracked {
   peer: Peer;
@@ -48,6 +46,38 @@ interface Tracked {
   link: LinkMonitor;
   /** Told when `link.weak` changes. */
   listeners: Set<() => void>;
+  /** Due when the oldest unanswered probe becomes a stall (`watchStall`). */
+  stallTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** Tells a socket's listeners its link changed. */
+function linkChanged(entry: Tracked): void {
+  for (const listener of entry.listeners) listener();
+}
+
+/**
+ * Arms the one timer that notices a socket gone silent, for the moment its
+ * oldest unanswered probe becomes a stall (`STALL_MS`). Re-armed whenever a
+ * probe goes out or comes back, so nothing sweeps every socket to look.
+ */
+function watchStall(entry: Tracked): void {
+  if (entry.stallTimer !== null) clearTimeout(entry.stallTimer);
+  entry.stallTimer = null;
+  const at = entry.link.stallAt();
+  if (at === null) return;
+  entry.stallTimer = setTimeout(
+    () => {
+      entry.stallTimer = null;
+      if (entry.link.tick(realClock.now())) linkChanged(entry);
+    },
+    Math.max(0, at - realClock.now()),
+  );
+  entry.stallTimer.unref?.();
+}
+
+function unwatch(entry: Tracked): void {
+  if (entry.stallTimer !== null) clearTimeout(entry.stallTimer);
+  entry.stallTimer = null;
 }
 
 /** Hard transport ceiling, well above anything the protocol sends. */
@@ -127,6 +157,7 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
       alive: true,
       link: new LinkMonitor(),
       listeners: new Set(),
+      stallTimer: null,
     };
     tracked.set(ws, entry);
 
@@ -135,9 +166,10 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
       // A timed probe carries its id; the heartbeat's own ping carries
       // nothing, and answers nothing here.
       const id = Number(data.toString());
-      if (data.length > 0 && Number.isFinite(id) && entry.link.answered(id, realClock.now())) {
-        for (const listener of entry.listeners) listener();
-      }
+      if (data.length === 0 || !Number.isFinite(id)) return;
+      const changed = entry.link.answered(id, realClock.now());
+      watchStall(entry);
+      if (changed) linkChanged(entry);
     });
 
     ws.on("message", (data) => {
@@ -147,6 +179,7 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
     });
 
     ws.on("close", () => {
+      unwatch(entry);
       tracked.delete(ws);
       router.onClose(entry.peer);
     });
@@ -161,6 +194,7 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
       if (!entry.alive) {
         // Missed a whole cycle: treat it as gone rather than waiting for a
         // close event that a half-open connection will never send.
+        unwatch(entry);
         tracked.delete(ws);
         router.onClose(entry.peer);
         ws.terminate();
@@ -179,23 +213,20 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
   heartbeat.unref?.();
 
   let probeId = 0;
-  let ticks = 0;
   const linkTimer = setInterval(() => {
     const now = realClock.now();
-    const probing = ++ticks % Math.round(PROBE_MS / LINK_TICK_MS) === 0;
-    if (probing) probeId++;
+    probeId++;
     for (const [ws, entry] of tracked) {
-      if (probing && ws.readyState === ws.OPEN) {
-        entry.link.sent(probeId, now);
-        try {
-          ws.ping(String(probeId));
-        } catch {
-          // Gone; the heartbeat cleans it up.
-        }
+      if (ws.readyState !== ws.OPEN) continue;
+      entry.link.sent(probeId, now);
+      watchStall(entry);
+      try {
+        ws.ping(String(probeId));
+      } catch {
+        // Gone; the heartbeat cleans it up.
       }
-      if (entry.link.tick(now)) for (const listener of entry.listeners) listener();
     }
-  }, LINK_TICK_MS);
+  }, PROBE_MS);
   linkTimer.unref?.();
 
   log.info("websocket server attached", { event: WS_PATH });
@@ -203,6 +234,7 @@ export function attachWebSocketServer(server: HttpServer, registry: RoomRegistry
   return () => {
     clearInterval(heartbeat);
     clearInterval(linkTimer);
+    for (const entry of tracked.values()) unwatch(entry);
     for (const ws of tracked.keys()) ws.terminate();
     tracked.clear();
     wss.close();

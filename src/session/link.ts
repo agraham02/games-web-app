@@ -57,9 +57,29 @@ export class LinkMonitor {
     return this.judge(now);
   }
 
-  /** Time has passed with nothing heard. Returns whether `weak` changed. */
+  /**
+   * Time has passed with nothing heard — called at `stallAt`. Returns
+   * whether `weak` changed.
+   */
   tick(now: number): boolean {
     return this.judge(now);
+  }
+
+  /**
+   * The quickest recent round trip, or null before there is one: the one
+   * least delayed by anything but the distance (`RoomConnection.oneWayMs`).
+   */
+  minRttMs(): number | null {
+    return this.rtts.length === 0 ? null : Math.min(...this.rtts);
+  }
+
+  /**
+   * When the oldest unanswered ping turns into a stall, or null with none
+   * outstanding. Silence is noticed by a timer armed for this moment and
+   * re-armed after every `sent` and `answered`, rather than by polling.
+   */
+  stallAt(): number | null {
+    return this.outstanding.length === 0 ? null : this.outstanding[0]!.at + STALL_MS;
   }
 
   /** The median recent round trip, or null before there is one. */
