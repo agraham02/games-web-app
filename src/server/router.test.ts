@@ -160,6 +160,22 @@ describe("the server, in process", () => {
     expect(conn.all("error").some((e) => e.code === "rate-limited")).toBe(true);
   });
 
+  it("names the move it turns away, so the page that showed it takes it back", () => {
+    const { peer, conn } = peerFor("flooder-2");
+    for (let i = 0; i < 200; i++) send(peer, { t: "ping" });
+    conn.clear();
+    send(peer, { t: "action", action: { t: "roll" }, epoch: "e1", n: 4 });
+    const refused = conn.last("error")!;
+    expect(refused.code).toBe("rate-limited");
+    expect(refused.move).toEqual({ epoch: "e1", n: 4 });
+  });
+
+  it("names a move sent from outside any room, too", () => {
+    const { peer, conn } = peerFor("roomless");
+    send(peer, { t: "action", action: { t: "roll" }, epoch: "e1", n: 2 });
+    expect(conn.last("error")).toMatchObject({ code: "no-room", move: { epoch: "e1", n: 2 } });
+  });
+
   describe("expiry", () => {
     // A room nobody is left in goes with its last member: each member who
     // drops gets LOBBY_GRACE_MS, then leaves, and `displace` destroys the

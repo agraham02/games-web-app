@@ -506,6 +506,29 @@ function isRecord(v: unknown): v is Record<string, unknown> {
  * about what a legal seat count or a legal action actually is already
  * live. Validating twice, in two places, is how the two drift apart.
  */
+/** A numbered move's tag, kept only whole — see `MoveTag`. */
+function moveTagIn(data: Record<string, unknown>): MoveTag | undefined {
+  const n = typeof data.n === "number" && Number.isSafeInteger(data.n) && data.n >= 0 ? data.n : undefined;
+  const epoch = typeof data.epoch === "string" && data.epoch.length <= 32 ? data.epoch : undefined;
+  return n !== undefined && epoch !== undefined ? { epoch, n } : undefined;
+}
+
+/**
+ * The tag of a numbered move, read from a message the server is refusing
+ * before it would otherwise parse it (rate-limited, say). Every refusal of
+ * a move a page has already shown must carry its tag, or that page keeps
+ * showing it until it gives up waiting (`UNANSWERED_MS`).
+ */
+export function moveTagOf(raw: string): MoveTag | undefined {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return isRecord(data) && data.t === "action" ? moveTagIn(data) : undefined;
+}
+
 export function parseClientMessage(raw: string): ClientMessage | null {
   let data: unknown;
   try {
@@ -616,10 +639,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       // The action itself is the game's business: `legalActions` and the
       // seat gate in `GameSession.submit` decide, and neither of them can
       // be usefully anticipated here. Its tag is ours, and only kept whole.
-      const n = typeof data.n === "number" && Number.isSafeInteger(data.n) && data.n >= 0 ? data.n : undefined;
-      const epoch = typeof data.epoch === "string" && data.epoch.length <= 32 ? data.epoch : undefined;
-      return n !== undefined && epoch !== undefined
-        ? { t: "action", action: data.action, n, epoch, reqId }
+      const tag = moveTagIn(data);
+      return tag
+        ? { t: "action", action: data.action, n: tag.n, epoch: tag.epoch, reqId }
         : { t: "action", action: data.action, reqId };
     }
 

@@ -374,10 +374,12 @@ export function useRoom(): RoomApi {
             // outliving the turn it referred to is worse than silence, and
             // that is exactly what greeted people on the entry screen
             // later, because nothing ever cleared it.
+            // A move this page already showed goes back (see `predict.ts`),
+            // whatever refused it: a lost race, or the router turning it away
+            // before the game ever saw it (rate-limited, no room).
+            if (message.move) setRefusedMove({ move: message.move, at: ++refusals.current });
             if (message.code === "move-refused") {
-              // A move this page already showed goes back (see `predict.ts`),
-              // said or quiet; a quiet one was made for them a moment ago.
-              if (message.move) setRefusedMove({ move: message.move, at: ++refusals.current });
+              // Said or quiet; a quiet one was made for them a moment ago.
               if (!message.quiet) announce(message.message || "that move is no longer available", "bad");
               break;
             }

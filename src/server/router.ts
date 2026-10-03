@@ -18,9 +18,11 @@
 import {
   errorText,
   moveRefusedText,
+  moveTagOf,
   parseClientMessage,
   PROTOCOL_VERSION,
   type ClientMessage,
+  type MoveTag,
   type ServerErrorCode,
 } from "@/session/protocol";
 import { isGameId } from "@/session/registry";
@@ -119,7 +121,7 @@ export class Router {
         session: peer.session ?? undefined,
         error: error instanceof Error ? error.message : String(error),
       });
-      this.fail(peer, "bad-message", "that request could not be handled");
+      this.fail(peer, "bad-message", "that request could not be handled", undefined, moveTagOf(raw));
     }
   }
 
@@ -129,7 +131,9 @@ export class Router {
       return;
     }
     if (this.rateLimited(peer)) {
-      this.fail(peer, "rate-limited", "slow down");
+      // A numbered move is still answered as one, so the page that showed
+      // it takes it back now rather than when it stops waiting.
+      this.fail(peer, "rate-limited", "slow down", undefined, moveTagOf(raw));
       return;
     }
 
@@ -155,7 +159,7 @@ export class Router {
 
     const session = peer.session;
     if (!session) {
-      this.fail(peer, "bad-message", "say hello first", message.reqId);
+      this.fail(peer, "bad-message", "say hello first", message.reqId, tagOf(message));
       return;
     }
 
@@ -181,16 +185,13 @@ export class Router {
 
     const runtime = this.registry.roomOf(session);
     if (!runtime) {
-      this.fail(peer, "no-room", "you are not in a room", message.reqId);
+      this.fail(peer, "no-room", "you are not in a room", message.reqId, tagOf(message));
       return;
     }
 
     switch (message.t) {
       case "action": {
-        const tag =
-          message.n !== undefined && message.epoch !== undefined
-            ? { epoch: message.epoch, n: message.n }
-            : undefined;
+        const tag = tagOf(message);
         const result = runtime.submitAction(session, message.action, tag);
         if (!result.ok) {
           // An out-of-turn or illegal move is an ordinary answer, not a
@@ -577,9 +578,17 @@ export class Router {
     return peer.countInWindow > MAX_MESSAGES_PER_WINDOW;
   }
 
-  private fail(peer: Peer, code: ServerErrorCode, message: string, reqId?: string): void {
-    peer.connection.send({ t: "error", code, message, reqId });
+  /** `move` names the numbered move refused, if this was one (`MoveTag`). */
+  private fail(peer: Peer, code: ServerErrorCode, message: string, reqId?: string, move?: MoveTag): void {
+    peer.connection.send({ t: "error", code, message, reqId, ...(move ? { move } : {}) });
   }
+}
+
+/** A numbered move's tag, for its answer — refused or not. See `MoveTag`. */
+function tagOf(message: ClientMessage): MoveTag | undefined {
+  return message.t === "action" && message.n !== undefined && message.epoch !== undefined
+    ? { epoch: message.epoch, n: message.n }
+    : undefined;
 }
 
 /**
