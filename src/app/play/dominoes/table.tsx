@@ -36,7 +36,8 @@ import { seatCue } from "@/table/turnCue";
 import { useBoardView, useGeometry, useTableStore } from "@/table/store";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { announce } from "@/ui/disclosure";
-import { hintsSetting, type GameSetting } from "@/table/gameSettings";
+import { HAND_SPACING_SETTING, hintsSetting, type GameSetting } from "@/table/gameSettings";
+import { HandPan } from "@/table/HandPan";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
 type Live = GameRuntime<DomState, DomAction>;
@@ -114,9 +115,13 @@ export function tapTile(
   on.select(id);
 }
 
-/** Dominoes' Hints: the dimming of tiles that cannot be played. */
+/**
+ * Dominoes' Hints (the dimming of tiles that cannot be played) and Card
+ * spacing — a draw game's rack can outgrow a phone.
+ */
 export const DOMINO_SETTINGS: readonly GameSetting[] = [
   hintsSetting("Dim the tiles you cannot play. Off, every tile looks playable."),
+  HAND_SPACING_SETTING,
 ];
 
 /* ============================================================
@@ -176,6 +181,9 @@ export function DominoTable({
       <OpenEndBadges state={state} dimmed={held !== null} />
       <GhostTiles live={live} held={held} onPlace={onPlace} />
       <BoneyardCount state={state} />
+      {view.viewerSeat >= 0 ? (
+        <HandPan count={(state.hands[view.viewerSeat] ?? []).length} tiles />
+      ) : null}
 
       <HandZone
         bar={bar}

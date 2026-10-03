@@ -207,7 +207,7 @@ export function piecesNamed(
  * keeps `faceUp: false` regardless — its stand-in has no face to show,
  * and this must never be the thing that reveals one.
  */
-function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
+export function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
   if (event.t === "play") {
     // A play is judged against the board only while the piece is still
     // where the play put it. Spades' exchange lands in the discard and
@@ -359,7 +359,11 @@ export function projectEvents(
       out.push({ t: "unmask", piece, at: naming.at, replaces: sentinelFor(naming.at) });
     }
 
-    out.push(withPiece(faced, nameOf));
+    // The shuffle's seed is the session's own: with it and the public rng,
+    // a viewer could replay the deal and read every hand at the table
+    // (found 2026-10-02 — Spades, Dominoes and BS sent it). It exists for an
+    // offline replay log; nobody at a table needs it.
+    out.push(faced.t === "shuffle" ? { t: "shuffle", seed: 0 } : withPiece(faced, nameOf));
   }
 
   return out;

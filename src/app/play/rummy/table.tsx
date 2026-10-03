@@ -797,7 +797,8 @@ function useFlippedMelds(melds: RummyState["melds"]): ReadonlySet<number> {
  * The worst a lagged timer can do is cost its own owner a card.
  */
 function useClaimCountdown(live: Live, seat: SeatId, isBot?: (seat: SeatId) => boolean) {
-  const racing = inClaimRace(live.state, seat);
+  // Not while their own answer is on its way: it would be a second one.
+  const racing = inClaimRace(live.state, seat) && !live.sending;
   const ms = claimDeadlineMs(live.state, seat, isBot);
   useEffect(() => {
     if (!racing) return;

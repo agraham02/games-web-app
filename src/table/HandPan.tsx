@@ -14,21 +14,21 @@
  * every phone. BS needs it most — a player who calls wrong takes the whole
  * pile, and a hand of twenty-odd cards compressed to fit a phone is a row
  * of slivers. Rummy does the same through its own wiring, together with its
- * discard.
+ * discard. Dominoes mounts it with `tiles`, for a draw game's rack.
  */
 
 import { useEffect, useRef } from "react";
-import { handFanMaxScroll } from "./geometry";
+import { handFanMaxScroll, heroFan } from "./geometry";
 import { PanSurface } from "./PanSurface";
 import { useGeometry, useHandFloor, useSetHandScroll, useTableStore } from "./store";
 
-export function HandPan({ count }: { count: number }) {
+export function HandPan({ count, tiles = false }: { count: number; tiles?: boolean }) {
   const geometry = useGeometry();
   const handScroll = useTableStore((s) => s.handScroll);
   const setHandScroll = useSetHandScroll();
   // The player's Card spacing: the same floor layout draws the fan with.
   const floor = useHandFloor();
-  const range = geometry ? handFanMaxScroll(geometry, count, floor) : 0;
+  const range = geometry ? handFanMaxScroll(geometry, count, floor, tiles) : 0;
 
   useEffect(() => {
     setHandScroll(0);
@@ -39,7 +39,9 @@ export function HandPan({ count }: { count: number }) {
   if (!geometry || handScroll === null) return null;
   return (
     <PanSurface
-      within={geometry.zones.hand}
+      // A rack's strip, off the boneyard beside it: a drag that starts on
+      // the boneyard is not a swipe of the hand.
+      within={heroFan(geometry, tiles).within}
       axis="x"
       range={range}
       value={handScroll}

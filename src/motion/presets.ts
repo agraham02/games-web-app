@@ -240,3 +240,18 @@ export function supportsHover(): boolean {
     if (typeof window === "undefined") return true;
     return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 }
+
+/**
+ * A press answered before the server has (`emitPress`): a quick dip and
+ * lift, relative to wherever the piece sits — it says "got it", and the
+ * move that follows does the travelling.
+ */
+export const PRESS_KEYFRAMES = {
+  scale: [1, 0.92, 1.06, 1],
+};
+
+export const PRESS_TIMING = {
+  duration: 0.32,
+  times: [0, 0.3, 0.7, 1],
+  ease: "easeOut" as const,
+};

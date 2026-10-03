@@ -84,8 +84,9 @@ export const VIBRATION_SETTING: GameSetting = {
  * scrolls sideways instead (the user, 2026-09-29: "letting the user decide
  * how condensed they want their card hand to be"). Shared, because it is
  * about the player's phone and thumb rather than any one game, and offered
- * only by the games whose hand can outgrow a phone (Spades, Rummy, BS),
- * where it changes something. `HAND_FLOORS` says what each one means; the
+ * by every game whose hand can outgrow a phone (Spades, Rummy, BS, and
+ * Dominoes' rack), where it changes something. Poker's two cards and LRC's
+ * chips never fill a screen, so it would be a setting that does nothing. `HAND_FLOORS` says what each one means; the
  * default is the default floor, so a player who never opens Settings sees
  * what everybody saw before the setting existed.
  */
@@ -93,7 +94,7 @@ export const HAND_SPACING_SETTING: ChoiceSetting = {
   kind: "choice",
   key: "handSpacing",
   label: "Card spacing",
-  description: "How much of each card in your hand shows. More spacing scrolls sideways.",
+  description: "How much of each card or tile in your hand shows. More spacing scrolls sideways.",
   choices: [
     { value: "fit", label: "Fit all" },
     { value: "comfortable", label: "Comfortable" },

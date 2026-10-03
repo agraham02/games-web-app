@@ -82,8 +82,8 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     you: "me",
     youAreLeader: true,
     members: [
-      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true, photo: null, idle: false },
-      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false, photo: null, idle: false },
+      { session: "me", name: "Ada", connected: true, seat: null, spectating: false, team: null, isLeader: true, photo: null, idle: false, weak: false },
+      { session: "bo", name: "Bo", connected: true, seat: null, spectating: false, team: null, isLeader: false, photo: null, idle: false, weak: false },
     ],
     seatPlan: ["me", "bo", null, null],
     pending: [],

@@ -17,6 +17,7 @@ import type { GameId, RawSettings } from "@/session/registry";
 import type {
   ClientMessage,
   FrameView,
+  MoveTag,
   RoomView,
   ServerErrorCode,
   SettlementView,
@@ -88,9 +89,19 @@ export function toLocalClock(
   };
 }
 
+/** A numbered move the server would not take; `at` is new every time. */
+export interface RefusedMove {
+  move: MoveTag;
+  at: number;
+}
+
 export interface RoomApi {
   phase: RoomPhase;
   status: ConnectionStatus;
+  /** The last of this page's moves the server refused — see `predict.ts`. */
+  refusedMove: RefusedMove | null;
+  /** This end's link is slow right now — see `RoomConnection.weak`. */
+  weakLink: boolean;
   room: RoomView | null;
   /** The code we are waiting on approval for, while `phase === "pending"`. */
   pendingCode: string | null;
@@ -173,6 +184,9 @@ function nextReqId(): string {
 export function useRoom(): RoomApi {
   const connection = useMemo(() => roomConnection(), []);
   const [status, setStatus] = useState<ConnectionStatus>(connection.status);
+  const [weakLink, setWeakLink] = useState(connection.weak);
+  const [refusedMove, setRefusedMove] = useState<RefusedMove | null>(null);
+  const refusals = useRef(0);
   const [room, setRoom] = useState<RoomView | null>(null);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [frame, setFrame] = useState<FrameView | null>(null);
@@ -215,6 +229,7 @@ export function useRoom(): RoomApi {
   useEffect(() => {
     const off = connection.subscribe({
       onStatus: setStatus,
+      onLink: setWeakLink,
       onMessage: (message) => {
         switch (message.t) {
           case "hello":
@@ -359,8 +374,13 @@ export function useRoom(): RoomApi {
             // outliving the turn it referred to is worse than silence, and
             // that is exactly what greeted people on the entry screen
             // later, because nothing ever cleared it.
+            // A move this page already showed goes back (see `predict.ts`),
+            // whatever refused it: a lost race, or the router turning it away
+            // before the game ever saw it (rate-limited, no room).
+            if (message.move) setRefusedMove({ move: message.move, at: ++refusals.current });
             if (message.code === "move-refused") {
-              announce(message.message || "that move is no longer available", "bad");
+              // Said or quiet; a quiet one was made for them a moment ago.
+              if (!message.quiet) announce(message.message || "that move is no longer available", "bad");
               break;
             }
             // Any other refusal from inside a room goes the same way, for
@@ -475,6 +495,8 @@ export function useRoom(): RoomApi {
       },
       chatRefused,
       turnClock,
+      weakLink,
+      refusedMove,
       resumeSeat: () => send({ t: "resume" }),
       setTurnTimer: (change) => send({ t: "setTurnTimer", ...change }),
     }),
@@ -490,6 +512,8 @@ export function useRoom(): RoomApi {
       chatLiveAfter,
       chatRefused,
       turnClock,
+      weakLink,
+      refusedMove,
       send,
       connection,
     ],

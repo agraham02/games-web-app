@@ -199,7 +199,8 @@ export function onPieceTap(
  * The two are deliberately not tuned to agree; see `CHALLENGE_GRACE_MS`.
  */
 function useChallengeCountdown(view: BsView, live: Live): void {
-  const racing = canCall(view, live);
+  // Not while their own answer is on its way: it would be a second one.
+  const racing = canCall(view, live) && !live.sending;
   const ms = challengeDeadlineMs(live.state);
   const seat = view.viewerSeat;
   useEffect(() => {

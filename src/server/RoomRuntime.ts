@@ -59,6 +59,7 @@ import {
 import type {
   FrameView,
   MemberView,
+  MoveTag,
   RoomView,
   ServerErrorCode,
   ServerMessage,
@@ -96,6 +97,9 @@ export const SPECTATOR_SEAT: SeatId = -1;
  */
 const BACKPRESSURE_BYTES = 256 * 1024;
 
+/** The most a slow connection adds to a seat's turn clock (`latencyAllowance`). */
+export const MAX_LATENCY_ALLOWANCE_MS = 1_500;
+
 /**
  * How long after a move is made for somebody — forced, or their clock ran
  * out — their own press for that position still counts as arriving second
@@ -109,6 +113,16 @@ export interface Connection {
   close(): void;
   /** Bytes written but not yet flushed to the network. */
   bufferedAmount(): number;
+  /**
+   * The link's recent round trip in ms, or null before one has been
+   * measured (see `LinkMonitor`). Optional: a test's connection has none,
+   * which reads as a perfect link.
+   */
+  rttMs?(): number | null;
+  /** Whether the link is slow right now — see `LinkMonitor`. */
+  weak?(): boolean;
+  /** Called whenever `weak()` changes. Returns a way to stop listening. */
+  onWeakChange?(listener: () => void): () => void;
 }
 
 export interface RoomRuntimeOptions {
@@ -140,6 +154,16 @@ export class RoomRuntime {
   private readonly onDeparted: (session: SessionId) => void;
   private readonly graceMs: number;
   private readonly connections = new Map<SessionId, Connection>();
+  /**
+   * Each person's newest numbered move the server has dealt with, taken or
+   * refused (`FrameView.handled`). Kept for the life of the room: a page
+   * that reconnects is told on its very next frame.
+   */
+  private readonly handled = new Map<SessionId, MoveTag>();
+  /** The move being taken right now, so the frame it produces can say so. */
+  private answering: { session: SessionId; n: number } | null = null;
+  /** Stops listening to each attached socket's link (see `watchLink`). */
+  private readonly linkWatch = new Map<SessionId, () => void>();
   /**
    * Members who have dropped with nothing to hold, each with the timer that
    * lets them go (`LOBBY_GRACE_MS`). Kept up to date after every command by
@@ -255,6 +279,7 @@ export class RoomRuntime {
       existing.close();
     }
     this.connections.set(session, connection);
+    this.watchLink(session, connection);
     this.command(session, { t: "setConnected", connected: true });
     this.broadcastRoom();
     this.sendCurrentFrame(session);
@@ -284,11 +309,43 @@ export class RoomRuntime {
     if (connection && current !== connection) return;
 
     this.connections.delete(session);
+    this.unwatchLink(session);
     if (this.room.members[session]) {
       this.command(session, { t: "setConnected", connected: false });
     }
     this.broadcastRoom();
     if (connectedCount(this.room) === 0) this.onEmpty(this.room.code);
+  }
+
+  /**
+   * A slow link is news for the whole room: it shows on that person's pod
+   * and in the lobby (`MemberView.weak`). The socket says when it changes,
+   * so nothing here polls.
+   */
+  private watchLink(session: SessionId, connection: Connection): void {
+    this.unwatchLink(session);
+    const stop = connection.onWeakChange?.(() => {
+      if (this.connections.get(session) === connection) this.broadcastRoom();
+    });
+    if (stop) this.linkWatch.set(session, stop);
+  }
+
+  private unwatchLink(session: SessionId): void {
+    this.linkWatch.get(session)?.();
+    this.linkWatch.delete(session);
+  }
+
+  /**
+   * The turn timer's allowance for a seat's connection: its round trip,
+   * which is what its screen loses — the move reaches it one way late and
+   * its answer takes one way back (the user, 2026-10-02: a slow connection
+   * must not cost a player turn time). Capped, so one bad sample, or a
+   * pong held back on purpose, cannot buy much.
+   */
+  private latencyAllowance(seat: SeatId): number {
+    const holder = this.room.game?.seatOwner[seat] ?? null;
+    const rtt = holder === null ? null : (this.connections.get(holder)?.rttMs?.() ?? null);
+    return Math.min(MAX_LATENCY_ALLOWANCE_MS, Math.max(0, rtt ?? 0));
   }
 
   isAttached(session: SessionId): boolean {
@@ -585,6 +642,7 @@ export class RoomRuntime {
     for (const connection of this.connections.values()) {
       this.push(connection, { t: "left", reason: "room-closed", by, settlement });
     }
+    for (const session of [...this.linkWatch.keys()]) this.unwatchLink(session);
     this.connections.clear();
   }
 
@@ -673,6 +731,7 @@ export class RoomRuntime {
             this.clock.now(),
         ),
       turnTimerMs: () => this.turnMs,
+      latencyMs: (seat) => this.latencyAllowance(seat),
       emit: (frame) => this.onFrame(frame),
     });
 
@@ -986,7 +1045,19 @@ export class RoomRuntime {
       seatNames,
       botSeats,
       lastAction: safeLastAction(frame.lastAction, truthAfter),
+      ...this.moveTagsFor(viewer),
     };
+  }
+
+  /**
+   * What this viewer is told about their own moves on this frame: the newest
+   * dealt with, and — on the frame that move produced — which one it was.
+   * See `FrameView.handled`.
+   */
+  private moveTagsFor(viewer: SessionId): Pick<FrameView, "handled" | "answers"> {
+    const handled = this.handled.get(viewer);
+    if (!handled) return {};
+    return this.answering?.session === viewer ? { handled, answers: this.answering.n } : { handled };
   }
 
   /** Re-sends the table's current position to one viewer — the whole of reconnection. */
@@ -1016,13 +1087,23 @@ export class RoomRuntime {
   submitAction(
     session: SessionId,
     action: unknown,
+    tag?: MoveTag,
   ): { ok: true } | { ok: false; error: string; silent?: true } {
+    // Dealt with from here on, whichever way it goes: recorded first, so
+    // the frame the move produces already says so.
+    if (tag) this.handled.set(session, tag);
     if (!this.session) return { ok: false, error: "no-game-running" };
     const seat = seatOf(this.room, session);
     if (seat === null) return { ok: false, error: "not-in-game" };
     // A spectator has no seat, so they never reach here; a seated player
     // who is not on turn is refused by the session's own gate.
-    const result = this.session.submit(seat, action);
+    this.answering = tag ? { session, n: tag.n } : null;
+    let result: ReturnType<AnySession["submit"]>;
+    try {
+      result = this.session.submit(seat, action);
+    } finally {
+      this.answering = null;
+    }
     if (!result.ok) {
       // A move made for them a moment ago, and this is their own press
       // arriving second: their last card after its wait, or their move for
@@ -1113,6 +1194,9 @@ export class RoomRuntime {
         connected: m.connected || this.grace.has(m.session),
         photo: this.photos.get(m.session)?.id ?? null,
         idle: isIdle(room, m.session),
+        // Slow, by their socket's own pings. Nothing to say of somebody who
+        // is not connected: that already shows.
+        weak: Boolean(this.connections.get(m.session)?.weak?.()),
         seat,
         spectating: Boolean(game?.present.includes(m.session)) && seat === null,
         // The seat decides the side: the one they hold in a running game,
@@ -1210,6 +1294,7 @@ export class RoomRuntime {
     this.chatTimes.clear();
     this.stopSession();
     for (const connection of this.connections.values()) connection.close();
+    for (const session of [...this.linkWatch.keys()]) this.unwatchLink(session);
     this.connections.clear();
   }
 }

@@ -6,6 +6,7 @@ import {
   discardMaxScroll,
   HAND_FLOORS,
   handFanMaxScroll,
+  heroFan,
   handHeaderHeight,
   podBox,
   resolveDensity,
@@ -660,6 +661,33 @@ describe("hero hand — never draws a card outside the hand zone", () => {
     expect(comfortable.step).toBeCloseTo(comfortable.w / 2, 1);
     expect(roomy.step).toBeCloseTo((roomy.w * 2) / 3, 1);
     expect(roomy.range).toBeGreaterThan(comfortable.range);
+  });
+
+  it("spaces and pans a domino rack the same way, off the boneyard", () => {
+    // The user, 2026-10-02: every game with a hand gets Card spacing. A draw
+    // game's rack reaches 14 tiles, which squeezed to about a third of a
+    // tile on a 390px phone. The pan's range and the drawn rack must agree:
+    // at either end of it the rack sits flush with its strip's edge.
+    const g = resolveTable({ seats: 2, width: 390, height: 844 });
+    const fan = heroFan(g, true);
+    const centre = (i: number, count: number, pan: number, floor: number) => {
+      const placement: Placement = { zone: "hand", seat: 0, index: i, count, faceUp: true };
+      const t = layoutPiece(placement, g, { kind: "tile", handScroll: pan, handIndex: i, handFloor: floor });
+      return { x: t.x + baseSize(g).w / 2, opacity: t.opacity };
+    };
+    for (const floor of [HAND_FLOORS.comfortable, HAND_FLOORS.roomy]) {
+      const range = handFanMaxScroll(g, 14, floor, true);
+      expect(range, `floor ${floor}: 14 tiles should pan`).toBeGreaterThan(0);
+      const first = centre(0, 14, range / 2, floor);
+      expect(centre(1, 14, range / 2, floor).x - first.x).toBeCloseTo(fan.size * floor, 1);
+      expect(first.x - fan.size / 2).toBeCloseTo(fan.within.x, 1);
+      expect(first.opacity).toBe(1);
+      const last = centre(13, 14, -range / 2, floor);
+      expect(last.x + fan.size / 2).toBeCloseTo(fan.within.x + fan.within.w, 1);
+    }
+    // Fit all, and an ordinary seven-tile hand at any spacing: no pan at all.
+    expect(handFanMaxScroll(g, 14, HAND_FLOORS.fit, true)).toBe(0);
+    expect(handFanMaxScroll(g, 7, HAND_FLOORS.roomy, true)).toBe(0);
   });
 
   it("shows half of every card in a 13-card hand on a phone, and pans the rest", () => {

@@ -20,6 +20,10 @@ import { GAME_IDS, GAMES, type GameId } from "./registry";
 import { GameSession } from "./GameSession";
 import { TestClock } from "./clock";
 import { isSentinel, projectEvents, redactPlacements } from "./redact";
+import { PROTOCOL_VERSION, type ServerMessage } from "./protocol";
+import { RoomRegistry } from "@/server/RoomRegistry";
+import type { Connection } from "@/server/RoomRuntime";
+import { makePeer, Router, type Peer } from "@/server/router";
 
 /** Deals a real game and returns the true placements plus piece meta. */
 function dealt(definition: ReturnType<typeof createSpades>, seats: number, seed: number) {
@@ -795,6 +799,55 @@ describe("the whole frame, every game, every turn", () => {
       expect(blanks.slice(0, 5)).toEqual([]);
       // Guards the guard: these two re-deal pieces the viewer could read.
       if (gameId === "dominoes" || gameId === "bs") expect(masks).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("the session's seed never reaches a table", () => {
+  // Found 2026-10-02: every `shuffle` carried the session's seed, and
+  // Dominoes' state carried it too. With it and the public rng, a player
+  // replayed `setup` + `startRound` and read every opponent's hand.
+  // Through the real router, so every message a socket is sent is checked
+  // — frames, rooms, clocks — not just what `projectEvents` returns.
+  class Recorder implements Connection {
+    readonly sent: ServerMessage[] = [];
+    send(message: ServerMessage): void {
+      this.sent.push(message);
+    }
+    close(): void {}
+    bufferedAmount(): number {
+      return 0;
+    }
+  }
+
+  for (const gameId of GAME_IDS) {
+    it(`${gameId}: sends no seed but zero`, () => {
+      const clock = new TestClock();
+      const registry = new RoomRegistry({ clock, seed: 4242 });
+      const router = new Router(registry, () => clock.now());
+      const say = (peer: Peer, message: unknown) => router.onMessage(peer, JSON.stringify(message));
+      const adaConn = new Recorder();
+      const boConn = new Recorder();
+      const ada = makePeer(adaConn, 0);
+      const bo = makePeer(boConn, 0);
+      say(ada, { t: "hello", token: "ada", protocol: PROTOCOL_VERSION });
+      say(ada, { t: "createRoom", name: "Ada" });
+      const code = (adaConn.sent.find((m) => m.t === "room") as Extract<ServerMessage, { t: "room" }>).room.code;
+      say(bo, { t: "hello", token: "bo", protocol: PROTOCOL_VERSION });
+      say(bo, { t: "joinRoom", code, name: "Bo" });
+      say(ada, { t: "selectGame", gameId, settings: {}, seats: 4, difficulty: "steady" });
+      say(ada, { t: "startGame" });
+      // Both people's moves made for them by the turn timer, and two rounds
+      // continued, so later deals are checked as well as the first.
+      for (let i = 0; i < 400; i++) {
+        clock.advance(5_000);
+        if (i % 40 === 39) say(ada, { t: "nextRound" });
+      }
+
+      const wire = JSON.stringify([...adaConn.sent, ...boConn.sent]);
+      const seeds = [...wire.matchAll(/"seed":(-?\d+)/g)].map((m) => Number(m[1]));
+      expect(wire.includes('"t":"frame"'), "no frame was sent").toBe(true);
+      expect(seeds.filter((s) => s !== 0)).toEqual([]);
     });
   }
 });

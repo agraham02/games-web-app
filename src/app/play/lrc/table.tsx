@@ -15,7 +15,7 @@ import { botColour, botName } from "@/games/_shared/botIdentity";
 import { chipsHeld, diceCountFor } from "@/games/lrc/state";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
 import { DURATION, TRANSITIONS, prefersReducedMotion } from "@/motion/presets";
-import { onDice } from "@/table/fx";
+import { emitDice, onDice, onTakeBack } from "@/table/fx";
 import { BandNote, HandZone } from "@/table/HandZone";
 import { Button } from "@/ui/primitives/Button";
 import { DiceFace } from "@/ui/primitives/DiceFace";
@@ -193,6 +193,12 @@ export function LrcControls({ view, live }: { view: LrcView; live: Live }) {
   // `setTimeout` never did. The dice shown are the real, decided ones.
   const roll = () => {
     if (live.busy) return; // Mid-roll — ignore a second click.
+    // The dice start tumbling on the press, not when the result comes back
+    // (the user, 2026-10-02: no lag on your own move). What they land on is
+    // still the server's; its `dice` event lands them.
+    if (!prefersReducedMotion() && view.viewerSeat >= 0) {
+      emitDice({ seat: view.viewerSeat, faces: null, count: diceCountFor(live.state, view.viewerSeat) });
+    }
     // Empty: whatever were sent would be discarded anyway.
     live.submitAction({ t: "roll", dice: [] });
   };
@@ -253,6 +259,8 @@ const TUMBLE_TICK_MS = 100;
  * that is how the two drifted apart.
  */
 const TUMBLE_TICKS = Math.max(1, Math.round((DURATION.diceTumble * 1000) / TUMBLE_TICK_MS));
+/** How long a throw tumbles waiting for its result before it gives up. */
+const OPEN_TUMBLE_MAX_TICKS = 80;
 
 /**
  * The count on every pile that has become one stack (see layout's
@@ -305,26 +313,44 @@ function ChipStackCounts() {
  */
 function DiceOverlay() {
   const geometry = useGeometry();
-  const [roll, setRoll] = useState<{ id: number; faces: Face[] } | null>(null);
+  // `open`: thrown on the press, its result not back yet — tumbling until
+  // the real `dice` event lands it, under the same key so it never blinks.
+  const [roll, setRoll] = useState<{ id: number; faces: Face[]; open: boolean } | null>(null);
   const [tick, setTick] = useState(TUMBLE_TICKS);
 
   useEffect(
     () =>
-      onDice(({ faces }) => {
-        setRoll((prev) => ({ id: (prev?.id ?? 0) + 1, faces: faces as Face[] }));
+      onDice(({ faces, count }) => {
+        if (faces === null) {
+          setRoll((prev) => ({ id: (prev?.id ?? 0) + 1, faces: Array(count ?? 1).fill("dot"), open: true }));
+          setTick(0);
+          return;
+        }
+        setRoll((prev) => ({
+          id: prev?.open ? prev.id : (prev?.id ?? 0) + 1,
+          faces: faces as Face[],
+          open: false,
+        }));
         // Reduced motion: the result, without the tumble.
         setTick(prefersReducedMotion() ? TUMBLE_TICKS : 0);
       }),
     [],
   );
+  // A throw the server refused has no result coming: stop it at once.
+  useEffect(() => onTakeBack(() => setRoll((prev) => (prev?.open ? null : prev))), []);
 
   useEffect(() => {
-    if (!roll || tick >= TUMBLE_TICKS) return;
-    const id = setTimeout(() => setTick((t) => t + 1), TUMBLE_TICK_MS);
+    if (!roll || (tick >= TUMBLE_TICKS && !roll.open)) return;
+    const id = setTimeout(() => {
+      // A throw whose result never came (lost, and not refused — that stops
+      // it at once) gives up tumbling.
+      if (roll.open && tick + 1 >= OPEN_TUMBLE_MAX_TICKS) setRoll(null);
+      else setTick((t) => t + 1);
+    }, TUMBLE_TICK_MS);
     return () => clearTimeout(id);
   }, [roll, tick]);
 
-  const settled = tick >= TUMBLE_TICKS;
+  const settled = tick >= TUMBLE_TICKS && !roll?.open;
   const shown = roll?.faces.map((real, i) =>
     settled ? real : TUMBLE_SEQUENCE[(tick + i) % TUMBLE_SEQUENCE.length]!,
   );

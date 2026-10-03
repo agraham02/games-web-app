@@ -18,6 +18,7 @@ import type { Density } from "./geometry";
 import { useGeometry } from "./store";
 import { TRANSITIONS } from "@/motion/presets";
 import { Avatar } from "@/ui/primitives/Avatar";
+import { WeakLinkIcon } from "@/ui/primitives/WeakLinkIcon";
 import { Stats, type Stat, type StatLines } from "@/ui/primitives/Stats";
 import { CountdownRing } from "@/ui/primitives/CountdownRing";
 
@@ -111,6 +112,13 @@ export interface SeatView {
    * `seatExtras`, like `photo`.
    */
   bubble?: { id: number; text: string } | null;
+  /**
+   * Their connection is slow right now (`MemberView.weak`) — a translucent
+   * pulsing wifi glyph on the avatar's top-right corner, the one corner no
+   * other marker claims. Laid over by `seatExtras`, like `photo`. Not drawn
+   * once `away`: a bot is playing then, and the link is beside the point.
+   */
+  weakLink?: boolean;
   /**
    * The turn timer's clock on this seat's move: a ring round the pod that
    * empties, green to amber at half to red at a fifth (the user, 2026-09-29).
@@ -237,6 +245,12 @@ export const SeatPod = memo(function SeatPod({
         {view.thinking ? <ThinkingRing /> : null}
         {view.badge ? <PositionBadge label={view.badge} /> : null}
         {view.away ? <AwayBadge name={view.name} /> : view.bot ? <BotBadge name={view.name} /> : null}
+        <WeakLinkIcon
+          show={Boolean(view.weakLink) && !view.away}
+          label={`${view.name}'s connection is slow`}
+          size={10}
+          className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-felt-950 ring-1 ring-felt-950/60"
+        />
       </div>
 
       <div

@@ -56,13 +56,12 @@ afterEach(() => {
 
 describe("Card spacing", () => {
   it("is offered by the games whose hand can outgrow a phone, and only those", () => {
-    for (const list of [SPADES_SETTINGS, RUMMY_SETTINGS, BS_SETTINGS]) {
+    // Dominoes too: a draw game's rack runs past a dozen tiles.
+    for (const list of [SPADES_SETTINGS, RUMMY_SETTINGS, BS_SETTINGS, DOMINO_SETTINGS]) {
       expect(list).toContain(HAND_SPACING_SETTING);
     }
-    // Two cards, and tiles that do not pan: the setting would do nothing.
-    for (const list of [POKER_SETTINGS, DOMINO_SETTINGS]) {
-      expect(list).not.toContain(HAND_SPACING_SETTING);
-    }
+    // Two cards: the setting would do nothing.
+    expect(POKER_SETTINGS).not.toContain(HAND_SPACING_SETTING);
   });
 
   it("changes how the hand is spaced from the Settings sheet", async () => {

@@ -746,6 +746,9 @@ export function createBs(rules: Partial<BsRules> = {}): GameDefinition<BsState, 
     forcedMove,
     validate,
     completeAction,
+    // Calling, letting go and taking the pile answer a window others may
+    // answer first — and a call turns over cards nobody has seen.
+    unpredictable: (_state, _seat, action) => action.t !== "play",
     deadline,
     turnHold,
     pieces,

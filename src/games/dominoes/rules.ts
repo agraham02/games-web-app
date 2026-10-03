@@ -669,6 +669,10 @@ export function playerView(state: DomState, viewer: SeatId): DomState {
     ...state,
     hands,
     boneyard: state.boneyard.map(() => HIDDEN_TILE),
+    // The session's seed (the slam roll's key): with it a viewer could
+    // replay the deal and read every hand. Slams are rolled where the real
+    // state is, and reach a table as events.
+    seed: 0,
   };
 }
 

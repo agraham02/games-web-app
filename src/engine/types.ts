@@ -729,6 +729,16 @@ export interface GameDefinition<S, A> {
    */
   validate?(state: S, seat: SeatId, action: A): string | null;
 
+  /**
+   * A move a page must not show before the server has answered it — see
+   * `session/predict.ts`. True for a race, where somebody else may get
+   * there first (Rummy's claim, BS's call), and for a move the server
+   * rewrites before taking it (`completeAction`: LRC's dice, Spades' blind
+   * vote). Everything else is predicted from what the mover can see, and
+   * held to the server's answer by `predict.test.ts`.
+   */
+  unpredictable?(state: S, seat: SeatId, action: A): boolean;
+
   currentSeat(state: S): SeatId | null;
   isOver(state: S): boolean;
 

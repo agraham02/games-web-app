@@ -19,16 +19,18 @@
 import { StrictMode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GameEvent } from "@/engine/types";
 import { createSpades } from "@/games/spades/rules";
 import type { SpadesAction, SpadesState } from "@/games/spades/types";
 import { TestClock } from "@/session/clock";
 import { GAMES, type GameId } from "@/session/registry";
-import { PROTOCOL_VERSION, type FrameView, type ServerMessage } from "@/session/protocol";
+import { PROTOCOL_VERSION, type FrameView, type MoveTag, type ServerMessage } from "@/session/protocol";
 import { RoomRegistry } from "@/server/RoomRegistry";
 import type { Connection } from "@/server/RoomRuntime";
 import { makePeer, Router, type Peer } from "@/server/router";
 import { useTableStore } from "@/table/store";
-import { openingPosition, READY_BEAT_MS, useOnlineRuntime } from "./useOnlineRuntime";
+import { playbackMs } from "@/motion/choreographer";
+import { afterShown, openingPosition, READY_BEAT_MS, useOnlineRuntime } from "./useOnlineRuntime";
 
 /* ============================================================
    A real deal, as one player is sent it
@@ -589,6 +591,43 @@ describe("a face-down play, online", () => {
     vi.unstubAllGlobals();
   });
 
+  it("opens a turn and dims what it cannot play in one step", () => {
+    // The turn opened when the move landed and the board, which carries the
+    // `dimmed` marks, was adopted after the card finished flying: with Hints
+    // on the hand grew first and dimmed a beat later (the user, 2026-10-02).
+    const frames = playedFrames();
+    let current = frames[0]!;
+    const { result, rerender } = renderHook(() =>
+      useOnlineRuntime<SpadesState, SpadesAction>({
+        frame: current,
+        submit: () => {},
+        nextRound: () => {},
+        initial: () => openingPosition(definition, 4, current.seat),
+      }),
+    );
+    for (let i = 0; i < 40; i++) tick(500);
+
+    let turnsWithDims = 0;
+    for (const frame of frames.slice(1)) {
+      current = frame;
+      rerender();
+      for (let t = 0; t < 8000; t += 20) {
+        tick(20);
+        if (!result.current!.isHeroTurn) continue;
+        const onTable = useTableStore.getState().placements;
+        const mine = Object.entries(frame.placements).filter(
+          ([, p]) => p.zone === "hand" && p.seat === frame.seat,
+        );
+        if (mine.some(([, p]) => p.dimmed)) turnsWithDims++;
+        for (const [id, p] of mine) {
+          expect(Boolean(onTable[id]?.dimmed), `${id} at ${t}ms`).toBe(Boolean(p.dimmed));
+        }
+        break;
+      }
+    }
+    expect(turnsWithDims, "the viewer never had a card to dim").toBeGreaterThan(0);
+  });
+
   it("lets another player's card fly to the pile before the board is adopted", () => {
     // Reported in BS, seen in Chrome: the viewer's own plays flew and nobody
     // else's did. An opponent's card is a stand-in named by its SLOT in the
@@ -688,3 +727,282 @@ describe("a face-down play, online", () => {
   });
 });
 
+describe("your own move, shown before the server answers", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    useTableStore.getState().reset({}, {});
+    visibility("visible");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Ada's page, against the real server, played up to the first card Ada
+   * may play. What her page sends goes to an outbox the test delivers when
+   * it chooses — the round trip, held open.
+   */
+  function adaOnTurn(rules = createSpades()) {
+    const clock = new TestClock();
+    const registry = new RoomRegistry({ clock, seed: 4242 });
+    const router = new Router(registry, () => clock.now());
+    const say = (peer: Peer, message: unknown) => router.onMessage(peer, JSON.stringify(message));
+    const adaConn = new Recorder();
+    const boConn = new Recorder();
+    const ada = makePeer(adaConn, 0);
+    const bo = makePeer(boConn, 0);
+    say(ada, { t: "hello", token: "ada", protocol: PROTOCOL_VERSION });
+    say(ada, { t: "createRoom", name: "Ada" });
+    say(ada, { t: "setTurnTimer", on: false });
+    const code = (adaConn.sent.find((m) => m.t === "room") as Extract<ServerMessage, { t: "room" }>).room.code;
+    say(bo, { t: "hello", token: "bo", protocol: PROTOCOL_VERSION });
+    say(bo, { t: "joinRoom", code, name: "Bo" });
+    say(ada, { t: "selectGame", gameId: "spades", settings: {}, seats: 4, difficulty: "steady" });
+    say(ada, { t: "startGame" });
+
+    const framesOf = (conn: Recorder) =>
+      conn.sent
+        .filter((m): m is Extract<ServerMessage, { t: "frame" }> => m.t === "frame")
+        .map((m) => JSON.parse(JSON.stringify(m.frame)) as FrameView);
+    const lastOf = (conn: Recorder) => framesOf(conn).at(-1)!;
+    const ordinary = (legal: SpadesAction[]) => legal.find((a) => a.t === "bid" && !a.nil) ?? legal[0];
+    for (let i = 0; i < 400; i++) {
+      clock.drain();
+      const mine = lastOf(adaConn);
+      const adaLegal = definition.legalActions(mine.state as SpadesState, mine.seat!);
+      if (adaLegal.some((a) => a.t === "play")) break;
+      const theirs = lastOf(boConn);
+      const boLegal = definition.legalActions(theirs.state as SpadesState, theirs.seat!);
+      if (adaLegal.length > 0) say(ada, { t: "action", action: ordinary(adaLegal) });
+      else if (boLegal.length > 0) say(bo, { t: "action", action: ordinary(boLegal) });
+    }
+
+    const history = framesOf(adaConn);
+    let delivered = history.length;
+    let current = history[0]!;
+    const outbox: Array<{ action: unknown; tag?: MoveTag }> = [];
+    let refused: { move: MoveTag; at: number } | null = null;
+    const hook = renderHook(() =>
+      useOnlineRuntime<SpadesState, SpadesAction>({
+        frame: current,
+        submit: (action, tag) => outbox.push({ action, tag }),
+        nextRound: () => {},
+        initial: () => openingPosition(definition, 4, current.seat),
+        definition: rules,
+        refused,
+      }),
+    );
+    const show = (frame: FrameView) => {
+      current = frame;
+      hook.rerender();
+      for (let k = 0; k < 60; k++) tick(100);
+    };
+    for (let k = 0; k < 40; k++) tick(500);
+    for (const frame of history.slice(1)) show(frame);
+
+    return {
+      hook,
+      show,
+      outbox,
+      last: () => current,
+      /**
+       * Sends what Ada's page sent, and shows her what came back — or, with
+       * `watch: false`, hands her only the answer and lets no time pass.
+       */
+      deliver({ watch = true } = {}) {
+        const sent = outbox.shift()!;
+        say(ada, { t: "action", action: sent.action, ...sent.tag });
+        clock.drain();
+        const fresh = framesOf(adaConn).slice(delivered);
+        if (!watch) {
+          delivered += 1;
+          current = fresh[0]!;
+          hook.rerender();
+          return fresh.slice(0, 1);
+        }
+        delivered += fresh.length;
+        for (const frame of fresh) show(frame);
+        return fresh;
+      },
+      /** Hands Ada a frame and lets no time pass. */
+      land(frame: FrameView) {
+        current = frame;
+        hook.rerender();
+      },
+      refuse(move: MoveTag) {
+        refused = { move, at: (refused?.at ?? 0) + 1 };
+        hook.rerender();
+        for (let k = 0; k < 10; k++) tick(100);
+      },
+    };
+  }
+
+  const zoneOf = (id: string) => useTableStore.getState().placements[id]?.zone;
+
+  function playAny(t: ReturnType<typeof adaOnTurn>): string {
+    const live = t.hook.result.current!;
+    expect(live.isHeroTurn, "Ada should be on turn").toBe(true);
+    const play = definition
+      .legalActions(live.state, t.last().seat!)
+      .find((a): a is Extract<SpadesAction, { t: "play" }> => a.t === "play")!;
+    act(() => live.submitAction(play));
+    tick(20);
+    return play.card;
+  }
+
+  it("plays the card the moment it is pressed, before anything comes back", () => {
+    const t = adaOnTurn();
+    const card = playAny(t);
+    expect(zoneOf(card)).toBe("trick");
+    expect(t.outbox).toHaveLength(1);
+    expect(t.outbox[0]!.tag?.n).toBe(1);
+    // The turn has passed on this screen; nothing is pressable twice.
+    expect(t.hook.result.current!.isHeroTurn).toBe(false);
+  });
+
+  it("does not pull the card back when the answer lands", () => {
+    const t = adaOnTurn();
+    const card = playAny(t);
+    for (let k = 0; k < 5; k++) tick(100);
+    const zones: string[] = [];
+    const stop = useTableStore.subscribe((s) => zones.push(s.placements[card]?.zone ?? "none"));
+    const answer = t.deliver();
+    stop();
+    expect(answer.some((f) => f.answers === 1), "the server answered").toBe(true);
+    expect(zones, "the card went back to the hand").not.toContain("hand");
+  });
+
+  it("takes the card back if the server refuses it", () => {
+    const t = adaOnTurn();
+    const before = t.hook.result.current!.lastAction;
+    const card = playAny(t);
+    for (let k = 0; k < 5; k++) tick(100);
+    t.refuse(t.outbox[0]!.tag!);
+    expect(zoneOf(card)).toBe("hand");
+    expect(t.hook.result.current!.isHeroTurn).toBe(true);
+    // The pods no longer say Ada just played it.
+    expect(t.hook.result.current!.lastAction).toEqual(before);
+  });
+
+  it("still takes it back when a frame saying it was dealt with lands first", () => {
+    const t = adaOnTurn();
+    const before = t.hook.result.current!.lastAction;
+    const card = playAny(t);
+    for (let k = 0; k < 5; k++) tick(100);
+    // `handled` counts a refused move too, and here it beats the refusal.
+    t.show({ ...t.last(), seq: 0, events: [], handled: t.outbox[0]!.tag, answers: undefined });
+    t.refuse(t.outbox[0]!.tag!);
+    expect(zoneOf(card)).toBe("hand");
+    expect(t.hook.result.current!.lastAction).toEqual(before);
+  });
+
+  /** Plays and answers Ada's turns until she is the one to finish a trick. */
+  function adaFinishesATrick() {
+    const t = adaOnTurn();
+    for (let i = 0; i < 13; i++) {
+      if ((t.hook.result.current!.state as SpadesState).trick.length === 3) break;
+      playAny(t);
+      t.deliver();
+    }
+    expect((t.hook.result.current!.state as SpadesState).trick).toHaveLength(3);
+    return t;
+  }
+
+  it("lets the card that finishes a trick land before the trick is collected", () => {
+    const t = adaFinishesATrick();
+    const card = playAny(t);
+    const [answer] = t.deliver({ watch: false });
+    const collect = answer!.events.findIndex((e) => e.t === "collect");
+    expect(collect, "the answer collects the trick").toBeGreaterThan(0);
+    // When the frame itself would collect it, counted from the press: the
+    // play's own beat included, which stripping the play must not lose.
+    const due = playbackMs(answer!.events.slice(0, collect + 1));
+    tick(due - 20 - 50);
+    expect(zoneOf(card), "collected from under the card still flying in").toBe("trick");
+    for (let k = 0; k < 20; k++) tick(100);
+    expect(zoneOf(card)).not.toBe("trick");
+  });
+
+  it("lets your own card land before adopting a board that no longer names it", () => {
+    const t = adaOnTurn();
+    const card = playAny(t);
+    const tag = t.outbox[0]!.tag!;
+    // An answer with nothing left to play once the gesture is stripped, whose
+    // board names the card otherwise — BS's pile, face down, by slot.
+    const { [card]: _renamed, ...placements } = t.last().placements;
+    t.land({ ...t.last(), seq: 0, events: [], placements, handled: tag, answers: tag.n });
+    expect(zoneOf(card), "unmounted while still flying").toBe("trick");
+    for (let k = 0; k < 10; k++) tick(100);
+    expect(zoneOf(card)).toBeUndefined();
+  });
+
+  it("never shows the table from before the move while its answer plays", () => {
+    const t = adaFinishesATrick();
+    const seat = t.last().seat!;
+    const held = () => (t.hook.result.current!.state as SpadesState).hands[seat]!.length;
+    playAny(t);
+    const after = held();
+    const seen: number[] = [];
+    t.deliver({ watch: false });
+    for (let k = 0; k < 40; k++) {
+      seen.push(held());
+      tick(50);
+    }
+    expect(Math.max(...seen), "the card went back into the hand").toBe(after);
+  });
+
+  it("keeps the card where it was played when somebody else's frame lands first", () => {
+    const t = adaOnTurn();
+    const card = playAny(t);
+    for (let k = 0; k < 5; k++) tick(100);
+    // A board from before the move — what a race or a reconnect delivers.
+    t.show({ ...t.last(), seq: 0, events: [], handled: undefined, answers: undefined });
+    expect(zoneOf(card)).toBe("trick");
+    expect(t.hook.result.current!.isHeroTurn).toBe(false);
+  });
+
+  it("waits on a move it cannot show, until any frame says it was dealt with", () => {
+    const t = adaOnTurn({ ...createSpades(), unpredictable: () => true });
+    const card = playAny(t);
+    expect(zoneOf(card), "nothing was shown").toBe("hand");
+    expect(t.hook.result.current!.isHeroTurn, "and nothing is pressable twice").toBe(false);
+    // A position that says the move was dealt with — refused, its answer
+    // lost — so the table is still Ada's.
+    t.show({ ...t.last(), seq: 0, events: [], handled: t.outbox[0]!.tag, answers: undefined });
+    expect(t.hook.result.current!.isHeroTurn).toBe(true);
+  });
+
+  it("stops believing a move nobody answers", () => {
+    const t = adaOnTurn();
+    const card = playAny(t);
+    expect(zoneOf(card)).toBe("trick");
+    for (let k = 0; k < 90; k++) tick(100);
+    expect(zoneOf(card)).toBe("hand");
+    expect(t.hook.result.current!.isHeroTurn).toBe(true);
+  });
+});
+
+describe("afterShown", () => {
+  const play: GameEvent = { t: "play", piece: "SA", from: 0, to: "trick", faceUp: true };
+  const collect: GameEvent = { t: "collect", pieces: ["SA"], to: 0 };
+
+  it("plays only what was not already shown", () => {
+    expect(afterShown([{ ...play }, collect], [play])).toEqual([collect]);
+  });
+
+  it("plays the whole frame when the prediction was wrong", () => {
+    const other: GameEvent = { t: "play", piece: "SK", from: 0, to: "trick", faceUp: true };
+    expect(afterShown([other, collect], [play])).toEqual([other, collect]);
+  });
+});

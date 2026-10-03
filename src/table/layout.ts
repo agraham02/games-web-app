@@ -18,6 +18,7 @@ import { HERO } from "@/engine/types";
 import {
   axisReach,
   fanSlot,
+  heroFan,
   pileAssembly,
   pileAssemblyHorizontal,
   pileCard,
@@ -1064,7 +1065,8 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
         // half the reservation. The hand has to stay centred on the
         // zone regardless of what's parked beside it; a matching phantom
         // margin on the right is the price of that, and it's cheap.
-        const gutter = isTile ? g.zones.boneyard.w + 14 : 0;
+        // `heroFan` is that answer, shared with the pan's range.
+        const fan = heroFan(g, isTile);
         // The hand as DRAWN — smaller than the base box on a laptop, where the
         // board may outgrow it (see `baseSize`).
         const ha = handArt(g, ctx?.kind);
@@ -1074,9 +1076,7 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
         // shorter than a card on purpose, and centring the card in it would
         // push its index up under the band instead.
         const within: Box = {
-          ...g.zones.hand,
-          x: g.zones.hand.x + gutter,
-          w: g.zones.hand.w - gutter * 2,
+          ...fan.within,
           ...(g.handBleed ? { y: g.zones.hand.y + HAND_LIFT_ROOM, h: ha.h } : {}),
         };
         // A hand that has just swallowed six cards off the discard pile
@@ -1084,7 +1084,8 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
         // does, and for the same reason — past a point, tighter is not
         // more readable, it is less. Opt-in: a game that never threads
         // `handScroll` in gets no floor and behaves exactly as before.
-        const panned = ctx?.handScroll !== undefined && !isTile;
+        // A domino rack too, since the draw game's hand can outgrow a phone.
+        const panned = ctx?.handScroll !== undefined;
         // ONE index drives both the fan position and the stacking order.
         //
         // Splitting them is what produced a card sitting visually
@@ -1101,7 +1102,7 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
           size: ha,
           maxRotation: isTile ? 0 : undefined,
           arcLift: isTile ? 0 : undefined,
-          maxGap: isTile ? ha.w * 1.14 : undefined,
+          maxGap: fan.maxGap,
           minGap: panned ? ha.w * (ctx!.handFloor ?? MIN_HAND_GAP_FRACTION) : undefined,
           pan: panned ? ctx!.handScroll : undefined,
         });

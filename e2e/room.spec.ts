@@ -96,6 +96,28 @@ test.describe("a room, in real browsers", () => {
     await two.close();
   });
 
+  test("the room socket is compressed in a real browser", async ({ browser }) => {
+    // A frame is 5–8KB of JSON and nearly all of it repeats the last one;
+    // compressed, a turn is a few hundred bytes (see `wsServer.ts`). A
+    // browser negotiates it on its own, so this checks it actually did.
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto("/");
+    const extensions = await page.evaluate(
+      () =>
+        new Promise<string>((done, fail) => {
+          const socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}/ws`);
+          socket.onopen = () => {
+            done(socket.extensions);
+            socket.close();
+          };
+          socket.onerror = () => fail(new Error("no socket"));
+        }),
+    );
+    expect(extensions).toContain("permessage-deflate");
+    await context.close();
+  });
+
   test("one person on their own is sent to the solo table instead", async ({ browser }) => {
     // A room game with a single human is the offline game plus a round
     // trip per bot turn. The server refuses it; what this checks is the
