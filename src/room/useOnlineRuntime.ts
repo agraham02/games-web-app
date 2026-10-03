@@ -41,7 +41,7 @@ import { announce } from "@/ui/disclosure";
 import { composeAnnounce } from "@/session/announce";
 import { piecesNamed, redactPlacements, sentinelFor } from "@/session/redact";
 import { applyEventToTable } from "@/table/applyEvent";
-import { emitPress, recentTap } from "@/table/fx";
+import { emitPress, emitTakeBack, recentTap } from "@/table/fx";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { ROUND_END_HOLD_MS, autoContinueMsFor } from "@/session/roundEnd";
@@ -96,6 +96,13 @@ interface Pending {
   /** The position after it, or null: the table waits on the server. */
   state: unknown;
   at: number;
+  /**
+   * The server has dealt with it, and the frame saying so is playing. Kept
+   * until that frame settles: dropped the moment it was dequeued, the table
+   * fell back to the position BEFORE the move for as long as the answer
+   * took to play (a trick's collect), then jumped forward again.
+   */
+  answered?: boolean;
 }
 
 /** Events compared as data, whatever order their keys were written in. */
@@ -336,8 +343,26 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   const [predictions, setPredictions] = useState<readonly Pending[]>([]);
   const [epoch] = useState(newEpoch);
   const moves = useRef(0);
-  /** A gesture is still being drawn; the frame that answers it waits. */
+  /**
+   * A gesture is still being drawn, or its last piece is still landing; the
+   * frame that answers it waits. Cleared by a timer for the gesture's own
+   * tail, not when its last event is applied: a one-card play is applied in
+   * the same call that starts it, so an answer with nothing left to play
+   * settled at once, and its board — BS's pile, which names the card by
+   * slot — unmounted the card still flying to it.
+   */
   const gesturing = useRef(false);
+  /** The events drawn since the gestures last went idle, for their tail. */
+  const drawn = useRef<GameEvent[]>([]);
+  const landing = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopGesture = () => {
+    if (landing.current !== null) clearTimeout(landing.current);
+    landing.current = null;
+    drawn.current = [];
+    gesturing.current = false;
+  };
+  /** The newest frame's own `lastAction`, for a move taken back. */
+  const serverLastAction = useRef<FrameView["lastAction"]>(null);
   const publishPending = () => setPredictions([...pending.current]);
 
   // A local generator, for the one thing it is still allowed to do: a
@@ -407,8 +432,12 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
 
   /**
    * The frame about to play, squared with this player's moves: anything it
-   * says the server has dealt with is no longer this page's to show, and
-   * the frame a move produced skips what was already shown of it.
+   * says the server has dealt with is no longer this page's to show once
+   * the frame settles (`answered`), and the frame a move produced skips what
+   * was already shown of it.
+   *
+   * Marked, not dropped, so a refusal that lands while this frame plays
+   * still finds the move it refuses: `handled` counts a refused move too.
    */
   const reconcile = (next: FrameView): FrameView => {
     const handled = next.handled;
@@ -416,10 +445,21 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     let out = next;
     const answered = pending.current.find((p) => p.n === next.answers);
     if (answered) out = { ...next, events: afterShown(next.events, answered.gesture) };
-    const before = pending.current.length;
-    pending.current = pending.current.filter((p) => p.n > handled.n);
-    if (pending.current.length !== before) publishPending();
+    let marked = false;
+    for (const entry of pending.current) {
+      if (entry.n > handled.n || entry.answered) continue;
+      entry.answered = true;
+      marked = true;
+    }
+    if (marked) publishPending();
     return out;
+  };
+
+  /** Lets go of every move the frame just settled has answered. */
+  const dropAnswered = () => {
+    const before = pending.current.length;
+    pending.current = pending.current.filter((p) => !p.answered);
+    if (pending.current.length !== before) publishPending();
   };
 
   const flushReset = () => {
@@ -435,7 +475,6 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     const current = playing.current;
     if (!current) return;
     setApplied(current);
-    repredict(current);
 
     // The board is adopted when the batch's animations have FINISHED, if
     // adopting it would pull a piece out from under one. A batch goes idle
@@ -448,6 +487,10 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // turn it is never waits on an animation; the next batch flushes any
     // board still pending before it touches the store (`pump`).
     flushReset();
+    // After any older board, which predates the answer and so still needs
+    // what the answered move showed; before this one, which already has it.
+    dropAnswered();
+    repredict(current);
     // Stand-ins included: the settled board names them by where they land,
     // so one dealt under any other name — a masked pile's, say — is swapped
     // out at the settle just as a real card is.
@@ -516,8 +559,17 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   const gestures = useChoreographer({
     apply: (event) => applyRef.current(event),
     onIdle: () => {
-      gesturing.current = false;
-      pump();
+      // Idle when the last event is APPLIED; its piece is still flying.
+      if (landing.current !== null) clearTimeout(landing.current);
+      const tail = prefersReducedMotion()
+        ? 0
+        : tailMs(drawn.current, { dealStaggerMs: opts.dealStaggerMs }) / Math.max(0.05, opts.speed ?? 1);
+      drawn.current = [];
+      landing.current = setTimeout(() => {
+        landing.current = null;
+        gesturing.current = false;
+        pump();
+      }, tail);
     },
     speed: opts.speed,
     dealStaggerMs: opts.dealStaggerMs,
@@ -567,6 +619,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // Whatever the last batch was still animating, this one starts from its
     // settled board.
     flushReset();
+    serverLastAction.current = next.lastAction;
     setLastAction(next.lastAction);
     // Learned BEFORE the events play, not after them.
     //
@@ -745,6 +798,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   useEffect(() => {
     return () => {
       if (pendingReset.current !== null) clearTimeout(pendingReset.current.timer);
+      if (landing.current !== null) clearTimeout(landing.current);
     };
   }, []);
 
@@ -765,7 +819,11 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     // From the last move still waiting, if there is one: Rummy's meld then
     // discard is two moves on one turn, the second made on the first's
     // predicted table.
-    const base = last ? last.state : (applied ?? frame)!.state;
+    // An answered move with nothing predicted stands where its answer,
+    // still playing, puts the table.
+    const base = last
+      ? (last.state ?? (last.answered ? (playing.current?.state ?? null) : null))
+      : (applied ?? frame)!.state;
     const prediction = definition && base !== null ? predict(definition, base, seat, action, knownToTable) : null;
     pending.current.push({
       n,
@@ -780,6 +838,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     clearDims();
     if (prediction && prediction.gesture.length > 0) {
       gesturing.current = true;
+      drawn.current.push(...prediction.gesture);
       gestures.push(prediction.gesture);
     } else {
       // Nothing to show of it yet — a card off the stock, a tile off the
@@ -788,6 +847,18 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
       if (pressed) emitPress({ piece: pressed });
     }
     opts.submit(action, { epoch, n });
+  };
+
+  /**
+   * What a move taken back leaves behind, once it is gone from `pending`:
+   * the pods say who really acted last, and — with nothing else of this
+   * player's still waiting — a flourish started on the press (LRC's open
+   * tumble) stops rather than run on with no answer coming.
+   */
+  const takeBack = () => {
+    const mine = pending.current.at(-1);
+    setLastAction(mine ? { seat: mine.seat, action: mine.action } : serverLastAction.current);
+    if (!mine) emitTakeBack();
   };
 
   /**
@@ -800,15 +871,18 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
     const refused = opts.refused;
     if (!refused || refused.move.epoch !== epoch) return;
     const at = pending.current.findIndex((p) => p.n === refused.move.n);
-    if (at < 0) return;
-    pending.current = pending.current.slice(0, at);
-    publishPending();
-    gestures.skip();
-    gesturing.current = false;
-    // Mid-batch, the frame playing settles to its own board soon enough.
-    const board = applied ?? frame;
-    if (!playing.current && !pendingReset.current && board) adoptBoard(board);
-    if (board) repredict(board);
+    if (at >= 0) {
+      pending.current = pending.current.slice(0, at);
+      publishPending();
+      gestures.skip();
+      stopGesture();
+      // Mid-batch, the frame playing settles to its own board soon enough —
+      // and that board carries the hand's dims, which the press cleared.
+      const board = applied ?? frame;
+      if (!playing.current && !pendingReset.current && board) adoptBoard(board);
+      if (board) repredict(board);
+    }
+    takeBack();
     pump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refusedAt]);
@@ -818,13 +892,15 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
    * swallowed it — stops being believed: the server's board comes back.
    */
   useEffect(() => {
-    const oldest = predictions[0];
+    // An answered move is waiting on nothing but its frame's playback.
+    const oldest = predictions.find((p) => !p.answered);
     if (!oldest) return;
     const timer = setTimeout(
       () => {
-        if (pending.current[0]?.n !== oldest.n) return;
-        pending.current = [];
+        if (pending.current.find((p) => !p.answered)?.n !== oldest.n) return;
+        pending.current = pending.current.filter((p) => p.answered);
         publishPending();
+        takeBack();
         const board = applied ?? frame;
         if (!playing.current && !pendingReset.current && board) adoptBoard(board);
         pump();
@@ -851,7 +927,7 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   // server — the last one predicted whole. A move that could not be leaves
   // the table waiting on the server (`waiting`).
   const ahead = [...predictions].reverse().find((p) => p.state !== null)?.state ?? null;
-  const waiting = predictions.some((p) => p.state === null);
+  const waiting = predictions.some((p) => p.state === null && !p.answered);
   const seen = (ahead ?? shown.state) as S;
   const onTurn =
     ahead !== null && opts.definition ? opts.definition.currentSeat(ahead) : shown.currentSeat;

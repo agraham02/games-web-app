@@ -15,7 +15,7 @@ import { botColour, botName } from "@/games/_shared/botIdentity";
 import { chipsHeld, diceCountFor } from "@/games/lrc/state";
 import type { LrcAction, LrcState } from "@/games/lrc/types";
 import { DURATION, TRANSITIONS, prefersReducedMotion } from "@/motion/presets";
-import { emitDice, onDice } from "@/table/fx";
+import { emitDice, onDice, onTakeBack } from "@/table/fx";
 import { BandNote, HandZone } from "@/table/HandZone";
 import { Button } from "@/ui/primitives/Button";
 import { DiceFace } from "@/ui/primitives/DiceFace";
@@ -336,11 +336,14 @@ function DiceOverlay() {
       }),
     [],
   );
+  // A throw the server refused has no result coming: stop it at once.
+  useEffect(() => onTakeBack(() => setRoll((prev) => (prev?.open ? null : prev))), []);
 
   useEffect(() => {
     if (!roll || (tick >= TUMBLE_TICKS && !roll.open)) return;
     const id = setTimeout(() => {
-      // A throw whose result never came (refused, or lost) stops tumbling.
+      // A throw whose result never came (lost, and not refused — that stops
+      // it at once) gives up tumbling.
       if (roll.open && tick + 1 >= OPEN_TUMBLE_MAX_TICKS) setRoll(null);
       else setTick((t) => t + 1);
     }, TUMBLE_TICK_MS);

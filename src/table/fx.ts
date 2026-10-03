@@ -1,5 +1,6 @@
 /**
- * One-shot flourishes — the slam, LRC's dice, and a press answered.
+ * One-shot flourishes — the slam, LRC's dice, a press answered, and a move
+ * taken back.
  *
  * **Why this is not the table store.** Everything in `store.ts` is table
  * STATE: where a piece is, whether it is face up, what it is doing. It
@@ -68,6 +69,24 @@ export function onDice(listener: (fx: DiceFx) => void): () => void {
 
 export function emitDice(fx: DiceFx): void {
   for (const listener of diceListeners) listener(fx);
+}
+
+/**
+ * A move this page showed was taken back: refused, or never answered. A
+ * flourish started on the press and waiting on the server's answer (LRC's
+ * open tumble) stops here instead of running on with nothing to land it.
+ */
+const takeBackListeners = new Set<() => void>();
+
+export function onTakeBack(listener: () => void): () => void {
+  takeBackListeners.add(listener);
+  return () => {
+    takeBackListeners.delete(listener);
+  };
+}
+
+export function emitTakeBack(): void {
+  for (const listener of takeBackListeners) listener();
 }
 
 /**

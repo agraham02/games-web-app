@@ -29,6 +29,7 @@ import { RoomRegistry } from "@/server/RoomRegistry";
 import type { Connection } from "@/server/RoomRuntime";
 import { makePeer, Router, type Peer } from "@/server/router";
 import { useTableStore } from "@/table/store";
+import { playbackMs } from "@/motion/choreographer";
 import { afterShown, openingPosition, READY_BEAT_MS, useOnlineRuntime } from "./useOnlineRuntime";
 
 /* ============================================================
@@ -815,15 +816,29 @@ describe("your own move, shown before the server answers", () => {
       show,
       outbox,
       last: () => current,
-      /** Sends what Ada's page sent, and shows her what came back. */
-      deliver() {
+      /**
+       * Sends what Ada's page sent, and shows her what came back — or, with
+       * `watch: false`, hands her only the answer and lets no time pass.
+       */
+      deliver({ watch = true } = {}) {
         const sent = outbox.shift()!;
         say(ada, { t: "action", action: sent.action, ...sent.tag });
         clock.drain();
         const fresh = framesOf(adaConn).slice(delivered);
+        if (!watch) {
+          delivered += 1;
+          current = fresh[0]!;
+          hook.rerender();
+          return fresh.slice(0, 1);
+        }
         delivered += fresh.length;
         for (const frame of fresh) show(frame);
         return fresh;
+      },
+      /** Hands Ada a frame and lets no time pass. */
+      land(frame: FrameView) {
+        current = frame;
+        hook.rerender();
       },
       refuse(move: MoveTag) {
         refused = { move, at: (refused?.at ?? 0) + 1 };
@@ -870,11 +885,81 @@ describe("your own move, shown before the server answers", () => {
 
   it("takes the card back if the server refuses it", () => {
     const t = adaOnTurn();
+    const before = t.hook.result.current!.lastAction;
     const card = playAny(t);
     for (let k = 0; k < 5; k++) tick(100);
     t.refuse(t.outbox[0]!.tag!);
     expect(zoneOf(card)).toBe("hand");
     expect(t.hook.result.current!.isHeroTurn).toBe(true);
+    // The pods no longer say Ada just played it.
+    expect(t.hook.result.current!.lastAction).toEqual(before);
+  });
+
+  it("still takes it back when a frame saying it was dealt with lands first", () => {
+    const t = adaOnTurn();
+    const before = t.hook.result.current!.lastAction;
+    const card = playAny(t);
+    for (let k = 0; k < 5; k++) tick(100);
+    // `handled` counts a refused move too, and here it beats the refusal.
+    t.show({ ...t.last(), seq: 0, events: [], handled: t.outbox[0]!.tag, answers: undefined });
+    t.refuse(t.outbox[0]!.tag!);
+    expect(zoneOf(card)).toBe("hand");
+    expect(t.hook.result.current!.lastAction).toEqual(before);
+  });
+
+  /** Plays and answers Ada's turns until she is the one to finish a trick. */
+  function adaFinishesATrick() {
+    const t = adaOnTurn();
+    for (let i = 0; i < 13; i++) {
+      if ((t.hook.result.current!.state as SpadesState).trick.length === 3) break;
+      playAny(t);
+      t.deliver();
+    }
+    expect((t.hook.result.current!.state as SpadesState).trick).toHaveLength(3);
+    return t;
+  }
+
+  it("lets the card that finishes a trick land before the trick is collected", () => {
+    const t = adaFinishesATrick();
+    const card = playAny(t);
+    const [answer] = t.deliver({ watch: false });
+    const collect = answer!.events.findIndex((e) => e.t === "collect");
+    expect(collect, "the answer collects the trick").toBeGreaterThan(0);
+    // When the frame itself would collect it, counted from the press: the
+    // play's own beat included, which stripping the play must not lose.
+    const due = playbackMs(answer!.events.slice(0, collect + 1));
+    tick(due - 20 - 50);
+    expect(zoneOf(card), "collected from under the card still flying in").toBe("trick");
+    for (let k = 0; k < 20; k++) tick(100);
+    expect(zoneOf(card)).not.toBe("trick");
+  });
+
+  it("lets your own card land before adopting a board that no longer names it", () => {
+    const t = adaOnTurn();
+    const card = playAny(t);
+    const tag = t.outbox[0]!.tag!;
+    // An answer with nothing left to play once the gesture is stripped, whose
+    // board names the card otherwise — BS's pile, face down, by slot.
+    const { [card]: _renamed, ...placements } = t.last().placements;
+    t.land({ ...t.last(), seq: 0, events: [], placements, handled: tag, answers: tag.n });
+    expect(zoneOf(card), "unmounted while still flying").toBe("trick");
+    for (let k = 0; k < 10; k++) tick(100);
+    expect(zoneOf(card)).toBeUndefined();
+  });
+
+  it("never shows the table from before the move while its answer plays", () => {
+    const t = adaFinishesATrick();
+    const seat = t.last().seat!;
+    const held = () => (t.hook.result.current!.state as SpadesState).hands[seat]!.length;
+    playAny(t);
+    const after = held();
+    const seen: number[] = [];
+    t.deliver({ watch: false });
+    for (let k = 0; k < 40; k++) {
+      seen.push(held());
+      tick(50);
+    }
+    expect(Math.max(...seen), "the card went back into the hand").toBe(after);
   });
 
   it("keeps the card where it was played when somebody else's frame lands first", () => {

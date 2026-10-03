@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DURATION } from "@/motion/presets";
 import { createRng } from "@/engine/rng";
 import { createLrc } from "@/games/lrc/rules";
-import { emitDice } from "@/table/fx";
+import { emitDice, emitTakeBack } from "@/table/fx";
 import { resolveTable } from "@/table/geometry";
 import { useTableStore } from "@/table/store";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -134,6 +134,22 @@ describe("the dice overlay", () => {
     // Given up (and fading out): nothing moves any more.
     const settled = after(10_000);
     expect(after(1_000)).toBe(settled);
+  });
+
+  it("stops at once when the roll is refused", () => {
+    render(<LrcControls view={view} live={live} />);
+    act(() => emitDice({ seat: 0, faces: null, count: 2 }));
+    expect(shown()).toHaveLength(2);
+    act(() => emitTakeBack());
+    // Fading out at once (jsdom never finishes the exit), not tumbling on
+    // for the eight seconds a lost result gets.
+    const still = shown().join("|");
+    for (let t = 0; t < 1_000; t += 100) {
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(shown().join("|")).toBe(still);
+    }
   });
 
   it("shows the result without the tumble under reduced motion", () => {
