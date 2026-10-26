@@ -17,14 +17,17 @@
  * the match (targets, stakes), the optional rules, and the bots.
  */
 
-import { useMemo } from "react";
+import { ChevronDown } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { BotDifficulty } from "@/engine/types";
 import {
   isAvailable,
   isVisible,
+  summarizeRules,
   textOf,
   withOption,
   type ChoiceOption,
+  type GameSetupSpec,
   type NumberOption,
   type OptionSpec,
   type SetupMode,
@@ -60,9 +63,11 @@ export interface GameOptionsProps {
 export function fieldCount(game: GameId, value: SetupValue, mode: SetupMode): number {
   const spec = GAMES[game].setup;
   const visible = spec.options.filter((o) => isVisible(o, value.settings, mode));
-  const toggles = visible.some((o) => o.kind === "toggle") ? 1 : 0;
-  const others = visible.filter((o) => o.kind !== "toggle").length;
-  return others + toggles + 1 /* players */ + (spec.difficulty ? 1 : 0);
+  const plain = visible.filter((o) => !o.section);
+  const toggles = plain.some((o) => o.kind === "toggle") ? 1 : 0;
+  const others = plain.filter((o) => o.kind !== "toggle").length;
+  const houseRules = visible.some((o) => o.section) ? 1 : 0;
+  return others + toggles + houseRules + 1 /* players */ + (spec.difficulty ? 1 : 0);
 }
 
 export function GameOptions({ game, mode, value, onChange, locked = false, className }: GameOptionsProps) {
@@ -72,9 +77,13 @@ export function GameOptions({ game, mode, value, onChange, locked = false, class
   const seats = Math.min(bounds.max, Math.max(bounds.min, value.seats));
 
   const visible = spec.options.filter((o) => isVisible(o, settings, mode));
-  const rulesets = visible.filter((o): o is ChoiceOption => o.kind === "choice" && o.ruleset === true);
-  const match = visible.filter((o) => o.kind !== "toggle" && !(o.kind === "choice" && o.ruleset));
-  const toggles = visible.filter((o): o is ToggleOption => o.kind === "toggle");
+  // Rules with a section are drawn together as house rules; the rest are the
+  // form as it has always been.
+  const plain = visible.filter((o) => !o.section);
+  const houseRules = visible.filter((o) => o.section);
+  const rulesets = plain.filter((o): o is ChoiceOption => o.kind === "choice" && o.ruleset === true);
+  const match = plain.filter((o) => o.kind !== "toggle" && !(o.kind === "choice" && o.ruleset));
+  const toggles = plain.filter((o): o is ToggleOption => o.kind === "toggle");
   const twoColumns = fieldCount(game, value, mode) > 3;
 
   const set = (key: string, next: string | number | boolean) =>
@@ -122,6 +131,17 @@ export function GameOptions({ game, mode, value, onChange, locked = false, class
         )}
 
         {match.map(field)}
+
+        {houseRules.length > 0 ? (
+          <HouseRules
+            spec={spec}
+            options={houseRules}
+            settings={settings}
+            mode={mode}
+            locked={locked}
+            onSet={set}
+          />
+        ) : null}
 
         {/* Its own height, opening and closing: Caribbean's three rules
             arrive and leave with the ruleset, and used to jump the form. */}
@@ -198,5 +218,87 @@ function ChoiceField({ option, settings, locked, onSet }: FieldProps<ChoiceOptio
         }}
       />
     </SetupField>
+  );
+}
+
+/**
+ * A long list of optional rules, kept out of the way.
+ *
+ * A game with a dozen switches (Chromaly) would otherwise make its setup a
+ * wall of them before the player has seen "Deal in". Closed, it says in one
+ * line what differs from the chosen preset; open, the rules sit under their
+ * section headings. Whether it is open is the player's alone — changing a
+ * rule never opens or closes it under their hand.
+ */
+function HouseRules({
+  spec,
+  options,
+  settings,
+  mode,
+  locked,
+  onSet,
+}: {
+  spec: GameSetupSpec;
+  options: readonly OptionSpec[];
+  settings: Readonly<Record<string, unknown>>;
+  mode: SetupMode;
+  locked: boolean;
+  onSet: (key: string, value: string | number | boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const summary = summarizeRules(spec, settings, mode);
+  const sections = [...new Set(options.map((o) => o.section!))];
+
+  return (
+    <div className="flex w-full flex-col gap-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 rounded-lg text-left"
+      >
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-xs font-bold text-bone-200">House rules</span>
+          <span className="truncate text-[11px] text-bone-500">
+            {summary.length > 0 ? summary.join(" · ") : "As the rules above say"}
+          </span>
+        </span>
+        <ChevronDown
+          size={16}
+          aria-hidden
+          className={cn("shrink-0 text-bone-400 transition-transform duration-200", open && "rotate-180")}
+        />
+      </button>
+      <Collapse open={open}>
+        <div className="flex flex-col gap-6 pt-1">
+          {sections.map((section) => (
+            <fieldset key={section} className="flex flex-col gap-3">
+              <legend className="eyebrow mb-1">{section}</legend>
+              {options
+                .filter((o) => o.section === section)
+                .map((option) => {
+                  if (option.kind === "number") {
+                    return <NumberField key={option.key} option={option} settings={settings} locked={locked} onSet={onSet} />;
+                  }
+                  if (option.kind === "choice") {
+                    return <ChoiceField key={option.key} option={option} settings={settings} locked={locked} onSet={onSet} />;
+                  }
+                  return (
+                    <Toggle
+                      key={option.key}
+                      label={option.label}
+                      hint={textOf(option.hint, settings) ?? ""}
+                      checked={settings[option.key] === true}
+                      unavailable={!isAvailable(option, settings)}
+                      locked={locked}
+                      onChange={(on) => onSet(option.key, on)}
+                    />
+                  );
+                })}
+            </fieldset>
+          ))}
+        </div>
+      </Collapse>
+    </div>
   );
 }

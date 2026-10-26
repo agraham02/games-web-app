@@ -64,6 +64,13 @@ interface OptionBase {
    * buy-in left over from last week's game is a surprise at the next table.
    */
   volatile?: boolean;
+  /**
+   * The group this rule is drawn under ("Drawing", "Special plays"). A game
+   * with a long list of optional rules sets it on every one of them, and
+   * `GameOptions` draws them together as house rules, behind a one-line
+   * summary, instead of as a wall of switches.
+   */
+  section?: string;
 }
 
 /** An open-ended number: a target score, a stack. */
@@ -106,6 +113,26 @@ export interface ToggleOption extends OptionBase {
 
 export type OptionSpec = NumberOption | ChoiceOption | ToggleOption;
 
+/**
+ * Named bundles of rules ("Classic", "Party"), so a host picks a way of
+ * playing and then adjusts it, rather than setting a dozen switches.
+ *
+ * The preset itself is an ordinary `ruleset` choice among the options (the
+ * form draws it first). What this adds is the coupling: picking one copies
+ * its values onto the rules, and changing any of those rules afterwards
+ * moves the choice to whichever preset the rules now match — or to
+ * `custom`. Data, not an `adjust` per game, so every game that has presets
+ * couples them the same way.
+ */
+export interface PresetSpec {
+  /** The option holding the preset. */
+  key: string;
+  /** Its value when the rules match no preset. */
+  custom: string;
+  /** Each preset's rules: option key to value. */
+  values: Readonly<Record<string, Readonly<Record<string, OptionValue>>>>;
+}
+
 export interface GameSetupSpec {
   /** One or two plain sentences: what the game IS, for someone new to it. */
   description: Text;
@@ -117,6 +144,13 @@ export interface GameSetupSpec {
   seatsHint?: (s: Settings, bounds: { min: number; max: number }) => string | undefined;
   /** Couplings: the settings after `key` changed to its new value. */
   adjust?: (next: Record<string, unknown>, key: string) => Record<string, unknown>;
+  presets?: PresetSpec;
+  /**
+   * How the lobby's folded panel reads. `"all"` (the default) lists every
+   * option; `"changes"` lists the preset and only the rules that differ from
+   * it, so a game with a dozen switches is not a dozen words of "off".
+   */
+  summary?: "all" | "changes";
 }
 
 /* ============================================================
@@ -184,6 +218,20 @@ export function defaultSettings(spec: GameSetupSpec): Record<string, OptionValue
   return Object.fromEntries(spec.options.map((o) => [o.key, o.default]));
 }
 
+/** The rule options a preset sets — the keys any preset names. */
+function presetKeys(p: PresetSpec): Set<string> {
+  return new Set(Object.values(p.values).flatMap((v) => Object.keys(v)));
+}
+
+/** The preset whose rules these settings match exactly, else `custom`. */
+function matchingPreset(spec: GameSetupSpec, p: PresetSpec, s: Settings): string {
+  const read = (key: string) => s[key] ?? spec.options.find((o) => o.key === key)?.default;
+  for (const [name, values] of Object.entries(p.values)) {
+    if (Object.entries(values).every(([key, value]) => read(key) === value)) return name;
+  }
+  return p.custom;
+}
+
 /** One option changed: the new settings, couplings applied. */
 export function withOption(
   spec: GameSetupSpec,
@@ -191,7 +239,16 @@ export function withOption(
   key: string,
   value: OptionValue,
 ): Record<string, unknown> {
-  const next = { ...s, [key]: value };
+  let next: Record<string, unknown> = { ...s, [key]: value };
+  const p = spec.presets;
+  if (p) {
+    if (key === p.key) {
+      const values = typeof value === "string" ? p.values[value] : undefined;
+      if (values) next = { ...next, ...values };
+    } else if (presetKeys(p).has(key)) {
+      next = { ...next, [p.key]: matchingPreset(spec, p, next) };
+    }
+  }
   return spec.adjust ? spec.adjust(next, key) : next;
 }
 
@@ -518,26 +575,55 @@ export const GAME_SETUPS = {
   bs: BS,
 } as const satisfies Record<string, GameSetupSpec>;
 
+function describe(option: OptionSpec, s: Settings): string {
+  const value = s[option.key];
+  if (option.kind === "choice") {
+    const choice = option.choices.find((c) => c.value === value) ?? option.choices.find((c) => c.value === option.default);
+    return choice ? (option.ruleset ? choice.label : `${option.label} ${choice.label}`) : "";
+  }
+  if (option.kind === "number") {
+    const n = typeof value === "number" ? value : option.default;
+    return `${option.format ? option.format(n) : n} ${option.unit(n)}`;
+  }
+  const on = value === true && isAvailable(option, s);
+  return `${option.label} ${on ? "on" : "off"}`;
+}
+
+/**
+ * The rules (options with a `section`) that differ from the chosen preset —
+ * one phrase each. Empty when the game is played exactly as the preset says,
+ * which is always so for a named preset (changing any rule moves the choice
+ * on, `withOption`). Under `custom` there is no preset to differ from, so it
+ * is what differs from the defaults: the rules that are on.
+ */
+export function summarizeRules(spec: GameSetupSpec, s: Settings, mode: SetupMode): string[] {
+  const p = spec.presets;
+  const base = p ? p.values[String(s[p.key])] : undefined;
+  const out: string[] = [];
+  for (const option of spec.options) {
+    if (!option.section || !isVisible(option, s, mode)) continue;
+    const fallback = base?.[option.key] ?? option.default;
+    const value = s[option.key] ?? option.default;
+    const inForce = option.kind === "toggle" ? value === true && isAvailable(option, s) : value;
+    if (inForce === fallback) continue;
+    out.push(describe(option, s));
+  }
+  return out;
+}
+
 /**
  * A game's setup in a few words — "Caribbean · 10 games · Partners off" —
  * for the lobby's folded Game panel. Only what is in force: hidden options
- * are left out, and an unavailable rule reads as off.
+ * are left out, and an unavailable rule reads as off. A game with
+ * `summary: "changes"` names its preset and only the rules that differ.
  */
 export function summarizeSetup(spec: GameSetupSpec, s: Settings, mode: SetupMode): string[] {
   const parts: string[] = [];
+  const changes = spec.summary === "changes";
   for (const option of spec.options) {
     if (!isVisible(option, s, mode)) continue;
-    const value = s[option.key];
-    if (option.kind === "choice") {
-      const choice = option.choices.find((c) => c.value === value) ?? option.choices.find((c) => c.value === option.default);
-      if (choice) parts.push(option.ruleset ? choice.label : `${option.label} ${choice.label}`);
-    } else if (option.kind === "number") {
-      const n = typeof value === "number" ? value : option.default;
-      parts.push(`${option.format ? option.format(n) : n} ${option.unit(n)}`);
-    } else {
-      const on = value === true && isAvailable(option, s);
-      parts.push(`${option.label} ${on ? "on" : "off"}`);
-    }
+    if (changes && option.section) continue;
+    parts.push(describe(option, s));
   }
-  return parts;
+  return changes ? [...parts, ...summarizeRules(spec, s, mode)] : parts;
 }
