@@ -45,6 +45,7 @@ import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { Toggle } from "@/ui/primitives/Toggle";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameOptions } from "@/ui/setup/GameOptions";
+import { readSavedSetup, saveSetup } from "@/ui/setup/savedSetup";
 import { useMediaQuery } from "@/ui/useMediaQuery";
 import { InviteCard } from "./InviteCard";
 import { Roster } from "./Roster";
@@ -243,13 +244,20 @@ function GamePanel({ api }: { api: RoomApi }) {
               ),
             }))}
             locked={locked}
-            // A new game starts on its own defaults — the solo screen's values
-            // (the user's call, 2026-09-26) — keeping only the bots' skill,
-            // which is the room's taste rather than any one game's.
+            // A new game starts on the leader's last setup for it on this
+            // device, else its own defaults — the solo screen's values (the
+            // user's call, 2026-09-26) — keeping only the bots' skill, which
+            // is the room's taste rather than any one game's.
             onChange={(id) => {
               if (!isGameId(id)) return;
               const next = GAMES[id];
-              api.selectGame(id, defaultSettings(next.setup), next.defaultSeats, room.difficulty);
+              const kept = readSavedSetup(id);
+              api.selectGame(
+                id,
+                kept?.settings ?? defaultSettings(next.setup),
+                kept?.seats ?? next.defaultSeats,
+                room.difficulty,
+              );
             }}
           />
           {/*
@@ -285,7 +293,12 @@ function GamePanel({ api }: { api: RoomApi }) {
                   seats: room.seats || entry.defaultSeats,
                   difficulty: room.difficulty,
                 }}
-                onChange={(next) => api.selectGame(entry.id, next.settings, next.seats, next.difficulty)}
+                onChange={(next) => {
+                  // Only the leader's device ever writes: everybody else's
+                  // form is locked and cannot reach here.
+                  saveSetup(entry.id, next, { keepDifficulty: true });
+                  api.selectGame(entry.id, next.settings, next.seats, next.difficulty);
+                }}
               />
             </Swap>
           ) : null}

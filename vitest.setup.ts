@@ -12,3 +12,23 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+
+/**
+ * Nothing is saved between tests.
+ *
+ * A game's setup is remembered on the device (`ui/setup/savedSetup.ts`), in
+ * `localStorage` and a module-level copy of it. In one test file that is one
+ * browser, so a choice made by one test would be the starting point of the
+ * next. Only jsdom has a `localStorage` to clear, and the module is only
+ * worth loading where there is one.
+ */
+import { beforeEach } from "vitest";
+
+beforeEach(async () => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  for (const game of ["spades", "dominoes", "poker", "lrc", "rummy", "bs"]) {
+    window.localStorage.removeItem(`table-games:setup:${game}`);
+  }
+  const { resetSavedSetupCache } = await import("./src/ui/setup/savedSetup");
+  resetSavedSetupCache();
+});

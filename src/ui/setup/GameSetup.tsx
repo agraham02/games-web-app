@@ -12,23 +12,20 @@
  */
 
 import Link from "next/link";
-import { useState } from "react";
-import { defaultSettings, textOf } from "@/session/gameSetup";
+import { textOf } from "@/session/gameSetup";
 import { GAMES, type GameId } from "@/session/registry";
 import { Reveal } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
 import { SetupShell } from "@/ui/primitives/SetupShell";
 import { GameOptions, fieldCount, type SetupValue } from "./GameOptions";
+import { defaultSetup, isDefaultSetup, useSavedSetup } from "./savedSetup";
 
-/** What a new setup starts on: the spec's defaults, the entry's seats. */
-export function initialSetup(game: GameId): SetupValue {
-  const entry = GAMES[game];
-  return { settings: defaultSettings(entry.setup), seats: entry.defaultSeats, difficulty: "steady" };
-}
-
-/** A play page's setup state, starting on the game's defaults. */
+/**
+ * A play page's setup state: what this device last used for the game, else
+ * its defaults, and every change is remembered (`savedSetup.ts`).
+ */
 export function useGameSetup(game: GameId) {
-  return useState<SetupValue>(() => initialSetup(game));
+  return useSavedSetup(game);
 }
 
 export function GameSetup({
@@ -53,9 +50,18 @@ export function GameSetup({
           <Button tone="primary" className="w-full max-w-xs" onClick={onStart}>
             Deal in
           </Button>
-          <Link href="/" className="text-xs text-bone-400 hover:text-bone-200">
-            ← Back
-          </Link>
+          {/* One row, so the button appearing as the form is edited does not
+              push "Deal in" up the screen. */}
+          <div className="flex items-center gap-5 text-xs text-bone-400">
+            <Link href="/" className="hover:text-bone-200">
+              ← Back
+            </Link>
+            {isDefaultSetup(game, value) ? null : (
+              <button type="button" className="hover:text-bone-200" onClick={() => onChange(defaultSetup(game))}>
+                Reset to defaults
+              </button>
+            )}
+          </div>
         </>
       }
     >

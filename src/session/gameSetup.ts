@@ -58,6 +58,12 @@ interface OptionBase {
   visibleWhen?: When;
   /** Only in one mode — BS's challenge window is a room setting. */
   mode?: SetupMode;
+  /**
+   * Never remembered between setups (`ui/setup/savedSetup.ts`): it starts on
+   * its default every time. For anything that costs somebody money — a
+   * buy-in left over from last week's game is a surprise at the next table.
+   */
+  volatile?: boolean;
 }
 
 /** An open-ended number: a target score, a stack. */
@@ -380,6 +386,7 @@ const POKER: GameSetupSpec = {
       ],
       default: 0,
       mode: "room",
+      volatile: true,
     },
   ],
   // Grounded in bots.ts's own tables (`CALL_MARGIN`, `RAISE_EDGE`,
@@ -427,6 +434,7 @@ const LRC: GameSetupSpec = {
       ],
       default: 0,
       mode: "room",
+      volatile: true,
     },
   ],
   // Rolling is the only legal action and the dice are random, so a tier
