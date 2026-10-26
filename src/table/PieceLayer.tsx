@@ -25,6 +25,7 @@ import { memo, useEffect } from "react";
 import { motion, useAnimate } from "motion/react";
 import { HERO, type PieceId } from "@/engine/types";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
+import { ChromaBack, ChromaFace } from "@/ui/primitives/ChromaFace";
 import { TileBack, TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { baseSize, handArt, layoutPiece } from "./layout";
@@ -569,6 +570,8 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
           back={
             meta.kind === "tile" ? (
               <TileBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
+            ) : meta.kind === "chroma" ? (
+              <ChromaBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
             ) : (
               <CardBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
             )
@@ -733,5 +736,6 @@ function PieceFace({
 }) {
   if (kind === "tile") return <TileFace tile={face} w={w} h={h} ariaHidden={ariaHidden} />;
   if (kind === "chip") return <ChipFace colour={face} size={Math.min(w, h)} />;
+  if (kind === "chroma") return <ChromaFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
   return <CardFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
 }

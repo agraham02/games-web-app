@@ -281,6 +281,27 @@ export function bestColor(hand: readonly PieceId[], except?: PieceId): Color {
   return best;
 }
 
+/**
+ * Why a tap on this card did nothing, in plain words - or null when it can be
+ * played. Feedback AFTER an attempt, never a hint before one: it is only asked
+ * once the player has tried the card.
+ */
+export function whyNotPlayable(state: ChromalyState, seat: SeatId, id: PieceId): string | null {
+  if (!(state.hands[seat] ?? []).includes(id)) return "That card is not in your hand";
+  if (state.drawn !== null && id !== state.drawn) return "Only the card you just drew can be played";
+  if (canPlay(state, seat, id)) return null;
+  const card = parseCard(id);
+  if (facingPenalty(state)) {
+    return state.rules.stacking === "off"
+      ? "Take the penalty first"
+      : "That does not answer the penalty";
+  }
+  if (card?.kind === "wild4" && state.rules.plusFour === "honest") {
+    return "A Wild +4 needs a hand with none of the colour in play";
+  }
+  return "That does not match the pile";
+}
+
 /** The seat's cards in hand that are draw cards, for a stack. */
 export function penaltyOf(card: ParsedCard): number {
   return drawAmount(card);

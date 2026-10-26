@@ -301,12 +301,15 @@ describe("calling the last card", () => {
     expect(r.state.calls[0]).toBe("called");
   });
 
-  it("is offered on two cards, on or off turn, and never on three", () => {
+  it("is offered on two cards on your own turn, and not on three or off turn", () => {
     const { def, state } = position(twoLeft);
-    expect(def.legalActions(state, 1).map((a) => a.t)).toEqual(["callLast"]);
-    const three = position({ ...twoLeft, hands: { ...twoLeft.hands, 1: ["Y1.1", "Y2.1", "Y5.1"] } });
-    expect(three.def.legalActions(three.state, 1)).toEqual([]);
-    expect(three.def.validate!(three.state, 1, { t: "callLast", seat: 1 })).toMatch(/two cards/);
+    expect(def.legalActions(state, 0).map((a) => a.t)).toContain("callLast");
+    // Off turn it is not offered: only the window can ask a seat to call.
+    expect(def.legalActions(state, 1)).toEqual([]);
+    expect(def.validate!(state, 1, { t: "callLast", seat: 1 })).toMatch(/own turn/);
+    const three = position({ ...twoLeft, hands: { ...twoLeft.hands, 0: ["R3.1", "R4.1", "R5.2"] } });
+    expect(three.def.legalActions(three.state, 0).map((a) => a.t)).not.toContain("callLast");
+    expect(three.def.validate!(three.state, 0, { t: "callLast", seat: 0 })).toMatch(/two cards/);
   });
 
   it("catching: anyone else's call makes the seat draw two", () => {
@@ -704,18 +707,53 @@ describe("the clock", () => {
     expect(def.currentSeat(state)).toBe(0);
   });
 
-  it("makes a timed-out turn the cautious one: draw, keep, or take the penalty", () => {
-    expect(def.timeoutAction!(state, 0)).toEqual({ t: "draw" });
-    const drew = position({ hands: { 0: ["B1.1", "B2.1"] }, top: TOP, draw: ["R9.1"] });
-    const d = act(drew.def, drew.state, 0, { t: "draw" }).state;
-    expect(drew.def.timeoutAction!(d, 0)).toEqual({ t: "keep" });
+  it("plays a plain card for a person who ran out of time - never a wild", () => {
+    const withPlain = position({ hands: { 0: ["R3.1", "R9.1", "W.1"] }, top: TOP });
+    // The heaviest plain card: the one most worth being rid of.
+    expect(withPlain.def.timeoutAction!(withPlain.state, 0)).toEqual({ t: "play", cards: ["R9.1"] });
+    const onlyWild = position({ hands: { 0: ["W.1", "F.1", "B1.1"] }, top: TOP });
+    expect(onlyWild.def.timeoutAction!(onlyWild.state, 0)).toEqual({ t: "draw" });
+  });
+
+  it("takes the penalty for a person who ran out of time", () => {
     const pen = position({
       rules: { stacking: "same" },
-      hands: { 0: ["RD.1", "B1.1", "B2.1"], 1: ["Y1.1"] },
+      hands: { 0: ["RD.1", "B1.1", "B2.1"], 1: ["GD.1", "Y1.1"] },
       top: TOP,
     });
     const a = act(pen.def, pen.state, 0, { t: "play", cards: ["RD.1"] }).state;
+    // Even holding a +2 it could stack, a timed-out seat just takes it.
     expect(pen.def.timeoutAction!(a, 1)).toEqual({ t: "acceptPenalty" });
+  });
+
+  it("keeps a drawn wild for a person who ran out of time, unless Force Play says it must go", () => {
+    const drew = position({ hands: { 0: ["B1.1", "B2.1"] }, top: TOP, draw: ["W.1"] });
+    const d = act(drew.def, drew.state, 0, { t: "draw" }).state;
+    expect(drew.def.timeoutAction!(d, 0)).toEqual({ t: "keep" });
+    const forced = position({ rules: { forcePlay: true }, hands: { 0: ["B1.1", "B2.1"] }, top: TOP, draw: ["W.1"] });
+    const f = act(forced.def, forced.state, 0, { t: "draw" }).state;
+    expect(forced.def.timeoutAction!(f, 0)).toMatchObject({ t: "play", cards: ["W.1"] });
+  });
+
+  it("leaves a window to its own deadline", () => {
+    expect(def.timeoutAction!(opened, 2)).toBeNull();
+  });
+});
+
+describe("a move that is no choice", () => {
+  it("drawing, when nothing in the hand can be played", () => {
+    const stuck = position({ hands: { 0: ["B1.1", "B2.1", "G3.1"] }, top: TOP });
+    expect(stuck.def.forcedMove!(stuck.state, 0)).toEqual({ t: "draw" });
+  });
+
+  it("is never forced when there is a choice, a card to play, or a call to make", () => {
+    const canPlayOne = position({ hands: { 0: ["R3.1", "B1.1", "G3.1"] }, top: TOP });
+    expect(canPlayOne.def.forcedMove!(canPlayOne.state, 0)).toBeNull();
+    // On two cards the call is also offered, so it is not the only move.
+    const twoCards = position({ hands: { 0: ["B1.1", "B2.1"] }, top: TOP });
+    expect(twoCards.def.forcedMove!(twoCards.state, 0)).toBeNull();
+    // Off turn, nothing.
+    expect(canPlayOne.def.forcedMove!(canPlayOne.state, 1)).toBeNull();
   });
 });
 

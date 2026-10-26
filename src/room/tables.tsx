@@ -23,6 +23,7 @@ import type { FrameView, RoomView } from "@/session/protocol";
 import type { RoomApi } from "./useRoom";
 import type { PieceId } from "@/engine/types";
 import { BsOnline } from "./tables/BsOnline";
+import { ChromalyOnline } from "./tables/ChromalyOnline";
 import { DominoesOnline } from "./tables/DominoesOnline";
 import { LrcOnline } from "./tables/LrcOnline";
 import { PokerOnline } from "./tables/PokerOnline";
@@ -56,7 +57,7 @@ export interface OnlineTableProps {
 export type OnlineTableComponent = (props: OnlineTableProps) => React.ReactNode;
 
 /**
- * All six. Rummy was the last of the original five in, and it sat out not
+ * All seven. Rummy was the last of the original five in, and it sat out not
  * because the room could not draw it but because its RULES answered "the
  * human" with seat 0 in three places — see the note on `GameEntry.online`.
  *
@@ -72,6 +73,7 @@ export const TABLES: Partial<Record<GameId, OnlineTableComponent>> = {
   lrc: LrcOnline,
   rummy: RummyOnline,
   bs: BsOnline,
+  chromaly: ChromalyOnline,
 };
 
 export function tableFor(gameId: GameId | null): OnlineTableComponent | null {

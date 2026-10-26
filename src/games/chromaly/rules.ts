@@ -685,10 +685,10 @@ function reduceChallenge(d: ChromalyState, events: GameEvent[]): void {
  * that leaves someone on a last card opens one too (the 2022 sheet's wording
  * is reaching one card, not playing a second-to-last).
  */
-function openWindow(d: ChromalyState, by: SeatId | null, card: PieceId | null, jumpable: boolean): void {
+function openWindow(d: ChromalyState, by: SeatId, card: PieceId | null, jumpable: boolean): void {
   d.window = null;
   const offenders = offendersOf(d);
-  const jumpers = jumpable && card !== null && by !== null ? jumpersFor(d, by, card) : [];
+  const jumpers = jumpable && card !== null ? jumpersFor(d, by, card) : [];
   if (offenders.length === 0 && jumpers.length === 0) return;
 
   d.windowCount += 1;
@@ -700,6 +700,7 @@ function openWindow(d: ChromalyState, by: SeatId | null, card: PieceId | null, j
       : jumpers;
   d.window = {
     id,
+    by,
     card: jumpers.length > 0 ? card : null,
     jumpers,
     offenders,
@@ -900,10 +901,14 @@ export function legalActions(state: ChromalyState, seat: SeatId): ChromalyAction
     return out;
   }
 
-  // On two cards a seat may say so ahead of the play, on or off its turn.
-  if (hand.length === 2 && state.calls[seat] === undefined) out.push({ t: "callLast", seat });
-
   if (seat !== state.turn) return out;
+
+  // On two cards the seat on turn may say so ahead of the play. Only on its
+  // own turn: offered to everyone it would make every seat on two cards
+  // entitled to act at all times, and "who may act" is the question the
+  // session's turn gate asks. A seat that drops to one card on somebody
+  // else's play is covered by the window, where it can still save itself.
+  if (hand.length === 2 && state.calls[seat] === undefined) out.push({ t: "callLast", seat });
 
   if (state.challenge) out.push({ t: "challenge" });
   if (facingPenalty(state)) out.push({ t: "acceptPenalty" });
@@ -1009,6 +1014,7 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
         if (!entitledToWindow(state, seat)) return "this seat is not in the window";
         return state.window.offenders.length > 0 ? null : "nobody is on a last card";
       }
+      if (seat !== state.turn) return "a last card is called on your own turn";
       if (hand.length !== 2) return "a last card is called on two cards";
       return state.calls[seat] === undefined ? null : "already called";
     }
@@ -1083,21 +1089,49 @@ export function turnHold(state: ChromalyState, seat?: SeatId): number | undefine
 }
 
 /**
- * What to play for a person whose turn timer ran out. Never spends a wild
- * for somebody who is not there: it takes the penalty, keeps a drawn card,
- * or draws - the cautious reading of every position, and always legal.
+ * What to play for a person whose turn timer ran out: a plain card if they
+ * have one, else the cautious reading of the position. Never a wild - those
+ * are the cards that rescue a hand and name a colour for the whole table, so
+ * spending one for somebody who is not there is the one thing that could cost
+ * them the game. Taking a penalty or drawing is always legal, and two timeouts
+ * in a row put a bot in the seat (`markIdle`), who plays for real.
+ *
+ * It has to play SOME card. A table of people all away must still finish: the
+ * suite that leaves every seat silent ends only if each decision has a move
+ * that gets rid of a card.
  */
 export function timeoutAction(state: ChromalyState, seat: SeatId): ChromalyAction | null {
   if (state.window || seat !== state.turn) return null;
   if (facingPenalty(state)) return { t: "acceptPenalty" };
+
+  const plain = playableIds(state, seat)
+    .filter((id) => !isWild(parseCard(id)!))
+    // The heaviest first: it is the one most worth being rid of.
+    .sort((a, b) => points(b) - points(a));
+  if (plain.length > 0) return representative(state, seat, plain[0]!);
+
   if (state.drawn !== null) {
+    // A wild just drawn, and the rules say it must go: that is the one case
+    // where a wild is played for somebody who is not there.
     if (state.rules.forcePlay && canPlay(state, seat, state.drawn)) {
-      const play = representative(state, seat, state.drawn);
-      return play;
+      return representative(state, seat, state.drawn);
     }
     return { t: "keep" };
   }
   return { t: "draw" };
+}
+
+/**
+ * A move that is no choice (see `GameDefinition.forcedMove`): drawing, when
+ * nothing in the hand can be played. Making it says the same thing whether the
+ * seat or the clock does - the table is told they drew - which is what lets it
+ * be made for somebody who has not moved.
+ */
+export function forcedMove(state: ChromalyState, seat: SeatId): ChromalyAction | null {
+  if (state.window !== null || state.drawn !== null || facingPenalty(state)) return null;
+  if (seat !== state.turn) return null;
+  const legal = legalActions(state, seat);
+  return legal.length === 1 && legal[0]!.t === "draw" ? legal[0]! : null;
 }
 
 /* ------------------------------------------------------------------ table */
@@ -1118,6 +1152,12 @@ export function placements(state: ChromalyState, viewer: SeatId): PlacementMap {
   });
 
   const jumping = state.window?.jumpers.includes(viewer) ?? false;
+  // Hints (a setting, off by default) dim what the viewer cannot play. Only
+  // on their own turn, and never inside a window, where what matters is not
+  // the turn's rules at all.
+  const deciding =
+    viewer === state.turn && state.window === null && state.result === null && state.dealt;
+  const playable = new Set(deciding ? playableIds(state, viewer) : []);
   for (let s = 0; s < state.seats; s++) {
     const seat = s as SeatId;
     const hand = state.hands[seat] ?? [];
@@ -1129,6 +1169,7 @@ export function placements(state: ChromalyState, viewer: SeatId): PlacementMap {
       // nothing is committed yet - so the touch preview-then-confirm gate
       // would cost a jump-in its three seconds.
       if (own && (state.rules.doubles || jumping)) place.instantAct = true;
+      if (own && deciding && !playable.has(id)) place.dimmed = true;
       out[id] = place;
     });
   }
@@ -1217,6 +1258,7 @@ export function createChromaly(
     deadline,
     turnHold,
     timeoutAction,
+    forcedMove,
     pieces,
     placements,
     playerView,

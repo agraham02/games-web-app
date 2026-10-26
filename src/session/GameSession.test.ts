@@ -7,6 +7,7 @@
 // server, where it is far more expensive to find.
 
 import { describe, expect, it } from "vitest";
+import type { ChromalyState } from "@/games/chromaly/types";
 import { blindVoteOpen, createSpades } from "@/games/spades/rules";
 import type { SpadesAction, SpadesState } from "@/games/spades/types";
 import { createLrc } from "@/games/lrc/rules";
@@ -413,6 +414,7 @@ describe("legalActions as the submit gate", () => {
     lrc: 6,
     rummy: 4,
     bs: 4,
+    chromaly: 4,
   };
 
   /** Seats a race in progress entitles, or null when no race is open. */
@@ -433,6 +435,15 @@ describe("legalActions as the submit gate", () => {
     if (gameId === "bs" && s.window) {
       const seats = new Set(s.window.pending.map((p) => p.seat));
       return { seats, why: "everyone still able to doubt the play, and nobody else" };
+    }
+    if (gameId === "chromaly") {
+      const c = state as ChromalyState;
+      if (c.window) {
+        return {
+          seats: new Set(c.window.pending.map((p) => p.seat)),
+          why: "everyone still in the window, and nobody else",
+        };
+      }
     }
     if (gameId === "spades") {
       // The blind vote: both partners of a trailing team, at once.

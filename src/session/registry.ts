@@ -17,6 +17,7 @@
 
 import type { BotDifficulty, GameDefinition } from "@/engine/types";
 import { createBs } from "@/games/bs/rules";
+import { createChromaly } from "@/games/chromaly/rules";
 import { createDominoes } from "@/games/dominoes/rules";
 import { createLrc } from "@/games/lrc/rules";
 import { createPoker } from "@/games/poker/rules";
@@ -24,7 +25,7 @@ import { createRummy } from "@/games/rummy/rules";
 import { createSpades } from "@/games/spades/rules";
 import { GAME_SETUPS, parseSettings, type GameSetupSpec } from "./gameSetup";
 
-export type GameId = "spades" | "dominoes" | "poker" | "lrc" | "rummy" | "bs";
+export type GameId = "spades" | "dominoes" | "poker" | "lrc" | "rummy" | "bs" | "chromaly";
 
 // Also the order the home screen lists them in.
 export const GAME_IDS: readonly GameId[] = [
@@ -34,6 +35,7 @@ export const GAME_IDS: readonly GameId[] = [
   "lrc",
   "rummy",
   "bs",
+  "chromaly",
 ];
 
 /** Loose bag off the wire, before `parse` has had a look at it. */
@@ -178,6 +180,34 @@ export const GAMES: Record<GameId, GameEntry> = {
     parse: (raw) => parseSettings(GAME_SETUPS.bs, raw),
     create: (s) =>
       createBs({ target: s.target as number, windowMs: s.windowMs as number }),
+  },
+
+  chromaly: {
+    id: "chromaly",
+    name: "Chromaly",
+    minSeats: 2,
+    maxSeats: 10,
+    defaultSeats: 4,
+    setup: GAME_SETUPS.chromaly,
+    online: true,
+    teams: () => false,
+    // Every house rule is clamped by the spec, and the window by its own
+    // range: zero would make the races unplayable and an hour would park the
+    // table.
+    parse: (raw) => parseSettings(GAME_SETUPS.chromaly, raw),
+    create: (s) =>
+      createChromaly({
+        target: s.target as number,
+        windowMs: s.windowMs as number,
+        drawToMatch: s.drawToMatch as boolean,
+        forcePlay: s.forcePlay as boolean,
+        stacking: s.stacking as "off" | "same" | "upward",
+        plusFour: s.plusFour as "challenge" | "free" | "honest",
+        jumpIn: s.jumpIn as boolean,
+        sevenZero: s.sevenZero as boolean,
+        doubles: s.doubles as boolean,
+        shuffleHands: s.shuffleHands as boolean,
+      }),
   },
 };
 

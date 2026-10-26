@@ -128,6 +128,7 @@ const FLOORS: Record<GameId, Record<string, { state?: number; gesture?: number }
     drawDiscard: { gesture: 1, state: 1 },
   },
   bs: { play: { gesture: 1, state: 1 } },
+  chromaly: { play: { gesture: 0.8, state: 0.5 } },
   dominoes: { play: { gesture: 1, state: 0.9 } },
   // Chips move at the end of a street, so a bet is a state, not a gesture;
   // a call or check that closes the street deals cards nobody has seen.

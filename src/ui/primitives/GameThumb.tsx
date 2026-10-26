@@ -13,6 +13,7 @@
 
 import { GAMES, type GameId } from "@/session/registry";
 import { CardBack, CardFace } from "./CardFace";
+import { ChromaFace } from "./ChromaFace";
 import { ChipFace } from "./ChipFace";
 import { DiceFace } from "./DiceFace";
 import { TileFace } from "./TileFace";
@@ -38,6 +39,8 @@ export function GameThumb({ id, size = "md" }: { id: GameId; size?: keyof typeof
     case "bs":
       // A back rather than a face, because the back of a card is the whole game.
       return <CardBack w={card} h={h} ariaHidden />;
+    case "chromaly":
+      return <ChromaFace card="RV.1" w={card} h={h} detail="index" ariaHidden />;
   }
 }
 
@@ -58,4 +61,5 @@ export const GAME_BLURBS: Record<GameId, string> = {
   poker: "No-limit hold'em, with real side pots and a proper showdown.",
   lrc: "Three dice, three chips, and not one decision to make.",
   bs: "Claim the rank, lie about it, and see who doubts you before the next card goes down.",
+  chromaly: "Match the colour or the number and empty your hand first — with every house rule you can think of, switched on or off.",
 };

@@ -48,6 +48,16 @@
   --color-suit-red: #c0362c;
   --color-suit-ink: #1a1712;
 
+  /* -- Chromaly ------------------------------------------- */
+  /* Four colours that stay apart from each other AND from the green felt
+     they are dealt onto, and an ink for wilds and the back. Every colour
+     also carries a shape (ChromaFace), so colour is never the only signal. */
+  --color-chroma-red: #d44a3f;
+  --color-chroma-yellow: #e8b92f;
+  --color-chroma-green: #3f9d5e;
+  --color-chroma-blue: #3a72c2;
+  --color-chroma-ink: #1d1a16;
+
   /* -- semantic ------------------------------------------- */
   /* A meld that has just closed and is about to turn over. Cool, and
      deliberately OUTSIDE the brass accent: brass everywhere else in this

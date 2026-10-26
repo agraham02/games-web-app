@@ -618,6 +618,7 @@ describe("the whole frame, every game, every turn", () => {
     lrc: 6,
     rummy: 4,
     bs: 4,
+    chromaly: 4,
   };
 
   /**
@@ -633,12 +634,16 @@ describe("the whole frame, every game, every turn", () => {
     lrc: false,
     rummy: true,
     bs: true,
+    chromaly: true,
   };
 
   /**
    * Plays a whole bot match and hands every frame to `visit`, once per
    * viewer: an opponent's seat and a spectator.
    */
+  /** The settings of the case under test: set by each `it` before it plays. */
+  let caseSettings: Record<string, unknown> = {};
+
   function everyFrame(
     gameId: GameId,
     visit: (frame: {
@@ -654,7 +659,7 @@ describe("the whole frame, every game, every turn", () => {
   ) {
     const entry = GAMES[gameId];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
+    const definition = entry.create(entry.parse(caseSettings)) as GameDefinition<any, any>;
     const clock = new TestClock();
     const session = new GameSession({
       definition,
@@ -693,8 +698,31 @@ describe("the whole frame, every game, every turn", () => {
     }
   }
 
-  for (const gameId of GAME_IDS) {
-    it(`${gameId}: names nothing an opponent or a spectator may not identify`, () => {
+  /**
+   * Every game as it plays by default, plus Chromaly with every house rule on:
+   * a hand swap, a hand pass and Shuffle Hands move cards between HIDDEN hands,
+   * which no other game does, and the default rules never reach them.
+   */
+  const CASES: Array<{ gameId: GameId; label: string; settings: Record<string, unknown> }> = [
+    ...GAME_IDS.map((gameId) => ({ gameId, label: gameId, settings: {} })),
+    {
+      gameId: "chromaly",
+      label: "chromaly (every rule on)",
+      settings: {
+        drawToMatch: true,
+        stacking: "same",
+        plusFour: "free",
+        jumpIn: true,
+        sevenZero: true,
+        doubles: true,
+        shuffleHands: true,
+      },
+    },
+  ];
+
+  for (const { gameId, label, settings } of CASES) {
+    it(`${label}: names nothing an opponent or a spectator may not identify`, () => {
+      caseSettings = settings;
       const leaks: string[] = [];
       let checked = 0;
 
@@ -741,7 +769,8 @@ describe("the whole frame, every game, every turn", () => {
       expect(leaks.slice(0, 5)).toEqual([]);
     });
 
-    it(`${gameId}: every event aims at a piece the viewer's table is holding`, () => {
+    it(`${label}: every event aims at a piece the viewer's table is holding`, () => {
+      caseSettings = settings;
       /**
        * `moveTo` does nothing to a piece the store is not tracking, so an
        * event renamed to a stand-in the viewer never had is a silent
@@ -760,8 +789,10 @@ describe("the whole frame, every game, every turn", () => {
       const misses: string[] = [];
       const blanks: string[] = [];
       let masks = 0;
+      const cues = new Set<string>();
 
       everyFrame(gameId, ({ viewer, events, truthBefore, truthAfter }) => {
+        for (const e of events) if (e.t === "cue") cues.add(e.kind);
         const projected = projectEvents(events, truthBefore, truthAfter);
         const held = new Set(Object.keys(redactPlacements(truthBefore, {}).placements));
         const aligned = projected.filter((e) => e.t !== "unmask" && e.t !== "mask");
@@ -798,7 +829,14 @@ describe("the whole frame, every game, every turn", () => {
       expect(misses.slice(0, 5)).toEqual([]);
       expect(blanks.slice(0, 5)).toEqual([]);
       // Guards the guard: these two re-deal pieces the viewer could read.
-      if (gameId === "dominoes" || gameId === "bs") expect(masks).toBeGreaterThan(0);
+      if (gameId === "dominoes" || gameId === "bs" || label.includes("every rule")) {
+        expect(masks).toBeGreaterThan(0);
+      }
+      // Guards the guard: the point of the every-rule case is hands changing
+      // places while hidden, so it must have seen all three ways it happens.
+      if (label.includes("every rule")) {
+        expect([...cues]).toEqual(expect.arrayContaining(["swap", "pass", "shuffleHands"]));
+      }
     });
   }
 });

@@ -27,6 +27,7 @@ import { SeatPod, type SeatView } from "@/table/SeatRing";
 import { render } from "@testing-library/react";
 
 import { playerViews as bs, standings as bsStandings } from "./bs/table";
+import { playerViews as chromaly, standings as chromalyStandings } from "./chromaly/table";
 import { standings as dominoesStandings } from "./dominoes/table";
 import { standings as lrcStandings } from "./lrc/table";
 import { standings as pokerStandings } from "./poker/table";
@@ -45,6 +46,7 @@ const SEATS: Record<GameId, number> = {
   lrc: 6,
   rummy: 4,
   bs: 4,
+  chromaly: 4,
 };
 
 /** Enough of a runtime for a `players` callback; none of them reduce. */
@@ -94,6 +96,8 @@ const CALLERS: Record<GameId, Caller> = {
   poker: (v, state, _s, away, bot) => (poker as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
   spades: (v, state, _s, away, bot) => (spades as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
   bs: (v, state, _s, away, bot) => (bs as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
+  chromaly: (v, state, _s, away, bot) =>
+    (chromaly as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
   // Rummy curries the seat count; the rest read it off state.
   rummy: (v, state, seats, away, bot) =>
     (rummy as AnyFn)(viewFor(v, away, bot), seats)(state, fakeLive(state)),
@@ -279,6 +283,8 @@ describe("standings, seen by somebody who is not playing", () => {
       (lrcStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.lrc(v, state, seats)),
     bs: (v, state, seats) =>
       (bsStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.bs(v, state, seats)),
+    chromaly: (v, state, seats) =>
+      (chromalyStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.chromaly(v, state, seats)),
     rummy: (v, state, seats) => (rummyStandings as AnyFn)(viewFor(v), seats)(state),
   };
 
@@ -296,6 +302,7 @@ describe("standings, seen by somebody who is not playing", () => {
     poker: true,
     lrc: true,
     bs: true,
+    chromaly: true,
     rummy: false,
   };
 

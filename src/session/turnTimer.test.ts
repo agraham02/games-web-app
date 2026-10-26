@@ -312,8 +312,9 @@ describe("every game, with nobody pressing anything", () => {
     lrc: { target: 1 },
     rummy: { target: 100 },
     bs: { target: 1 },
+    chromaly: { target: 100 },
   };
-  const SEATS: Record<GameId, number> = { spades: 4, dominoes: 4, poker: 3, lrc: 3, rummy: 3, bs: 3 };
+  const SEATS: Record<GameId, number> = { spades: 4, dominoes: 4, poker: 3, lrc: 3, rummy: 3, bs: 3, chromaly: 3 };
 
   for (const gameId of GAME_IDS) {
     it(`${gameId}: every decision has a move the timer can make`, () => {

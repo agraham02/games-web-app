@@ -57,6 +57,10 @@ function publicReason(game: GameId, state: unknown, seat: SeatId, action: { t: s
       return `Rummy forced a ${action.t}`;
     case "poker":
       return "poker has no forced move";
+    case "chromaly":
+      // Drawing when nothing can be played: the table is told they drew
+      // either way, so who made it is not a secret.
+      return action.t === "draw" ? null : `Chromaly forced a ${action.t}`;
   }
 }
 

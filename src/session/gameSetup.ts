@@ -23,6 +23,14 @@
 import type { BotDifficulty } from "@/engine/types";
 import { CHALLENGE_MS_ONLINE, DEFAULT_TARGET as BS_DEFAULT_TARGET } from "@/games/bs/state";
 import {
+  DEFAULT_TARGET as CHROMALY_DEFAULT_TARGET,
+  DEFAULT_WINDOW_MS as CHROMALY_DEFAULT_WINDOW_MS,
+  TARGET_MAX as CHROMALY_TARGET_MAX,
+  TARGET_MIN as CHROMALY_TARGET_MIN,
+  WINDOW_MS_MAX as CHROMALY_WINDOW_MS_MAX,
+  WINDOW_MS_MIN as CHROMALY_WINDOW_MS_MIN,
+} from "@/games/chromaly/state";
+import {
   CARIBBEAN_DEFAULT_TARGET,
   CARIBBEAN_TARGET_MAX,
   CARIBBEAN_TARGET_MIN,
@@ -566,6 +574,188 @@ const BS: GameSetupSpec = {
   },
 };
 
+const CHROMALY: GameSetupSpec = {
+  description:
+    "Match the colour or the number on the pile, and be first to empty your hand. Skips, reverses and draw cards make it a fight; the wilds get you out of trouble. Played by the official rules, with house rules to switch on.",
+  summary: "changes",
+  // Named bundles, so a host picks a way of playing and then adjusts it. The
+  // values are what each bundle turns on; everything not named stays off.
+  presets: {
+    key: "preset",
+    custom: "custom",
+    values: {
+      classic: {
+        drawToMatch: false,
+        forcePlay: false,
+        stacking: "off",
+        plusFour: "challenge",
+        jumpIn: false,
+        sevenZero: false,
+        doubles: false,
+        shuffleHands: false,
+      },
+      party: {
+        drawToMatch: true,
+        forcePlay: false,
+        stacking: "upward",
+        plusFour: "challenge",
+        jumpIn: true,
+        sevenZero: true,
+        doubles: false,
+        shuffleHands: false,
+      },
+      caribbean: {
+        drawToMatch: false,
+        forcePlay: false,
+        stacking: "off",
+        plusFour: "challenge",
+        jumpIn: false,
+        sevenZero: false,
+        doubles: true,
+        shuffleHands: false,
+      },
+    },
+  },
+  options: [
+    {
+      kind: "choice",
+      key: "preset",
+      label: "Rules",
+      ruleset: true,
+      hint: (s) =>
+        s.preset === "party"
+          ? "Draw until you can play, stack draw cards, jump in with the identical card, and 7s swap hands."
+          : s.preset === "caribbean"
+            ? "Two of a number at once: the same colour is a Skip, different colours a Reverse."
+            : s.preset === "custom"
+              ? "Your own mix — see House rules below."
+              : "The official rules, as Mattel prints them.",
+      choices: [
+        { value: "classic", label: "Classic" },
+        { value: "party", label: "Party" },
+        { value: "caribbean", label: "Caribbean" },
+        { value: "custom", label: "Custom" },
+      ],
+      default: "classic",
+    },
+    {
+      kind: "number",
+      key: "target",
+      label: "Play to",
+      hint: "A round is worth the points left in everyone else's hands.",
+      min: CHROMALY_TARGET_MIN,
+      max: CHROMALY_TARGET_MAX,
+      step: 50,
+      default: CHROMALY_DEFAULT_TARGET,
+      unit: plural("point", "points"),
+    },
+    {
+      // A room setting only, as BS's: alone against bots the beat is short
+      // and fixed, and in a room the next player is waiting on it.
+      kind: "number",
+      key: "windowMs",
+      label: "Seconds to react",
+      hint: "How long everyone gets to jump in or catch a last card.",
+      min: CHROMALY_WINDOW_MS_MIN,
+      max: CHROMALY_WINDOW_MS_MAX,
+      step: 1_000,
+      default: CHROMALY_DEFAULT_WINDOW_MS,
+      unit: plural("second", "seconds"),
+      format: (ms) => String(Math.round(ms / 1000)),
+      mode: "room",
+    },
+    {
+      kind: "toggle",
+      key: "drawToMatch",
+      label: "Draw to match",
+      hint: "Can't play? Keep drawing until you can, instead of taking one card.",
+      default: false,
+      section: "Drawing",
+    },
+    {
+      kind: "toggle",
+      key: "forcePlay",
+      label: "Force play",
+      hint: "A card you draw that can be played must be played — no keeping it.",
+      default: false,
+      section: "Drawing",
+    },
+    {
+      kind: "choice",
+      key: "stacking",
+      label: "Stacking",
+      hint: (s) =>
+        s.stacking === "same"
+          ? "A +2 can go on a +2, and a +4 on a +4. The penalty grows."
+          : s.stacking === "upward"
+            ? "A +2 on a +2; a +4 on a +2 or a +4. Never a +2 on a +4."
+            : "Off: a draw card is taken at once, and cannot be answered.",
+      choices: [
+        { value: "off", label: "Off" },
+        { value: "same", label: "Same card" },
+        { value: "upward", label: "Equal or higher" },
+      ],
+      default: "off",
+      section: "Draw cards",
+    },
+    {
+      kind: "choice",
+      key: "plusFour",
+      label: "Wild +4",
+      hint: (s) =>
+        s.plusFour === "free"
+          ? "No bluffing: play it any time, and nobody can challenge it."
+          : s.plusFour === "honest"
+            ? "Only legal with no card of the colour in play, so there is nothing to challenge."
+            : "Legal only with no card of the colour in play. The next player may call a bluff: wrong and they draw 6, right and you draw 4.",
+      choices: [
+        { value: "challenge", label: "Challenge" },
+        { value: "free", label: "No bluffing" },
+        { value: "honest", label: "Honest only" },
+      ],
+      default: "challenge",
+      section: "Draw cards",
+    },
+    {
+      kind: "toggle",
+      key: "jumpIn",
+      label: "Jump-In",
+      hint: "Hold the identical card (same colour and number) and you can play it out of turn, in the few seconds after it goes down.",
+      default: false,
+      section: "Special plays",
+    },
+    {
+      kind: "toggle",
+      key: "sevenZero",
+      label: "7-0",
+      hint: "A 7 swaps hands with anyone you choose. A 0 passes every hand one seat along.",
+      default: false,
+      section: "Special plays",
+    },
+    {
+      kind: "toggle",
+      key: "doubles",
+      label: "Pairs",
+      hint: "Play two of a number at once: the same colour is a Skip, different colours a Reverse. Three or more is just a way to shed cards.",
+      default: false,
+      section: "Special plays",
+    },
+    {
+      kind: "toggle",
+      key: "shuffleHands",
+      label: "Shuffle Hands wild",
+      hint: "Adds a wild that gathers every hand, shuffles them together and deals them back out.",
+      default: false,
+      section: "Deck",
+    },
+  ],
+  difficulty: {
+    casual: "Plays what it can, names a colour at random, and forgets to call its last card — and to catch yours.",
+    steady: "Sheds its high cards, saves its wilds, stays in its best colour, and usually remembers to call.",
+    sharp: "Reads which colours you have been missing, aims its draw cards at whoever is about to go out, and almost never misses a last card.",
+  },
+};
+
 export const GAME_SETUPS = {
   spades: SPADES,
   dominoes: DOMINOES,
@@ -573,6 +763,7 @@ export const GAME_SETUPS = {
   lrc: LRC,
   rummy: RUMMY,
   bs: BS,
+  chromaly: CHROMALY,
 } as const satisfies Record<string, GameSetupSpec>;
 
 function describe(option: OptionSpec, s: Settings): string {

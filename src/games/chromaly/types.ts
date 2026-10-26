@@ -100,6 +100,12 @@ export interface Challenge {
 export interface Window {
   /** New with every window: what a deadline's key is built from. */
   id: number;
+  /**
+   * The seat whose play opened it. Public (everybody watched it play), and
+   * what the table keeps lit while the window is open, so the glow does not
+   * walk round the answering queue and give away who holds what.
+   */
+  by: SeatId;
   /** The card a jump-in must match, when one may be jumped in on. */
   card: PieceId | null;
   /**
