@@ -61,6 +61,28 @@ export const DURATION = {
 } as const;
 
 /**
+ * How long each `cue` takes to play, in seconds. The numbers are the longest
+ * a piece of table chrome ever runs for that cue (`ChromalyFx`), and the
+ * choreographer reserves exactly that so a cue is not cut off by the next
+ * frame. Short on purpose: nothing here may feel like waiting.
+ */
+export const CUE_SECONDS: Record<string, number> = {
+    skip: 0.7,
+    reverse: 0.7,
+    draw: 0.6,
+    stack: 0.5,
+    colour: 0.55,
+    jump: 0.6,
+    called: 0.6,
+    caught: 0.7,
+    bluff: 0.9,
+    clean: 0.9,
+    swap: 0.8,
+    pass: 0.8,
+    shuffleHands: 1.0,
+};
+
+/**
  * Deliberate pauses BEFORE a step starts — distinct from DURATION, which
  * is how long a step itself takes once it begins. `trick` is the beat
  * between a trick's 4th card landing and the `collect` event actually

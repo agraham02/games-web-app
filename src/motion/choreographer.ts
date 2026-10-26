@@ -10,7 +10,7 @@
  */
 
 import type { GameEvent } from "@/engine/types";
-import { DURATION, HOLD, STAGGER } from "./presets";
+import { CUE_SECONDS, DURATION, HOLD, STAGGER } from "./presets";
 
 export interface TimedStep {
   event: GameEvent;
@@ -199,6 +199,14 @@ export function choreograph(
           offset: 0,
           duration: (event.final ? DURATION.slamFinal : DURATION.slam) * MS,
         });
+        break;
+
+      case "cue":
+        // Rides with the move it belongs to (offset 0), but with a real
+        // duration like `slam`: an event with no case gets 0 and is
+        // stomped by the next one in the same frame, and these need a beat
+        // to be read. They block nothing - see `blockingMs`.
+        steps.push({ event, offset: 0, duration: (CUE_SECONDS[event.kind] ?? 0.4) * MS });
         break;
 
       case "think":

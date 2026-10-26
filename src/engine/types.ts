@@ -289,7 +289,7 @@ export type PlacementMap = Record<PieceId, Placement>;
  * describe its own physical pieces regardless of how the React layer
  * happens to cache them.
  */
-export type PieceKind = "card" | "tile" | "chip";
+export type PieceKind = "card" | "tile" | "chip" | "chroma";
 
 export interface PieceMeta {
   kind: PieceKind;
@@ -302,6 +302,38 @@ export interface PieceMeta {
    ============================================================ */
 
 export type Tone = "info" | "good" | "bad";
+
+/**
+ * What a `cue` event is about. A closed list, so the choreographer can give
+ * each one a real duration and the table can draw each one — see `cue`.
+ */
+export type CueKind =
+  /** A seat is skipped: a stamp on its pod. */
+  | "skip"
+  /** Direction of play flips: `dir` is the NEW direction (1 clockwise). */
+  | "reverse"
+  /** `amount` cards are about to go to `seat`: the numeral flies to the pod. */
+  | "draw"
+  /** A pending draw grew to `amount`: the stack badge steps up. */
+  | "stack"
+  /** A wild's colour was named: `colour` washes across the table. */
+  | "colour"
+  /** `seat` jumped in out of turn. */
+  | "jump"
+  /** `seat` called its last card. */
+  | "called"
+  /** `seat` was caught without calling. */
+  | "caught"
+  /** A Wild +4 challenge came out as a bluff (`seat` is the guilty one). */
+  | "bluff"
+  /** ...or came out clean (`seat` is the innocent one). */
+  | "clean"
+  /** Two hands change places (a 7). */
+  | "swap"
+  /** Every hand moves one seat on (a 0). */
+  | "pass"
+  /** Every hand is gathered, shuffled and dealt out again. */
+  | "shuffleHands";
 
 export type GameEvent =
   /** Deck is randomised. Carries the seed so a log replays exactly. */
@@ -481,6 +513,25 @@ export type GameEvent =
        * the one that belongs to whoever is looking.
        */
       selfTone?: Tone;
+    }
+  /**
+   * Something happened that the TABLE should make a show of, with no piece
+   * to move for it: a skip, a reverse, a stack growing, a bluff called.
+   *
+   * One event with a closed `kind`, not a union member per effect, so the
+   * choreographer, redaction and every driver learn about it once. It names
+   * seats and numbers and never a piece, so it passes through redaction
+   * untouched — and like `slam` it goes through the queue, which is what
+   * makes it obey skip, the speed setting and reduced motion for free.
+   * Purely cosmetic: nothing may depend on it having been drawn.
+   */
+  | {
+      t: "cue";
+      kind: CueKind;
+      seat?: SeatId;
+      amount?: number;
+      dir?: 1 | -1;
+      colour?: string;
     }
   | { t: "phase"; phase: string }
   | { t: "score"; deltas: Record<SeatId, number> }
