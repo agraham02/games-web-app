@@ -33,6 +33,7 @@ import {
   togglePlayCard,
   turnSeat,
 } from "./table";
+import { chromalyScenarios } from "./scenarios";
 
 type Live = GameRuntime<ChromalyState, ChromalyAction>;
 
@@ -78,6 +79,7 @@ export default function ChromalyPlayPage() {
       onPieceTap={(id, live) => tapCard(view, id, live, pickUp(live))}
       handActive={(live) => canAct(view, live) || canJump(view, live)}
       turnSeat={turnSeat}
+      scenarios={chromalyScenarios}
       onRematch={() => {
         clearHeld();
         setGameKey((k) => k + 1);

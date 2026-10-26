@@ -56,6 +56,7 @@ import { useHeldMarks } from "@/table/useHeldMarks";
 import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { SHAPE_GLYPH } from "@/ui/primitives/ChromaFace";
 import { announce } from "@/ui/disclosure";
+import { PileChrome } from "./PileChrome";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 
 /** Chromaly's own Settings: Hints (dimming what cannot be played) and Card spacing. */
@@ -341,6 +342,7 @@ export function ChromalyTable({
 
   return (
     <>
+      <PileChrome state={state} />
       {/* Thirty cards after a few penalties is possible; past a point the hand
           pans rather than compressing into slivers too thin to tap. */}
       {isSeated(view, state) ? <HandPan count={(state.hands[view.viewerSeat] ?? []).length} /> : null}
