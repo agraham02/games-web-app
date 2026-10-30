@@ -11,7 +11,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { installBrain } from "./brain";
-import { vectorBrainFrom } from "./vectorBrain";
+import { VECTORS_FILE, VOCAB_FILE, vectorBrainFrom } from "./vectorBrain";
 
 /** Where the build script put them, relative to the project root. */
 const DIR = join(process.cwd(), "public", "mindmeld");
@@ -19,8 +19,8 @@ const DIR = join(process.cwd(), "public", "mindmeld");
 export async function loadServerBrain(): Promise<boolean> {
   try {
     const [vocab, vectors] = await Promise.all([
-      readFile(join(DIR, "vocab-v1.json"), "utf8"),
-      readFile(join(DIR, "vectors-v1.bin")),
+      readFile(join(DIR, VOCAB_FILE), "utf8"),
+      readFile(join(DIR, VECTORS_FILE)),
     ]);
     installBrain(vectorBrainFrom(vocab, vectors));
     return true;

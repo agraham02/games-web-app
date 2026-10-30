@@ -5,7 +5,7 @@ import type { BotDifficulty } from "@/engine/types";
 import { associationsOf } from "./associations";
 import { fallbackBrain } from "./brain";
 import { isProfane } from "./profanity";
-import { DIM, vectorBrainFrom } from "./vectorBrain";
+import { VECTORS_FILE, VOCAB_FILE, vectorBrainFrom } from "./vectorBrain";
 import { sameWord, tokens } from "./words";
 
 /**
@@ -19,8 +19,8 @@ import { sameWord, tokens } from "./words";
  * every time, which is no game at all.
  */
 
-const vocabJson = readFileSync("public/mindmeld/vocab-v1.json", "utf8");
-const vectors = readFileSync("public/mindmeld/vectors-v1.bin");
+const vocabJson = readFileSync(`public/mindmeld/${VOCAB_FILE}`, "utf8");
+const vectors = readFileSync(`public/mindmeld/${VECTORS_FILE}`);
 const brain = vectorBrainFrom(vocabJson, vectors);
 const TIERS: BotDifficulty[] = ["casual", "steady", "sharp"];
 
@@ -282,9 +282,12 @@ describe("the shipped data", () => {
   const vocab = JSON.parse(vocabJson) as string[];
 
   it("is the size the build script says, and small enough to ship", () => {
-    expect(vocab).toHaveLength(15_000);
-    expect(vectors.length).toBe(vocab.length * DIM);
-    expect(vectors.length + vocabJson.length).toBeLessThan(2 * 1024 * 1024);
+    // 15,000 common words, less the few Numberbatch does not know.
+    expect(vocab.length).toBeGreaterThan(14_900);
+    expect(brain.dim).toBe(300);
+    expect(vectors.length).toBe(vocab.length * brain.dim);
+    // Solo Mind Meld fetches these before its first deal.
+    expect(vectors.length + vocabJson.length).toBeLessThan(5 * 1024 * 1024);
   });
 
   it("is lowercase words of three to fourteen letters, with no duplicates", () => {
