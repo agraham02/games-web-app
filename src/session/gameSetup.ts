@@ -592,6 +592,7 @@ const CHROMALY: GameSetupSpec = {
         jumpIn: false,
         sevenZero: false,
         doubles: false,
+        plainPairs: false,
         shuffleHands: false,
       },
       party: {
@@ -602,6 +603,7 @@ const CHROMALY: GameSetupSpec = {
         jumpIn: true,
         sevenZero: true,
         doubles: false,
+        plainPairs: false,
         shuffleHands: false,
       },
       caribbean: {
@@ -612,6 +614,7 @@ const CHROMALY: GameSetupSpec = {
         jumpIn: false,
         sevenZero: false,
         doubles: true,
+        plainPairs: false,
         shuffleHands: false,
       },
       // Every house rule on at once (the user, 2026-10-30). Stacking at its
@@ -625,6 +628,9 @@ const CHROMALY: GameSetupSpec = {
         jumpIn: true,
         sevenZero: true,
         doubles: true,
+        // Pairs only to shed cards: with everything else going on, a pair
+        // that also skips is one surprise too many (the user, 2026-10-30).
+        plainPairs: true,
         shuffleHands: true,
       },
     },
@@ -752,9 +758,21 @@ const CHROMALY: GameSetupSpec = {
       kind: "toggle",
       key: "doubles",
       label: "Pairs",
-      hint: "Play two of a number at once: the same colour is a Skip, different colours a Reverse. Three or more is just a way to shed cards.",
+      hint: (s) =>
+        s.plainPairs
+          ? "Play two or more of a number, of Skips or of Reverses at once. Each Skip skips a player and each Reverse turns play round."
+          : "Play two or more of a number, of Skips or of Reverses at once. Two of a number: the same colour is a Skip, different colours a Reverse.",
       default: false,
       section: "Special plays",
+    },
+    {
+      kind: "toggle",
+      key: "plainPairs",
+      label: "Pairs are just pairs",
+      hint: "Two of a number is only a way to shed cards, with no Skip or Reverse.",
+      default: false,
+      section: "Special plays",
+      visibleWhen: (s) => s.doubles === true,
     },
     {
       kind: "toggle",

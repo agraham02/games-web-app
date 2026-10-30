@@ -34,6 +34,7 @@ import {
   bestColor,
   canPlay,
   facingPenalty,
+  groupable,
   legalDoubles,
   nextSeat,
   plusFourIsBluff,
@@ -232,14 +233,15 @@ function chooseColor(state: ChromalyState, seat: SeatId, except: PieceId, tier: 
   return lacked.length > 0 ? lacked[lacked.length - 1]! : mine;
 }
 
-/** Sets of two or more same-numbered cards in hand that could be played together. */
+/** Sets of two or more cards in hand that could be played together: one number, Skips, or Reverses. */
 function doublesOptions(state: ChromalyState, seat: SeatId): PieceId[][] {
   if (!state.rules.doubles || state.drawn !== null || facingPenalty(state)) return [];
-  const byValue = new Map<number, PieceId[]>();
+  const byValue = new Map<string, PieceId[]>();
   for (const id of state.hands[seat] ?? []) {
     const c = parseCard(id);
-    if (c?.kind !== "number") continue;
-    byValue.set(c.value!, [...(byValue.get(c.value!) ?? []), id]);
+    if (!c || !groupable(c)) continue;
+    const key = c.kind === "number" ? `n${c.value}` : c.kind;
+    byValue.set(key, [...(byValue.get(key) ?? []), id]);
   }
   const out: PieceId[][] = [];
   for (const group of byValue.values()) {
@@ -340,6 +342,8 @@ function strategy(kind: BotDifficulty): BotStrategy<ChromalyState, ChromalyActio
   return {
     id: `chromaly-${kind}`,
     choose(state, seat, rng) {
+      // Only a person's jump-in leaves this open; a bot sitting in for them finishes it.
+      if (state.swapping) return { t: "chooseSwap", seat, with: swapTarget(state, seat) };
       if (state.window) return answerWindow(state, seat, tier);
       return chooseTurn(state, seat, tier, rng, kind);
     },

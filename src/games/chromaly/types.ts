@@ -52,8 +52,19 @@ export interface ChromalyRules {
   jumpIn: boolean;
   /** A 7 swaps hands with a seat you choose; a 0 passes every hand along. */
   sevenZero: boolean;
-  /** Two of a number at once: the same colour a Skip, different colours a Reverse. */
+  /**
+   * Several cards at once: two or more of a number, of Skips, or of
+   * Reverses. Exactly two of a number is a Skip if their colours match and a
+   * Reverse if they differ, unless `plainPairs`; Skips and Reverses each do
+   * their own thing once per card.
+   */
   doubles: boolean;
+  /**
+   * Under `doubles`, two of a number is only a way to shed cards, with no
+   * Skip or Reverse (the user, 2026-10-30). Optional so a saved setup from
+   * before it existed still loads.
+   */
+  plainPairs?: boolean;
   /** Adds the Wild Shuffle Hands card to the deck. */
   shuffleHands: boolean;
   /** How long a person gets to answer a window, in ms. */
@@ -176,6 +187,14 @@ export interface ChromalyState {
   challenge: Challenge | null;
   window: Window | null;
   windowCount: number;
+  /**
+   * A 7 jumped in with, whose player is still choosing who to swap hands
+   * with. The tap on the card is the claim (the user, 2026-10-30): a window's
+   * clock must never run out on somebody who has already jumped, so the 7
+   * goes down at once and the choice comes after, with the table waiting on
+   * it. Public. Optional so a state from before it existed still loads.
+   */
+  swapping?: { seat: SeatId; card: PieceId } | null;
 
   /**
    * Who has called their last card. `called` is said out loud and shown;
@@ -236,5 +255,7 @@ export type ChromalyAction =
   | { t: "callLast"; seat: SeatId }
   | { t: "jumpIn"; seat: SeatId; card: PieceId; swapWith?: SeatId }
   | { t: "declineWindow"; seat: SeatId }
+  /** Who a jumped-in 7 swaps hands with (see `swapping`). Seat stamped, like the window's. */
+  | { t: "chooseSwap"; seat: SeatId; with: SeatId }
   /** Time is up: the window is over for everybody. */
   | { t: "closeWindow" };

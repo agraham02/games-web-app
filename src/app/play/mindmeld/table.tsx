@@ -37,6 +37,7 @@ import { HandZone } from "@/table/HandZone";
 import type { SeatView } from "@/table/SeatRing";
 import { useTableStore } from "@/table/store";
 import { useCueFeedback } from "@/table/cueSounds";
+import { playLockTick } from "@/table/tableSounds";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { announce } from "@/ui/disclosure";
 import type { ScoreRow } from "@/ui/phases/PhaseScreens";
@@ -182,6 +183,16 @@ export function MindMeldTable({
   const seated = isSeated(view, state);
   const mine = seated ? pairOf(state, view.viewerSeat) : undefined;
   const lockable = canLock(view, live);
+
+  // A click as each seat locks in: the table is otherwise silent while people
+  // think, and a lock-in is the one thing that happens.
+  const locked = Object.values(state.locks).filter((w) => w !== null).length;
+  const lockedBefore = useRef(locked);
+  const soundOn = settings?.sound !== false;
+  useEffect(() => {
+    if (locked > lockedBefore.current && soundOn) playLockTick();
+    lockedBefore.current = locked;
+  }, [locked, soundOn]);
 
   return (
     <>

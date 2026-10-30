@@ -20,7 +20,7 @@ import { createRummy } from "@/games/rummy/rules";
 import { GAME_IDS, GAMES, type GameId } from "./registry";
 import { GameSession } from "./GameSession";
 import { TestClock } from "./clock";
-import { isSentinel, projectEvents, redactPlacements } from "./redact";
+import { isSentinel, projectEvents, redactPlacements, withFacing } from "./redact";
 import { PROTOCOL_VERSION, type ServerMessage } from "./protocol";
 import { RoomRegistry } from "@/server/RoomRegistry";
 import type { Connection } from "@/server/RoomRuntime";
@@ -939,4 +939,19 @@ describe("the session's seed never reaches a table", () => {
       expect(seeds.filter((s) => s !== 0)).toEqual([]);
     });
   }
+});
+
+describe("withFacing", () => {
+  const at = (zone: "hand" | "discard", seat: number, faceUp: boolean) => ({ zone, seat, index: 0, count: 1, faceUp });
+
+  it("turns a deal face up when it ends face up in the hand it went to", () => {
+    const out = withFacing({ t: "deal", piece: "AS", to: 1, faceUp: false }, { AS: at("hand", 1, true) });
+    expect(out).toMatchObject({ faceUp: true });
+  });
+
+  it("leaves a draw face down when the card is played away in the same batch", () => {
+    // Chromaly, draw-until-playable under Force Play: drawn and played in one go.
+    const out = withFacing({ t: "draw", piece: "AS", from: "deck", to: 2, faceUp: false }, { AS: at("discard", 0, true) });
+    expect(out).toMatchObject({ faceUp: false });
+  });
 });

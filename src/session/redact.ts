@@ -222,6 +222,12 @@ export function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
   if (event.t !== "deal" && event.t !== "draw" && event.t !== "flip") return event;
   const landed = after[event.piece];
   if (!landed || landed.faceUp === event.faceUp) return event;
+  // A card dealt or drawn is judged against the board only while it is still
+  // in the hand it went to. One played away in the same batch (Chromaly's
+  // draw-until-playable under Force Play) ends face up on the discard, and
+  // correcting its DRAW to match showed an opponent's card arriving in their
+  // hand face up (the user, 2026-10-30).
+  if ((event.t === "deal" || event.t === "draw") && (landed.zone !== "hand" || landed.seat !== event.to)) return event;
   return { ...event, faceUp: landed.faceUp };
 }
 

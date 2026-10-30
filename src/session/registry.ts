@@ -242,6 +242,7 @@ export const GAMES: Record<GameId, GameEntry> = {
         jumpIn: s.jumpIn as boolean,
         sevenZero: s.sevenZero as boolean,
         doubles: s.doubles as boolean,
+        plainPairs: s.plainPairs as boolean,
         shuffleHands: s.shuffleHands as boolean,
       }),
   },

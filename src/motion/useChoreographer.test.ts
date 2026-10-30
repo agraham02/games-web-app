@@ -71,6 +71,25 @@ describe("useChoreographer — playback timing", () => {
     expect(applied).toHaveLength(6);
   });
 
+  it("applies a hand handed over whole in one tick, so it renders and leaves as one", () => {
+    const applied: GameEvent[] = [];
+    const { result } = renderHook(() =>
+      useChoreographer({ apply: (e) => applied.push(e) }),
+    );
+    const handOver: GameEvent[] = Array.from({ length: 12 }, (_, i) => ({
+      t: "deal" as const,
+      piece: `C${i + 2}`,
+      to: 1,
+      faceUp: false,
+      together: true,
+    }));
+
+    // No timers advanced at all: one `setTimeout(0)` per card put a render
+    // between each, and twenty cards visibly left one by one.
+    act(() => result.current.push(handOver));
+    expect(applied).toHaveLength(12);
+  });
+
   it("streams a run of draws one after another, so a penalty can be counted", () => {
     const applied: GameEvent[] = [];
     const { result } = renderHook(() =>

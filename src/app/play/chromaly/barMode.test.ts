@@ -125,11 +125,13 @@ describe("which bar the band shows", () => {
     });
     const opened = act(def, state, 1, { t: "play", cards: ["R7.1"] }).state;
 
-    it("is open to the twin's holder only, who is told nothing by the band", () => {
+    it("is open to the twin's holder only, who is told there is a chance but not which card", () => {
       expect(canJump(view(0), live(opened, 0))).toBe(true);
       expect(canJump(view(2), live(opened, 2))).toBe(false);
-      // No bar: the jump has no button, and nothing lights the card.
-      expect(barMode(view(0), live(opened, 0))).toBeNull();
+      // The band says "Jump in!" with its clock (the user, 2026-10-30: there
+      // was no sign a chance existed). It has no button and lights no card.
+      expect(barMode(view(0), live(opened, 0))).toBe("jump");
+      expect(barMode(view(2), live(opened, 2))).toBeNull();
     });
   });
 });

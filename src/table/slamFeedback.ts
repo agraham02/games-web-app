@@ -22,6 +22,7 @@
 import { useEffect, useRef } from "react";
 import { SLAM_FINAL_LAND_MS, SLAM_LAND_MS, prefersReducedMotion } from "@/motion/presets";
 import { onSlam } from "./fx";
+import { useTableStore } from "./store";
 
 let context: AudioContext | null = null;
 
@@ -90,11 +91,51 @@ export function playSlamSound(final: boolean): void {
   knock.start(now);
 }
 
-/** A buzz, where the device and browser can (Android; not iOS Safari). */
-export function vibrateSlam(final: boolean): void {
+/**
+ * A CARD slammed down - a Chromaly draw card, a jump-in, the last card. A
+ * slap, not a thud: paper on felt is a sharp crack with very little body,
+ * and the dominoes thud under a card read as wrong (the user, 2026-10-30).
+ */
+export function playCardSlap(final: boolean): void {
+  const ctx = audioContext();
+  if (!ctx || ctx.state !== "running") return;
+  const now = ctx.currentTime;
+  const length = Math.floor(ctx.sampleRate * (final ? 0.12 : 0.08));
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  // Cosmetic noise; see `playSlamSound`.
+  for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length) ** 3;
+  const slap = ctx.createBufferSource();
+  slap.buffer = buffer;
+  const high = ctx.createBiquadFilter();
+  high.type = "highpass";
+  high.frequency.value = final ? 900 : 1300;
+  const gain = ctx.createGain();
+  gain.gain.value = final ? 0.75 : 0.55;
+  slap.connect(high).connect(gain).connect(ctx.destination);
+  slap.start(now);
+
+  // A little of the table under it, so it lands rather than ticks.
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.frequency.setValueAtTime(final ? 160 : 210, now);
+  body.frequency.exponentialRampToValueAtTime(final ? 70 : 110, now + 0.09);
+  bodyGain.gain.setValueAtTime(final ? 0.35 : 0.2, now);
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, now + (final ? 0.16 : 0.1));
+  body.connect(bodyGain).connect(ctx.destination);
+  body.start(now);
+  body.stop(now + 0.2);
+}
+
+/**
+ * A buzz, where the device and browser can (Android; not iOS Safari).
+ * Longer and harder than it was, for a domino (the user, 2026-10-30): the
+ * slam is the one moment the table is meant to be felt.
+ */
+export function vibrateSlam(final: boolean, tile = true): void {
   if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return;
   try {
-    navigator.vibrate(final ? [45, 35, 90] : 50);
+    navigator.vibrate(tile ? (final ? [90, 40, 180] : 85) : final ? [45, 35, 90] : 50);
   } catch {
     /* Some browsers throw instead of ignoring it; either way, no buzz. */
   }
@@ -115,7 +156,8 @@ export function useSlamFeedback({ sound, vibration }: { sound: boolean; vibratio
     window.addEventListener("pointerdown", unlock);
     window.addEventListener("keydown", unlock);
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    const off = onSlam(({ final }) => {
+    const off = onSlam(({ piece, final }) => {
+      const tile = useTableStore.getState().meta[piece]?.kind === "tile";
       const { sound: withSound, vibration: withBuzz } = prefs.current;
       if (!withSound && !withBuzz) return;
       // With reduced motion the slam does not animate, so there is no
@@ -123,8 +165,11 @@ export function useSlamFeedback({ sound, vibration }: { sound: boolean; vibratio
       const delay = prefersReducedMotion() ? 0 : final ? SLAM_FINAL_LAND_MS : SLAM_LAND_MS;
       const timer = setTimeout(() => {
         timers.delete(timer);
-        if (withSound) playSlamSound(final);
-        if (withBuzz) vibrateSlam(final);
+        if (withSound) {
+          if (tile) playSlamSound(final);
+          else playCardSlap(final);
+        }
+        if (withBuzz) vibrateSlam(final, tile);
       }, delay);
       timers.add(timer);
     });

@@ -137,6 +137,7 @@ function makeSetup(rules: ChromalyRules) {
       pendingDraw: null,
       challenge: null,
       window: null,
+      swapping: null,
       windowCount: 0,
       calls: {},
       scores,
@@ -227,6 +228,7 @@ export function startRound(state: ChromalyState, rng: Rng): ReduceResult<Chromal
       pendingDraw: null,
       challenge: null,
       window: null,
+      swapping: null,
       calls: {},
       plays: 0,
       misses,
@@ -332,6 +334,9 @@ export function reduce(state: ChromalyState, action: ChromalyAction): ReduceResu
       break;
     case "declineWindow":
       reduceDecline(d, action.seat, events);
+      break;
+    case "chooseSwap":
+      reduceChooseSwap(d, action.with, events);
       break;
     case "closeWindow":
       closeWindow(d);
@@ -469,16 +474,26 @@ function playCards(
   // rest fall through to the next seat on.
   d.turn = next();
   if (cards.length >= 2) {
-    // The family rule (the user, 2026-10-24): exactly two of a number is a
-    // Skip if their colours match and a Reverse if they differ; three or
-    // more is just a way to shed cards, with no effect, so a bigger dump
-    // buys nothing but speed.
-    if (cards.length === 2) {
+    if (lastCard.kind === "skip") {
+      // Several Skips: one player skipped per card (the user, 2026-10-30).
+      applySkip(d, seat, events, cards.length);
+    } else if (lastCard.kind === "reverse") {
+      // Several Reverses: the way round turns once per card, so an even
+      // number leaves it where it was.
+      applyReverse(d, seat, events, cards.length);
+    } else if (cards.length === 2 && !d.rules.plainPairs) {
+      // The family rule (the user, 2026-10-24): exactly two of a number is
+      // a Skip if their colours match and a Reverse if they differ; three
+      // or more is just a way to shed cards, with no effect, so a bigger
+      // dump buys nothing but speed. Under `plainPairs` a pair is too.
       if (parsed[0]!.color === parsed[1]!.color) applySkip(d, seat, events);
       else applyReverse(d, seat, events);
     }
   } else {
-    applySingle(d, seat, lastCard, opts, { bluff, colorBefore }, events);
+    applySingle(d, seat, lastCard, opts, { bluff, colorBefore, jump }, events);
+    // A jumped-in 7 still choosing whom to swap with: the swap, and the
+    // window after it, wait for the choice (`reduceChooseSwap`).
+    if (d.swapping) return;
   }
 
   normalizeCalls(d);
@@ -487,15 +502,20 @@ function playCards(
   if (d.window === null && d.plays >= PLAY_LIMIT) endRound(d, null, true, events);
 }
 
-function applySkip(d: ChromalyState, seat: SeatId, events: GameEvent[]): void {
-  const skipped = nextSeat(d, seat);
-  events.push({ t: "cue", kind: "skip", seat: skipped });
-  d.turn = nextSeat(d, seat, 2);
+/**
+ * Skips `n` players. Never more than everybody else: a Skip cannot skip the
+ * player who laid it, so once the whole table is skipped they simply go again.
+ */
+function applySkip(d: ChromalyState, seat: SeatId, events: GameEvent[], n = 1): void {
+  const skipped = Math.min(n, d.seats - 1);
+  for (let i = 1; i <= skipped; i++) events.push({ t: "cue", kind: "skip", seat: nextSeat(d, seat, i) });
+  d.turn = nextSeat(d, seat, skipped + 1);
 }
 
-function applyReverse(d: ChromalyState, seat: SeatId, events: GameEvent[]): void {
-  d.direction = d.direction === 1 ? -1 : 1;
-  events.push({ t: "cue", kind: "reverse", seat, dir: d.direction });
+/** Turns play round `n` times: an even number leaves the direction as it was. */
+function applyReverse(d: ChromalyState, seat: SeatId, events: GameEvent[], n = 1): void {
+  if (n % 2 === 1) d.direction = d.direction === 1 ? -1 : 1;
+  events.push({ t: "cue", kind: "reverse", seat, dir: d.direction, amount: n > 1 ? n : undefined });
   // With two players a Reverse is a Skip: the other player has nowhere to be
   // reversed to, so you simply go again (Mattel, 2001).
   if (d.seats === 2) {
@@ -511,7 +531,7 @@ function applySingle(
   seat: SeatId,
   card: ParsedCard,
   opts: { color?: Color; swapWith?: SeatId },
-  wild4: { bluff: boolean; colorBefore: Color },
+  how: { bluff: boolean; colorBefore: Color; jump: boolean },
   events: GameEvent[],
 ): void {
   switch (card.kind) {
@@ -522,16 +542,21 @@ function applySingle(
       applyReverse(d, seat, events);
       return;
     case "draw2":
-      penalise(d, seat, 2, "draw2", wild4, events);
+      penalise(d, seat, 2, "draw2", how, events);
       return;
     case "wild4":
-      penalise(d, seat, 4, "wild4", wild4, events);
+      penalise(d, seat, 4, "wild4", how, events);
       return;
     case "shuffle":
       shuffleHands(d, seat, events);
       return;
     case "number":
       if (d.rules.sevenZero && card.value === 7) {
+        // Jumped in with, and the seat not named yet: it is chosen next.
+        if (how.jump && opts.swapWith === undefined) {
+          d.swapping = { seat, card: d.discard[d.discard.length - 1]! };
+          return;
+        }
         swapHands(d, seat, opts.swapWith ?? nextSeat(d, seat), events);
       } else if (d.rules.sevenZero && card.value === 0) {
         passHands(d, events);
@@ -907,6 +932,21 @@ function reduceJump(
   reducePlay(d, seat, [card], { swapWith }, true, events);
 }
 
+/**
+ * The seat a jumped-in 7 swaps with, chosen after the 7 went down. Then
+ * everything a 7 played in one go would have done next: the swap, and a
+ * window if the swap left somebody on a last card.
+ */
+function reduceChooseSwap(d: ChromalyState, target: SeatId, events: GameEvent[]): void {
+  const pending = d.swapping;
+  if (!pending) return;
+  d.swapping = null;
+  swapHands(d, pending.seat, target, events);
+  normalizeCalls(d);
+  openWindow(d, pending.seat, pending.card, false);
+  if (d.window === null && d.plays >= PLAY_LIMIT) endRound(d, null, true, events);
+}
+
 /* ------------------------------------------------------------------ rounds */
 
 function endRound(
@@ -971,7 +1011,22 @@ export function currentSeat(state: ChromalyState): SeatId | null {
   // During a window this names the soonest reactor, which is who the PACING
   // waits on. It is NOT the only seat allowed to act: see `legalActions`.
   if (state.window) return state.window.pending[0]?.seat ?? null;
+  // A jumped-in 7 waiting on its swap: the table waits on its player.
+  if (state.swapping) return state.swapping.seat;
   return state.turn;
+}
+
+/** The other seat holding the fewest cards: the obvious one to swap with. */
+function fewestHeld(state: ChromalyState, seat: SeatId): SeatId {
+  const targets = swapTargets(state, seat);
+  return targets.reduce((a, b) => ((state.hands[b]?.length ?? 0) < (state.hands[a]?.length ?? 0) ? b : a));
+}
+
+/** Who a seat may swap hands with: anybody else, the next seat on first. */
+function swapTargets(state: ChromalyState, seat: SeatId): SeatId[] {
+  const out: SeatId[] = [];
+  for (let i = 1; i < state.seats; i++) out.push(nextSeat(state, seat, i));
+  return out;
 }
 
 export function isRoundOver(state: ChromalyState): boolean {
@@ -998,6 +1053,11 @@ export function legalActions(state: ChromalyState, seat: SeatId): ChromalyAction
   if (state.winner !== null || state.result !== null || !state.dealt) return [];
   const hand = state.hands[seat] ?? [];
   const out: ChromalyAction[] = [];
+
+  if (state.swapping) {
+    if (seat !== state.swapping.seat) return [];
+    return swapTargets(state, seat).map((target) => ({ t: "chooseSwap", seat, with: target }));
+  }
 
   if (state.window) {
     if (!entitledToWindow(state, seat)) return [];
@@ -1077,11 +1137,20 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
     const c = parseCard(id);
     return c !== null && c.kind === "number" && c.value === 7 && state.rules.sevenZero && hand.length > 1;
   };
-  const swapProblem = (id: PieceId, swapWith: unknown): string | null => {
+  const swapProblem = (id: PieceId, swapWith: unknown, later = false): string | null => {
     if (!wantsSwap(id)) return swapWith === undefined ? null : "there is nothing to swap";
+    // A jump-in may leave the seat to be chosen after (`swapping`).
+    if (later && swapWith === undefined) return null;
     if (!validSeat(swapWith) || swapWith === seat) return "choose another seat to swap hands with";
     return null;
   };
+
+  if (state.swapping) {
+    if (action.t !== "chooseSwap") return "waiting for a seat to swap hands with";
+    if (seat !== state.swapping.seat) return "not this seat's swap";
+    if (!validSeat(action.with) || action.with === seat) return "choose another seat to swap hands with";
+    return null;
+  }
 
   switch (action.t) {
     case "play": {
@@ -1147,8 +1216,11 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
       const mine = parseCard(action.card);
       const top = w.card === null ? null : parseCard(w.card);
       if (!mine || !top || !identical(mine, top)) return "only an identical card may jump in";
-      return swapProblem(action.card, action.swapWith);
+      return swapProblem(action.card, action.swapWith, true);
     }
+
+    case "chooseSwap":
+      return "there is no swap to choose";
 
     case "declineWindow":
       return entitledToWindow(state, seat) ? null : "this seat is not in the window";
@@ -1167,7 +1239,7 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
  * so the seat the session knows submitted replaces whatever the client said.
  */
 export function completeAction(_state: ChromalyState, action: ChromalyAction, seat: SeatId): ChromalyAction {
-  if (action.t === "callLast" || action.t === "jumpIn" || action.t === "declineWindow") {
+  if (action.t === "callLast" || action.t === "jumpIn" || action.t === "declineWindow" || action.t === "chooseSwap") {
     return { ...action, seat };
   }
   return action;
@@ -1222,6 +1294,12 @@ export function turnHold(state: ChromalyState, seat?: SeatId): number | undefine
  * that gets rid of a card.
  */
 export function timeoutAction(state: ChromalyState, seat: SeatId): ChromalyAction | null {
+  // A jump-in already made stands; only whom to swap with is left, and the
+  // seat with the fewest cards is the choice anybody would make.
+  if (state.swapping) {
+    if (seat !== state.swapping.seat) return null;
+    return { t: "chooseSwap", seat, with: fewestHeld(state, seat) };
+  }
   if (state.window || seat !== state.turn) return null;
   if (facingPenalty(state)) return { t: "acceptPenalty" };
 

@@ -258,6 +258,39 @@ export const SHAKE_TIMING_FINAL = {
     ease: "easeOut" as const,
 };
 
+/**
+ * The DOMINO's slam, which the user asked to be more prominent again
+ * (2026-10-30: bigger motion, an impact you can see, a harder buzz). Tiles
+ * only - Chromaly slams cards with the presets above, and a card is a thin
+ * thing that a bigger arc would only make look thrown. Same `times` and
+ * durations, so the impact lands exactly where the sound and buzz do.
+ */
+export const SLAM_KEYFRAMES_TILE = {
+    scale: [1, 2.35, 2.35, 0.8, 1],
+    rotate: [0, -6, -6, 3, 0],
+};
+
+export const SLAM_KEYFRAMES_TILE_FINAL = {
+    scale: [1, 3.6, 3.6, 0.64, 1],
+    rotate: [0, -12, -12, 6, 0],
+};
+
+export const SHAKE_KEYFRAMES_TILE = {
+    x: [0, -10, 10, -7, 7, 0],
+    y: [0, 5, -3, 3, 0, 0],
+};
+
+export const SHAKE_KEYFRAMES_TILE_FINAL = {
+    x: [0, -18, 18, -12, 12, 0],
+    y: [0, 9, -6, 5, 0, 0],
+};
+
+/** The whole table taking the hit, a beat after the board does. */
+export const JOLT_KEYFRAMES = { y: [0, 4, -2, 1, 0] };
+export const JOLT_KEYFRAMES_FINAL = { y: [0, 9, -5, 2.5, 0], x: [0, -3, 3, -1, 0] };
+export const JOLT_TIMING = { duration: 0.28, ease: "easeOut" as const };
+export const JOLT_TIMING_FINAL = { duration: 0.42, ease: "easeOut" as const };
+
 /** Honoured by the choreographer, by <Piece>'s slam, and — via
  * `MotionConfig reducedMotion="user"` in the root layout — by every
  * motion component's transform animations. */

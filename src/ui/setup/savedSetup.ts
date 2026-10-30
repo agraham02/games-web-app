@@ -51,6 +51,14 @@ export function sanitizeSetup(game: GameId, raw: unknown): SetupValue {
     for (const option of entry.setup.options) {
       if (!option.volatile && option.key in incoming) kept[option.key] = incoming[option.key];
     }
+    // A rule added since the save takes the value of the preset the save
+    // names, not the option's own default: a saved Crazy is still Crazy when
+    // Crazy gains a rule (the user's own save, 2026-10-30).
+    const p = entry.setup.presets;
+    const named = p && typeof kept[p.key] === "string" ? p.values[kept[p.key] as string] : undefined;
+    if (named) {
+      for (const [key, value] of Object.entries(named)) if (!(key in incoming)) kept[key] = value;
+    }
   }
   const settings = entry.parse(kept);
   const seats =
