@@ -71,6 +71,8 @@ export interface GameHostProps<S, A> {
   pileAnchor?: number;
   /** See `TableSurfaceProps.panelReserve`. Poker only. */
   panelReserve?: number;
+  /** See `ResolveOptions.pairs`: partners sit together. Mind Meld. */
+  seatPairs?: boolean;
   /** Dev-only one-shot rigs, handed the live runtime so a game can build
    *  a state that is otherwise only reachable by waiting for it. */
   scenarios?: (live: GameRuntime<S, A>) => ReadonlyArray<{ label: string; run: () => void }>;
@@ -251,6 +253,7 @@ export function GameHostView<S, A>({
   bottomZone,
   panelReserve,
   pileAnchor,
+  seatPairs,
   scenarios,
   gameTitle,
   standings,
@@ -411,6 +414,7 @@ export function GameHostView<S, A>({
       pileAnchor={pileAnchor}
       viewerSeat={viewerSeat}
       handBleed={handBleed}
+      pairs={seatPairs}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />

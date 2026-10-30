@@ -128,6 +128,13 @@ export const MEASURE_SCENARIOS: readonly MeasureScenario[] = [
     primary: { placement: card("reveal", { count: 4 }), kind: "card" },
     hand: { placement: card("hand", { seat: 0, count: 13 }), kind: "card" },
   },
+  {
+    id: "chromaly",
+    seats: 4,
+    turns: 30,
+    primary: { placement: card("discard"), kind: "chroma" },
+    hand: { placement: card("hand", { seat: 0, count: 10 }), kind: "chroma" },
+  },
 ];
 
 /** The subset of a definition this drives, whatever the game. */

@@ -65,6 +65,8 @@ export interface TableSurfaceProps {
   band?: boolean;
   /** See `ResolveOptions.handBleed`. `GameHost` works it out per game. */
   handBleed?: boolean;
+  /** See `ResolveOptions.pairs`. */
+  pairs?: boolean;
 }
 
 export function TableSurface({
@@ -83,6 +85,7 @@ export function TableSurface({
   viewerSeat,
   band = true,
   handBleed,
+  pairs,
 }: TableSurfaceProps) {
   const ref = useRef<HTMLDivElement>(null);
   const setGeometry = useTableStore((s) => s.setGeometry);
@@ -133,9 +136,10 @@ export function TableSurface({
         pileAnchor,
         viewerSeat,
         handBleed,
+        pairs,
       }),
     );
-  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, pairs, setGeometry]);
 
   return (
     <div

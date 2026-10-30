@@ -23,6 +23,14 @@
 import type { BotDifficulty } from "@/engine/types";
 import { CHALLENGE_MS_ONLINE, DEFAULT_TARGET as BS_DEFAULT_TARGET } from "@/games/bs/state";
 import {
+  DEFAULT_TARGET as CHROMALY_DEFAULT_TARGET,
+  DEFAULT_WINDOW_MS as CHROMALY_DEFAULT_WINDOW_MS,
+  TARGET_MAX as CHROMALY_TARGET_MAX,
+  TARGET_MIN as CHROMALY_TARGET_MIN,
+  WINDOW_MS_MAX as CHROMALY_WINDOW_MS_MAX,
+  WINDOW_MS_MIN as CHROMALY_WINDOW_MS_MIN,
+} from "@/games/chromaly/state";
+import {
   CARIBBEAN_DEFAULT_TARGET,
   CARIBBEAN_TARGET_MAX,
   CARIBBEAN_TARGET_MIN,
@@ -58,6 +66,19 @@ interface OptionBase {
   visibleWhen?: When;
   /** Only in one mode — BS's challenge window is a room setting. */
   mode?: SetupMode;
+  /**
+   * Never remembered between setups (`ui/setup/savedSetup.ts`): it starts on
+   * its default every time. For anything that costs somebody money — a
+   * buy-in left over from last week's game is a surprise at the next table.
+   */
+  volatile?: boolean;
+  /**
+   * The group this rule is drawn under ("Drawing", "Special plays"). A game
+   * with a long list of optional rules sets it on every one of them, and
+   * `GameOptions` draws them together as house rules, behind a one-line
+   * summary, instead of as a wall of switches.
+   */
+  section?: string;
 }
 
 /** An open-ended number: a target score, a stack. */
@@ -100,6 +121,26 @@ export interface ToggleOption extends OptionBase {
 
 export type OptionSpec = NumberOption | ChoiceOption | ToggleOption;
 
+/**
+ * Named bundles of rules ("Classic", "Party"), so a host picks a way of
+ * playing and then adjusts it, rather than setting a dozen switches.
+ *
+ * The preset itself is an ordinary `ruleset` choice among the options (the
+ * form draws it first). What this adds is the coupling: picking one copies
+ * its values onto the rules, and changing any of those rules afterwards
+ * moves the choice to whichever preset the rules now match — or to
+ * `custom`. Data, not an `adjust` per game, so every game that has presets
+ * couples them the same way.
+ */
+export interface PresetSpec {
+  /** The option holding the preset. */
+  key: string;
+  /** Its value when the rules match no preset. */
+  custom: string;
+  /** Each preset's rules: option key to value. */
+  values: Readonly<Record<string, Readonly<Record<string, OptionValue>>>>;
+}
+
 export interface GameSetupSpec {
   /** One or two plain sentences: what the game IS, for someone new to it. */
   description: Text;
@@ -111,6 +152,13 @@ export interface GameSetupSpec {
   seatsHint?: (s: Settings, bounds: { min: number; max: number }) => string | undefined;
   /** Couplings: the settings after `key` changed to its new value. */
   adjust?: (next: Record<string, unknown>, key: string) => Record<string, unknown>;
+  presets?: PresetSpec;
+  /**
+   * How the lobby's folded panel reads. `"all"` (the default) lists every
+   * option; `"changes"` lists the preset and only the rules that differ from
+   * it, so a game with a dozen switches is not a dozen words of "off".
+   */
+  summary?: "all" | "changes";
 }
 
 /* ============================================================
@@ -178,6 +226,20 @@ export function defaultSettings(spec: GameSetupSpec): Record<string, OptionValue
   return Object.fromEntries(spec.options.map((o) => [o.key, o.default]));
 }
 
+/** The rule options a preset sets — the keys any preset names. */
+function presetKeys(p: PresetSpec): Set<string> {
+  return new Set(Object.values(p.values).flatMap((v) => Object.keys(v)));
+}
+
+/** The preset whose rules these settings match exactly, else `custom`. */
+function matchingPreset(spec: GameSetupSpec, p: PresetSpec, s: Settings): string {
+  const read = (key: string) => s[key] ?? spec.options.find((o) => o.key === key)?.default;
+  for (const [name, values] of Object.entries(p.values)) {
+    if (Object.entries(values).every(([key, value]) => read(key) === value)) return name;
+  }
+  return p.custom;
+}
+
 /** One option changed: the new settings, couplings applied. */
 export function withOption(
   spec: GameSetupSpec,
@@ -185,7 +247,16 @@ export function withOption(
   key: string,
   value: OptionValue,
 ): Record<string, unknown> {
-  const next = { ...s, [key]: value };
+  let next: Record<string, unknown> = { ...s, [key]: value };
+  const p = spec.presets;
+  if (p) {
+    if (key === p.key) {
+      const values = typeof value === "string" ? p.values[value] : undefined;
+      if (values) next = { ...next, ...values };
+    } else if (presetKeys(p).has(key)) {
+      next = { ...next, [p.key]: matchingPreset(spec, p, next) };
+    }
+  }
   return spec.adjust ? spec.adjust(next, key) : next;
 }
 
@@ -380,6 +451,7 @@ const POKER: GameSetupSpec = {
       ],
       default: 0,
       mode: "room",
+      volatile: true,
     },
   ],
   // Grounded in bots.ts's own tables (`CALL_MARGIN`, `RAISE_EDGE`,
@@ -427,6 +499,7 @@ const LRC: GameSetupSpec = {
       ],
       default: 0,
       mode: "room",
+      volatile: true,
     },
   ],
   // Rolling is the only legal action and the dice are random, so a tier
@@ -501,6 +574,298 @@ const BS: GameSetupSpec = {
   },
 };
 
+const CHROMALY: GameSetupSpec = {
+  description:
+    "Match the colour or the number on the pile, and be first to empty your hand. Skips, reverses and draw cards make it a fight; the wilds get you out of trouble. Played by the official rules, with house rules to switch on.",
+  summary: "changes",
+  // Named bundles, so a host picks a way of playing and then adjusts it. The
+  // values are what each bundle turns on; everything not named stays off.
+  presets: {
+    key: "preset",
+    custom: "custom",
+    values: {
+      classic: {
+        drawToMatch: false,
+        forcePlay: false,
+        stacking: "off",
+        plusFour: "challenge",
+        jumpIn: false,
+        sevenZero: false,
+        doubles: false,
+        shuffleHands: false,
+      },
+      party: {
+        drawToMatch: true,
+        forcePlay: false,
+        stacking: "upward",
+        plusFour: "challenge",
+        jumpIn: true,
+        sevenZero: true,
+        doubles: false,
+        shuffleHands: false,
+      },
+      caribbean: {
+        drawToMatch: false,
+        forcePlay: false,
+        stacking: "off",
+        plusFour: "challenge",
+        jumpIn: false,
+        sevenZero: false,
+        doubles: true,
+        shuffleHands: false,
+      },
+      // Every house rule on at once (the user, 2026-10-30). Stacking at its
+      // widest and the +4 left challengeable, because "on" for those two
+      // choices means the version with the most going on.
+      crazy: {
+        drawToMatch: true,
+        forcePlay: true,
+        stacking: "upward",
+        plusFour: "challenge",
+        jumpIn: true,
+        sevenZero: true,
+        doubles: true,
+        shuffleHands: true,
+      },
+    },
+  },
+  options: [
+    {
+      kind: "choice",
+      key: "preset",
+      label: "Rules",
+      ruleset: true,
+      hint: (s) =>
+        s.preset === "party"
+          ? "Draw until you can play, stack draw cards, jump in with the identical card, and 7s swap hands."
+          : s.preset === "caribbean"
+            ? "Two of a number at once: the same colour is a Skip, different colours a Reverse."
+            : s.preset === "crazy"
+              ? "Every house rule at once: stacking, jump-ins, swaps, doubles, draw to match, and the Shuffle Hands wild."
+              : s.preset === "custom"
+                ? "Your own mix — see House rules below."
+                : "The official rules, as Mattel prints them.",
+      choices: [
+        { value: "classic", label: "Classic" },
+        { value: "party", label: "Party" },
+        { value: "caribbean", label: "Caribbean" },
+        { value: "crazy", label: "Crazy" },
+        { value: "custom", label: "Custom" },
+      ],
+      default: "classic",
+    },
+    {
+      kind: "number",
+      key: "target",
+      label: "Play to",
+      hint: "A round is worth the points left in everyone else's hands.",
+      min: CHROMALY_TARGET_MIN,
+      max: CHROMALY_TARGET_MAX,
+      step: 50,
+      default: CHROMALY_DEFAULT_TARGET,
+      unit: plural("point", "points"),
+    },
+    {
+      // A room setting only, as BS's: alone against bots the beat is short
+      // and fixed, and in a room the next player is waiting on it.
+      kind: "number",
+      key: "windowMs",
+      label: "Seconds to react",
+      hint: "How long everyone gets to jump in or catch a last card.",
+      min: CHROMALY_WINDOW_MS_MIN,
+      max: CHROMALY_WINDOW_MS_MAX,
+      step: 1_000,
+      default: CHROMALY_DEFAULT_WINDOW_MS,
+      unit: plural("second", "seconds"),
+      format: (ms) => String(Math.round(ms / 1000)),
+      mode: "room",
+    },
+    {
+      kind: "toggle",
+      key: "drawToMatch",
+      label: "Draw to match",
+      hint: "Can't play? Keep drawing until you can, instead of taking one card.",
+      default: false,
+      section: "Drawing",
+    },
+    {
+      kind: "toggle",
+      key: "forcePlay",
+      label: "Force play",
+      hint: "A card you draw that can be played must be played — no keeping it.",
+      default: false,
+      section: "Drawing",
+    },
+    {
+      kind: "choice",
+      key: "stacking",
+      label: "Stacking",
+      hint: (s) =>
+        s.stacking === "same"
+          ? "A +2 can go on a +2, and a +4 on a +4. The penalty grows."
+          : s.stacking === "upward"
+            ? "A +2 on a +2; a +4 on a +2 or a +4. Never a +2 on a +4."
+            : "Off: a draw card is taken at once, and cannot be answered.",
+      choices: [
+        { value: "off", label: "Off" },
+        { value: "same", label: "Same card" },
+        { value: "upward", label: "Equal or higher" },
+      ],
+      default: "off",
+      section: "Draw cards",
+    },
+    {
+      kind: "choice",
+      key: "plusFour",
+      label: "Wild +4",
+      hint: (s) =>
+        s.plusFour === "free"
+          ? "No bluffing: play it any time, and nobody can challenge it."
+          : s.plusFour === "honest"
+            ? "Only legal with no card of the colour in play, so there is nothing to challenge."
+            : "Legal only with no card of the colour in play. The next player may call a bluff: wrong and they draw 6, right and you draw 4.",
+      choices: [
+        { value: "challenge", label: "Challenge" },
+        { value: "free", label: "No bluffing" },
+        { value: "honest", label: "Honest only" },
+      ],
+      default: "challenge",
+      section: "Draw cards",
+    },
+    {
+      kind: "toggle",
+      key: "jumpIn",
+      label: "Jump-In",
+      hint: "Hold the identical card (same colour and number) and you can play it out of turn, in the few seconds after it goes down.",
+      default: false,
+      section: "Special plays",
+    },
+    {
+      kind: "toggle",
+      key: "sevenZero",
+      label: "7-0",
+      hint: "A 7 swaps hands with anyone you choose. A 0 passes every hand one seat along.",
+      default: false,
+      section: "Special plays",
+    },
+    {
+      kind: "toggle",
+      key: "doubles",
+      label: "Pairs",
+      hint: "Play two of a number at once: the same colour is a Skip, different colours a Reverse. Three or more is just a way to shed cards.",
+      default: false,
+      section: "Special plays",
+    },
+    {
+      kind: "toggle",
+      key: "shuffleHands",
+      label: "Shuffle Hands wild",
+      hint: "Adds a wild that gathers every hand, shuffles them together and deals them back out.",
+      default: false,
+      section: "Deck",
+    },
+  ],
+  difficulty: {
+    casual: "Plays what it can, names a colour at random, and forgets to call its last card — and to catch yours.",
+    steady: "Sheds its high cards, saves its wilds, stays in its best colour, and usually remembers to call.",
+    sharp: "Reads which colours you have been missing, aims its draw cards at whoever is about to go out, and almost never misses a last card.",
+  },
+};
+
+const MINDMELD: GameSetupSpec = {
+  description:
+    "Two minds, one word. You and your partner each write a word at the same moment, then a countdown and both are shown. The same word and you have melded. If not, write one that connects the last two said, and round it goes until you meet. The first pair to meld takes the round, and the fewer tries, the more points.",
+  options: [
+    {
+      kind: "choice",
+      key: "pace",
+      label: "Pairs play",
+      hint: (s) =>
+        s.pace === "turns"
+          ? "One pair at a time while the others watch, taking turns round the table."
+          : "Every pair writes at once. The first to meld takes the round.",
+      choices: [
+        { value: "together", label: "All at once" },
+        { value: "turns", label: "One at a time" },
+      ],
+      default: "together",
+    },
+    {
+      kind: "number",
+      key: "rounds",
+      label: "Rounds",
+      hint: "The pair with the most points after the last round wins.",
+      min: 1,
+      max: 9,
+      step: 1,
+      default: 5,
+      unit: plural("round", "rounds"),
+    },
+    {
+      kind: "choice",
+      key: "tries",
+      label: "Tries per round",
+      hint: "A pair that has not met by then scores nothing that round.",
+      choices: [
+        { value: 8, label: "8" },
+        { value: 10, label: "10" },
+        { value: 15, label: "15" },
+      ],
+      default: 10,
+    },
+    {
+      kind: "choice",
+      key: "thinkSeconds",
+      label: "Think time",
+      hint: (s) =>
+        s.thinkSeconds === 0
+          ? "Off: take as long as you like."
+          : "Run out and your pair loses that try, with nothing shown.",
+      choices: [
+        { value: 0, label: "Off" },
+        { value: 30, label: "30s" },
+        { value: 60, label: "60s" },
+        { value: 90, label: "90s" },
+      ],
+      default: 0,
+    },
+    {
+      kind: "choice",
+      key: "start",
+      label: "Start",
+      hint: (s) =>
+        s.start === "dealt" ? "Each pair is given two words to connect." : "Any word you like, to begin.",
+      choices: [
+        { value: "free", label: "Any word" },
+        { value: "dealt", label: "Dealt words" },
+      ],
+      default: "free",
+    },
+    {
+      kind: "toggle",
+      key: "showLast",
+      label: "Show the last two words",
+      hint: "Keeps the two words you are connecting faintly on the table. Off, you have to remember them.",
+      default: false,
+    },
+    {
+      kind: "toggle",
+      key: "familySafe",
+      label: "Family-safe words",
+      hint: "Refuses a rude word before it is locked in, so nobody ever sees it.",
+      default: true,
+    },
+  ],
+  // See `HEAT` and `SHORTLIST` in vectorBrain.ts: the tiers are how many of its best
+  // ideas a bot will consider, and how much it says what people say.
+  difficulty: {
+    casual: "A wandering partner: its words are fair, but it takes a while to land on yours.",
+    steady: "Says the obvious word most of the time, and now and then something of its own.",
+    sharp: "Reaches for what most people would say, so it meets you quickly - and so does the other pair.",
+  },
+  seatsHint: () => "Pairs sit side by side. An odd number of people gets a bot for the empty seat.",
+};
+
 export const GAME_SETUPS = {
   spades: SPADES,
   dominoes: DOMINOES,
@@ -508,28 +873,59 @@ export const GAME_SETUPS = {
   lrc: LRC,
   rummy: RUMMY,
   bs: BS,
+  chromaly: CHROMALY,
+  mindmeld: MINDMELD,
 } as const satisfies Record<string, GameSetupSpec>;
+
+function describe(option: OptionSpec, s: Settings): string {
+  const value = s[option.key];
+  if (option.kind === "choice") {
+    const choice = option.choices.find((c) => c.value === value) ?? option.choices.find((c) => c.value === option.default);
+    return choice ? (option.ruleset ? choice.label : `${option.label} ${choice.label}`) : "";
+  }
+  if (option.kind === "number") {
+    const n = typeof value === "number" ? value : option.default;
+    return `${option.format ? option.format(n) : n} ${option.unit(n)}`;
+  }
+  const on = value === true && isAvailable(option, s);
+  return `${option.label} ${on ? "on" : "off"}`;
+}
+
+/**
+ * The rules (options with a `section`) that differ from the chosen preset —
+ * one phrase each. Empty when the game is played exactly as the preset says,
+ * which is always so for a named preset (changing any rule moves the choice
+ * on, `withOption`). Under `custom` there is no preset to differ from, so it
+ * is what differs from the defaults: the rules that are on.
+ */
+export function summarizeRules(spec: GameSetupSpec, s: Settings, mode: SetupMode): string[] {
+  const p = spec.presets;
+  const base = p ? p.values[String(s[p.key])] : undefined;
+  const out: string[] = [];
+  for (const option of spec.options) {
+    if (!option.section || !isVisible(option, s, mode)) continue;
+    const fallback = base?.[option.key] ?? option.default;
+    const value = s[option.key] ?? option.default;
+    const inForce = option.kind === "toggle" ? value === true && isAvailable(option, s) : value;
+    if (inForce === fallback) continue;
+    out.push(describe(option, s));
+  }
+  return out;
+}
 
 /**
  * A game's setup in a few words — "Caribbean · 10 games · Partners off" —
  * for the lobby's folded Game panel. Only what is in force: hidden options
- * are left out, and an unavailable rule reads as off.
+ * are left out, and an unavailable rule reads as off. A game with
+ * `summary: "changes"` names its preset and only the rules that differ.
  */
 export function summarizeSetup(spec: GameSetupSpec, s: Settings, mode: SetupMode): string[] {
   const parts: string[] = [];
+  const changes = spec.summary === "changes";
   for (const option of spec.options) {
     if (!isVisible(option, s, mode)) continue;
-    const value = s[option.key];
-    if (option.kind === "choice") {
-      const choice = option.choices.find((c) => c.value === value) ?? option.choices.find((c) => c.value === option.default);
-      if (choice) parts.push(option.ruleset ? choice.label : `${option.label} ${choice.label}`);
-    } else if (option.kind === "number") {
-      const n = typeof value === "number" ? value : option.default;
-      parts.push(`${option.format ? option.format(n) : n} ${option.unit(n)}`);
-    } else {
-      const on = value === true && isAvailable(option, s);
-      parts.push(`${option.label} ${on ? "on" : "off"}`);
-    }
+    if (changes && option.section) continue;
+    parts.push(describe(option, s));
   }
-  return parts;
+  return changes ? [...parts, ...summarizeRules(spec, s, mode)] : parts;
 }

@@ -221,6 +221,18 @@ export interface Placement {
    * three different players.
    */
   ownerTag?: string;
+  /**
+   * A colour the piece has taken on in play, as a game-defined key - a
+   * Chromaly wild that has named its colour. The face grows into it. Belongs
+   * to the piece's PLACE, like `ownerTag`: cleared by any move.
+   */
+  tint?: string;
+  /**
+   * The hand this piece is in has closed into one stack (`gather`), and
+   * stays closed until `spread`. Kept through a `deal`, so a gathered hand
+   * travels to its new seat still stacked.
+   */
+  gathered?: boolean;
   /** Pushed back as an invalid target during a targeting mode. */
   dimmed?: boolean;
   /**
@@ -289,7 +301,7 @@ export type PlacementMap = Record<PieceId, Placement>;
  * describe its own physical pieces regardless of how the React layer
  * happens to cache them.
  */
-export type PieceKind = "card" | "tile" | "chip";
+export type PieceKind = "card" | "tile" | "chip" | "chroma";
 
 export interface PieceMeta {
   kind: PieceKind;
@@ -303,11 +315,55 @@ export interface PieceMeta {
 
 export type Tone = "info" | "good" | "bad";
 
+/**
+ * What a `cue` event is about. A closed list, so the choreographer can give
+ * each one a real duration and the table can draw each one — see `cue`.
+ */
+export type CueKind =
+  /** A seat is skipped: a stamp on its pod. */
+  | "skip"
+  /** Direction of play flips: `dir` is the NEW direction (1 clockwise). */
+  | "reverse"
+  /** `amount` cards are about to go to `seat`: the numeral flies to the pod. */
+  | "draw"
+  /** A pending draw grew to `amount`: the stack badge steps up. */
+  | "stack"
+  /** A wild's colour was named: `colour` washes across the table. */
+  | "colour"
+  /** `seat` jumped in out of turn. */
+  | "jump"
+  /** `seat` called its last card. */
+  | "called"
+  /** `seat` was caught without calling. */
+  | "caught"
+  /** A Wild +4 challenge came out as a bluff (`seat` is the guilty one). */
+  | "bluff"
+  /** ...or came out clean (`seat` is the innocent one). */
+  | "clean"
+  /** Two hands change places (a 7). */
+  | "swap"
+  /** Every hand moves one seat on (a 0). */
+  | "pass"
+  /** Every hand is gathered, shuffled and dealt out again. */
+  | "shuffleHands"
+  /** A shared three-two-one before words are revealed. Holds the queue. */
+  | "countdown"
+  /** A pair said the same word: `seat` is one of them, `amount` the try. */
+  | "meld"
+  /** A pair was a letter out from the same word - a flourish, never a match. */
+  | "close"
+  /** A pair did not match, and goes round again. */
+  | "miss";
+
 export type GameEvent =
   /** Deck is randomised. Carries the seed so a log replays exactly. */
   | { t: "shuffle"; seed: number }
-  /** Opening deal. Choreographer staggers these automatically. */
-  | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean }
+  /**
+   * Opening deal. Choreographer staggers these automatically - unless
+   * `together`, for a whole hand handed over as one stack (see `gather`),
+   * whose cards travel side by side rather than one after another.
+   */
+  | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean; together?: boolean }
   /** Taking a piece from a shared pile into a hand. */
   | { t: "draw"; piece: PieceId; from: ZoneId; to: SeatId; faceUp: boolean }
   /**
@@ -427,6 +483,33 @@ export type GameEvent =
    */
   | { t: "pause" }
   /**
+   * What follows is a CONSEQUENCE of what came before, and must wait for it.
+   *
+   * The user's rule, said about LRC and again about Chromaly's +2
+   * (2026-10-30): an action plays out first, and only then does what it
+   * caused - the two cards a +2 deals, the colour a wild names - with a beat
+   * between, or the table "feels rushed, and players might not get the
+   * chance to see everything that happened". Events run concurrently unless
+   * something holds the queue, so this is the hold.
+   *
+   * `after` names the GESTURE being waited for rather than a number of
+   * milliseconds, for `pause`'s reason: how long a slam takes is a motion
+   * decision, and `choreograph` turns the name into a duration from
+   * `presets.ts`. Omitted, it is an ordinary play.
+   */
+  | { t: "settle"; after?: "play" | "deal" | "slam" | "slamFinal" }
+  /**
+   * A hand picks itself up: every card in the seat's hand closes into one
+   * stack where the hand is, ready to travel as a single thing (Chromaly's 7
+   * and 0, which hand whole hands round the table). The `deal`s that follow
+   * keep the stack closed on the way (`Placement.gathered`); `spread` fans
+   * it out where it lands. Names a seat and no piece, so it passes through
+   * redaction untouched, like `cue`.
+   */
+  | { t: "gather"; seat: SeatId }
+  /** The hand at `seat` opens back out into its fan. See `gather`. */
+  | { t: "spread"; seat: SeatId }
+  /**
    * Dice are thrown — LRC's roll, shown before anything it decided moves.
    * A cosmetic flourish, like `slam`, and an event for the same reason: it
    * goes through the queue, so the chips behind it wait until the dice
@@ -481,6 +564,25 @@ export type GameEvent =
        * the one that belongs to whoever is looking.
        */
       selfTone?: Tone;
+    }
+  /**
+   * Something happened that the TABLE should make a show of, with no piece
+   * to move for it: a skip, a reverse, a stack growing, a bluff called.
+   *
+   * One event with a closed `kind`, not a union member per effect, so the
+   * choreographer, redaction and every driver learn about it once. It names
+   * seats and numbers and never a piece, so it passes through redaction
+   * untouched — and like `slam` it goes through the queue, which is what
+   * makes it obey skip, the speed setting and reduced motion for free.
+   * Purely cosmetic: nothing may depend on it having been drawn.
+   */
+  | {
+      t: "cue";
+      kind: CueKind;
+      seat?: SeatId;
+      amount?: number;
+      dir?: 1 | -1;
+      colour?: string;
     }
   | { t: "phase"; phase: string }
   | { t: "score"; deltas: Record<SeatId, number> }
@@ -693,6 +795,13 @@ export interface GameDefinition<S, A> {
    * means a bot arrives sooner than the ring says at any speed but 1x.
    */
   turnHold?(state: S, seat: SeatId): number | undefined;
+  /**
+   * The least time, in ms, the table sits on a round's last move before the
+   * scorecard covers it. Every driver holds for its own default; this only
+   * ever lengthens it, for a game whose round ends on something that has to
+   * be READ - Mind Meld's winning words, shown at the reveal that ends it.
+   */
+  roundHoldMs?: number;
 
   /**
    * Is this actually a well-formed, legal action for this seat? Return a

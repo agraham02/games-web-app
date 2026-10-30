@@ -929,6 +929,51 @@ test.describe("a room, in real browsers", () => {
     await two.close();
   });
 
+  test("Chromaly deals two real tables, and each hand is nameable only by its owner", async ({ browser }) => {
+    // The Uno-style game, in two real browsers. What nothing below this layer
+    // can see: that a second person actually gets a table, that each browser
+    // can name its own seven cards, and that the only cards both can name are
+    // the ones on the pile, which are face up to everybody.
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    const ada = await player(one, "Ada");
+    const code = await hostRoom(ada);
+    const bo = await player(two, "Bo");
+    await join(bo, code);
+
+    await ada.getByRole("button", { name: /^Chromaly,/ }).click();
+    await ada.getByRole("button", { name: /start chromaly/i }).click();
+
+    for (const page of [ada, bo]) await atTable(page);
+
+    // Before the deal every card sits on the draw pile face down, and a full
+    // table of anonymous stand-ins looks like a dealt one until you ask how
+    // many of them anybody can name.
+    const nameable = async (page: Page) =>
+      new Set(
+        (
+          await page
+            .locator("[data-fx]")
+            .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-fx") ?? ""))
+        ).filter((id) => !id.startsWith("#")),
+      );
+
+    for (const page of [ada, bo]) {
+      await expect.poll(async () => (await nameable(page)).size, { timeout: 25_000 }).toBeGreaterThanOrEqual(7);
+    }
+
+    const adaCards = await nameable(ada);
+    const boCards = await nameable(bo);
+    const shared = [...adaCards].filter((id) => boCards.has(id));
+    // A bot may have played a card or two by now, but a hand is never shared.
+    expect(shared.length, `both could name ${shared.join(", ")}`).toBeLessThanOrEqual(4);
+    expect(adaCards.size - shared.length, "Ada should hold cards Bo cannot name").toBeGreaterThanOrEqual(5);
+    expect(boCards.size - shared.length, "Bo should hold cards Ada cannot name").toBeGreaterThanOrEqual(5);
+
+    await one.close();
+    await two.close();
+  });
+
   test("a BS challenge window reaches a second player's screen", async ({ browser }) => {
     // The race, from the only place it can really be seen. A window entitles
     // every seat but the claimer at once, so when cards go down BOTH people

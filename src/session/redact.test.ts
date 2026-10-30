@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
 import type { GameDefinition, GameEvent, PieceId, PlacementMap } from "@/engine/types";
+import type { MindMeldState } from "@/games/mindmeld/types";
 import { createSpades } from "@/games/spades/rules";
 import { createPoker } from "@/games/poker/rules";
 import { createDominoes } from "@/games/dominoes/rules";
@@ -618,6 +619,8 @@ describe("the whole frame, every game, every turn", () => {
     lrc: 6,
     rummy: 4,
     bs: 4,
+    chromaly: 4,
+    mindmeld: 6,
   };
 
   /**
@@ -633,12 +636,19 @@ describe("the whole frame, every game, every turn", () => {
     lrc: false,
     rummy: true,
     bs: true,
+    chromaly: true,
+    // Pieces: none. Its one secret is a typed word, which no piece check can
+    // see - `a word nobody may read yet never leaves the server` below does.
+    mindmeld: false,
   };
 
   /**
    * Plays a whole bot match and hands every frame to `visit`, once per
    * viewer: an opponent's seat and a spectator.
    */
+  /** The settings of the case under test: set by each `it` before it plays. */
+  let caseSettings: Record<string, unknown> = {};
+
   function everyFrame(
     gameId: GameId,
     visit: (frame: {
@@ -654,7 +664,7 @@ describe("the whole frame, every game, every turn", () => {
   ) {
     const entry = GAMES[gameId];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const definition = entry.create(entry.parse({})) as GameDefinition<any, any>;
+    const definition = entry.create(entry.parse(caseSettings)) as GameDefinition<any, any>;
     const clock = new TestClock();
     const session = new GameSession({
       definition,
@@ -693,8 +703,31 @@ describe("the whole frame, every game, every turn", () => {
     }
   }
 
-  for (const gameId of GAME_IDS) {
-    it(`${gameId}: names nothing an opponent or a spectator may not identify`, () => {
+  /**
+   * Every game as it plays by default, plus Chromaly with every house rule on:
+   * a hand swap, a hand pass and Shuffle Hands move cards between HIDDEN hands,
+   * which no other game does, and the default rules never reach them.
+   */
+  const CASES: Array<{ gameId: GameId; label: string; settings: Record<string, unknown> }> = [
+    ...GAME_IDS.map((gameId) => ({ gameId, label: gameId, settings: {} })),
+    {
+      gameId: "chromaly",
+      label: "chromaly (every rule on)",
+      settings: {
+        drawToMatch: true,
+        stacking: "same",
+        plusFour: "free",
+        jumpIn: true,
+        sevenZero: true,
+        doubles: true,
+        shuffleHands: true,
+      },
+    },
+  ];
+
+  for (const { gameId, label, settings } of CASES) {
+    it(`${label}: names nothing an opponent or a spectator may not identify`, () => {
+      caseSettings = settings;
       const leaks: string[] = [];
       let checked = 0;
 
@@ -741,7 +774,8 @@ describe("the whole frame, every game, every turn", () => {
       expect(leaks.slice(0, 5)).toEqual([]);
     });
 
-    it(`${gameId}: every event aims at a piece the viewer's table is holding`, () => {
+    it(`${label}: every event aims at a piece the viewer's table is holding`, () => {
+      caseSettings = settings;
       /**
        * `moveTo` does nothing to a piece the store is not tracking, so an
        * event renamed to a stand-in the viewer never had is a silent
@@ -760,8 +794,10 @@ describe("the whole frame, every game, every turn", () => {
       const misses: string[] = [];
       const blanks: string[] = [];
       let masks = 0;
+      const cues = new Set<string>();
 
       everyFrame(gameId, ({ viewer, events, truthBefore, truthAfter }) => {
+        for (const e of events) if (e.t === "cue") cues.add(e.kind);
         const projected = projectEvents(events, truthBefore, truthAfter);
         const held = new Set(Object.keys(redactPlacements(truthBefore, {}).placements));
         const aligned = projected.filter((e) => e.t !== "unmask" && e.t !== "mask");
@@ -798,9 +834,62 @@ describe("the whole frame, every game, every turn", () => {
       expect(misses.slice(0, 5)).toEqual([]);
       expect(blanks.slice(0, 5)).toEqual([]);
       // Guards the guard: these two re-deal pieces the viewer could read.
-      if (gameId === "dominoes" || gameId === "bs") expect(masks).toBeGreaterThan(0);
+      if (gameId === "dominoes" || gameId === "bs" || label.includes("every rule")) {
+        expect(masks).toBeGreaterThan(0);
+      }
+      // Guards the guard: the point of the every-rule case is hands changing
+      // places while hidden, so it must have seen all three ways it happens.
+      if (label.includes("every rule")) {
+        expect([...cues]).toEqual(expect.arrayContaining(["swap", "pass", "shuffleHands"]));
+      }
     });
   }
+
+  /**
+   * Mind Meld's secret is not a piece: a word somebody has typed and not yet
+   * had revealed. Every check above looks for pieces, so none of them could see
+   * it leave; this one reads the serialised view and every event a viewer is
+   * sent, and fails if a word its owner locked in and the table has not been
+   * shown yet is anywhere in them - the owner's own view excepted, which is
+   * theirs to read.
+   */
+  it("mindmeld: a word nobody may read yet never leaves the server", () => {
+    caseSettings = {};
+    const leaks: string[] = [];
+    let hidden = 0;
+
+    everyFrame("mindmeld", ({ definition, viewer, events, after }) => {
+      const raw = after as MindMeldState;
+      // What the table has been shown: a word already on any chain or reveal is public.
+      const shown = new Set<string>();
+      for (const pair of raw.pairs) for (const w of pair.chain) shown.add(w);
+      for (const r of raw.reveal ?? []) {
+        shown.add(r.a);
+        shown.add(r.b);
+      }
+      // Nor is a word the viewer typed themselves: a pair that is about to meld
+      // has the same word twice, and one of them is the viewer's to read.
+      if (viewer >= 0 && raw.locks[viewer]) shown.add(raw.locks[viewer]!);
+      const sent = JSON.stringify({ view: definition.playerView(after, viewer), events });
+      for (let seat = 0; seat < raw.seats; seat++) {
+        const word = raw.locks[seat];
+        if (word === null || word === undefined || seat === viewer || shown.has(word)) continue;
+        hidden++;
+        // As a VALUE: a word that is also a field's name ("window") is not a leak.
+        const asValue = new RegExp(`${JSON.stringify(word).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!:)`);
+        const found = asValue.exec(sent);
+        if (found) {
+          leaks.push(
+            `viewer ${viewer} was sent seat ${seat}'s "${word}": …${sent.slice(Math.max(0, found.index - 70), found.index + 30)}…`,
+          );
+        }
+      }
+    });
+
+    // Guards the guard: a match that never held a word back would pass vacuously.
+    expect(hidden).toBeGreaterThan(20);
+    expect(leaks.slice(0, 5)).toEqual([]);
+  });
 });
 
 describe("the session's seed never reaches a table", () => {

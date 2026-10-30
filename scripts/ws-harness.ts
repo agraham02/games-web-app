@@ -23,6 +23,8 @@ import WebSocket from "ws";
 // The 52 real ids, so the leak check below cannot drift from the deck.
 import { rummyDeck } from "../src/games/rummy/cards";
 import { PROTOCOL_VERSION } from "../src/session/protocol";
+import { createChromaly } from "../src/games/chromaly/rules";
+import type { ChromalyState } from "../src/games/chromaly/types";
 import { createSpades } from "../src/games/spades/rules";
 import type { SpadesState } from "../src/games/spades/types";
 import { TURN_GRACE_MS } from "../src/session/GameSession";
@@ -1270,6 +1272,153 @@ async function main(): Promise<void> {
       after.fingerprint !== before.fingerprint,
       "the table never moved — a challenge window stalled it with nobody answering",
     );
+  });
+
+  await scenario("Chromaly runs online, and no hand, draw pile or verdict leaks", async () => {
+    // The Uno-style game, with every house rule that moves cards between
+    // hidden hands switched on. Everything a viewer is sent is read from this
+    // side of the wire, because only this side can see what actually arrives.
+    const a = await client(`t-chroma-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-chroma-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({
+      t: "selectGame",
+      gameId: "chromaly",
+      settings: { target: 100, jumpIn: true, sevenZero: true, stacking: "upward", shuffleHands: true },
+      seats: 4,
+      difficulty: "casual",
+    });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(1500);
+
+    const state = await dump(code);
+    assert(state.sessionRunning === true, "chromaly should be running");
+
+    for (const c of [a, b]) {
+      const f = c.latest("frame")?.frame as { seat: number; state: ChromalyState } | undefined;
+      assert(f, "every player should have been dealt in");
+      for (const [seat, hand] of Object.entries(f.state.hands)) {
+        if (Number(seat) === f.seat) {
+          assert(hand.every((id) => id !== "??"), "a player should be able to see their own hand");
+        } else {
+          assert(hand.every((id) => id === "??"), `seat ${seat}'s hand leaked`);
+        }
+      }
+      assert(f.state.drawPile.every((id) => id === "??"), "the draw pile arrived named");
+      assert(f.state.secret === 0, "the shuffle secret was sent");
+      if (f.state.challenge) assert(f.state.challenge.guilty === false, "a +4's verdict was sent");
+      // Whoever is not a jumper must not be told who is.
+      const w = f.state.window;
+      if (w && w.offenders.length === 0) {
+        assert(w.jumpers.every((s) => s === f.seat), "a window named somebody else as holding the twin");
+        assert(w.pending.every((p) => p.seat === f.seat), "a window listed another seat as entitled");
+      }
+    }
+  });
+
+  await scenario("a Chromaly window cannot stall the table", async () => {
+    // A window parks the table on several seats at once, so no single browser
+    // can unblock it. Drives real plays (a scripted player picks a legal move
+    // from its OWN hand, which is all the wire gives it) until a window opens,
+    // then answers nothing: whatever moves is the server's own deadline.
+    const a = await client(`t-chromawin-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-chromawin-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({
+      t: "selectGame",
+      gameId: "chromaly",
+      // Everyone but the two people is a sharp bot, so windows open often.
+      settings: { target: 500, jumpIn: true, windowMs: 2000, sevenZero: true },
+      seats: 4,
+      difficulty: "sharp",
+    });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(900);
+
+    const def = createChromaly({ jumpIn: true, windowMs: 2000, sevenZero: true });
+    let opened = false;
+    for (let tick = 0; tick < 200 && !opened; tick++) {
+      for (const c of [a, b]) {
+        const f = c.latest("frame")?.frame as { seat: number; state: ChromalyState } | undefined;
+        if (!f || f.seat === null) continue;
+        if (f.state.window) {
+          opened = true;
+          break;
+        }
+        if (f.state.turn !== f.seat) continue;
+        // The first thing the rules say this seat may do, short of a call.
+        const move = def.legalActions(f.state, f.seat).find((x) => x.t === "play" || x.t === "draw" || x.t === "acceptPenalty");
+        if (move) c.send({ t: "action", action: move });
+      }
+      await sleep(100);
+    }
+    assert(opened, "no window ever opened, so there was nothing to test");
+
+    const before = (await dump(code)).table as { fingerprint: string };
+    // Long enough for a window to expire on its own several times over.
+    await sleep(9000);
+    const after = (await dump(code)).table as { fingerprint: string };
+    assert(after.fingerprint !== before.fingerprint, "the table never moved - a window stalled it with nobody answering");
+  });
+
+  await scenario("Chromaly refuses a forged or illegal action", async () => {
+    // Everything here is reachable from a socket by a seated player: playing
+    // a card out of somebody else's hand (ids are guessable), calling a last
+    // card for another seat, a colour on a card that takes none, a malformed
+    // array. None may move the table.
+    const a = await client(`t-chromabad-a-${Date.now()}`);
+    const code = await hostRoom(a, "Ada");
+    const b = await client(`t-chromabad-b-${Date.now()}`);
+    b.send({ t: "joinRoom", code, name: "Bo" });
+    await b.until((m) => m.t === "room");
+
+    a.send({ t: "selectGame", gameId: "chromaly", settings: { jumpIn: true }, seats: 4, difficulty: "casual" });
+    await sleep(60);
+    a.send({ t: "startGame" });
+    await sleep(600);
+
+    const seatOf = new Map<Client, number>();
+    for (const c of [a, b]) seatOf.set(c, (c.latest("frame")!.frame as { seat: number }).seat);
+
+    let onTurn: Client | undefined;
+    for (let tick = 0; tick < HUMAN_TURN_TICKS && !onTurn; tick++) {
+      const table = (await dump(code)).table as { currentSeat: number | null } | null;
+      onTurn = [a, b].find((c) => seatOf.get(c) === table?.currentSeat);
+      if (!onTurn) await sleep(100);
+    }
+    assert(onTurn, "the table should have parked on a human");
+
+    const before = (await dump(code)).table as { fingerprint: string };
+    const mine = seatOf.get(onTurn)!;
+    const other = (mine + 1) % 4;
+    for (const action of [
+      { t: "play", cards: ["R5.1", "B7.2", "F.4", "W.1"] },
+      { t: "play", cards: ["??"], color: "R" },
+      { t: "play", cards: "R5.1" },
+      { t: "play", cards: [] },
+      { t: "callLast", seat: other },
+      { t: "jumpIn", seat: other, card: "R5.1" },
+      { t: "declineWindow", seat: other },
+      { t: "closeWindow" },
+      { t: "challenge" },
+      { t: "acceptPenalty" },
+      { t: "keep" },
+      { t: "nonsense" },
+    ]) {
+      onTurn.send({ t: "action", action });
+      await sleep(60);
+    }
+
+    const after = (await dump(code)).table as { fingerprint: string };
+    assert(after.fingerprint === before.fingerprint, "an illegal action moved the table when it should have changed nothing");
   });
 
   await scenario("BS refuses a claim nobody could make", async () => {

@@ -48,6 +48,16 @@
   --color-suit-red: #c0362c;
   --color-suit-ink: #1a1712;
 
+  /* -- Chromaly ------------------------------------------- */
+  /* Four colours that stay apart from each other AND from the green felt
+     they are dealt onto, and an ink for wilds and the back. Every colour
+     also carries a shape (ChromaFace), so colour is never the only signal. */
+  --color-chroma-red: #d44a3f;
+  --color-chroma-yellow: #e8b92f;
+  --color-chroma-green: #3f9d5e;
+  --color-chroma-blue: #3a72c2;
+  --color-chroma-ink: #1d1a16;
+
   /* -- semantic ------------------------------------------- */
   /* A meld that has just closed and is about to turn over. Cool, and
      deliberately OUTSIDE the brass accent: brass everywhere else in this
@@ -61,6 +71,10 @@
   /* A partnership game's two sides, in the lobby's seating plan. */
   --color-team-a: #e3c68f;
   --color-team-b: #8fb8e0;
+  /* Mind Meld seats up to five pairs, so three more sides. */
+  --color-team-c: #a8d5a2;
+  --color-team-d: #d4a5e0;
+  --color-team-e: #e8a98a;
 
   /* -- roles ------------------------------------------------
      shadcn's names, Neo-Felt's values. The primitives in src/ui/base
@@ -258,6 +272,13 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* A piece mid-slam comes forward over everything (PieceLayer's `useSlamFx`).
+   `!important` because the piece's own z-index is an inline style that React
+   owns; the attribute coming off hands it straight back. */
+.piece-layer > [data-slamming] {
+  z-index: 6000 !important;
 }
 
 /* ============================================================

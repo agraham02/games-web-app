@@ -696,6 +696,70 @@ function allocateByPerimeter(
  * (see resolveTable), because a seat pushed into a corner is as bad as
  * two pods overlapping mid-edge.
  */
+/**
+ * How many PAIRS go on each edge (`ResolveOptions.pairs`), as pod counts for
+ * the left, top and right edges. The top takes as many pairs as fit side by
+ * side; the rest are shared between the two sides, one pair to a side first,
+ * so the table stays balanced. Three or more pairs always use both sides.
+ */
+function pairEdges(pairs: number, ringW: number, podSize: PieceSize, podInset: number): EdgeAlloc {
+  if (pairs <= 0) return [0, 0, 0];
+  const fits = (sides: boolean) =>
+    Math.max(1, Math.floor((ringW - (sides ? podInset * 2 + podSize.w * 2 : 0)) / (podSize.w * 2 + 16)));
+  let left = 0;
+  let right = 0;
+  let top = pairs;
+  if (pairs >= 3) {
+    left = 1;
+    right = 1;
+    top = pairs - 2;
+  }
+  while (top > fits(left + right > 0) && top > 0) {
+    if (left <= right) left++;
+    else right++;
+    top--;
+  }
+  return [left * 2, top * 2, right * 2];
+}
+
+/**
+ * Draws each rim pair's two pods in until they touch, about the middle of
+ * the two spots the edge gave them, and seats the viewer's partner beside
+ * them at the bottom. A spectator's bottom pair is split about the centre.
+ */
+function drawPairsTogether(seats: SeatSlot[], seatBase: SeatId, podSize: PieceSize, watching: boolean): void {
+  const partner = (seatBase % 2 === 0 ? seatBase + 1 : seatBase - 1) as SeatId;
+  for (let i = 1; i + 1 < seats.length; i += 2) {
+    const a = seats[i]!;
+    const b = seats[i + 1]!;
+    if (a.anchor === "top") {
+      const mid = (a.x + b.x) / 2;
+      const half = podSize.w / 2 + 3;
+      a.x = mid - half;
+      b.x = mid + half;
+    } else {
+      const mid = (a.y + b.y) / 2;
+      const half = podSize.h / 2 + 2;
+      // Each pair in seat order down the screen on the right, up it on the
+      // left - the way round the table is read.
+      const [upper, lower] = a.y < b.y ? [a, b] : [b, a];
+      upper.y = mid - half;
+      lower.y = mid + half;
+    }
+  }
+  const hero = seats[0]!;
+  const half = podSize.w / 2 + 3;
+  if (watching) hero.x -= half;
+  seats.push({
+    seat: partner,
+    x: watching ? hero.x + half * 2 : hero.x + podSize.w + 8,
+    y: hero.y,
+    anchor: "bottom",
+    rotation: 0,
+    isHero: false,
+  });
+}
+
 export function allocateEdges(
   opponents: number,
   density: Density,
@@ -815,6 +879,18 @@ export interface ResolveOptions {
    * screen with height to spare.
    */
   handBleed?: boolean;
+  /**
+   * Seats are PAIRS - seats 2i and 2i+1 are partners (Mind Meld) - and
+   * partners sit together: side by side on the top edge, one above the other
+   * on a side, and the viewer's partner beside them at the bottom rather than
+   * out on the rim. The user's call (2026-10-30): with the ordinary ring a
+   * pair landed wherever their seat numbers fell, 90 degrees apart.
+   *
+   * A parameter, not a second layout: the edges are the same edges, filled in
+   * whole pairs, and each pair's two pods are drawn in to touch. An odd seat
+   * count has no pairs and is laid out as usual.
+   */
+  pairs?: boolean;
 }
 
 export function resolveTable(opts: ResolveOptions): TableGeometry {
@@ -915,13 +991,21 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   const ringH = Math.max(0, ringBottom - ringTop);
 
   const opponents = Math.max(0, seatCount - 1);
-  const [nLeft, nTop, nRight] = allocateEdges(
-    opponents,
-    density,
-    ringW,
-    ringH,
-    podInset,
-  );
+  const paired = opts.pairs === true && seatCount % 2 === 0;
+  // The viewer's pair is at the bottom; every other pair goes on the rim, in
+  // order round the table from the pair after the viewer's.
+  const rimSeats: SeatId[] = [];
+  if (paired) {
+    const pairCount = seatCount / 2;
+    const own = Math.floor(seatBase / 2);
+    for (let k = 1; k < pairCount; k++) {
+      const pair = (own + k) % pairCount;
+      rimSeats.push(pair * 2, pair * 2 + 1);
+    }
+  }
+  const [nLeft, nTop, nRight] = paired
+    ? pairEdges(rimSeats.length / 2, ringW, podSize, podInset)
+    : allocateEdges(opponents, density, ringW, ringH, podInset);
 
   // Each edge stops short of the corners the other edges occupy,
   // otherwise the topmost side seat and the leftmost top seat land
@@ -948,7 +1032,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
    * would put somebody else's cards in your hand.
    */
   let position = 1;
-  const seatAt = (i: number): SeatId => (i + seatBase) % seatCount;
+  const seatAt = (i: number): SeatId => (paired ? rimSeats[i - 1]! : (i + seatBase) % seatCount);
 
   // A top seat's pod sits inside the screen whole. Centred half an inset
   // below the ring, as it always was, a pod taller than that inset put its
@@ -1037,6 +1121,8 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
       isHero: false,
     });
   }
+
+  if (paired) drawPairsTogether(seats, seatBase, podSize, watching);
 
   // The play area is the ring pulled in past whichever edges hold seats.
   //

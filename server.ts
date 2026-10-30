@@ -25,6 +25,7 @@ import { debugEnabled, handleDebugRequest } from "@/server/debug";
 import { handleRejoinRequest } from "@/server/rejoin";
 import { handlePhotoRequest } from "@/server/photo";
 import { log, setLogLevel } from "@/server/log";
+import { loadServerBrain } from "@/games/mindmeld/serverBrain";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = Number(process.env.PORT ?? 3000);
@@ -40,6 +41,13 @@ async function main(): Promise<void> {
   if (process.env.LOG_LEVEL) {
     setLogLevel(process.env.LOG_LEVEL as "debug" | "info" | "warn" | "error");
   }
+
+  // Mind Meld's bots think with word vectors read from disk. Before the first
+  // room can exist, so a table never starts on the stand-in by accident; if the
+  // files are missing it is logged and the game plays on the stand-in.
+  const brainLoaded = await loadServerBrain();
+  if (brainLoaded) log.info("word brain loaded", { event: "mindmeld-brain" });
+  else log.warn("word brain missing: Mind Meld bots will use the stand-in", { event: "mindmeld-brain" });
 
   const app = next({ dev, hostname, port });
   await app.prepare();

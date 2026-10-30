@@ -25,7 +25,8 @@ import { onSlam } from "./fx";
 
 let context: AudioContext | null = null;
 
-function audio(): AudioContext | null {
+/** The page's one audio context, created on first use; null where there is none. */
+export function audioContext(): AudioContext | null {
   if (context) return context;
   const Ctor =
     typeof window === "undefined"
@@ -43,13 +44,13 @@ function audio(): AudioContext | null {
 
 /** Called from a user gesture, which is what lets the context start. */
 export function unlockAudio(): void {
-  const ctx = audio();
+  const ctx = audioContext();
   if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
 }
 
 /** One thud. `final` is the round-ending slam: lower, longer, louder. */
 export function playSlamSound(final: boolean): void {
-  const ctx = audio();
+  const ctx = audioContext();
   if (!ctx || ctx.state !== "running") return;
   const now = ctx.currentTime;
   const out = ctx.createGain();

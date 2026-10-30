@@ -17,14 +17,16 @@
 
 import type { BotDifficulty, GameDefinition } from "@/engine/types";
 import { createBs } from "@/games/bs/rules";
+import { createChromaly } from "@/games/chromaly/rules";
 import { createDominoes } from "@/games/dominoes/rules";
 import { createLrc } from "@/games/lrc/rules";
+import { createMindMeld } from "@/games/mindmeld/rules";
 import { createPoker } from "@/games/poker/rules";
 import { createRummy } from "@/games/rummy/rules";
 import { createSpades } from "@/games/spades/rules";
 import { GAME_SETUPS, parseSettings, type GameSetupSpec } from "./gameSetup";
 
-export type GameId = "spades" | "dominoes" | "poker" | "lrc" | "rummy" | "bs";
+export type GameId = "spades" | "dominoes" | "poker" | "lrc" | "rummy" | "bs" | "chromaly" | "mindmeld";
 
 // Also the order the home screen lists them in.
 export const GAME_IDS: readonly GameId[] = [
@@ -34,6 +36,8 @@ export const GAME_IDS: readonly GameId[] = [
   "lrc",
   "rummy",
   "bs",
+  "chromaly",
+  "mindmeld",
 ];
 
 /** Loose bag off the wire, before `parse` has had a look at it. */
@@ -68,6 +72,15 @@ export interface GameEntry {
   online: boolean;
   /** Whether the lobby should offer team assignment for this game. */
   teams: (settings: RawSettings) => boolean;
+  /**
+   * Which side a seat plays for, where there are sides. Partners ACROSS the table
+   * (seats 0/2 against 1/3) is the default - Spades and Caribbean dominoes - so it
+   * is only given by a game that seats them otherwise: Mind Meld's partners sit
+   * side by side, and there can be five pairs.
+   */
+  teamOf?: (seat: number) => number;
+  /** Seats come in this many at a time (Mind Meld's pairs): 1 when omitted. */
+  seatStep?: number;
   /** Clamps whatever arrived off the wire into something safe to build —
    * from `setup`'s own ranges and defaults, so the form cannot drift from it. */
   parse: (raw: RawSettings) => RawSettings;
@@ -179,6 +192,59 @@ export const GAMES: Record<GameId, GameEntry> = {
     create: (s) =>
       createBs({ target: s.target as number, windowMs: s.windowMs as number }),
   },
+
+  mindmeld: {
+    id: "mindmeld",
+    name: "Mind Meld",
+    minSeats: 2,
+    maxSeats: 10,
+    defaultSeats: 4,
+    seatStep: 2,
+    setup: GAME_SETUPS.mindmeld,
+    online: true,
+    // Always in pairs; the seat decides the pair, side by side.
+    teams: () => true,
+    teamOf: (seat) => Math.floor(seat / 2),
+    parse: (raw) => parseSettings(GAME_SETUPS.mindmeld, raw),
+    create: (s) =>
+      createMindMeld({
+        rounds: s.rounds as number,
+        tries: s.tries as number,
+        thinkSeconds: s.thinkSeconds as number,
+        start: s.start as "free" | "dealt",
+        showLast: s.showLast as boolean,
+        familySafe: s.familySafe as boolean,
+        pace: s.pace === "turns" ? "turns" : "together",
+      }),
+  },
+
+  chromaly: {
+    id: "chromaly",
+    name: "Chromaly",
+    minSeats: 2,
+    maxSeats: 10,
+    defaultSeats: 4,
+    setup: GAME_SETUPS.chromaly,
+    online: true,
+    teams: () => false,
+    // Every house rule is clamped by the spec, and the window by its own
+    // range: zero would make the races unplayable and an hour would park the
+    // table.
+    parse: (raw) => parseSettings(GAME_SETUPS.chromaly, raw),
+    create: (s) =>
+      createChromaly({
+        target: s.target as number,
+        windowMs: s.windowMs as number,
+        drawToMatch: s.drawToMatch as boolean,
+        forcePlay: s.forcePlay as boolean,
+        stacking: s.stacking as "off" | "same" | "upward",
+        plusFour: s.plusFour as "challenge" | "free" | "honest",
+        jumpIn: s.jumpIn as boolean,
+        sevenZero: s.sevenZero as boolean,
+        doubles: s.doubles as boolean,
+        shuffleHands: s.shuffleHands as boolean,
+      }),
+  },
 };
 
 export function gameEntry(id: GameId): GameEntry {
@@ -207,7 +273,15 @@ export function seatBounds(id: GameId, settings: RawSettings): { min: number; ma
 /** `seats` pulled inside `seatBounds`. `NaN` stays `NaN`, for the caller to refuse. */
 export function clampSeats(id: GameId, settings: RawSettings, seats: number): number {
   const { min, max } = seatBounds(id, settings);
-  return Math.min(max, Math.max(min, seats));
+  const n = Math.min(max, Math.max(min, seats));
+  const step = GAMES[id].seatStep ?? 1;
+  // An odd count rounds UP to the next whole group: the empty seat is a bot's.
+  return step > 1 && Number.isFinite(n) && n % step !== 0 ? Math.min(max, n + (step - (n % step))) : n;
+}
+
+/** The side seat `seat` plays for in a game with sides: across by default. */
+export function teamIndexOf(id: GameId, seat: number): number {
+  return GAMES[id].teamOf ? GAMES[id].teamOf!(seat) : seat % 2;
 }
 
 export function isGameId(v: unknown): v is GameId {

@@ -20,7 +20,7 @@ import type {
   ZoneId,
 } from "@/engine/types";
 import { STAGGER } from "@/motion/presets";
-import { emitDice, emitSlam } from "./fx";
+import { emitCue, emitDice, emitSlam } from "./fx";
 import { useTableStore } from "./store";
 
 /**
@@ -96,6 +96,8 @@ function moveTo(
      * once": an ordinary deal/draw/play/flip on this same piece next
      * resets it to undefined. */
     motionDelayMs?: number;
+    /** See Placement.gathered: only a `deal` carries a closed hand on. */
+    gathered?: boolean;
   },
 ): void {
   const prev = map[id];
@@ -123,6 +125,8 @@ function moveTo(
     // leftover from a round that has ended.
     ownerTag: undefined,
     accentColour: undefined,
+    tint: undefined,
+    gathered: target.gathered,
   };
 }
 
@@ -141,6 +145,8 @@ export function applyEventToTable(event: GameEvent): void {
         zone: "hand",
         seat: event.to,
         faceUp: event.faceUp,
+        // A hand handed over whole stays one stack on the way (`gather`).
+        gathered: map[event.piece]?.gathered,
       });
       touched = true;
       break;
@@ -241,6 +247,15 @@ export function applyEventToTable(event: GameEvent): void {
       }
       break;
 
+    case "gather":
+    case "spread":
+      for (const [id, p] of Object.entries(map)) {
+        if (p.zone !== "hand" || p.seat !== event.seat) continue;
+        map[id] = { ...p, gathered: event.t === "gather" ? true : undefined };
+      }
+      touched = true;
+      break;
+
     case "highlight":
       if (map[event.piece]) {
         map[event.piece] = { ...map[event.piece]!, highlighted: event.on };
@@ -251,6 +266,11 @@ export function applyEventToTable(event: GameEvent): void {
     case "dice":
       // Like the slam: nothing moves, so nothing is touched here.
       emitDice({ seat: event.seat, faces: event.faces });
+      break;
+
+    case "cue":
+      // Like the slam: nothing moves, so nothing is touched here.
+      emitCue(event);
       break;
 
     case "slam":

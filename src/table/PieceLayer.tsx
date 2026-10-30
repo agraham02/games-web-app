@@ -25,6 +25,7 @@ import { memo, useEffect } from "react";
 import { motion, useAnimate } from "motion/react";
 import { HERO, type PieceId } from "@/engine/types";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
+import { ChromaBack, ChromaFace } from "@/ui/primitives/ChromaFace";
 import { TileBack, TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { baseSize, handArt, layoutPiece } from "./layout";
@@ -139,17 +140,6 @@ export interface PieceLayerProps {
 }
 
 /**
- * While a piece is being slammed it has to draw over everything —
- * including the hand it just left and any pod it flies past. Above
- * `Z_SELECTED` (5000), and set imperatively rather than through the
- * placement map because it is a hard switch, not something to tween: it
- * lands on the same frame the grow starts and is put back on the same
- * frame the piece settles. This is the one place the piece layer touches
- * z-index outside `layoutPiece`, and it is deliberately transient.
- */
-const Z_SLAM = 6000;
-
-/**
  * A piece id, made safe to sit inside a QUOTED attribute selector.
  * `CSS.escape` is the wrong tool here — it escapes identifiers, not
  * string contents, so it would turn `6-3` into `6\-3` (which happens to
@@ -201,11 +191,18 @@ function useSlamFx() {
           // The piece's own parent — the positional root — is what has
           // to come forward; lifting the wrapper alone would leave it
           // inside a stacking context that is still behind the hand.
+          //
+          // Through an attribute and a stylesheet rule (`[data-slamming]`),
+          // never by writing `style.zIndex`. It used to save the inline value
+          // and put it back afterwards - but the slam starts while the card is
+          // still in the hand, so what it saved was the HAND's z-index, and
+          // React never rewrites a style it thinks has not changed. Every
+          // slammed card stayed at hand height for good: on Chromaly's
+          // discard, one card sat on top of every card played after it.
           const lifted = target.parentElement;
-          const restore = lifted?.style.zIndex ?? "";
-          if (lifted) lifted.style.zIndex = String(Z_SLAM);
+          lifted?.setAttribute("data-slamming", "");
           void animate(target, slamKeyframes, slamTiming).then(() => {
-            if (lifted) lifted.style.zIndex = restore;
+            lifted?.removeAttribute("data-slamming");
           });
         }
 
@@ -569,6 +566,8 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
           back={
             meta.kind === "tile" ? (
               <TileBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
+            ) : meta.kind === "chroma" ? (
+              <ChromaBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
             ) : (
               <CardBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
             )
@@ -581,6 +580,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
             h={base.h}
             detail={detail}
             ariaHidden={!placement.faceUp}
+            tint={placement.tint}
           />
         </Flipper>
       )}
@@ -722,6 +722,7 @@ function PieceFace({
   h,
   detail,
   ariaHidden,
+  tint,
 }: {
   kind: string;
   face: string;
@@ -730,8 +731,13 @@ function PieceFace({
   detail: "full" | "index";
   /** Flippable kinds — hides the front face while the back is showing. */
   ariaHidden?: boolean;
+  /** See `Placement.tint`. */
+  tint?: string;
 }) {
   if (kind === "tile") return <TileFace tile={face} w={w} h={h} ariaHidden={ariaHidden} />;
   if (kind === "chip") return <ChipFace colour={face} size={Math.min(w, h)} />;
+  if (kind === "chroma") {
+    return <ChromaFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} tint={tint} />;
+  }
   return <CardFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
 }

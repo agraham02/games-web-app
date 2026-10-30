@@ -47,6 +47,7 @@ import { prefersReducedMotion } from "@/motion/presets";
 import { announce } from "@/ui/disclosure";
 import { botName } from "@/games/_shared/botIdentity";
 import { composeAnnounce } from "@/session/announce";
+import { withFacing } from "@/session/redact";
 import {
   DEFAULT_TURN_HOLD_MS,
   GameSession,
@@ -372,7 +373,8 @@ export function useGameRuntime<S, A>(
     const factor = 1 / Math.max(0.05, live.speed ?? 1);
 
     if (definition.isOver(current)) {
-      const delay = prefersReducedMotion() ? 0 : (live.endHoldMs ?? DEFAULT_END_HOLD_MS) * factor;
+      const hold = Math.max(live.endHoldMs ?? DEFAULT_END_HOLD_MS, definition.roundHoldMs ?? 0);
+      const delay = prefersReducedMotion() ? 0 : hold * factor;
       endHoldTimer.current = setTimeout(() => setGameEndRevealed(true), delay);
       return;
     }
@@ -384,7 +386,7 @@ export function useGameRuntime<S, A>(
     if (definition.isRoundOver?.(current)) {
       const delay = prefersReducedMotion()
         ? 0
-        : (live.roundHoldMs ?? DEFAULT_ROUND_HOLD_MS) * factor;
+        : Math.max(live.roundHoldMs ?? DEFAULT_ROUND_HOLD_MS, definition.roundHoldMs ?? 0) * factor;
       roundHoldTimer.current = setTimeout(() => setRoundEndRevealed(true), delay);
       return;
     }
@@ -411,7 +413,14 @@ export function useGameRuntime<S, A>(
     if (frame.dealtRound !== null) setDealingRound(frame.dealtRound);
     setHasPending(session.pendingReveal);
     if (frame.events.length > 0) {
-      choreographer.push(frame.events);
+      // Facing corrected for the hero exactly as a room corrects it for each
+      // viewer (`projectEvents`): a game that deals `faceUp: false` and lets
+      // the board say who may see what (BS, Chromaly) dealt the hero's cards
+      // face DOWN here and turned them over at the end of the deal. The user
+      // wants a deal face up (2026-10-30); a hand that is not theirs to see
+      // yet (Spades' blind bid) stays down, because the board says so.
+      const after = definition.placements(session.snapshot(), HERO);
+      choreographer.push(frame.events.map((event) => withFacing(event, after)));
     } else {
       // A legal action that moves nothing — Spades' `look`. The
       // choreographer bails on an empty batch without ever calling
