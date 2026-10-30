@@ -71,6 +71,22 @@ describe("the home screen", () => {
     await waitFor(() => expect(root().getAttribute("data-game")).toBe(last));
   });
 
+  it("goes to a game in view when it is pressed, the same before and after a drag", async () => {
+    const { container } = render(<HomeScreen />);
+    const slide = (label: string) => container.querySelector(`[aria-label="${label}"]`) as HTMLElement;
+    const press = (el: HTMLElement) => {
+      fireEvent.pointerDown(el);
+      fireEvent.click(el);
+    };
+    press(slide(`2 of ${GAME_IDS.length}`));
+    await waitFor(() => expect(root().getAttribute("data-game")).toBe(GAME_IDS[1]));
+    // The one to the left of the first wraps round to the last.
+    press(slide(`1 of ${GAME_IDS.length}`));
+    await waitFor(() => expect(root().getAttribute("data-game")).toBe(GAME_IDS[0]));
+    press(slide(`${GAME_IDS.length} of ${GAME_IDS.length}`));
+    await waitFor(() => expect(root().getAttribute("data-game")).toBe(GAME_IDS[GAME_IDS.length - 1]));
+  });
+
   it("goes straight to a game from its dot", async () => {
     render(<HomeScreen />);
     const third = GAME_IDS[2]!;

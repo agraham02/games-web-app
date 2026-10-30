@@ -109,7 +109,8 @@ function Orb({ size, colour, blend = false }: { size: number; colour: string; bl
  */
 export function GameArt({ id, scale = 1, still = false }: { id: GameId; scale?: number; still?: boolean }) {
   return (
-    <div aria-hidden className="relative shrink-0" style={{ width: ART_W * scale, height: ART_H * scale }}>
+    // Its own game's colours, whatever page it is on (see `GameThumb`).
+    <div aria-hidden data-game={id} className="relative shrink-0" style={{ width: ART_W * scale, height: ART_H * scale }}>
       <div
         className="absolute top-0 left-0"
         style={{ width: ART_W, height: ART_H, transform: `scale(${scale})`, transformOrigin: "top left" }}

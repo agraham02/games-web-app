@@ -21,7 +21,21 @@ import { TileFace } from "./TileFace";
 /** How tall the piece is drawn, in px. The home page's tiles are `md`. */
 const HEIGHT = { sm: 40, md: 50 } as const;
 
+/**
+ * Each game's picture wears ITS OWN game's colours, whatever page it is on: a
+ * BS card back and Mind Meld's orbs are drawn in the theme's felt and accent,
+ * and in a Poker room's picker they came out navy and champagne.
+ * `display: contents`, so the wrapper adds a colour scope and no box.
+ */
 export function GameThumb({ id, size = "md" }: { id: GameId; size?: keyof typeof HEIGHT }) {
+  return (
+    <span data-game={id} className="contents">
+      <Thumb id={id} size={size} />
+    </span>
+  );
+}
+
+function Thumb({ id, size }: { id: GameId; size: keyof typeof HEIGHT }) {
   const h = HEIGHT[size];
   const card = Math.round(h * 0.72);
   const round = Math.round(h * 0.8);

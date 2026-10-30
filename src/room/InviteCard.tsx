@@ -78,7 +78,7 @@ export function InviteCard({ code, compact = false }: { code: string; compact?: 
   // The lobby's: a card of its own, the code beside its buttons on anything
   // wider than a phone.
   return (
-    <div className="flex w-full flex-col items-center gap-4 rounded-xl border border-bone-50/10 bg-bone-50/3 px-5 py-5 backdrop-blur-sm sm:flex-row sm:justify-between sm:px-6">
+    <div className="flex w-full flex-col items-center gap-4 rounded-2xl border border-bone-50/14 bg-bone-50/6 shadow-e2 backdrop-blur-md px-5 py-5 sm:flex-row sm:justify-between sm:px-6">
       <div className="flex flex-col items-center gap-1.5 sm:items-start">
         <span className="eyebrow">Room code</span>
         <span className="font-title text-5xl leading-none font-light tracking-[0.28em] text-brass-200 transition-colors duration-700 sm:text-6xl">

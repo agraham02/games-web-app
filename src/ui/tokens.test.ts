@@ -14,7 +14,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GAME_IDS } from "@/session/registry";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { GAME_THEMES, themeAttrs } from "./gameTheme";
+import { GameThumb } from "./primitives/GameThumb";
 
 const SRC = path.resolve(__dirname, "..");
 const CSS = readFileSync(path.join(SRC, "app", "globals.css"), "utf8");
@@ -81,8 +84,9 @@ function declared(block: string, token: string): string | undefined {
 
 /** What a `[data-game="…"]` subtree declares, merged across its blocks. */
 function gameBlock(id: string): string {
-  const blocks = [...CSS.matchAll(new RegExp(`\\[data-game="${id}"\\]\\s*\\{([^}]*)\\}`, "g"))];
-  return blocks.map((m) => m[1]).join("\n");
+  // Any rule whose selector list names the game, grouped or alone.
+  const blocks = [...CSS.matchAll(/([^{}]*)\{([^{}]*)\}/g)].filter((m) => m[1]!.includes(`[data-game="${id}"]`));
+  return blocks.map((m) => m[2]).join("\n");
 }
 
 function luminance(hex: string): number {
@@ -135,6 +139,24 @@ describe("per-game surfaces", () => {
     for (const id of GAME_IDS) {
       if (id === "spades" || id === "rummy" || id === "bs") continue;
       expect(selectors, id).toContain(`[data-game="${id}"]`);
+    }
+  });
+
+  it("gives EVERY game its own colours, so its pieces look the same on another game's page", () => {
+    // A BS card back and Mind Meld's orbs are drawn in felt and brass. The
+    // house-green games had no block of their own, so inside a Poker room's
+    // picker they inherited Poker's navy (the user, 2026-10-30).
+    for (const id of GAME_IDS) {
+      const block = gameBlock(id);
+      for (const token of ["felt-700", "felt-800", "brass-300", "brass-500"]) {
+        expect(declared(block, token), `${id} ${token}`).toBeDefined();
+      }
+    }
+  });
+
+  it("draws each game's picture in its own game's scope", () => {
+    for (const id of GAME_IDS) {
+      expect(renderToStaticMarkup(createElement(GameThumb, { id }))).toContain(`data-game="${id}"`);
     }
   });
 

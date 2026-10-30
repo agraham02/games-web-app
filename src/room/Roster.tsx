@@ -102,7 +102,7 @@ export function Roster(props: RosterProps) {
 /** During a game: the people, with the seats they hold. */
 function MemberList({ members, you, youAreLeader, onPromote, onKick, onPhoto }: RosterProps) {
   return (
-    <ul aria-label="Room members" className="flex w-full flex-col gap-1.5">
+    <ul aria-label="Room members" className="flex w-full flex-col divide-y divide-bone-50/8">
       {members.map((m) => (
         <li key={m.session} className={ROW}>
           <MemberCells
@@ -183,7 +183,7 @@ function SeatingPlan({
         setKeys(next);
       }}
       aria-label="Seating plan"
-      className="flex w-full flex-col gap-1.5"
+      className="flex w-full flex-col divide-y divide-bone-50/8"
     >
       {keys.map((key, i) => {
         const member = isBotKey(key) ? null : byId.get(key);
@@ -233,8 +233,9 @@ function SeatingPlan({
   );
 }
 
-const ROW =
-  "flex items-center gap-3 rounded-lg bg-bone-50/4 px-3 py-2.5 ring-1 ring-bone-50/8";
+// Rows of ONE list, divided by hairlines, not a box each: the lobby draws the
+// table as a card, and a box per row inside it was cards in a card.
+const ROW = "flex items-center gap-3 px-1 py-2.5";
 
 function SeatRow({
   value,
@@ -267,7 +268,15 @@ function SeatRow({
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={TRANSITIONS.uiEnter}
-      whileDrag={{ scale: 1.02, zIndex: 1, boxShadow: "0 8px 24px rgb(0 0 0 / 0.35)" }}
+      // A row has no box of its own any more, so it takes one while it is
+      // carried: over the rows it passes, bare text on text was unreadable.
+      whileDrag={{
+        scale: 1.02,
+        zIndex: 1,
+        borderRadius: 8,
+        backgroundColor: "rgb(24 24 24 / 0.96)",
+        boxShadow: "0 8px 24px rgb(0 0 0 / 0.45)",
+      }}
     >
       {canArrange ? (
         <button

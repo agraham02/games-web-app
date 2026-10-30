@@ -166,6 +166,9 @@
    The hexes are mirrored (as swatches) in src/ui/gameTheme.ts, and
    tokens.test.ts checks the two agree and that contrast holds.
    ============================================================ */
+[data-game="spades"],
+[data-game="rummy"],
+[data-game="bs"],
 [data-game="poker"],
 [data-game="dominoes"],
 [data-game="chromaly"],
@@ -179,6 +182,26 @@
   --color-ring: var(--color-brass-300);
   --shadow-glow: 0 0 16px color-mix(in srgb, var(--color-brass-400) 50%, transparent);
   --shadow-glow-inset: inset 0 0 8px color-mix(in srgb, var(--color-brass-400) 55%, transparent);
+}
+
+/* Spades, Rummy 500, BS — the house green, said again. :root already has it,
+   but a green game's piece drawn INSIDE another game's page (a BS card back
+   in the picker of a Poker room) must not wear the Poker navy. */
+[data-game="spades"],
+[data-game="rummy"],
+[data-game="bs"] {
+  --color-felt-950: #071310;
+  --color-felt-900: #0b2019;
+  --color-felt-850: #0f2a22;
+  --color-felt-800: #143528;
+  --color-felt-700: #1b4634;
+  --color-felt-600: #245c45;
+  --color-brass-200: #f0dcb4;
+  --color-brass-300: #e3c68f;
+  --color-brass-400: #d4af6a;
+  --color-brass-500: #b8914e;
+  --color-brass-600: #8e6e39;
+  --color-brass-700: #5c4724;
 }
 
 /* Poker — midnight navy, champagne gold. */

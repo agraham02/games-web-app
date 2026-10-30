@@ -83,8 +83,8 @@ export function Lobby({ api }: { api: RoomApi }) {
  */
 function Card({ title, aside, children }: { title: string; aside?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="flex w-full min-w-0 flex-col gap-4 rounded-xl border border-bone-50/10 bg-bone-50/3 p-5 backdrop-blur-sm sm:p-6">
-      <header className="flex min-h-6 items-center justify-between gap-3">
+    <section className="flex w-full min-w-0 flex-col gap-4 rounded-2xl border border-bone-50/14 bg-bone-50/6 shadow-e2 backdrop-blur-md p-5 sm:p-6">
+      <header className="-mx-5 flex min-h-6 items-center justify-between gap-3 border-b border-bone-50/10 px-5 pb-4 sm:-mx-6 sm:px-6">
         <h2 className="caps text-bone-300">{title}</h2>
         {aside}
       </header>
@@ -530,7 +530,7 @@ function TurnTimerField({
  */
 function WaitingForPeople({ gameId }: { gameId: GameId | null }) {
   return (
-    <div className="flex flex-col items-center gap-2 rounded-lg bg-bone-50/4 px-4 py-3 text-center ring-1 ring-bone-50/10">
+    <div className="flex flex-col items-center gap-2 rounded-lg bg-black/25 px-4 py-3 text-center">
       <p className="text-xs leading-relaxed text-bone-400">
         A room game needs {MIN_ROOM_PLAYERS} people. Send the link above — or play on your own until somebody
         arrives.

@@ -87,10 +87,13 @@ export function Carousel({ active, onActive, count, slide, gap = 16, label, clas
           step(-1);
         }
       }}
-      onPanStart={() => {
+      // Reset on EVERY press, not when a drag starts: a plain click never
+      // starts one, so after the first drag every later click on a game
+      // still counted as a drag and went nowhere.
+      onPointerDown={() => {
         moved.current = false;
-        setHeld(true);
       }}
+      onPanStart={() => setHeld(true)}
       onPan={(_, info) => {
         if (Math.abs(info.offset.x) > 4) moved.current = true;
         setDrag(info.offset.x);
