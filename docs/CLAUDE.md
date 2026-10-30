@@ -1226,26 +1226,32 @@ green felt, so no game felt like itself.
 
 The user chose it (2026-10-30) over a Bold & graphic test page; both are still
 at `/lab/design/bold` and `/lab/design/luxury`. Near-black page with only a
-pool of the game's colour (`ui/stage/GameBackdrop`), Instrument Serif italic
-for names (`font-title`; tables keep Cinzel), wide-tracked capitals (`caps`,
+pool of the game's colour (`ui/stage/GameBackdrop`), Jost light for names and
+the room code (`font-title`; the user does not like serifs, so no serif in the
+shell — tables still use Cinzel), wide-tracked capitals (`caps`,
 `eyebrow`, `text-link` utilities), hairlines instead of fills. The `rounded`
 `Button` is the flat/outlined shell look; the `pill` stays the table's.
 
-- **Home (`app/HomeScreen.tsx`) is game-first.** A snap-scrolling carousel
-  (`ui/stage/Carousel`, no library) of each game's own pieces (`GameArt`);
-  the page colour crossfades by opacity. **Play with friends** makes a room
+- **Home (`app/HomeScreen.tsx`) is game-first.** A full-width, ENDLESS
+  carousel (`ui/stage/Carousel`) of each game's own pieces (`GameArt`), with
+  dots and an arrow either side under it; the page colour crossfades by
+  opacity. It is transform-based, not scroll-snap: a scroller has ends and a
+  mouse cannot drag it. `virtual` is an unbounded index, slide `k` shows game
+  `k mod n`, and only slides within reach are mounted, so wrapping never makes
+  a slide jump across the strip; a page-driven change takes the shortest way. **Play with friends** makes a room
   FOR the game on show: the entry intent is `{ t: "make", game }`
   (`room/entry.ts`), and once the room exists `RoomScreen` sends `selectGame`
   with this device's saved setup, holding the "acting" screen until it has
   taken so the lobby never flashes "Pick a game first". The name is asked in
-  a sheet only when the device has none. Wide screens and landscape phones
-  put the carousel and the words side by side — stacked, the buttons fell
-  below the fold.
+  a sheet only when the device has none. Only a landscape phone (`short:`) puts
+  the carousel and the words side by side; on a laptop that squashed it.
 - **A room made this way has a game from the start**, so its roster is the
-  seating plan (not the plain member list) and a phone's Game panel starts
-  folded to its summary line (`Change` opens it).
-- Carousel gotchas: the scroller must be `relative` (slide `offsetLeft` maths),
-  and it must scroll to follow `active` when the PAGE changes it.
+  seating plan (not the plain member list), and the lobby's Game card shows
+  just that game: "Change game" opens the picker. The lobby is cards (invite,
+  Game, Table, Room) in a wide grid, and the footer is a solid full-width bar
+  (a fade the width of the column read as a box cut out of the page).
+- e2e: pick a game with `pickGame(page, /^Name,/)` in `room.spec.ts` — it
+  opens "Change game" first when the picker is folded.
 
 ## Shared UI primitives
 
