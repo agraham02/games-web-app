@@ -34,6 +34,16 @@ async function hostRoom(page: Page): Promise<string> {
   return new URL(page.url()).pathname.split("/").pop()!;
 }
 
+/**
+ * Choose a game in the lobby. A room made from the home carousel already has
+ * one (Spades, the first), so the picker is folded behind "Change game".
+ */
+async function pickGame(page: Page, name: RegExp): Promise<void> {
+  const tile = page.getByRole("button", { name });
+  if (!(await tile.isVisible())) await page.getByRole("button", { name: /change game/i }).click();
+  await tile.click();
+}
+
 async function join(page: Page, code: string): Promise<void> {
   await page.getByLabel(/room code/i).fill(code);
   await page.getByRole("button", { name: /join room/i }).click();
@@ -130,7 +140,7 @@ test.describe("a room, in real browsers", () => {
     const ada = await player(one, "Ada");
     await hostRoom(ada);
 
-    await ada.getByRole("button", { name: "Dominoes" }).click();
+    await pickGame(ada, /^Dominoes,/);
     await expect(ada.getByRole("button", { name: /start dominoes/i })).toBeDisabled();
     await expect(ada.getByText(/needs 2 people/i)).toBeVisible();
     await expect(ada.getByRole("link", { name: /play dominoes solo/i })).toHaveAttribute(
@@ -169,7 +179,7 @@ test.describe("a room, in real browsers", () => {
       }
     }
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await pickGame(ada, /^Spades,/);
     await ada.getByRole("button", { name: /start spades/i }).click();
 
     for (const page of pages) {
@@ -218,7 +228,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await pickGame(ada, /^Spades,/);
     await ada.getByRole("button", { name: /start spades/i }).click();
 
     // Both land on a table rather than the lobby.
@@ -284,7 +294,7 @@ test.describe("a room, in real browsers", () => {
     await ada.getByRole("button", { name: "Close", exact: true }).click();
     await bo.getByRole("button", { name: "Close", exact: true }).click();
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await pickGame(ada, /^Spades,/);
     await ada.getByRole("button", { name: /start spades/i }).click();
     for (const page of [ada, bo]) await atTable(page);
 
@@ -323,7 +333,7 @@ test.describe("a room, in real browsers", () => {
     for (let i = 0; i < 5; i++) await fewer.click();
     await expect(ada.getByText("5", { exact: true })).toBeVisible();
 
-    await ada.getByRole("button", { name: "Poker" }).click();
+    await pickGame(ada, /^Poker,/);
     await ada.getByRole("button", { name: /start poker/i }).click();
     for (const page of [ada, bo]) await atTable(page);
 
@@ -364,7 +374,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await pickGame(ada, /^Spades,/);
     await ada.getByRole("button", { name: /start spades/i }).click();
     await atTable(bo);
 
@@ -411,7 +421,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await pickGame(ada, /^Spades,/);
     await ada.getByRole("button", { name: /start spades/i }).click();
     await atTable(bo);
 
@@ -433,7 +443,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await pickGame(ada, /^Spades,/);
     await ada.getByRole("button", { name: /start spades/i }).click();
     await atTable(bo);
 
@@ -462,7 +472,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Rummy 500" }).click();
+    await pickGame(ada, /^Rummy 500,/);
     await ada.getByRole("button", { name: /start rummy 500/i }).click();
 
     for (const page of [ada, bo]) {
@@ -568,7 +578,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Dominoes" }).click();
+    await pickGame(ada, /^Dominoes,/);
     await ada.getByRole("button", { name: /start dominoes/i }).click();
     for (const page of [ada, bo]) {
       await atTable(page);
@@ -712,7 +722,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Dominoes" }).click();
+    await pickGame(ada, /^Dominoes,/);
     await ada.getByRole("button", { name: /start dominoes/i }).click();
     for (const page of [ada, bo]) {
       await atTable(page);
@@ -844,7 +854,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    await pickGame(ada, /^Spades,/);
 
     // A dealt card shows its face; an undealt one is a back. So Bo's own
     // hand filling in is a count of faces going from nothing to thirteen.
@@ -891,7 +901,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^BS,/ }).click();
+    await pickGame(ada, /^BS,/);
     await ada.getByRole("button", { name: /start bs/i }).click();
 
     for (const page of [ada, bo]) {
@@ -944,7 +954,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^Chromaly,/ }).click();
+    await pickGame(ada, /^Chromaly,/);
     await ada.getByRole("button", { name: /start chromaly/i }).click();
 
     for (const page of [ada, bo]) await atTable(page);
@@ -991,7 +1001,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: /^BS,/ }).click();
+    await pickGame(ada, /^BS,/);
     await ada.getByRole("button", { name: /start bs/i }).click();
     for (const page of [ada, bo]) {
       await atTable(page);

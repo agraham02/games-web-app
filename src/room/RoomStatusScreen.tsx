@@ -67,7 +67,7 @@ export function RoomStatusScreen({
           <PieceStrip className="scale-90" />
         </motion.div>
 
-        <h1 className="font-title text-4xl leading-tight font-normal text-bone-50 italic">
+        <h1 className="font-title text-4xl leading-tight font-light tracking-tight text-bone-50">
           {title}
         </h1>
         {line ? (

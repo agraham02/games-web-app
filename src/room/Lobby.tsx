@@ -55,22 +55,41 @@ import type { RoomApi } from "./useRoom";
 export function Lobby({ api }: { api: RoomApi }) {
   const room = api.room!;
   return (
-    <SetupShell game={room.gameId ?? undefined} maxWidth="max-w-md lg:max-w-4xl" footer={<LobbyFooter api={api} />}>
+    <SetupShell game={room.gameId ?? undefined} maxWidth="max-w-xl lg:max-w-6xl" footer={<LobbyFooter api={api} />}>
       {/* First, while there is one: after a game played for money this is
           what everybody came back to the lobby needing. It stays until the
           next game starts. */}
-      {room.settlement ? <SettleUp settlement={room.settlement} you={room.you} className="max-w-md" /> : null}
+      {room.settlement ? <SettleUp settlement={room.settlement} you={room.you} className="w-full" /> : null}
       <InviteCard code={room.code} />
       {/* `grid-cols-1` is `minmax(0, 1fr)`: without it the one column on a
           phone is `auto`, sized to its widest content that will not wrap —
           a Spades roster row with its Team chip — and the whole lobby ran
-          past the right-hand padding, off an iPhone's screen. A slider
-          then held it there, measuring its fill from the stretched track. */}
-      <div className="grid w-full grid-cols-1 gap-9 lg:grid-cols-2 lg:items-start lg:gap-12">
+          past the right-hand padding, off an iPhone's screen. */}
+      <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:items-start lg:gap-5">
         <GamePanel api={api} />
-        <TablePanel api={api} />
+        <div className="flex min-w-0 flex-col gap-4 lg:gap-5">
+          <TablePanel api={api} />
+          <RoomPanel api={api} />
+        </div>
       </div>
     </SetupShell>
+  );
+}
+
+/**
+ * One section of the lobby (the user asked for cards, 2026-10-30): it was a
+ * single long column of controls, and nothing said where one thing ended and
+ * the next began.
+ */
+function Card({ title, aside, children }: { title: string; aside?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="flex w-full min-w-0 flex-col gap-4 rounded-xl border border-bone-50/10 bg-bone-50/3 p-5 backdrop-blur-sm sm:p-6">
+      <header className="flex min-h-6 items-center justify-between gap-3">
+        <h2 className="caps text-bone-300">{title}</h2>
+        {aside}
+      </header>
+      {children}
+    </section>
   );
 }
 
@@ -103,59 +122,70 @@ function LobbyFooter({ api }: { api: RoomApi }) {
   const ready = leader && room.gameId !== null && here(room) >= MIN_ROOM_PLAYERS;
   const full = room.openSeats.length === 0;
 
+  const main = room.gameRunning ? (
+    <div className="flex w-full gap-2">
+      {/* Dimmed rather than hidden at a full table, with the reason above
+          it: `openSeats` used to go unread, and pressing this at a full
+          table quietly made you a spectator. */}
+      <Button tone="primary" className="flex-[1.4]" disabled={full} onClick={() => api.enterGame("player")}>
+        {full ? "Table is full" : "Join the game →"}
+      </Button>
+      <Button className="flex-1" onClick={() => api.enterGame("spectator")}>
+        Watch instead
+      </Button>
+    </div>
+  ) : leader ? (
+    <Button tone="primary" className="w-full" disabled={!ready} onClick={api.startGame}>
+      {room.gameId ? `Start ${GAMES[room.gameId].name}` : "Pick a game first"}
+    </Button>
+  ) : null;
+
+  const lead =
+    room.gameRunning && leader ? (
+      <EndGameAction
+        onEnd={api.endGame}
+        size="sm"
+        tone="danger"
+        label="End the game for everyone"
+        question="End the game for everyone?"
+        note="Everyone comes back here."
+      />
+    ) : leader ? (
+      // Hidden, not dimmed, for everybody else: they can never press it
+      // (see `hide-controls-never-usable`), and a Leave is theirs.
+      <EndGameAction
+        onEnd={api.closeRoom}
+        size="sm"
+        tone="danger"
+        label="Close room"
+        question="Close the room for everyone?"
+        note="Everyone is sent home."
+        confirmLabel="Close room"
+        cancelLabel="Keep it open"
+      />
+    ) : (
+      <span />
+    );
+
+  // A phone: what to do, then the ways out on one row under it. Wider: one
+  // row, the ways out at either end and the action in the middle.
   return (
-    <div className="flex w-full max-w-md flex-col items-center gap-2.5">
-      {status ? (
-        <p role="status" className="text-center text-xs font-semibold text-bone-300">
-          {status}
-        </p>
-      ) : null}
-      {room.gameRunning ? (
-        <div className="flex w-full gap-2">
-          {/* Dimmed rather than hidden at a full table, with the reason
-              above it: `openSeats` used to go unread, and pressing this at
-              a full table quietly made you a spectator. */}
-          <Button tone="primary" className="flex-[1.4]" disabled={full} onClick={() => api.enterGame("player")}>
-            {full ? "Table is full" : "Join the game →"}
-          </Button>
-          <Button className="flex-1" onClick={() => api.enterGame("spectator")}>
-            Watch instead
+    <div className="flex w-full flex-col items-center gap-2.5 sm:grid sm:grid-cols-[1fr_minmax(0,22rem)_1fr] sm:items-center sm:gap-6">
+      <div className="flex w-full flex-col items-center gap-2 sm:col-start-2 sm:row-start-1">
+        {status ? (
+          <p role="status" className="text-center text-xs font-medium text-bone-300">
+            {status}
+          </p>
+        ) : null}
+        {main}
+      </div>
+      <div className="flex w-full items-center justify-between gap-3 sm:contents">
+        <div className="sm:col-start-1 sm:row-start-1 sm:justify-self-start">{lead}</div>
+        <div className="sm:col-start-3 sm:row-start-1 sm:justify-self-end">
+          <Button size="sm" onClick={api.leaveRoom}>
+            Leave room
           </Button>
         </div>
-      ) : leader ? (
-        <Button tone="primary" className="w-full" disabled={!ready} onClick={api.startGame}>
-          {room.gameId ? `Start ${GAMES[room.gameId].name}` : "Pick a game first"}
-        </Button>
-      ) : null}
-      <div className="flex w-full items-center justify-between gap-3">
-        {room.gameRunning && leader ? (
-          <EndGameAction
-            onEnd={api.endGame}
-            size="sm"
-            tone="danger"
-            label="End the game for everyone"
-            question="End the game for everyone?"
-            note="Everyone comes back here."
-          />
-        ) : leader ? (
-          // Hidden, not dimmed, for everybody else: they can never press it
-          // (see `hide-controls-never-usable`), and a Leave is theirs.
-          <EndGameAction
-            onEnd={api.closeRoom}
-            size="sm"
-            tone="danger"
-            label="Close room"
-            question="Close the room for everyone?"
-            note="Everyone is sent home."
-            confirmLabel="Close room"
-            cancelLabel="Keep it open"
-          />
-        ) : (
-          <span />
-        )}
-        <Button size="sm" onClick={api.leaveRoom}>
-          Leave room
-        </Button>
       </div>
     </div>
   );
@@ -177,54 +207,53 @@ function GamePanel({ api }: { api: RoomApi }) {
   const offline = GAME_IDS.map((id) => GAMES[id]).filter((g) => !g.online);
   const entry = room.gameId ? GAMES[room.gameId] : null;
 
-  // On a phone a chosen game folds to one line, so the Table below it is in
-  // reach; anybody's opens on request. The leader's starts open only while
-  // there is NOTHING chosen yet: a room made from the home carousel already
-  // has its game (and the setup this device last used for it), and eight
-  // picture tiles would push the Table off the screen to say so again. Side
-  // by side on a wide screen, nothing folds.
+  // The picker is out only while there is no game yet, or once the leader
+  // asks to change it: a room made from the home carousel arrives with its
+  // game, and eight tiles saying so again were most of the screen.
+  const [picking, setPicking] = useState(false);
+  const showPicker = entry === null || picking;
+  // The rules: always out on a wide screen; on a phone, folded to the one
+  // line that already says them, until asked for.
   const wide = useMediaQuery("(min-width: 1024px)");
-  const [open, setOpen] = useState(() => room.youAreLeader && !room.gameRunning && room.gameId === null);
-  const folded = entry !== null && !wide && !open;
+  const [rulesOpen, setRulesOpen] = useState(false);
+  // Not the game's name: it is the heading right above.
   const summary = entry
     ? [
-        entry.name,
         ...summarizeSetup(entry.setup, room.settings, "room"),
         ...(entry.setup.difficulty ? [`Bots ${DIFFICULTY_NAMES[room.difficulty]}`] : []),
       ].join(" · ")
     : "";
 
   return (
-    <section className="flex w-full flex-col gap-3">
-      <header className="flex items-center justify-between gap-3">
-        <span className="eyebrow">Game</span>
-        {entry && !wide ? (
-          <button
-            type="button"
-            aria-expanded={!folded}
-            onClick={() => setOpen((o) => !o)}
-            className="text-xs font-semibold text-brass-300 underline-offset-4 hover:underline"
-          >
-            {folded ? (locked ? "Details" : "Change") : locked ? "Hide" : "Done"}
+    <Card
+      title="Game"
+      aside={
+        entry && !locked ? (
+          <button type="button" className="text-link" aria-expanded={showPicker} onClick={() => setPicking((p) => !p)}>
+            {picking ? "Keep this game" : "Change game"}
           </button>
-        ) : null}
-      </header>
+        ) : null
+      }
+    >
       {locked ? (
-        <p className="text-[11px] text-bone-500">
+        <p className="-mt-2 text-[11px] text-bone-500">
           {room.gameRunning ? "Fixed until this game ends." : `Only ${leaderName(room)} can change these.`}
         </p>
       ) : null}
 
-      {folded && entry ? (
-        <div className="flex items-center gap-3">
-          <span aria-hidden className="flex h-11 w-8 shrink-0 items-center justify-center">
-            <GameThumb id={entry.id} size="sm" />
+      {entry ? (
+        <div className="flex items-center gap-4">
+          <span aria-hidden className="grid h-14 w-12 shrink-0 place-items-center">
+            <GameThumb id={entry.id} />
           </span>
-          <p className="text-sm leading-relaxed text-bone-200">{summary}</p>
+          <div className="min-w-0">
+            <div className="font-title text-3xl leading-none font-light tracking-tight text-bone-50">{entry.name}</div>
+            <div className="caps mt-2 text-bone-500">{seatRange(entry.id)}</div>
+          </div>
         </div>
       ) : null}
 
-      <Collapse open={!folded}>
+      <Collapse open={showPicker}>
         <div className="flex flex-col gap-3">
           {/* The home page's pictures, not a row of names (the user,
               2026-09-27): a domino says "Dominoes" faster than the word. */}
@@ -241,7 +270,7 @@ function GamePanel({ api }: { api: RoomApi }) {
                   <span aria-hidden className="flex h-11 items-center justify-center">
                     <GameThumb id={g.id} size="sm" />
                   </span>
-                  <span className="font-title text-[17px] leading-tight italic">{g.name}</span>
+                  <span className="font-title text-[15px] leading-tight font-light">{g.name}</span>
                   <span className="text-[10px] font-semibold text-bone-500">{seatRange(g.id)}</span>
                 </>
               ),
@@ -261,6 +290,7 @@ function GamePanel({ api }: { api: RoomApi }) {
                 kept?.seats ?? next.defaultSeats,
                 room.difficulty,
               );
+              setPicking(false);
             }}
           />
           {/*
@@ -276,11 +306,28 @@ function GamePanel({ api }: { api: RoomApi }) {
               for now.
             </p>
           ) : null}
+        </div>
+      </Collapse>
 
-          {/* A different game's options cross-fade in rather than jumping. */}
-          {entry ? (
-            <Swap swapKey={entry.id}>
-              <p className="text-xs leading-relaxed text-bone-400">{textOf(entry.setup.description, room.settings)}</p>
+      {/* A different game's options cross-fade in rather than jumping. */}
+      {entry ? (
+        <Swap swapKey={entry.id}>
+          <div className="flex flex-col gap-3 border-t border-bone-50/8 pt-4">
+            <p className="text-xs leading-relaxed text-bone-400">{textOf(entry.setup.description, room.settings)}</p>
+            {wide ? null : (
+              <div className="flex items-start gap-3">
+                {rulesOpen ? null : <p className="flex-1 text-sm leading-relaxed text-bone-200">{summary}</p>}
+                <button
+                  type="button"
+                  aria-expanded={rulesOpen}
+                  onClick={() => setRulesOpen((o) => !o)}
+                  className="text-link ml-auto shrink-0 pt-1"
+                >
+                  {rulesOpen ? (locked ? "Hide" : "Done") : locked ? "Details" : "Edit rules"}
+                </button>
+              </div>
+            )}
+            <Collapse open={wide || rulesOpen}>
               {/*
                 Empty seats are filled by bots, so their skill is a real setting
                 in a room even when every seat has a person in it — somebody
@@ -290,7 +337,6 @@ function GamePanel({ api }: { api: RoomApi }) {
                 game={entry.id}
                 mode="room"
                 locked={locked}
-                className="mt-3"
                 value={{
                   settings: room.settings,
                   seats: room.seats || entry.defaultSeats,
@@ -303,11 +349,11 @@ function GamePanel({ api }: { api: RoomApi }) {
                   api.selectGame(entry.id, next.settings, next.seats, next.difficulty);
                 }}
               />
-            </Swap>
-          ) : null}
-        </div>
-      </Collapse>
-    </section>
+            </Collapse>
+          </div>
+        </Swap>
+      ) : null}
+    </Card>
   );
 }
 
@@ -323,7 +369,14 @@ function TablePanel({ api }: { api: RoomApi }) {
   const hasGame = room.gameId !== null;
 
   return (
-    <section className="flex w-full flex-col gap-3">
+    <Card
+      title="Table"
+      aside={
+        <span className="text-xs text-bone-400">
+          {here(room)} of {room.members.length} here
+        </span>
+      }
+    >
       {/* Pinned to the top of the table they are asking to join — the toast
           that announces them is gone in two seconds. */}
       {leader && room.pending.length > 0 ? (
@@ -347,12 +400,6 @@ function TablePanel({ api }: { api: RoomApi }) {
         </div>
       ) : null}
 
-      <header className="flex items-center justify-between">
-        <span className="eyebrow">Table</span>
-        <span className="text-xs text-bone-400">
-          {here(room)} of {room.members.length} here
-        </span>
-      </header>
       <Roster
         members={room.members}
         you={room.you}
@@ -367,28 +414,38 @@ function TablePanel({ api }: { api: RoomApi }) {
         onPhoto={api.setPhoto}
       />
       {room.gameRunning ? null : hasGame ? (
-        <p className="text-[11px] leading-relaxed text-bone-500">
-          Seat 1 is dealt first, and the seats go clockwise from there — each one sits to the left of the seat
-          above it.
-          {teamsEnabled
-            ? entry?.id === "mindmeld"
-              ? " Partners sit side by side, so the seat decides the pair."
-              : " Partners sit across, so the seat decides the team."
-            : ""}
-          {leader ? " Drag a row by its grip to move a person or a bot." : ""}
-        </p>
+        <div className="flex items-start gap-4">
+          <p className="flex-1 text-[11px] leading-relaxed text-bone-500">
+            Seat 1 deals first, then clockwise.
+            {teamsEnabled ? (entry?.id === "mindmeld" ? " Partners sit side by side." : " Partners sit across.") : ""}
+            {leader ? " Drag a row by its grip to move it." : ""}
+          </p>
+          {leader ? (
+            <button
+              type="button"
+              onClick={api.shuffleSeats}
+              className="text-link inline-flex shrink-0 items-center gap-1.5"
+            >
+              <Shuffle size={11} /> Shuffle seats
+            </button>
+          ) : null}
+        </div>
       ) : (
         <p className="text-[11px] leading-relaxed text-bone-500">Pick a game to set up the seats.</p>
       )}
-      {leader && !room.gameRunning && hasGame ? (
-        <Button size="sm" onClick={api.shuffleSeats} className="self-start">
-          <Shuffle size={12} /> Shuffle seats
-        </Button>
-      ) : null}
 
       {here(room) >= MIN_ROOM_PLAYERS ? null : <WaitingForPeople gameId={room.gameId} />}
+    </Card>
+  );
+}
 
-      <div className="mt-2 flex flex-col gap-2">
+/** How the room itself runs: who may come in, and how long a turn can take. */
+function RoomPanel({ api }: { api: RoomApi }) {
+  const room = api.room!;
+  const leader = room.youAreLeader;
+  return (
+    <Card title="Room">
+      <div className="flex flex-col gap-2">
         <span className="text-xs font-bold text-bone-200">Who can join</span>
         <ChoiceGroup
           label="Who can join"
@@ -403,7 +460,6 @@ function TablePanel({ api }: { api: RoomApi }) {
           onChange={(privacy) => api.setPrivacy(privacy)}
         />
       </div>
-
       <TurnTimerField
         timer={room.turnTimer}
         // Like the game's options: dimmed with its real values for anybody
@@ -411,7 +467,7 @@ function TablePanel({ api }: { api: RoomApi }) {
         locked={!leader || room.gameRunning}
         onChange={api.setTurnTimer}
       />
-    </section>
+    </Card>
   );
 }
 

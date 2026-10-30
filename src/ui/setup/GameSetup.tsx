@@ -74,7 +74,7 @@ export function GameSetup({
       <Reveal slow className="flex w-full flex-col items-center gap-7">
         <div className="flex w-full flex-col gap-4">
           <span className="caps text-brass-300">New match</span>
-          <h1 className="font-title text-[clamp(2.6rem,10vw,3.8rem)] leading-[0.98] font-normal tracking-tight text-bone-50 italic text-balance">
+          <h1 className="font-title text-[clamp(2.6rem,10vw,3.8rem)] leading-[0.98] font-light tracking-tight text-bone-50 text-balance">
             {entry.name}
           </h1>
           <p className="text-sm leading-[1.8] font-light text-bone-300 text-pretty">

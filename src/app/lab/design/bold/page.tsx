@@ -87,8 +87,8 @@ function Home({ active, setActive }: { active: number; setActive: (i: number) =>
           active={active}
           onActive={setActive}
           count={GAME_IDS.length}
-          slideWidth="min(74vw, 300px)"
-          gap="0.9rem"
+          slide={300}
+          gap={14}
           label="Games"
           className="py-4"
         >

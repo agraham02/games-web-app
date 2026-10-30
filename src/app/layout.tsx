@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Cinzel, Figtree, Instrument_Serif, Source_Serif_4 } from "next/font/google";
+import { Cinzel, Figtree, Jost, Source_Serif_4 } from "next/font/google";
 import type { ReactNode } from "react";
 import { captureInstallPrompt } from "./installCapture";
 import { MotionProvider } from "./MotionProvider";
@@ -16,12 +16,11 @@ const figtree = Figtree({
   subsets: ["latin"],
 });
 
-// The shell's title face (home, setup, lobby). Tables keep Cinzel.
-const instrument = Instrument_Serif({
-  variable: "--font-instrument",
+// The shell's title face (home, setup, lobby): a light geometric sans. The
+// user does not like serifs (2026-10-30); tables keep Cinzel for now.
+const jost = Jost({
+  variable: "--font-jost",
   subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
 });
 
 const sourceSerif = Source_Serif_4({
@@ -58,7 +57,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${cinzel.variable} ${figtree.variable} ${instrument.variable} ${sourceSerif.variable} h-full antialiased`}
+      className={`${cinzel.variable} ${figtree.variable} ${jost.variable} ${sourceSerif.variable} h-full antialiased`}
     >
       <head>
         {/* Before anything else loads: see installCapture.ts. */}

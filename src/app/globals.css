@@ -105,7 +105,7 @@
   --font-display: var(--font-cinzel), Georgia, serif;
   --font-sans: var(--font-figtree), system-ui, sans-serif;
   --font-rank: var(--font-source-serif), Georgia, serif;
-  --font-title: var(--font-instrument), Georgia, serif;
+  --font-title: var(--font-jost), var(--font-figtree), system-ui, sans-serif;
 
   /* -- elevation: warm drop shadows on dark felt ----------- */
   --shadow-e1: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.22);

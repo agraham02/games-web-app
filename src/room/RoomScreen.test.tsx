@@ -292,7 +292,7 @@ describe("the room client", () => {
       });
       // On a phone somebody else's game folds to one line — which already
       // says the rules as they are.
-      expect(screen.getByText(/Dominoes · Caribbean · .*Partners on · Key tile on · Six love off/)).toBeInTheDocument();
+      expect(screen.getByText(/^Caribbean · .*Partners on · Key tile on · Six love off/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Details" }));
       const teams = await screen.findByRole("switch", { name: /partners/i });
       expect(teams).toHaveAttribute("aria-checked", "true");

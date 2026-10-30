@@ -1,137 +1,133 @@
 "use client";
 
 /**
- * A snap-scrolling carousel with no library: native `scroll-snap`, and the
- * slide nearest the middle is the active one.
+ * The home screen's game carousel: endless, and dragged by a mouse as
+ * readily as by a thumb (the user, 2026-10-30).
  *
- * `active` is controlled, and goes both ways: swiping updates it; changing
- * it from outside (an arrow button, the lobby) scrolls to it. While WE are
- * scrolling on purpose, the slides passed on the way do not each become the
- * active one (`lock`), or a jump from the first game to the sixth would
- * flash through four themes.
+ * It is NOT native scroll-snap any more. That gave a free swipe on a phone,
+ * but a scroller has two ends — so no wrapping — and a mouse cannot drag it.
+ * Here every slide is placed by a transform, and the strip is a window onto
+ * an unending line of slides: `virtual` is an integer that only ever moves
+ * by steps, slide `k` shows game `k mod count`, and only the slides within
+ * `REACH` of `virtual` are mounted. Moving one step mounts the next slide
+ * off one edge and drops one off the other, so nothing ever has to jump
+ * across the strip to wrap.
  *
- * The scroller is `relative` so a slide's `offsetLeft` is measured against
- * it; left unpositioned, the maths is against some ancestor and a click on a
- * far slide scrolls nowhere.
+ * `active` (0..count-1) is controlled, and goes both ways. When the page
+ * changes it (a dot, an arrow) the strip takes the SHORTEST way there, so
+ * from the last game to the first is one step right, not seven left.
  *
- * Reads as a labelled group of slides, and takes ← → when focused.
+ * Dragging follows the pointer exactly (no animation while held), and on
+ * release moves by however many slides it was dragged, plus a little for a
+ * flick. `touch-action: pan-y` keeps a vertical swipe scrolling the page.
  */
 
-import { useCallback, useEffect, useRef } from "react";
-import { useReducedMotion } from "motion/react";
+import { useState, useRef } from "react";
+import { motion, useReducedMotion } from "motion/react";
+
+/** Slides mounted either side of the one in front. */
+const REACH = 4;
+const EASE = [0.22, 1, 0.36, 1] as const;
 
 export interface CarouselProps {
   active: number;
   onActive: (index: number) => void;
   count: number;
-  /** CSS length of one slide; the scroller pads itself so any slide can centre. */
-  slideWidth: string;
-  gap?: string;
+  /** One slide's width (and height: slides are square), in px. */
+  slide: number;
+  /** Space between slides, in px. */
+  gap?: number;
   label: string;
   className?: string;
   children: (index: number, isActive: boolean) => React.ReactNode;
 }
 
-export function Carousel({ active, onActive, count, slideWidth, gap = "1rem", label, className, children }: CarouselProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const lock = useRef<number | null>(null);
-  const frame = useRef(0);
+export function Carousel({ active, onActive, count, slide, gap = 16, label, className, children }: CarouselProps) {
   const reduced = useReducedMotion();
+  const wrap = (i: number) => ((i % count) + count) % count;
+  const [virtual, setVirtual] = useState(active);
+  const [drag, setDrag] = useState(0);
+  const [held, setHeld] = useState(false);
+  /** A press that moved is a drag, and must not also count as a tap on a slide. */
+  const moved = useRef(false);
+  const stride = slide + gap;
 
-  const nearest = useCallback(() => {
-    const el = ref.current;
-    if (!el) return 0;
-    const mid = el.scrollLeft + el.clientWidth / 2;
-    let best = 0;
-    let bestDist = Infinity;
-    Array.from(el.children).forEach((child, i) => {
-      const c = child as HTMLElement;
-      const dist = Math.abs(c.offsetLeft + c.offsetWidth / 2 - mid);
-      if (dist < bestDist) {
-        best = i;
-        bestDist = dist;
-      }
-    });
-    return best;
-  }, []);
+  // Follow `active` when the page moves it: the shortest way round. Set
+  // during render, React's pattern for state that tracks a prop.
+  if (wrap(virtual) !== active) {
+    let delta = active - wrap(virtual);
+    if (delta > count / 2) delta -= count;
+    if (delta < -count / 2) delta += count;
+    setVirtual(virtual + delta);
+  }
 
-  const scrollToIndex = useCallback(
-    (i: number) => {
-      const el = ref.current;
-      const target = el?.children[i] as HTMLElement | undefined;
-      if (!el || !target) return;
-      lock.current = i;
-      el.scrollTo?.({
-        left: target.offsetLeft + target.offsetWidth / 2 - el.clientWidth / 2,
-        behavior: reduced ? "auto" : "smooth",
-      });
-      window.setTimeout(() => {
-        if (lock.current === i) lock.current = null;
-      }, 700);
-    },
-    [reduced],
-  );
-
-  const goTo = useCallback(
-    (i: number) => {
-      onActive(i);
-      scrollToIndex(i);
-    },
-    [onActive, scrollToIndex],
-  );
-
-  // While the user is scrolling, `active` already IS the nearest slide, so
-  // this only acts when the page changed it.
-  useEffect(() => {
-    if (nearest() !== active) scrollToIndex(active);
-  }, [active, nearest, scrollToIndex]);
-
-  useEffect(() => () => cancelAnimationFrame(frame.current), []);
-
-  const onScroll = () => {
-    if (lock.current !== null) return;
-    cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(() => {
-      const i = nearest();
-      if (i !== active) onActive(i);
-    });
+  const step = (by: number) => {
+    if (by === 0) return;
+    setVirtual(virtual + by);
+    onActive(wrap(virtual + by));
   };
 
+  const slides: number[] = [];
+  for (let k = virtual - REACH; k <= virtual + REACH; k++) slides.push(k);
+
   return (
-    <div
-      ref={ref}
+    <motion.div
       role="group"
       aria-roledescription="carousel"
       aria-label={label}
       tabIndex={0}
-      onScroll={onScroll}
+      className={`relative w-full touch-pan-y overflow-x-clip select-none outline-none ${held ? "cursor-grabbing" : "cursor-grab"} ${className ?? ""}`}
+      style={{ height: slide }}
       onKeyDown={(e) => {
         if (e.key === "ArrowRight") {
           e.preventDefault();
-          goTo(Math.min(count - 1, active + 1));
+          step(1);
         } else if (e.key === "ArrowLeft") {
           e.preventDefault();
-          goTo(Math.max(0, active - 1));
+          step(-1);
         }
       }}
-      className={`relative flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none] focus-visible:outline-none [&::-webkit-scrollbar]:hidden ${className ?? ""}`}
-      style={{ gap, paddingInline: `calc(50% - ${slideWidth} / 2)` }}
+      onPanStart={() => {
+        moved.current = false;
+        setHeld(true);
+      }}
+      onPan={(_, info) => {
+        if (Math.abs(info.offset.x) > 4) moved.current = true;
+        setDrag(info.offset.x);
+      }}
+      onPanEnd={(_, info) => {
+        setHeld(false);
+        setDrag(0);
+        step(Math.round(-(info.offset.x + info.velocity.x * 0.15) / stride));
+      }}
     >
-      {Array.from({ length: count }, (_, i) => (
-        <div
-          key={i}
-          role="group"
-          aria-roledescription="slide"
-          aria-label={`${i + 1} of ${count}`}
-          className="shrink-0 snap-center"
-          style={{ width: slideWidth }}
-          onClick={() => {
-            if (i !== active) goTo(i);
-          }}
-        >
-          {children(i, i === active)}
-        </div>
-      ))}
-    </div>
+      {slides.map((k) => {
+        const offset = k - virtual;
+        // Where the slide is right now, in slides, counting the drag.
+        const live = offset + drag / stride;
+        const d = Math.abs(live);
+        const scale = d < 1 ? 1 - 0.24 * d : 0.76;
+        const opacity = d < 1 ? 1 - 0.68 * d : d < 3 ? 0.32 : Math.max(0, 0.32 * (REACH - d));
+        return (
+          <motion.div
+            key={k}
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`${wrap(k) + 1} of ${count}`}
+            aria-hidden={offset !== 0}
+            className="absolute top-0 left-1/2"
+            style={{ width: slide, height: slide, marginLeft: -slide / 2 }}
+            initial={false}
+            animate={{ x: offset * stride + drag, scale, opacity }}
+            transition={held || reduced ? { duration: 0 } : { duration: 0.55, ease: EASE }}
+            onClick={() => {
+              if (!moved.current && offset !== 0) step(offset);
+            }}
+          >
+            {children(wrap(k), offset === 0)}
+          </motion.div>
+        );
+      })}
+    </motion.div>
   );
 }

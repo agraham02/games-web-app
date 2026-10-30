@@ -534,7 +534,7 @@ function EntryScreen({ api, urlCode }: { api: RoomApi; urlCode?: string }) {
     <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">Play together</span>
-        <h1 className="font-title text-5xl leading-none font-normal tracking-tight text-bone-50 italic">
+        <h1 className="font-title text-5xl leading-none font-light tracking-tight text-bone-50">
           {mode === "invite" ? `Room ${invited}` : "Rooms"}
         </h1>
         {mode === "retry" ? null : (

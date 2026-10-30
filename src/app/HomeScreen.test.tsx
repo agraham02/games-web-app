@@ -46,7 +46,7 @@ describe("the home screen", () => {
     render(<HomeScreen />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(GAMES[GAME_IDS[0]!].name);
     expect(root().getAttribute("data-game")).toBe(GAME_IDS[0]);
-    expect(screen.getByText(`01 / ${String(GAME_IDS.length).padStart(2, "0")}`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: GAMES[GAME_IDS[0]!].name })).toHaveAttribute("aria-current", "true");
   });
 
   it("moves to the next game on →, and the page colour and the solo link follow", async () => {
@@ -58,13 +58,25 @@ describe("the home screen", () => {
     expect(screen.getByRole("link", { name: /play solo/i })).toHaveAttribute("href", `/play/${second}`);
   });
 
-  it("does not run off either end", () => {
+  it("never runs out: back from the first game is the last, on the keys and on the arrow", async () => {
     render(<HomeScreen />);
+    const last = GAME_IDS[GAME_IDS.length - 1]!;
     act(() => {
       fireEvent.keyDown(carousel(), { key: "ArrowLeft" });
     });
-    expect(root().getAttribute("data-game")).toBe(GAME_IDS[0]);
-    expect(screen.getByRole("button", { name: "Previous game" })).toBeDisabled();
+    await waitFor(() => expect(root().getAttribute("data-game")).toBe(last));
+    fireEvent.click(screen.getByRole("button", { name: "Next game" }));
+    await waitFor(() => expect(root().getAttribute("data-game")).toBe(GAME_IDS[0]));
+    fireEvent.click(screen.getByRole("button", { name: "Previous game" }));
+    await waitFor(() => expect(root().getAttribute("data-game")).toBe(last));
+  });
+
+  it("goes straight to a game from its dot", async () => {
+    render(<HomeScreen />);
+    const third = GAME_IDS[2]!;
+    fireEvent.click(screen.getByRole("button", { name: GAMES[third].name }));
+    await waitFor(() => expect(root().getAttribute("data-game")).toBe(third));
+    expect(screen.getByRole("button", { name: GAMES[third].name })).toHaveAttribute("aria-current", "true");
   });
 
   it("makes a room for the game on show, straight away, when the name is already known", async () => {
