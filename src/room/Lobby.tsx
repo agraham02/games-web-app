@@ -32,7 +32,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { defaultSettings, summarizeSetup, textOf } from "@/session/gameSetup";
 import type { RoomView } from "@/session/protocol";
-import { GAMES, GAME_IDS, isGameId, onlineGames, type GameId } from "@/session/registry";
+import { GAMES, GAME_IDS, isGameId, onlineGames, teamIndexOf, type GameId } from "@/session/registry";
 import { MIN_ROOM_PLAYERS, TURN_TIMER_MAX_S, TURN_TIMER_MIN_S, TURN_TIMER_STEP_S } from "@/session/room";
 import { EndGameAction } from "@/table/gameSettings";
 import { motion } from "motion/react";
@@ -357,6 +357,7 @@ function TablePanel({ api }: { api: RoomApi }) {
         plan={room.gameRunning || !hasGame ? null : room.seatPlan}
         seatCount={room.seats}
         teamsEnabled={teamsEnabled}
+        teamOf={entry ? (seat) => teamIndexOf(entry.id, seat) : undefined}
         onPromote={api.promote}
         onKick={api.kick}
         onArrange={api.arrangeSeats}
@@ -366,7 +367,11 @@ function TablePanel({ api }: { api: RoomApi }) {
         <p className="text-[11px] leading-relaxed text-bone-500">
           Seat 1 is dealt first, and the seats go clockwise from there — each one sits to the left of the seat
           above it.
-          {teamsEnabled ? " Partners sit across, so the seat decides the team." : ""}
+          {teamsEnabled
+            ? entry?.id === "mindmeld"
+              ? " Partners sit side by side, so the seat decides the pair."
+              : " Partners sit across, so the seat decides the team."
+            : ""}
           {leader ? " Drag a row by its grip to move a person or a bot." : ""}
         </p>
       ) : (

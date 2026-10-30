@@ -31,13 +31,6 @@ export const DEFAULT_RULES: MindMeldRules = {
 /** How much longer the DRIVER waits than the clock a player is shown. */
 export const THINK_GRACE_MS = 900;
 
-/**
- * With no think time set, a table still must not be parked for ever by a
- * person who has walked away. Long enough that nobody who is there will meet
- * it, and what an idle room's seat is handed to a bot by.
- */
-export const BACKSTOP_MS = 10 * 60 * 1000;
-
 /** A bot never has a word sooner than this, in ms from the try opening... */
 export const BOT_MIN_MS = 2_500;
 /** ...nor later than this. Wide on purpose: two bots never lock together. */

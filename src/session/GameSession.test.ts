@@ -415,6 +415,7 @@ describe("legalActions as the submit gate", () => {
     rummy: 4,
     bs: 4,
     chromaly: 4,
+    mindmeld: 6,
   };
 
   /** Seats a race in progress entitles, or null when no race is open. */
@@ -444,6 +445,13 @@ describe("legalActions as the submit gate", () => {
           why: "everyone still in the window, and nobody else",
         };
       }
+    }
+    if (gameId === "mindmeld" && s.window) {
+      // Every pair thinks at once: whoever has not locked a word yet may.
+      return {
+        seats: new Set(s.window.pending.map((p) => p.seat)),
+        why: "everyone who has not locked a word, and nobody else",
+      };
     }
     if (gameId === "spades") {
       // The blind vote: both partners of a trailing team, at once.

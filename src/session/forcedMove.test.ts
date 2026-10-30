@@ -57,6 +57,9 @@ function publicReason(game: GameId, state: unknown, seat: SeatId, action: { t: s
       return `Rummy forced a ${action.t}`;
     case "poker":
       return "poker has no forced move";
+    case "mindmeld":
+      // A word is anything, so no word is ever the only move.
+      return "Mind Meld has no forced move";
     case "chromaly":
       // Drawing when nothing can be played: the table is told they drew
       // either way, so who made it is not a secret.
@@ -106,7 +109,7 @@ describe("which moves are forced", () => {
         }
       }
 
-      if (game === "poker") {
+      if (game === "poker" || game === "mindmeld") {
         expect(forcedSeen).toBe(0);
         return;
       }

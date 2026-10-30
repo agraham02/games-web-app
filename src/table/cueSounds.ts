@@ -15,8 +15,8 @@
 
 import { useEffect, useRef } from "react";
 import type { CueKind, SeatId } from "@/engine/types";
-import { audioContext, unlockAudio } from "@/table/slamFeedback";
-import { onCue, type CueFx } from "@/table/fx";
+import { audioContext, unlockAudio } from "./slamFeedback";
+import { onCue, type CueFx } from "./fx";
 
 type Ctx = AudioContext;
 
@@ -114,6 +114,23 @@ export function playCue(kind: CueKind, amount = 0): void {
       // Two low notes: a wasted call.
       tone(ctx, now, { from: 220, seconds: 0.2, gain: 0.22 });
       tone(ctx, now + 0.14, { from: 165, seconds: 0.3, gain: 0.22 });
+      return;
+    case "countdown":
+      // A tick per number, a beat apart, the last one higher: three, two, one.
+      for (let i = 0; i < 3; i++) tone(ctx, now + i * 0.8, { type: "triangle", from: i < 2 ? 440 : 660, seconds: 0.14, gain: 0.26 });
+      return;
+    case "meld":
+      // A chord that opens up, with a glint on top.
+      [523, 659, 784].forEach((f, i) => tone(ctx, now + i * 0.07, { from: f, seconds: 0.7, gain: 0.16 }));
+      tone(ctx, now + 0.22, { from: 1568, seconds: 0.4, gain: 0.1 });
+      return;
+    case "close":
+      // A wobble: nearly, and not quite.
+      tone(ctx, now, { from: 494, to: 440, seconds: 0.22, gain: 0.2 });
+      tone(ctx, now + 0.2, { from: 440, to: 494, seconds: 0.22, gain: 0.2 });
+      return;
+    case "miss":
+      tone(ctx, now, { from: 240, to: 190, seconds: 0.26, gain: 0.18 });
       return;
     case "swap":
     case "pass":

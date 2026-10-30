@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
 import type { GameDefinition, GameEvent, PieceId, PlacementMap } from "@/engine/types";
+import type { MindMeldState } from "@/games/mindmeld/types";
 import { createSpades } from "@/games/spades/rules";
 import { createPoker } from "@/games/poker/rules";
 import { createDominoes } from "@/games/dominoes/rules";
@@ -619,6 +620,7 @@ describe("the whole frame, every game, every turn", () => {
     rummy: 4,
     bs: 4,
     chromaly: 4,
+    mindmeld: 6,
   };
 
   /**
@@ -635,6 +637,9 @@ describe("the whole frame, every game, every turn", () => {
     rummy: true,
     bs: true,
     chromaly: true,
+    // Pieces: none. Its one secret is a typed word, which no piece check can
+    // see - `a word nobody may read yet never leaves the server` below does.
+    mindmeld: false,
   };
 
   /**
@@ -839,6 +844,52 @@ describe("the whole frame, every game, every turn", () => {
       }
     });
   }
+
+  /**
+   * Mind Meld's secret is not a piece: a word somebody has typed and not yet
+   * had revealed. Every check above looks for pieces, so none of them could see
+   * it leave; this one reads the serialised view and every event a viewer is
+   * sent, and fails if a word its owner locked in and the table has not been
+   * shown yet is anywhere in them - the owner's own view excepted, which is
+   * theirs to read.
+   */
+  it("mindmeld: a word nobody may read yet never leaves the server", () => {
+    caseSettings = {};
+    const leaks: string[] = [];
+    let hidden = 0;
+
+    everyFrame("mindmeld", ({ definition, viewer, events, after }) => {
+      const raw = after as MindMeldState;
+      // What the table has been shown: a word already on any chain or reveal is public.
+      const shown = new Set<string>();
+      for (const pair of raw.pairs) for (const w of pair.chain) shown.add(w);
+      for (const r of raw.reveal ?? []) {
+        shown.add(r.a);
+        shown.add(r.b);
+      }
+      // Nor is a word the viewer typed themselves: a pair that is about to meld
+      // has the same word twice, and one of them is the viewer's to read.
+      if (viewer >= 0 && raw.locks[viewer]) shown.add(raw.locks[viewer]!);
+      const sent = JSON.stringify({ view: definition.playerView(after, viewer), events });
+      for (let seat = 0; seat < raw.seats; seat++) {
+        const word = raw.locks[seat];
+        if (word === null || word === undefined || seat === viewer || shown.has(word)) continue;
+        hidden++;
+        // As a VALUE: a word that is also a field's name ("window") is not a leak.
+        const asValue = new RegExp(`${JSON.stringify(word).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!:)`);
+        const found = asValue.exec(sent);
+        if (found) {
+          leaks.push(
+            `viewer ${viewer} was sent seat ${seat}'s "${word}": …${sent.slice(Math.max(0, found.index - 70), found.index + 30)}…`,
+          );
+        }
+      }
+    });
+
+    // Guards the guard: a match that never held a word back would pass vacuously.
+    expect(hidden).toBeGreaterThan(20);
+    expect(leaks.slice(0, 5)).toEqual([]);
+  });
 });
 
 describe("the session's seed never reaches a table", () => {

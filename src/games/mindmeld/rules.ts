@@ -38,7 +38,6 @@ import { makeBots } from "./bots";
 import { isProfane } from "./profanity";
 import { activePairs, activeSeats, allAtOnce, type Schedule } from "./schedule";
 import {
-  BACKSTOP_MS,
   DEFAULT_RULES,
   LOCK_BEAT_MS,
   MAX_SEATS,
@@ -77,6 +76,27 @@ function clampRules(rules: Partial<MindMeldRules>): MindMeldRules {
     showLast: merged.showLast === true,
     familySafe: merged.familySafe !== false,
   };
+}
+
+/**
+ * Why this word may not be locked in by this seat, or null when it may.
+ *
+ * Shared by `validate` and by the input on the table, so a player is told at
+ * once - before anything is sent - exactly what the server would say. Everything
+ * refused is refused BEFORE the word is locked, so the cost of a mistake falls
+ * on nobody but the person who made it: no try is spent and nothing is shown.
+ *
+ * "Already used" is feedback after an attempt, not a hint before one: it says
+ * only that the word was used, never what to say instead.
+ */
+export function wordProblem(state: MindMeldState, seat: SeatId, word: unknown): string | null {
+  if (typeof word !== "string") return "a word must be text";
+  const refused = refusal(word);
+  if (refused) return refused;
+  if (state.rules.familySafe && isProfane(word)) return "Pick another word";
+  const pair = pairOf(state, seat);
+  if (pair && sameAsAny(word, pair.chain)) return "That one has been used - try something new";
+  return null;
 }
 
 export interface MindMeldOptions {
@@ -362,18 +382,7 @@ export function createMindMeld(
     if (action.t !== "submit") return "unknown action";
     if (!mayLock(state, seat)) return "this seat has nothing to lock in";
 
-    const word: unknown = action.word;
-    if (typeof word !== "string") return "a word must be text";
-    const refused = refusal(word);
-    if (refused) return refused;
-    if (state.rules.familySafe && isProfane(word)) return "Pick another word";
-
-    const pair = pairOf(state, seat);
-    // Already said by this pair, in any form: "dogs" for "dog" is the same word.
-    // Feedback after an attempt, not a hint before one: it says only that the
-    // word was used, never what to say instead.
-    if (pair && sameAsAny(word, pair.chain)) return "That one has been used - try something new";
-    return null;
+    return wordProblem(state, seat, action.word);
   }
 
   /** Stamps the acting seat: a client that names another seat locks in for itself or not at all. */
@@ -382,15 +391,18 @@ export function createMindMeld(
   }
 
   /**
-   * A seat that is taking too long. With a think time set, the clock a person is
-   * shown ends here and every waiting pair forfeits the try; with none, a long
-   * backstop stops a person who has walked away holding the table for ever.
-   * Keyed by try, so a reconnect or the next person's lock-in does not hand the
-   * time back.
+   * With a think time set, the clock a person is shown ends here and every
+   * waiting pair forfeits the try - one deadline for the whole table, keyed by
+   * try, so a reconnect or the next person's lock-in does not hand the time back.
+   *
+   * With none there is no deadline of the game's own, deliberately: the room's
+   * turn timer then covers a person who has walked away, and what it plays for
+   * them is a bot's word, which is a better outcome for their partner than a
+   * forfeited try.
    */
   function deadline(state: MindMeldState, seat: SeatId) {
-    if (!state.window || !mayLock(state, seat)) return null;
-    const ms = state.rules.thinkSeconds > 0 ? state.rules.thinkSeconds * 1000 + THINK_GRACE_MS : BACKSTOP_MS;
+    if (!state.window || !mayLock(state, seat) || state.rules.thinkSeconds === 0) return null;
+    const ms = state.rules.thinkSeconds * 1000 + THINK_GRACE_MS;
     return { ms, action: { t: "timeout" } as MindMeldAction, key: `mm:${state.round}:${state.tryNo}` };
   }
 

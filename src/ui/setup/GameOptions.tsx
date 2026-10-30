@@ -124,6 +124,7 @@ export function GameOptions({ game, mode, value, onChange, locked = false, class
               min={bounds.min}
               max={bounds.max}
               locked={locked}
+              step={GAMES[game].seatStep}
               onChange={(n) => onChange({ ...value, seats: n })}
             />
             {seatsHint ? <p className="mt-2 text-center text-[11px] text-bone-500">{seatsHint}</p> : null}

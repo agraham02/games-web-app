@@ -135,6 +135,10 @@ const FLOORS: Record<GameId, Record<string, { state?: number; gesture?: number }
   poker: { fold: { state: 0.85 }, bet: { state: 0.9 }, raise: { state: 0.8 } },
   // The roll is the server's (`unpredictable`): its tumble starts on the press.
   lrc: {},
+  // A submit is `unpredictable`: what it does depends on a word nobody else has
+  // seen, and a pair that melds on it reveals both. The page shows "Locked in"
+  // itself.
+  mindmeld: {},
 };
 
 describe("a prediction never lies", () => {

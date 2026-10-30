@@ -58,7 +58,7 @@ import { SHAPE_GLYPH } from "@/ui/primitives/ChromaFace";
 import { announce } from "@/ui/disclosure";
 import { ChromalyFx } from "./ChromalyFx";
 import { PileChrome } from "./PileChrome";
-import { useCueFeedback } from "./chromaSounds";
+import { useCueFeedback } from "@/table/cueSounds";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 
 /** Chromaly's own Settings: Hints (dimming what cannot be played) and Card spacing. */

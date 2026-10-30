@@ -71,6 +71,10 @@
   /* A partnership game's two sides, in the lobby's seating plan. */
   --color-team-a: #e3c68f;
   --color-team-b: #8fb8e0;
+  /* Mind Meld seats up to five pairs, so three more sides. */
+  --color-team-c: #a8d5a2;
+  --color-team-d: #d4a5e0;
+  --color-team-e: #e8a98a;
 
   /* -- roles ------------------------------------------------
      shadcn's names, Neo-Felt's values. The primitives in src/ui/base

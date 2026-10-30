@@ -67,6 +67,8 @@ export interface RosterProps {
   seatCount: number;
   /** Whether the selected game plays in partnerships (seat decides team). */
   teamsEnabled: boolean;
+  /** Which side a seat plays for: across by default, side by side in Mind Meld. */
+  teamOf?: (seat: number) => number;
   onPromote: (session: string) => void;
   onKick: (session: string) => void;
   /** Leader only, between games: the rearranged plan. Absent, no dragging. */
@@ -136,6 +138,7 @@ function SeatingPlan({
   plan,
   seatCount,
   teamsEnabled,
+  teamOf,
   onPromote,
   onKick,
   onArrange,
@@ -186,7 +189,7 @@ function SeatingPlan({
         const member = isBotKey(key) ? null : byId.get(key);
         const seated = i < seatCount;
         const label = seated ? `Seat ${i + 1}` : "No seat";
-        const team = teamsEnabled && seated ? i % 2 : null;
+        const team = teamsEnabled && seated ? (teamOf ? teamOf(i) : i % 2) : null;
         return (
           <SeatRow
             key={key}
@@ -303,19 +306,22 @@ function SeatLabel({ label }: { label: string | null }) {
 }
 
 /** The side a seat plays for — partners sit across, so the seat decides. */
+const TEAM_TOKENS = ["a", "b", "c", "d", "e"] as const;
+
 function TeamChip({ team }: { team: number | null }) {
   if (team === null) return null;
-  const b = team === 1;
+  const token = TEAM_TOKENS[team % TEAM_TOKENS.length]!;
+  const colour = `var(--color-team-${token})`;
   return (
     <span
       className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
       style={{
-        color: b ? "var(--color-team-b)" : "var(--color-team-a)",
-        background: `color-mix(in srgb, ${b ? "var(--color-team-b)" : "var(--color-team-a)"} 16%, transparent)`,
-        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${b ? "var(--color-team-b)" : "var(--color-team-a)"} 45%, transparent)`,
+        color: colour,
+        background: `color-mix(in srgb, ${colour} 16%, transparent)`,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${colour} 45%, transparent)`,
       }}
     >
-      Team {b ? "B" : "A"}
+      Team {token.toUpperCase()}
     </span>
   );
 }

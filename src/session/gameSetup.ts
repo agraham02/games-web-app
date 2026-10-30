@@ -756,6 +756,86 @@ const CHROMALY: GameSetupSpec = {
   },
 };
 
+const MINDMELD: GameSetupSpec = {
+  description:
+    "Two minds, one word. You and your partner each write a word at the same moment, then a countdown and both are shown. The same word and you have melded. If not, write one that connects the last two said, and round it goes until you meet. The fewer tries, the more points.",
+  options: [
+    {
+      kind: "number",
+      key: "rounds",
+      label: "Rounds",
+      hint: "The pair with the most points after the last round wins.",
+      min: 1,
+      max: 9,
+      step: 1,
+      default: 5,
+      unit: plural("round", "rounds"),
+    },
+    {
+      kind: "choice",
+      key: "tries",
+      label: "Tries per round",
+      hint: "A pair that has not met by then scores nothing that round.",
+      choices: [
+        { value: 8, label: "8" },
+        { value: 10, label: "10" },
+        { value: 15, label: "15" },
+      ],
+      default: 10,
+    },
+    {
+      kind: "choice",
+      key: "thinkSeconds",
+      label: "Think time",
+      hint: (s) =>
+        s.thinkSeconds === 0
+          ? "Off: take as long as you like."
+          : "Run out and your pair loses that try, with nothing shown.",
+      choices: [
+        { value: 0, label: "Off" },
+        { value: 30, label: "30s" },
+        { value: 60, label: "60s" },
+        { value: 90, label: "90s" },
+      ],
+      default: 0,
+    },
+    {
+      kind: "choice",
+      key: "start",
+      label: "Start",
+      hint: (s) =>
+        s.start === "dealt" ? "Each pair is given two words to connect." : "Any word you like, to begin.",
+      choices: [
+        { value: "free", label: "Any word" },
+        { value: "dealt", label: "Dealt words" },
+      ],
+      default: "free",
+    },
+    {
+      kind: "toggle",
+      key: "showLast",
+      label: "Show the last two words",
+      hint: "Keeps the two words you are connecting faintly on the table. Off, you have to remember them.",
+      default: false,
+    },
+    {
+      kind: "toggle",
+      key: "familySafe",
+      label: "Family-safe words",
+      hint: "Refuses a rude word before it is locked in, so nobody ever sees it.",
+      default: true,
+    },
+  ],
+  // See `HEAT` and `SHORTLIST` in vectorBrain.ts: the tiers are how many of its best
+  // ideas a bot will consider, and how much it says what people say.
+  difficulty: {
+    casual: "A wandering partner: its words are fair, but it takes a while to land on yours.",
+    steady: "Says the obvious word most of the time, and now and then something of its own.",
+    sharp: "Reaches for what most people would say, so it meets you quickly - and so does the other pair.",
+  },
+  seatsHint: () => "Pairs sit side by side. An odd number of people gets a bot for the empty seat.",
+};
+
 export const GAME_SETUPS = {
   spades: SPADES,
   dominoes: DOMINOES,
@@ -764,6 +844,7 @@ export const GAME_SETUPS = {
   rummy: RUMMY,
   bs: BS,
   chromaly: CHROMALY,
+  mindmeld: MINDMELD,
 } as const satisfies Record<string, GameSetupSpec>;
 
 function describe(option: OptionSpec, s: Settings): string {

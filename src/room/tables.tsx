@@ -26,6 +26,7 @@ import { BsOnline } from "./tables/BsOnline";
 import { ChromalyOnline } from "./tables/ChromalyOnline";
 import { DominoesOnline } from "./tables/DominoesOnline";
 import { LrcOnline } from "./tables/LrcOnline";
+import { MindMeldOnline } from "./tables/MindMeldOnline";
 import { PokerOnline } from "./tables/PokerOnline";
 import { RummyOnline } from "./tables/RummyOnline";
 import { SpadesOnline } from "./tables/SpadesOnline";
@@ -74,6 +75,7 @@ export const TABLES: Partial<Record<GameId, OnlineTableComponent>> = {
   rummy: RummyOnline,
   bs: BsOnline,
   chromaly: ChromalyOnline,
+  mindmeld: MindMeldOnline,
 };
 
 export function tableFor(gameId: GameId | null): OnlineTableComponent | null {

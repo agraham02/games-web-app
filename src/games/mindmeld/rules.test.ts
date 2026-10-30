@@ -242,9 +242,9 @@ describe("the round and the match", () => {
 });
 
 describe("think time", () => {
-  it("names no deadline of its own with no limit, but a long backstop", () => {
+  it("names no deadline of its own with no limit: the room's turn timer covers somebody away", () => {
     const { def, state } = game();
-    expect(def.deadline!(state, 0)).toMatchObject({ ms: 10 * 60 * 1000, action: { t: "timeout" } });
+    expect(def.deadline!(state, 0)).toBeNull();
   });
 
   it("gives a person the think time plus the grace, one deadline for the whole try", () => {

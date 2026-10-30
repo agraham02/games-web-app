@@ -33,11 +33,16 @@ export function GameSetup({
   value,
   onChange,
   onStart,
+  startDisabled = false,
+  startLabel = "Deal in",
 }: {
   game: GameId;
   value: SetupValue;
   onChange: (next: SetupValue) => void;
   onStart: () => void;
+  /** A game that must load something first (Mind Meld's bot) holds the button. */
+  startDisabled?: boolean;
+  startLabel?: string;
 }) {
   const entry = GAMES[game];
   const wide = fieldCount(game, value, "solo") > 3;
@@ -47,8 +52,8 @@ export function GameSetup({
       maxWidth={wide ? "max-w-xs md:max-w-2xl" : "max-w-xs"}
       footer={
         <>
-          <Button tone="primary" className="w-full max-w-xs" onClick={onStart}>
-            Deal in
+          <Button tone="primary" className="w-full max-w-xs" onClick={onStart} disabled={startDisabled}>
+            {startLabel}
           </Button>
           {/* One row, so the button appearing as the form is edited does not
               push "Deal in" up the screen. */}
