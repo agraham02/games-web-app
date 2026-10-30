@@ -1188,6 +1188,65 @@ difficulty slider, and let Caribbean be set to three seats. Add an option
 to the spec and all three follow. Defaults are the solo values everywhere
 (the user's call).
 
+## Every game has its own surface (and the shell is near-black)
+
+Added 2026-10-30. Before it, every table, setup screen and lobby sat on one
+green felt, so no game felt like itself.
+
+- **A game's colours are a scope, not new tokens.** `app/globals.css` has a
+  `[data-game="poker"] { --color-felt-*: …; --color-brass-*: … }` block per
+  themed game (Poker navy + champagne, Dominoes walnut + copper, Chromaly
+  ember + yellow, LRC mustard + cream, Mind Meld indigo + lavender). Spades,
+  Rummy and BS ARE the house green (`:root`) and need no block. Everything
+  that reads `felt-*`, `brass-*` or a role follows — `CardBack` included.
+  **The shadcn roles (`--color-background`, `card`, `popover`, `primary`,
+  `ring`) are re-declared inside the scope**: a `var()` in a custom property
+  resolves where it is declared, so the ones set once on `:root` keep the
+  green inside a themed subtree.
+- **Where the attribute goes:** `TableSurface` (via `GameHost`'s
+  `definition.id`), `SetupShell` (`game` prop), the online waiting screens,
+  the lobby (the chosen game), and the home page (the carousel's active game).
+  `themeAttrs(id)` in `ui/gameTheme.ts` returns it for a known id. A sheet
+  portalled to `body` (`InfoSheet layer="page"`) is OUTSIDE the scope.
+- **`GAME_THEMES` mirrors the stylesheet** (deep / mid / lit / accent hexes)
+  for places that draw a game's colour from outside its subtree.
+  `tokens.test.ts` checks the two agree and that text, accent and card
+  contrast hold on every surface. Change a hex in both.
+- **Surfaces are gradients only** — no images. `felt-weave` reads
+  `--surface-texture` / `--surface-opacity`: Dominoes sets a wood grain,
+  Mind Meld sets `none`.
+- **The browser colour:** the shell is `#050505` (`layout.tsx`, the manifest);
+  each themed game's route has a tiny server `layout.tsx` exporting
+  `viewport.themeColor` (the page is a client component and cannot).
+- **Tailwind v4 only emits an `@theme` variable it sees written out.**
+  `var(--color-team-${x})` built at runtime gets NO colour; write the five
+  names out.
+
+### The shell: Quiet luxury
+
+The user chose it (2026-10-30) over a Bold & graphic test page; both are still
+at `/lab/design/bold` and `/lab/design/luxury`. Near-black page with only a
+pool of the game's colour (`ui/stage/GameBackdrop`), Instrument Serif italic
+for names (`font-title`; tables keep Cinzel), wide-tracked capitals (`caps`,
+`eyebrow`, `text-link` utilities), hairlines instead of fills. The `rounded`
+`Button` is the flat/outlined shell look; the `pill` stays the table's.
+
+- **Home (`app/HomeScreen.tsx`) is game-first.** A snap-scrolling carousel
+  (`ui/stage/Carousel`, no library) of each game's own pieces (`GameArt`);
+  the page colour crossfades by opacity. **Play with friends** makes a room
+  FOR the game on show: the entry intent is `{ t: "make", game }`
+  (`room/entry.ts`), and once the room exists `RoomScreen` sends `selectGame`
+  with this device's saved setup, holding the "acting" screen until it has
+  taken so the lobby never flashes "Pick a game first". The name is asked in
+  a sheet only when the device has none. Wide screens and landscape phones
+  put the carousel and the words side by side — stacked, the buttons fell
+  below the fold.
+- **A room made this way has a game from the start**, so its roster is the
+  seating plan (not the plain member list) and a phone's Game panel starts
+  folded to its summary line (`Change` opens it).
+- Carousel gotchas: the scroller must be `relative` (slide `offsetLeft` maths),
+  and it must scroll to follow `active` when the PAGE changes it.
+
 ## Shared UI primitives
 
 Reach for these before writing a one-off — each replaced several copies:
