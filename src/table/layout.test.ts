@@ -953,6 +953,8 @@ describe("the band above the hand — nothing on the table sits under it", () =>
       reserve: (vp) => (vp.w >= 1024 ? 104 : vp.h < 560 && vp.w >= 640 ? 84 : 114),
     },
     { game: "bs", seats: [2, 4, 6], hand: 13, zones: ["reveal", "pile"] },
+    // Up to ten seats, and a hand a few penalties can swell well past seven.
+    { game: "chromaly", seats: [2, 4, 6, 8, 10], hand: 14, zones: ["deck", "discard"] },
     { game: "spades", seats: [4], hand: 13, zones: ["trick"] },
     { game: "rummy", seats: [2, 4, 6], hand: 10, zones: ["deck", "discard"], bottomZone: 140 },
     { game: "dominoes", seats: [2, 3, 4], hand: 7, zones: ["line"] },
