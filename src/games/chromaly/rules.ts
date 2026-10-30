@@ -771,6 +771,15 @@ function reduceCall(d: ChromalyState, seat: SeatId, events: GameEvent[]): void {
     }
     return;
   }
+  // Everyone has answered and there is still somebody on a last card (two
+  // seats at once - a swap or a pass can leave two): the window is over, and
+  // whoever got away with it is safe. Left open with nobody pending, the table
+  // would be parked on nobody at all.
+  if (pending.length === 0) {
+    d.window = { ...w, offenders, pending };
+    closeWindow(d);
+    return;
+  }
   d.window = { ...w, offenders, pending };
 }
 

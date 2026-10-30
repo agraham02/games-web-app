@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { deckIds, parseCard, points } from "./cards";
 import { createChromaly } from "./rules";
 import { act, everyCard, position } from "./testkit";
+import type { ChromalyState } from "./types";
 
 /**
  * Every ruling in the plan (docs: "rulings for rule interactions") is a named
@@ -339,6 +340,30 @@ describe("calling the last card", () => {
     // The next play does not open another against the same seat.
     const next = act(def, closed, 1, { t: "play", cards: ["R9.1"] }).state;
     expect(next.window?.offenders ?? []).not.toContain(0);
+  });
+
+  it("two seats on a last card, and the last seat to answer catches one: the window ends rather than parking the table", () => {
+    // A swap or a pass can leave two seats on one card at once. Everybody else
+    // has answered, so the one pending seat's catch used to leave a window
+    // open with nobody left in it - and the round frozen, found by a pooled
+    // bot run, not by any scripted test.
+    const { def, state } = position({
+      hands: { 0: ["R3.1"], 1: ["R4.1"], 2: ["Y2.1", "Y3.1"], 3: ["Y4.1", "Y5.1"] },
+      top: TOP,
+      turn: 2,
+      draw: ["G1.1", "G2.1"],
+    });
+    const stuck = {
+      ...state,
+      calls: {},
+      window: { id: 1, by: 3, card: null, jumpers: [], offenders: [0, 1], pending: [{ seat: 2, ms: 900 }] },
+      windowCount: 1,
+    } as ChromalyState;
+    const r = act(def, stuck, 2, { t: "callLast", seat: 2 }).state;
+    expect(r.hands[0]).toHaveLength(1 + 2);
+    expect(r.window).toBeNull();
+    expect(r.calls[1]).toBe("passed");
+    expect(def.currentSeat(r)).toBe(2);
   });
 
   it("a seat that goes back up past two cards starts afresh", () => {

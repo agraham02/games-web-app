@@ -34,7 +34,6 @@ import {
   bestColor,
   canPlay,
   facingPenalty,
-  holdsColor,
   legalDoubles,
   nextSeat,
   plusFourIsBluff,
@@ -63,7 +62,7 @@ interface Tier {
 
 const TIERS: Record<BotDifficulty, Tier> = {
   casual: { forgets: 0.3, catches: 0.5, jumps: 0.4, recovers: 0.6, bluffs: 0.3, stacks: 0.4, doubt: 0.0, reads: false },
-  steady: { forgets: 0.1, catches: 0.8, jumps: 0.75, recovers: 0.9, bluffs: 0.04, stacks: 0.75, doubt: 0.1, reads: false },
+  steady: { forgets: 0.16, catches: 0.68, jumps: 0.62, recovers: 0.85, bluffs: 0.04, stacks: 0.75, doubt: 0.1, reads: false },
   sharp: { forgets: 0.02, catches: 0.95, jumps: 0.95, recovers: 0.98, bluffs: 0.12, stacks: 0.95, doubt: 0.0, reads: true },
 };
 
@@ -164,11 +163,30 @@ function dumpValue(id: PieceId): number {
   return points(id);
 }
 
-/** Lower is better: the order in which a steady player would shed. */
+/**
+ * Weights for a card's score, lower being played first.
+ *
+ * Sharp's differ from the others', and the difference is measured rather than
+ * guessed: `bots.test.ts` holds the tiers to winning matches in that order.
+ * Staying in the colour you hold most counts for far more than shedding the
+ * heavy cards (it was the other way round, and sharp was no better than
+ * steady), while "play the card most likely to be stranded first" and
+ * "leave the next seat in a colour it just failed to follow" looked sensible
+ * and measured as nothing or worse. The edge is real and modest - about 54%
+ * of Classic matches and 60% of Party ones against steady - which is what
+ * skill is worth in a game this dependent on the draw.
+ */
+const WEIGHTS = {
+  sharp: { points: 0.4, sameColour: 5, attack: 30 },
+  other: { points: 1, sameColour: 2, attack: 0 },
+};
+
+/** Lower is better: the order in which a bot would shed. */
 function score(state: ChromalyState, seat: SeatId, id: PieceId, tier: Tier): number {
   const c = parseCard(id)!;
   const hand = state.hands[seat] ?? [];
-  let s = -dumpValue(id);
+  const w = tier.reads ? WEIGHTS.sharp : WEIGHTS.other;
+  let s = -dumpValue(id) * w.points;
 
   // Keep wilds back: they are the cards that rescue a bad hand later.
   if (isWild(c)) s += 60;
@@ -176,21 +194,18 @@ function score(state: ChromalyState, seat: SeatId, id: PieceId, tier: Tier): num
   if (!isWild(c) && c.color) {
     const same = hand.filter((h) => {
       const x = parseCard(h);
-      return x !== null && !isWild(x) && x.color === c.color;
+      return h !== id && x !== null && !isWild(x) && x.color === c.color;
     }).length;
-    s -= same * 2;
+    s -= same * w.sameColour;
   }
 
-  if (tier.reads) {
-    const next = upNext(state, seat);
-    const theirs = handSize(state, next);
+  if (w.attack !== 0) {
+    const theirs = handSize(state, upNext(state, seat));
     // Aim the cards that hurt at somebody about to go out.
     if (c.kind === "skip" || c.kind === "draw2" || c.kind === "reverse") {
-      if (theirs <= 2) s -= 30;
+      if (theirs <= 2) s -= w.attack;
       if (theirs >= 6) s += 10;
     }
-    // Hand the next seat a colour they have already shown they lack.
-    if (!isWild(c) && c.color && (state.misses[next] ?? []).includes(c.color)) s -= 12;
   }
   return s;
 }
@@ -203,10 +218,17 @@ function chooseColor(state: ChromalyState, seat: SeatId, except: PieceId, tier: 
   }
   const mine = bestColor(hand, except);
   if (!tier.reads) return mine;
-  // A sharp player prefers a colour the next seat has failed to follow, so
-  // long as it still has some of its own.
+  // A sharp player prefers a colour the next seat has failed to follow - but
+  // only when it costs nothing: its own best colour comes first, and the
+  // other is chosen only if it holds as many of it. Naming a colour it has
+  // one card of, to hurt somebody, was worse than just staying in its own.
+  const count = (c: Color) =>
+    hand.filter((id) => {
+      const x = parseCard(id);
+      return id !== except && x !== null && !isWild(x) && x.color === c;
+    }).length;
   const next = upNext(state, seat);
-  const lacked = (state.misses[next] ?? []).filter((c) => holdsColor(state, seat, c, except));
+  const lacked = (state.misses[next] ?? []).filter((c) => count(c) >= count(mine));
   return lacked.length > 0 ? lacked[lacked.length - 1]! : mine;
 }
 

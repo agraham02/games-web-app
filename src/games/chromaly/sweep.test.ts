@@ -24,10 +24,15 @@ describe("whole matches", () => {
   for (const [name, rules] of Object.entries(PRESETS)) {
     for (const seats of [2, 3, 4, 7, 10]) {
       it(`${name}, ${seats} seats: ends, keeps the deck whole, and only ever chooses legal actions`, () => {
-        // A low target keeps the sweep quick; the rules are what is under test.
-        const played = playMatch({ rules: { ...rules, target: 100 }, seats, seed: seats * 31 + name.length });
-        expect(played.state.winner).not.toBeNull();
-        expect(played.rounds).toBeGreaterThan(0);
+        // Several seeds, because the bugs this finds are one position in
+        // thousands: a window left open with nobody in it survived the single
+        // seed this used to run and was found by a pooled bot match.
+        for (let seed = 0; seed < 8; seed++) {
+          // A low target keeps the sweep quick; the rules are what is under test.
+          const played = playMatch({ rules: { ...rules, target: 100 }, seats, seed: seed * 101 + seats * 31 + name.length });
+          expect(played.state.winner).not.toBeNull();
+          expect(played.rounds).toBeGreaterThan(0);
+        }
       });
     }
   }
