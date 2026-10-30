@@ -15,6 +15,8 @@ import { createPoker, DEFAULT_BIG_BLIND, DEFAULT_STARTING_STACK } from "@/games/
 import { betRange } from "@/games/poker/state";
 import { createRummy } from "@/games/rummy/rules";
 import { createBs } from "@/games/bs/rules";
+import type { BridgeOptions, WordBrain } from "@/games/mindmeld/brain";
+import { createMindMeld } from "@/games/mindmeld/rules";
 import { REACTION_MAX as BS_REACTION_MAX } from "@/games/bs/state";
 import type { BsAction, BsState } from "@/games/bs/types";
 import { CLAIM_GRACE_MS, claimReactions } from "@/games/rummy/state";
@@ -87,6 +89,32 @@ describe("GameSession — the loop outside React", () => {
     expect(final.winner).not.toBeNull();
     expect(final.winningSeats).toHaveLength(2); // Spades wins are a partnership.
     expect(clock.pending).toBe(0); // Loop genuinely parked, not still ticking.
+  });
+
+  it("tells a bot whether its partner is a person, from which seats are live", () => {
+    // Mind Meld's bot meets a person halfway and another bot loosely, and the
+    // game's own state cannot say which is which: only the session knows who
+    // is live. Seat 0 is a person; seat 1 is its partner, seats 2 and 3 a
+    // pair of bots.
+    const asked: Array<{ partner: BridgeOptions["partner"] }> = [];
+    const brain: WordBrain = {
+      bridge: (_a, _b, opts) => {
+        asked.push({ partner: opts.partner });
+        return `word${asked.length}`;
+      },
+      starter: () => "apple",
+    };
+    const { clock, session } = harness({
+      definition: createMindMeld({ start: "dealt" }, { brain: () => brain }),
+      seats: 4,
+      seed: 7,
+      isSeatLive: (seat) => seat === 0,
+    });
+    session.start();
+    clock.drain();
+
+    expect(asked.filter((a) => a.partner === "human")).toHaveLength(1);
+    expect(asked.filter((a) => a.partner === "bot")).toHaveLength(2);
   });
 
   it("parks on a live seat instead of playing it, and resumes when that seat submits", () => {

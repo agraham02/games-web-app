@@ -13,7 +13,7 @@
  */
 
 import { hashString } from "@/engine/rng";
-import type { BotDifficulty, BotStrategy, SeatId } from "@/engine/types";
+import type { BotContext, BotDifficulty, BotStrategy, SeatId } from "@/engine/types";
 import type { WordBrain } from "./brain";
 import { isProfane } from "./profanity";
 import { lastTwo, pairOf } from "./state";
@@ -37,8 +37,11 @@ function usable(word: string, chain: readonly string[], familySafe: boolean): bo
 export function makeBots(brain: () => WordBrain): Record<BotDifficulty, BotStrategy<MindMeldState, MindMeldAction>> {
   const strategy = (tier: BotDifficulty): BotStrategy<MindMeldState, MindMeldAction> => ({
     id: `mindmeld-${tier}`,
-    choose(state, seat, rng) {
+    choose(state, seat, rng, ctx?: BotContext) {
       const pair = pairOf(state, seat);
+      // Met harder when the other end is a person: see `BridgeOptions.partner`.
+      const partnerSeat = pair?.seats.find((s) => s !== seat);
+      const partner = partnerSeat !== undefined && ctx?.isLive(partnerSeat) ? "human" : "bot";
       const chain = pair?.chain ?? [];
       const two = pair ? lastTwo(pair) : null;
       const b = brain();
@@ -47,7 +50,7 @@ export function makeBots(brain: () => WordBrain): Record<BotDifficulty, BotStrat
       let word = "";
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
         const candidate = two
-          ? b.bridge(two[0], two[1], { exclude, tier, personality: personality(seat), rng })
+          ? b.bridge(two[0], two[1], { exclude, tier, personality: personality(seat), rng, partner, misses: pair?.tries ?? 0 })
           : b.starter(rng, exclude);
         if (usable(candidate, chain, state.rules.familySafe)) {
           word = candidate;
