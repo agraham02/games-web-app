@@ -14,9 +14,9 @@ import { cn } from "@/lib/utils";
 
 const toggleVariants = cva(
   [
-    "inline-flex items-center justify-center gap-1.5 rounded-lg font-bold whitespace-nowrap ring-1 transition-colors duration-(--duration-ui) outline-none",
-    "bg-bone-50/5 text-bone-300 ring-bone-50/12 hover:bg-bone-50/10 hover:text-bone-100",
-    "aria-pressed:bg-brass-400/18 aria-pressed:text-brass-300 aria-pressed:ring-brass-400/60",
+    "inline-flex items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap ring-1 transition-colors duration-(--duration-ui) outline-none",
+    "bg-transparent text-bone-300 ring-bone-50/16 hover:ring-bone-50/38 hover:text-bone-100",
+    "aria-pressed:bg-brass-400/8 aria-pressed:text-brass-200 aria-pressed:ring-brass-400/70",
     "focus-visible:ring-2 focus-visible:ring-ring",
     // Locked, the choice that was made is the one thing worth reading.
     "data-disabled:cursor-not-allowed data-disabled:opacity-45 aria-pressed:data-disabled:opacity-90",

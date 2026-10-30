@@ -51,25 +51,41 @@ export function InviteCard({ code, compact = false }: { code: string; compact?: 
       });
   };
 
-  return (
-    <div className={`flex w-full flex-col items-center ${compact ? "gap-2" : "gap-3"}`}>
-      <span className="eyebrow">Room code</span>
-      <span
-        className={`font-display tracking-[0.3em] text-brass-300 ${compact ? "text-2xl" : "text-4xl"}`}
-      >
-        {code}
-      </span>
-      <div className="flex gap-2">
-        <Button size="sm" onClick={copy} aria-label={`Copy the link to room ${code}`}>
-          {copied ? <Check size={12} /> : <Link2 size={12} />}
-          {copied ? "Copied" : "Copy link"}
+  const buttons = (
+    <div className="flex gap-2">
+      <Button size="sm" onClick={copy} aria-label={`Copy the link to room ${code}`}>
+        {copied ? <Check size={12} /> : <Link2 size={12} />}
+        {copied ? "Copied" : "Copy link"}
+      </Button>
+      {canShare ? (
+        <Button size="sm" onClick={share}>
+          <Share size={12} /> Share
         </Button>
-        {canShare ? (
-          <Button size="sm" onClick={share}>
-            <Share size={12} /> Share
-          </Button>
-        ) : null}
+      ) : null}
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <div className="flex w-full flex-col items-center gap-2 py-2">
+        <span className="eyebrow">Room code</span>
+        <span className="font-title text-4xl font-light tracking-[0.28em] text-brass-200">{code}</span>
+        {buttons}
       </div>
+    );
+  }
+
+  // The lobby's: a card of its own, the code beside its buttons on anything
+  // wider than a phone.
+  return (
+    <div className="flex w-full flex-col items-center gap-4 rounded-2xl border border-bone-50/14 bg-bone-50/6 shadow-e2 backdrop-blur-md px-5 py-5 sm:flex-row sm:justify-between sm:px-6">
+      <div className="flex flex-col items-center gap-1.5 sm:items-start">
+        <span className="eyebrow">Room code</span>
+        <span className="font-title text-5xl leading-none font-light tracking-[0.28em] text-brass-200 transition-colors duration-700 sm:text-6xl">
+          {code}
+        </span>
+      </div>
+      {buttons}
     </div>
   );
 }

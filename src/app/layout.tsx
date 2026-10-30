@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Cinzel, Figtree, Source_Serif_4 } from "next/font/google";
+import { Cinzel, Figtree, Jost, Source_Serif_4 } from "next/font/google";
 import type { ReactNode } from "react";
 import { captureInstallPrompt } from "./installCapture";
 import { MotionProvider } from "./MotionProvider";
@@ -16,6 +16,13 @@ const figtree = Figtree({
   subsets: ["latin"],
 });
 
+// The shell's title face (home, setup, lobby): a light geometric sans. The
+// user does not like serifs (2026-10-30); tables keep Cinzel for now.
+const jost = Jost({
+  variable: "--font-jost",
+  subsets: ["latin"],
+});
+
 const sourceSerif = Source_Serif_4({
   variable: "--font-source-serif",
   subsets: ["latin"],
@@ -24,7 +31,7 @@ const sourceSerif = Source_Serif_4({
 
 export const metadata: Metadata = {
   title: "Table Games",
-  description: "Dominoes, Spades, Rummy 500, Poker, Left Right Center and BS.",
+  description: "Eight table games — Spades, Dominoes, Poker, Rummy 500, BS, Left Right Center, Chromaly and Mind Meld — with friends in a room, or on your own.",
   // Added to an iPhone's Home Screen, it opens as an app under this name.
   // A black status bar rather than a translucent one: the setup screens'
   // top padding is shorter than the status bar, and would sit under it.
@@ -34,7 +41,8 @@ export const metadata: Metadata = {
 // The table sizes itself to the visual viewport and paints into the
 // safe area, so the browser chrome must not resize the layout.
 export const viewport: Viewport = {
-  themeColor: "#071310",
+  // The shell is near-black; a game route sets its own table colour.
+  themeColor: "#050505",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -49,7 +57,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${cinzel.variable} ${figtree.variable} ${sourceSerif.variable} h-full antialiased`}
+      className={`${cinzel.variable} ${figtree.variable} ${jost.variable} ${sourceSerif.variable} h-full antialiased`}
     >
       <head>
         {/* Before anything else loads: see installCapture.ts. */}

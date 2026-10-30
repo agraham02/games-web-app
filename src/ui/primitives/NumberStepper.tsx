@@ -91,7 +91,7 @@ export function NumberStepper({
     if (Number.isFinite(typed)) onChange(Math.min(max, Math.max(min, typed)));
     setDraft(null);
   };
-  const figure = `tnum min-w-[2ch] px-1 text-center font-display ${small ? "text-2xl" : "text-4xl"} font-extrabold text-brass-300`;
+  const figure = `tnum min-w-[2ch] px-1 text-center font-title ${small ? "text-3xl" : "text-5xl"} font-light text-brass-200`;
   const button =
     `flex ${small ? "h-9 w-9" : "h-11 w-11"} shrink-0 items-center justify-center rounded-full bg-bone-50/6 text-xl font-bold text-bone-100 ring-1 ring-bone-50/14 hover:bg-brass-400/15 hover:text-brass-300 disabled:pointer-events-none disabled:opacity-30`;
 

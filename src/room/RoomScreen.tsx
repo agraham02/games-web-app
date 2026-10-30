@@ -43,6 +43,9 @@ import { RoomStatusScreen } from "./RoomStatusScreen";
 import { SettleUp } from "./SettleUp";
 import { tableFor } from "./tables";
 import { useRoom, type RoomApi } from "./useRoom";
+import { defaultSettings } from "@/session/gameSetup";
+import { GAMES, isGameId, type GameId } from "@/session/registry";
+import { readSavedSetup } from "@/ui/setup/savedSetup";
 import { statusLane } from "@/table/geometry";
 import { useGeometry } from "@/table/store";
 
@@ -93,6 +96,9 @@ export function RoomScreen({ code }: { code?: string }) {
   const [intent, setIntent] = useState<EntryIntent | null | undefined>(undefined);
   /** Sent, and waiting to hear back. */
   const [acting, setActing] = useState<EntryIntent | null>(null);
+  /** The game a just-made room is being set up for (the carousel's pick). */
+  const [wantGame, setWantGame] = useState<GameId | null>(null);
+  const askedGame = useRef(false);
   useEffect(() => {
     // Storage exists only in the browser, so this cannot be read during
     // render; and read ONCE, so a refresh does not make a second room.
@@ -118,9 +124,42 @@ export function RoomScreen({ code }: { code?: string }) {
     if (!name) return;
     if (intent.t === "join" && api.room?.code === intent.code) return;
     setActing(intent);
+    if (intent.t === "make" && isGameId(intent.game)) {
+      askedGame.current = false;
+      setWantGame(intent.game);
+    }
     if (intent.t === "make") api.createRoom(name);
     else api.joinRoom(intent.code, name);
   }, [intent, api]);
+  // The room exists: set it up for the game the home page showed, with the
+  // setup this device last used for it. Asked once; the lobby is held back
+  // (the "acting" screen) until it has taken, so it never flashes "Pick a
+  // game first". Gives up after a few seconds — a refusal must not strand.
+  useEffect(() => {
+    if (!wantGame) return;
+    const room = api.room;
+    if (room?.gameId === wantGame) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setWantGame(null);
+      return;
+    }
+    if (room?.youAreLeader && room.gameId === null && !askedGame.current) {
+      askedGame.current = true;
+      const entry = GAMES[wantGame];
+      const kept = readSavedSetup(wantGame);
+      api.selectGame(
+        wantGame,
+        kept?.settings ?? defaultSettings(entry.setup),
+        kept?.seats ?? entry.defaultSeats,
+        room.difficulty,
+      );
+    }
+  }, [wantGame, api]);
+  useEffect(() => {
+    if (!wantGame) return;
+    const timer = window.setTimeout(() => setWantGame(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [wantGame]);
   // Done once there is an answer: the room arrived, or a refusal did.
   useEffect(() => {
     if (!acting) return;
@@ -222,7 +261,7 @@ export function RoomScreen({ code }: { code?: string }) {
       ? "superseded"
       : api.phase === "connecting"
         ? "connecting"
-        : (intent || acting || intent === undefined) && api.phase !== "pending"
+        : (intent || acting || wantGame || intent === undefined) && api.phase !== "pending"
           ? "acting"
           : api.phase === "pending"
             ? "pending"
@@ -334,7 +373,10 @@ export function RoomScreen({ code }: { code?: string }) {
               waiting
             />
           ) : screen === "acting" ? (
-            <RoomStatusScreen title={intentLabel(acting ?? intent ?? null)} waiting />
+            <RoomStatusScreen
+              title={wantGame && !acting && !intent ? "Setting up your table…" : intentLabel(acting ?? intent ?? null)}
+              waiting
+            />
           ) : screen === "pending" ? (
             <RoomStatusScreen
               title="Waiting to be let in"
@@ -492,7 +534,7 @@ function EntryScreen({ api, urlCode }: { api: RoomApi; urlCode?: string }) {
     <SetupShell maxWidth="max-w-xs">
       <div className="flex flex-col items-center gap-2 text-center">
         <span className="eyebrow">Play together</span>
-        <h1 className="font-display text-4xl tracking-wider text-brass-300">
+        <h1 className="font-title text-5xl leading-none font-light tracking-tight text-bone-50">
           {mode === "invite" ? `Room ${invited}` : "Rooms"}
         </h1>
         {mode === "retry" ? null : (
