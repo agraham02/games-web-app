@@ -63,25 +63,51 @@ export function ChromalyFx({ names }: { names: (seat: SeatId) => string }) {
   };
   // Kept inside the table: a pod on the rim has half a ribbon's width beside
   // it at most, and an effect hung off the edge is an effect nobody reads.
-  const MARGIN = 90;
-  const pod = (seat: SeatId | undefined) => {
+  const pod = (seat: SeatId | undefined, margin: number) => {
     const slot = seat === undefined ? undefined : slotForSeat(g, seat);
     if (!slot) return pile;
-    return {
-      x: Math.min(g.box.w - MARGIN, Math.max(MARGIN, slot.x)),
-      y: Math.min(g.box.h - 60, Math.max(60, slot.y)),
-    };
+    // A box narrower than the effect itself is centred: it cannot fit anyway.
+    const x = g.box.w < margin * 2 ? g.box.w / 2 : Math.min(g.box.w - margin, Math.max(margin, slot.x));
+    return { x, y: Math.min(g.box.h - 60, Math.max(60, slot.y)) };
   };
 
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0" style={{ zIndex: 1600 }}>
       <AnimatePresence>
-        {active.map(({ id, cue }) => (
-          <Effect key={id} cue={cue} pile={pile} at={pod(cue.seat)} name={cue.seat === undefined ? "" : names(cue.seat)} />
-        ))}
+        {active.map(({ id, cue }) => {
+          const name = cue.seat === undefined ? "" : names(cue.seat);
+          return (
+            <Effect key={id} cue={cue} pile={pile} at={pod(cue.seat, halfWidth(cue, name))} name={name} />
+          );
+        })}
       </AnimatePresence>
     </div>
   );
+}
+
+/** The words a ribbon shows, which is also what decides how wide it is. */
+function ribbonText(cue: CueFx, name: string): string | null {
+  switch (cue.kind) {
+    case "jump":
+      return "Jump in!";
+    case "bluff":
+      return name ? `${name}: bluff!` : "Bluff!";
+    case "clean":
+      return "Played it straight";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Half the width an effect needs, so its pod can be kept that far inside the
+ * table. A ribbon is as wide as its words (a pill of tracked-out capitals, an
+ * icon, padding): a fixed margin let "Played it straight" run off the right
+ * edge and arrive as "Played it" (the user, 2026-10-30).
+ */
+function halfWidth(cue: CueFx, name: string): number {
+  const text = ribbonText(cue, name);
+  return text === null ? 90 : Math.max(90, text.length * 7.5 + 44);
 }
 
 function Effect({

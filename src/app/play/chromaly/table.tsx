@@ -54,6 +54,7 @@ import { seatCue } from "@/table/turnCue";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { useHeldMarks } from "@/table/useHeldMarks";
 import { CountdownButton } from "@/ui/primitives/CountdownButton";
+import { CountdownBar } from "@/ui/primitives/CountdownRing";
 import { SHAPE_GLYPH } from "@/ui/primitives/ChromaFace";
 import { announce } from "@/ui/disclosure";
 import { ChromalyFx } from "./ChromalyFx";
@@ -158,10 +159,12 @@ function couldPair(state: ChromalyState, seat: SeatId, id: PieceId): boolean {
  * Which the action band shows, for both screens and testable without
  * mounting a table. Only one thing is ever offered at a time.
  */
-export type BarMode = "call" | "penalty" | "drawn" | "turn" | null;
+export type BarMode = "call" | "jump" | "penalty" | "drawn" | "turn" | null;
 
 export function barMode(view: ChromalyView, live: Live): BarMode {
   if (canCall(view, live)) return "call";
+  // Told only to the seat that holds the twin: its own hand is its own business.
+  if (canJump(view, live)) return "jump";
   if (!canAct(view, live)) return null;
   const state = live.state;
   if (state.challenge !== null || state.pendingDraw !== null) return "penalty";
@@ -342,6 +345,8 @@ export function ChromalyTable({
   const bar =
     mode === "call" ? (
       <CallBar view={view} live={live} />
+    ) : mode === "jump" ? (
+      <JumpBar live={live} />
     ) : mode === "penalty" ? (
       <PenaltyBar live={live} />
     ) : mode === "drawn" ? (
@@ -451,6 +456,33 @@ function CallBar({ view, live }: { view: ChromalyView; live: Live }) {
         CHROMA!
       </CountdownButton>
     </>
+  );
+}
+
+/**
+ * The viewer holds the twin of the card just played, and has a moment to jump
+ * in with it. Says that there is a chance and for how long - not which card:
+ * working that out is the game. It is deliberately not a button: the card is.
+ */
+function JumpBar({ live }: { live: Live }) {
+  const w = live.state.window!;
+  return (
+    // Plain text over a draining line, nothing like a button: the thing to
+    // press is the card in your hand (the user, 2026-10-30).
+    <motion.div
+      // Keyed by the window, so each gets a fresh clock.
+      key={w.id}
+      role="status"
+      className="flex shrink-0 flex-col items-center gap-1"
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: "easeOut" }}
+    >
+      <span className="font-display text-base font-extrabold tracking-wide text-brass-300">Jump in!</span>
+      <div className="h-1 w-24 overflow-hidden rounded-full bg-bone-50/10">
+        <CountdownBar totalMs={live.state.rules.windowMs} />
+      </div>
+    </motion.div>
   );
 }
 

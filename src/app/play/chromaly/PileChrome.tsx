@@ -22,6 +22,7 @@ import { AnimatePresence, motion, useAnimationFrame, useMotionValue } from "moti
 import { prefersReducedMotion } from "@/motion/presets";
 import type { ChromalyState } from "@/games/chromaly/types";
 import { useGeometry } from "@/table/store";
+import { CountdownRing } from "@/ui/primitives/CountdownRing";
 
 const COLOUR: Record<string, string> = {
   R: "212 74 63",
@@ -137,6 +138,16 @@ export function PileChrome({ state }: { state: ChromalyState }) {
           </g>
         ))}
       </motion.svg>
+
+      {/* A window to jump in, as the time left round the pile. Public, like the
+          window itself (everybody saw the play that opened it), and the same
+          for every seat: it says a chance exists, never who holds it. Keyed
+          by the window so each one starts a full ring. */}
+      {state.window !== null && state.window.offenders.length === 0 ? (
+        <div key={state.window.id} className="absolute inset-0 rounded-full">
+          <CountdownRing totalMs={state.rules.windowMs} inset={5} offset={0} />
+        </div>
+      ) : null}
 
       {/* What is waiting to be taken. A pill above the pile, growing a little
           with each card added to it. */}
