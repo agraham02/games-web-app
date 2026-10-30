@@ -607,6 +607,41 @@ describe("the room client", () => {
     expect(window.sessionStorage.getItem("table-games.entry-intent")).toBeNull();
   });
 
+  it("sets the new room up for the game the carousel showed, before the lobby appears", async () => {
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "make", game: "poker" }),
+    );
+    await arrive();
+    await waitFor(() => expect(socket().lastSent("createRoom")).toBeDefined());
+
+    // The room exists, with no game yet: the game is asked for, and the
+    // lobby has not been shown in between ("Pick a game first").
+    socket().deliver({ t: "room", room: roomView({ gameId: null, youAreLeader: true }) });
+    await waitFor(() =>
+      expect(socket().lastSent("selectGame")).toMatchObject({ t: "selectGame", gameId: "poker" }),
+    );
+    expect(screen.queryByText("Pick a game first")).toBeNull();
+    expect(screen.getByText("Setting up your table…")).toBeInTheDocument();
+
+    // Once the room has the game, the lobby is up on it.
+    socket().deliver({ t: "room", room: roomView({ gameId: "poker", youAreLeader: true }) });
+    expect(await screen.findByText(/Start Poker/)).toBeInTheDocument();
+  });
+
+  it("ignores a game it does not know, and just makes the room", async () => {
+    window.localStorage.setItem("table-games.display-name", "Ada");
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "make", game: "not-a-game" }),
+    );
+    await arrive();
+    await waitFor(() => expect(socket().lastSent("createRoom")).toBeDefined());
+    socket().deliver({ t: "room", room: roomView({ gameId: null, youAreLeader: true }) });
+    expect(socket().lastSent("selectGame")).toBeUndefined();
+  });
+
   it("joins the room the home page asked for", async () => {
     window.localStorage.setItem("table-games.display-name", "Ada");
     window.sessionStorage.setItem(

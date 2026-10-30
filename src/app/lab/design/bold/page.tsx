@@ -69,7 +69,7 @@ function Home({ active, setActive }: { active: number; setActive: (i: number) =>
   const entry = GAMES[game];
   return (
     <section data-game={game} className="relative isolate flex min-h-[calc(100svh-3rem)] flex-col overflow-hidden pb-10">
-      <GameBackdrop active={game} />
+      <GameBackdrop active={game} kind="felt" />
       <header className="relative flex items-center justify-between gap-3 px-5 pt-5">
         <span className="text-xl font-extrabold tracking-tight">Table Games</span>
         <div className="flex items-center gap-2">
@@ -163,7 +163,7 @@ function Home({ active, setActive }: { active: number; setActive: (i: number) =>
 function Setup({ game }: { game: GameId }) {
   return (
     <section data-game={game} className="relative isolate min-h-[calc(100svh-3rem)] overflow-hidden">
-      <GameBackdrop active={game} />
+      <GameBackdrop active={game} kind="felt" />
       <div className="relative mx-auto flex max-w-2xl flex-col gap-6 px-5 pt-8 pb-10">
         <Tag n={2}>/play/{game}</Tag>
         <div className="flex items-center gap-4">
@@ -201,7 +201,7 @@ function SetupPanel({ game }: { game: GameId }) {
 function Lobby({ game, onPick }: { game: GameId; onPick: (id: GameId) => void }) {
   return (
     <section data-game={game} className="relative isolate min-h-[calc(100svh-3rem)] overflow-hidden">
-      <GameBackdrop active={game} />
+      <GameBackdrop active={game} kind="felt" />
       <div className="relative mx-auto flex max-w-4xl flex-col gap-5 px-5 pt-8 pb-28">
         <Tag n={3}>/room/{MOCK_CODE}</Tag>
 

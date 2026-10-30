@@ -105,6 +105,7 @@
   --font-display: var(--font-cinzel), Georgia, serif;
   --font-sans: var(--font-figtree), system-ui, sans-serif;
   --font-rank: var(--font-source-serif), Georgia, serif;
+  --font-title: var(--font-instrument), Georgia, serif;
 
   /* -- elevation: warm drop shadows on dark felt ----------- */
   --shadow-e1: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.22);
@@ -285,7 +286,8 @@ body {
 
 body {
   margin: 0;
-  background: var(--color-felt-950);
+  /* The shell's near-black, not the felt: every screen but a table. */
+  background: #050505;
   color: var(--color-bone-50);
   font-family: var(--font-sans);
   text-wrap: pretty;
@@ -366,12 +368,37 @@ body {
   opacity: 0.5;
 }
 
+/* The shell's small label: wide-tracked capitals. Colour is the caller's. */
+@utility caps {
+  font-size: 0.65625rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
 @utility eyebrow {
-  font-size: 0.625rem;
-  letter-spacing: 0.18em;
+  font-size: 0.65625rem;
+  letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--color-bone-400);
-  font-weight: 700;
+  font-weight: 500;
+}
+
+/* A quiet text action: capitals, underlined by a hairline. */
+@utility text-link {
+  font-size: 0.65625rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--color-bone-300);
+  text-decoration: underline;
+  text-decoration-color: rgb(245 242 234 / 0.25);
+  text-underline-offset: 7px;
+  transition: color var(--duration-ui), text-decoration-color var(--duration-ui);
+  &:hover {
+    color: var(--color-bone-50);
+    text-decoration-color: rgb(245 242 234 / 0.6);
+  }
 }
 
 /* Scores and counters must never reflow while animating. */

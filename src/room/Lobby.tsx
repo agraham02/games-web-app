@@ -178,10 +178,13 @@ function GamePanel({ api }: { api: RoomApi }) {
   const entry = room.gameId ? GAMES[room.gameId] : null;
 
   // On a phone a chosen game folds to one line, so the Table below it is in
-  // reach. The leader's starts open — it is theirs to set; anybody else's
-  // opens on request. Side by side on a wide screen, nothing folds.
+  // reach; anybody's opens on request. The leader's starts open only while
+  // there is NOTHING chosen yet: a room made from the home carousel already
+  // has its game (and the setup this device last used for it), and eight
+  // picture tiles would push the Table off the screen to say so again. Side
+  // by side on a wide screen, nothing folds.
   const wide = useMediaQuery("(min-width: 1024px)");
-  const [open, setOpen] = useState(() => room.youAreLeader && !room.gameRunning);
+  const [open, setOpen] = useState(() => room.youAreLeader && !room.gameRunning && room.gameId === null);
   const folded = entry !== null && !wide && !open;
   const summary = entry
     ? [
@@ -238,7 +241,7 @@ function GamePanel({ api }: { api: RoomApi }) {
                   <span aria-hidden className="flex h-11 items-center justify-center">
                     <GameThumb id={g.id} size="sm" />
                   </span>
-                  <span className="font-display text-[13px] leading-tight tracking-wide">{g.name}</span>
+                  <span className="font-title text-[17px] leading-tight italic">{g.name}</span>
                   <span className="text-[10px] font-semibold text-bone-500">{seatRange(g.id)}</span>
                 </>
               ),

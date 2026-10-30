@@ -58,12 +58,12 @@ export function GameSetup({
           </Button>
           {/* One row, so the button appearing as the form is edited does not
               push "Deal in" up the screen. */}
-          <div className="flex items-center gap-5 text-xs text-bone-400">
-            <Link href="/" className="hover:text-bone-200">
+          <div className="flex items-center gap-6">
+            <Link href="/" className="text-link">
               ← Back
             </Link>
             {isDefaultSetup(game, value) ? null : (
-              <button type="button" className="hover:text-bone-200" onClick={() => onChange(defaultSetup(game))}>
+              <button type="button" className="text-link" onClick={() => onChange(defaultSetup(game))}>
                 Reset to defaults
               </button>
             )}
@@ -72,14 +72,19 @@ export function GameSetup({
       }
     >
       <Reveal slow className="flex w-full flex-col items-center gap-7">
-        <div className="flex max-w-sm flex-col items-center gap-2 text-center">
-          <span className="eyebrow">New match</span>
-          <h1 className="font-display text-4xl tracking-wider text-brass-300">{entry.name}</h1>
-          <p className="text-sm leading-relaxed text-bone-400">
+        <div className="flex w-full flex-col gap-4">
+          <span className="caps text-brass-300">New match</span>
+          <h1 className="font-title text-[clamp(2.6rem,10vw,3.8rem)] leading-[0.98] font-normal tracking-tight text-bone-50 italic text-balance">
+            {entry.name}
+          </h1>
+          <p className="text-sm leading-[1.8] font-light text-bone-300 text-pretty">
             {textOf(entry.setup.description, value.settings)}
           </p>
+          <div className="mt-2 h-px w-full bg-linear-to-r from-brass-400/50 to-transparent" />
         </div>
-        <GameOptions game={game} mode="solo" value={value} onChange={onChange} />
+        <div className="w-full rounded-md border border-bone-50/10 p-5">
+          <GameOptions game={game} mode="solo" value={value} onChange={onChange} />
+        </div>
       </Reveal>
     </SetupShell>
   );

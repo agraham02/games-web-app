@@ -52,10 +52,10 @@ export function InviteCard({ code, compact = false }: { code: string; compact?: 
   };
 
   return (
-    <div className={`flex w-full flex-col items-center ${compact ? "gap-2" : "gap-3"}`}>
+    <div className={`flex w-full flex-col items-center border-y border-bone-50/10 ${compact ? "gap-2 py-4" : "gap-3 py-6"}`}>
       <span className="eyebrow">Room code</span>
       <span
-        className={`font-display tracking-[0.3em] text-brass-300 ${compact ? "text-2xl" : "text-4xl"}`}
+        className={`font-title tracking-[0.3em] text-brass-200 transition-colors duration-700 ${compact ? "text-4xl" : "text-6xl"}`}
       >
         {code}
       </span>

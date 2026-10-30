@@ -17,6 +17,7 @@
  * governs the exit too, and `AnimatePresence` waits on it for ever.
  */
 
+import { GameBackdrop } from "@/ui/stage/GameBackdrop";
 import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
@@ -38,30 +39,52 @@ export interface RoomStatusScreenProps {
   home?: boolean;
 }
 
-export function RoomStatusScreen({ title, line, action, waiting = false, home = true }: RoomStatusScreenProps) {
+export function RoomStatusScreen({
+  title,
+  line,
+  action,
+  waiting = false,
+  home = true,
+}: RoomStatusScreenProps) {
   // Reduced motion keeps opacity animations by default; a pulse that never
   // stops is exactly what that setting is asking not to see.
   const reduced = useReducedMotion();
   const breathe = waiting && !reduced;
   return (
-    <main className="felt felt-weave flex h-svh flex-col items-center justify-center gap-5 px-6 text-center">
-      <motion.div
-        initial={false}
-        animate={breathe ? { opacity: [1, 0.45, 1] } : { opacity: 1 }}
-        transition={breathe ? { duration: 2.4, ease: "easeInOut", repeat: Infinity } : TRANSITIONS.uiEnter}
-        exit={{ opacity: 0, transition: TRANSITIONS.uiExit }}
-      >
-        <PieceStrip className="scale-90" />
-      </motion.div>
+    <div className="relative h-svh">
+      <GameBackdrop active="spades" />
+      <main className="relative flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
+        <motion.div
+          initial={false}
+          animate={breathe ? { opacity: [1, 0.45, 1] } : { opacity: 1 }}
+          transition={
+            breathe
+              ? { duration: 2.4, ease: "easeInOut", repeat: Infinity }
+              : TRANSITIONS.uiEnter
+          }
+          exit={{ opacity: 0, transition: TRANSITIONS.uiExit }}
+        >
+          <PieceStrip className="scale-90" />
+        </motion.div>
 
-      <h1 className="font-display text-2xl tracking-wide text-bone-50">{title}</h1>
-      {line ? <p className="max-w-xs text-sm leading-relaxed text-bone-400">{line}</p> : null}
-      {action}
-      {home ? (
-        <Link href="/" className="text-xs text-bone-400 underline-offset-4 hover:text-bone-200 hover:underline">
-          ← Home
-        </Link>
-      ) : null}
-    </main>
+        <h1 className="font-title text-4xl leading-tight font-normal text-bone-50 italic">
+          {title}
+        </h1>
+        {line ? (
+          <p className="max-w-xs text-sm leading-relaxed text-bone-400">
+            {line}
+          </p>
+        ) : null}
+        {action}
+        {home ? (
+          <Link
+            href="/"
+            className="text-xs text-bone-400 underline-offset-4 hover:text-bone-200 hover:underline"
+          >
+            ← Home
+          </Link>
+        ) : null}
+      </main>
+    </div>
   );
 }

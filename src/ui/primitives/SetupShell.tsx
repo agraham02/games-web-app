@@ -31,7 +31,9 @@
  * sticky inside the centred block, not pinned to the window's edge.
  */
 
+import { isGameId } from "@/session/registry";
 import { themeAttrs } from "@/ui/gameTheme";
+import { GameBackdrop } from "@/ui/stage/GameBackdrop";
 import { Credit } from "./Credit";
 
 export interface SetupShellProps {
@@ -46,23 +48,23 @@ export interface SetupShellProps {
 
 export function SetupShell({ children, maxWidth = "max-w-sm", footer, game }: SetupShellProps) {
   return (
-    <main
-      className="felt felt-weave h-svh overflow-y-auto overscroll-contain"
-      {...(game ? themeAttrs(game) : {})}
-    >
-      <div className="flex min-h-full flex-col px-6 pt-10 pb-6">
-        <div className={`m-auto flex w-full ${maxWidth} flex-col items-center gap-7`}>
-          {children}
-          {footer ? (
-            <div
-              className="sticky bottom-0 z-10 -mx-6 flex w-[calc(100%+3rem)] flex-col items-center gap-3 bg-linear-to-t from-felt-950 from-60% to-transparent px-6 pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-            >
-              {footer}
-            </div>
-          ) : null}
+    // The backdrop sits OUTSIDE the scroller: inside it, `inset-0` is the
+    // scroller's visible box and would scroll away with the content.
+    <div className="relative h-svh" {...(game ? themeAttrs(game) : {})}>
+      <GameBackdrop active={game && isGameId(game) ? game : "spades"} />
+      <main className="relative h-full overflow-y-auto overscroll-contain">
+        <div className="flex min-h-full flex-col px-6 pt-[max(2.5rem,calc(env(safe-area-inset-top)+1rem))] pb-6">
+          <div className={`m-auto flex w-full ${maxWidth} flex-col items-center gap-7`}>
+            {children}
+            {footer ? (
+              <div className="sticky bottom-0 z-10 -mx-6 flex w-[calc(100%+3rem)] flex-col items-center gap-3 bg-linear-to-t from-[#050505] from-60% to-transparent px-6 pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                {footer}
+              </div>
+            ) : null}
+          </div>
+          <Credit />
         </div>
-        <Credit />
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }

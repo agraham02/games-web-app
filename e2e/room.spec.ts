@@ -18,9 +18,11 @@ import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 /** A player: their own storage, their own socket, their own seat. */
 async function player(context: BrowserContext, name: string): Promise<Page> {
   const page = await context.newPage();
-  // The home page, which is where people actually start: its own form
-  // makes or joins in one press (see HomeEntry).
+  // The home page, which is where people actually start. "Join with code"
+  // opens the sheet with the name, the make button and the code (see
+  // HomeScreen); with no name saved yet, "Play with friends" opens the same.
   await page.goto("/");
+  await page.getByRole("button", { name: /join with code/i }).click();
   await page.getByLabel(/your name/i).fill(name);
   return page;
 }
@@ -82,11 +84,12 @@ test.describe("a room, in real browsers", () => {
     for (const page of [ada, bo]) {
       // Scoped to the roster: a sonner toast is also an <li>, so "Bo"
       // matches both the row and the "Bo joined" notice otherwise.
-      // Before a game is picked there are no seats yet, so the roster is
-      // the plain member list (the seating plan arrives with a game).
-      const roster = page.getByRole("list", { name: "Room members" });
-      await expect(roster.getByRole("listitem").filter({ hasText: "Ada" })).toBeVisible();
-      await expect(roster.getByRole("listitem").filter({ hasText: "Bo" })).toBeVisible();
+      // A room made from the home carousel already has its game, so there
+      // are seats: the roster is the seating plan.
+      const roster = page.getByRole("list", { name: "Seating plan" });
+      // Not a bare "Bo": the seating plan also has bots, and "Bot" contains it.
+      await expect(roster.getByRole("listitem").filter({ has: page.getByText(/^Ada/) })).toBeVisible();
+      await expect(roster.getByRole("listitem").filter({ has: page.getByText(/^Bo(?!t)/) })).toBeVisible();
     }
     // And only the host is offered the controls.
     await expect(ada.getByRole("button", { name: /leave room/i })).toBeEnabled();
@@ -166,7 +169,7 @@ test.describe("a room, in real browsers", () => {
       }
     }
 
-    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
     await ada.getByRole("button", { name: /start spades/i }).click();
 
     for (const page of pages) {
@@ -215,7 +218,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
     await ada.getByRole("button", { name: /start spades/i }).click();
 
     // Both land on a table rather than the lobby.
@@ -281,7 +284,7 @@ test.describe("a room, in real browsers", () => {
     await ada.getByRole("button", { name: "Close", exact: true }).click();
     await bo.getByRole("button", { name: "Close", exact: true }).click();
 
-    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
     await ada.getByRole("button", { name: /start spades/i }).click();
     for (const page of [ada, bo]) await atTable(page);
 
@@ -361,7 +364,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
     await ada.getByRole("button", { name: /start spades/i }).click();
     await atTable(bo);
 
@@ -408,7 +411,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
     await ada.getByRole("button", { name: /start spades/i }).click();
     await atTable(bo);
 
@@ -430,7 +433,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
     await ada.getByRole("button", { name: /start spades/i }).click();
     await atTable(bo);
 
@@ -841,7 +844,7 @@ test.describe("a room, in real browsers", () => {
     const bo = await player(two, "Bo");
     await join(bo, code);
 
-    await ada.getByRole("button", { name: "Spades" }).click();
+    await ada.getByRole("button", { name: /^Spades,/ }).click();
 
     // A dealt card shows its face; an undealt one is a back. So Bo's own
     // hand filling in is a count of faces going from nothing to thirteen.
