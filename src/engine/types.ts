@@ -795,6 +795,13 @@ export interface GameDefinition<S, A> {
    * means a bot arrives sooner than the ring says at any speed but 1x.
    */
   turnHold?(state: S, seat: SeatId): number | undefined;
+  /**
+   * The least time, in ms, the table sits on a round's last move before the
+   * scorecard covers it. Every driver holds for its own default; this only
+   * ever lengthens it, for a game whose round ends on something that has to
+   * be READ - Mind Meld's winning words, shown at the reveal that ends it.
+   */
+  roundHoldMs?: number;
 
   /**
    * Is this actually a well-formed, legal action for this seat? Return a

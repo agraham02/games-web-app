@@ -774,8 +774,22 @@ const CHROMALY: GameSetupSpec = {
 
 const MINDMELD: GameSetupSpec = {
   description:
-    "Two minds, one word. You and your partner each write a word at the same moment, then a countdown and both are shown. The same word and you have melded. If not, write one that connects the last two said, and round it goes until you meet. The fewer tries, the more points.",
+    "Two minds, one word. You and your partner each write a word at the same moment, then a countdown and both are shown. The same word and you have melded. If not, write one that connects the last two said, and round it goes until you meet. The first pair to meld takes the round, and the fewer tries, the more points.",
   options: [
+    {
+      kind: "choice",
+      key: "pace",
+      label: "Pairs play",
+      hint: (s) =>
+        s.pace === "turns"
+          ? "One pair at a time while the others watch, taking turns round the table."
+          : "Every pair writes at once. The first to meld takes the round.",
+      choices: [
+        { value: "together", label: "All at once" },
+        { value: "turns", label: "One at a time" },
+      ],
+      default: "together",
+    },
     {
       kind: "number",
       key: "rounds",

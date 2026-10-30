@@ -36,7 +36,7 @@ import type {
 import { currentBrain, type WordBrain } from "./brain";
 import { makeBots } from "./bots";
 import { isProfane } from "./profanity";
-import { activePairs, activeSeats, allAtOnce, type Schedule } from "./schedule";
+import { activePairs, activeSeats, scheduleFor, type Schedule } from "./schedule";
 import {
   DEFAULT_RULES,
   LOCK_BEAT_MS,
@@ -59,6 +59,9 @@ import { refusal, sameAsAny, sameWord, soClose } from "./words";
 /** What a viewer is shown in place of somebody else's locked word. */
 export const HIDDEN_WORD = "•";
 
+/** How long the reveal that ends a round stays up before the scorecard. */
+const ROUND_READ_MS = 3_600;
+
 /** Never more rounds than this past the target when a tie will not break. */
 const TIE_EXTRA_ROUNDS = 3;
 
@@ -75,6 +78,7 @@ function clampRules(rules: Partial<MindMeldRules>): MindMeldRules {
     start: merged.start === "dealt" ? "dealt" : "free",
     showLast: merged.showLast === true,
     familySafe: merged.familySafe !== false,
+    pace: merged.pace === "turns" ? "turns" : "together",
   };
 }
 
@@ -100,7 +104,7 @@ export function wordProblem(state: MindMeldState, seat: SeatId, word: unknown): 
 }
 
 export interface MindMeldOptions {
-  /** Which pairs play a try. Default: all of them at once. */
+  /** Which pairs play a try. Default: what the `pace` rule says. */
   schedule?: Schedule;
   /** Where a bot's words come from. Default: whichever brain is installed. */
   brain?: () => WordBrain;
@@ -111,7 +115,7 @@ export function createMindMeld(
   opts: MindMeldOptions = {},
 ): GameDefinition<MindMeldState, MindMeldAction> {
   const rules = clampRules(rulesIn);
-  const schedule = opts.schedule ?? allAtOnce;
+  const schedule = opts.schedule ?? scheduleFor(rules);
   const brain = opts.brain ?? currentBrain;
 
   /* ------------------------------------------------------------- setup */
@@ -289,7 +293,11 @@ export function createMindMeld(
     d.tryNo += 1;
     d.window = null;
 
-    if (d.pairs.every((p) => !isActive(p, d.rules))) {
+    // The first meld ends the round (the user, 2026-10-30): it is a race, and
+    // whoever melds on the same reveal shares it. Everybody else scores
+    // nothing for the round.
+    const melded = revealed.some((r) => r.outcome === "meld");
+    if (melded || d.pairs.every((p) => !isActive(p, d.rules))) {
       endRound(d, events);
     } else {
       d.window = openWindow(d);
@@ -446,6 +454,9 @@ export function createMindMeld(
     completeAction,
     // The reveal depends on words nobody here can see.
     unpredictable: () => true,
+    // The round ends on a reveal - somebody's winning words - and the
+    // scorecard must not cover them before they are read.
+    roundHoldMs: ROUND_READ_MS,
     deadline,
     turnHold,
     pieces: (): Record<PieceId, PieceMeta> => ({}),

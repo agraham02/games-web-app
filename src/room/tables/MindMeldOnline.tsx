@@ -84,6 +84,7 @@ export function MindMeldOnline({ api, room, frame, corner }: OnlineTableProps) {
         runtime={{ seats: room.seats }}
         gameTitle={GAMES[room.gameId ?? "mindmeld"].name}
         handZone={MINDMELD_HAND_ZONE}
+        seatPairs
         viewerSeat={frame.seat}
         serverDriven
         autoContinueMs={autoContinueFor(room)}

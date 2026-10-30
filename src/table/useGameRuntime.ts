@@ -373,7 +373,8 @@ export function useGameRuntime<S, A>(
     const factor = 1 / Math.max(0.05, live.speed ?? 1);
 
     if (definition.isOver(current)) {
-      const delay = prefersReducedMotion() ? 0 : (live.endHoldMs ?? DEFAULT_END_HOLD_MS) * factor;
+      const hold = Math.max(live.endHoldMs ?? DEFAULT_END_HOLD_MS, definition.roundHoldMs ?? 0);
+      const delay = prefersReducedMotion() ? 0 : hold * factor;
       endHoldTimer.current = setTimeout(() => setGameEndRevealed(true), delay);
       return;
     }
@@ -385,7 +386,7 @@ export function useGameRuntime<S, A>(
     if (definition.isRoundOver?.(current)) {
       const delay = prefersReducedMotion()
         ? 0
-        : (live.roundHoldMs ?? DEFAULT_ROUND_HOLD_MS) * factor;
+        : Math.max(live.roundHoldMs ?? DEFAULT_ROUND_HOLD_MS, definition.roundHoldMs ?? 0) * factor;
       roundHoldTimer.current = setTimeout(() => setRoundEndRevealed(true), delay);
       return;
     }

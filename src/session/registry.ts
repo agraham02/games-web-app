@@ -214,6 +214,7 @@ export const GAMES: Record<GameId, GameEntry> = {
         start: s.start as "free" | "dealt",
         showLast: s.showLast as boolean,
         familySafe: s.familySafe as boolean,
+        pace: s.pace === "turns" ? "turns" : "together",
       }),
   },
 

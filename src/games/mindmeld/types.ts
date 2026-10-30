@@ -27,6 +27,12 @@ export interface MindMeldRules {
   showLast: boolean;
   /** Refuse rude words before they are locked in. */
   familySafe: boolean;
+  /**
+   * `together`: every pair writes at once. `turns`: one pair at a time, the
+   * rest watching (the user, 2026-10-30). Either way the first meld ends the
+   * round. See `schedule.ts`.
+   */
+  pace: "together" | "turns";
 }
 
 export interface Pair {

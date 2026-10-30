@@ -132,13 +132,15 @@ describe("a try", () => {
     expect(meldOn(12)).toBe(1);
   });
 
-  it("takes a melded pair out of the try: its seats are done, the rest go on", () => {
+  it("ends the round at the first meld: the pair that melded scores, the rest nothing", () => {
     const { def, state } = game();
     const r = round(def, state, { 0: "same", 1: "same", 2: "sun", 3: "moon" });
     expect(r.state.pairs[0]!.meldedOn).toBe(1);
-    expect(def.legalActions(r.state, 0)).toEqual([]);
-    expect(def.legalActions(r.state, 2)).toHaveLength(1);
-    expect(r.state.window?.pending.map((p) => p.seat).sort()).toEqual([2, 3]);
+    expect(def.isRoundOver!(r.state)).toBe(true);
+    expect(r.state.scores).toEqual({ 0: 10, 1: 10, 2: 0, 3: 0 });
+    expect(def.legalActions(r.state, 2)).toEqual([]);
+    // The pair that missed still sees its words come back.
+    expect(r.state.reveal?.find((x) => x.pair === 1)?.outcome).toBe("miss");
   });
 });
 
@@ -174,7 +176,7 @@ describe("what may be locked in", () => {
     const once = lock(def, state, 0, "dog").state;
     expect(def.validate!(once, 0, { t: "submit", seat: 0, word: "cat" })).toMatch(/nothing to lock in/);
     const melded = round(def, state, { 0: "same", 1: "same", 2: "a", 3: "b" }).state;
-    expect(def.validate!(melded, 0, { t: "submit", seat: 0, word: "more" })).toMatch(/nothing to lock in/);
+    expect(def.validate!(melded, 2, { t: "submit", seat: 2, word: "more" })).toMatch(/round is over/);
   });
 
   it("stamps the real seat, whatever a client sent", () => {
@@ -185,15 +187,15 @@ describe("what may be locked in", () => {
 });
 
 describe("the round and the match", () => {
-  it("ends when every pair has melded, and scores each pair's points to both partners", () => {
+  it("shares a round between pairs that meld on the same reveal, each partner scoring", () => {
     const { def, state } = game({ rounds: 3 });
-    let s = round(def, state, { 0: "same", 1: "same", 2: "x", 3: "y" }).state;
-    s = round(def, s, { 2: "z", 3: "z" }).state;
+    let s = round(def, state, { 0: "x", 1: "y", 2: "p", 3: "q" }).state;
+    expect(def.isRoundOver!(s)).toBe(false);
+    s = round(def, s, { 0: "z", 1: "z", 2: "r", 3: "r" }).state;
     expect(def.isRoundOver!(s)).toBe(true);
-    // Pair 0 melded on try 1 (10); pair 1 on try 2 (9).
-    expect(s.scores).toEqual({ 0: 10, 1: 10, 2: 9, 3: 9 });
-    expect(s.result?.winner).toBe(0);
-    expect(s.result?.deltas).toEqual({ 0: 10, 1: 10, 2: 9, 3: 9 });
+    // Both melded on try 2: nine apiece, to both partners.
+    expect(s.scores).toEqual({ 0: 9, 1: 9, 2: 9, 3: 9 });
+    expect(s.result?.deltas).toEqual({ 0: 9, 1: 9, 2: 9, 3: 9 });
   });
 
   it("scores nothing for a pair that runs out of tries", () => {
@@ -210,7 +212,6 @@ describe("the round and the match", () => {
     let s = state;
     for (let r = 0; r < 2; r++) {
       s = round(def, s, { 0: "same", 1: "same", 2: "x", 3: "y" }).state;
-      s = round(def, s, { 2: "q", 3: "q" }).state;
       if (r === 0) {
         expect(def.isOver(s)).toBe(false);
         s = def.startRound!(s, rng).state;
@@ -229,7 +230,6 @@ describe("the round and the match", () => {
     s = def.startRound!(s, rng).state;
     expect(s.round).toBe(2);
     s = round(def, s, { 0: "same", 1: "same", 2: "a", 3: "b" }).state;
-    s = round(def, s, { 2: "c", 3: "c" }).state;
     expect(s.winner).toBe(0);
   });
 
@@ -348,32 +348,43 @@ describe("the clock a bot is paced by", () => {
   });
 });
 
-describe("which pairs play a try is the schedule's answer", () => {
-  /** A stand-in "take turns" schedule: the lowest-numbered pair that is still in. */
-  const oneAtATime = (state: MindMeldState) => {
-    const live = state.pairs.filter((p) => p.meldedOn === null && p.tries < state.rules.tries);
-    return live.length > 0 ? [live[0]!.id] : [];
-  };
-
-  it("runs the whole round for one pair at a time without a change to the rules", () => {
-    const def = createMindMeld({}, { schedule: oneAtATime, brain: () => brain(["x"]) });
+describe("one pair at a time", () => {
+  function turns(seats = 6) {
+    const def = createMindMeld({ pace: "turns" }, { brain: () => brain(["x"]) });
     const rng = createRng(2);
-    let s = def.startRound!(def.setup({ seats: 6, rng }), rng).state;
-    expect(activePairs(s, oneAtATime)).toEqual([0]);
-    // Only pair 0's seats may act.
-    expect(def.legalActions(s, 0)).toHaveLength(1);
-    expect(def.legalActions(s, 2)).toEqual([]);
+    return { def, rng, state: def.startRound!(def.setup({ seats, rng }), rng).state };
+  }
 
-    s = round(def, s, { 0: "same", 1: "same" }).state;
-    expect(s.pairs[0]!.meldedOn).toBe(1);
-    // Pair 1 is up next, and pair 2 still waits.
-    expect(def.legalActions(s, 2)).toHaveLength(1);
-    expect(def.legalActions(s, 4)).toEqual([]);
+  it("lets only the pair whose turn it is write, then moves round the table", () => {
+    const { def, state } = turns();
+    expect(activePairs(state)).toEqual([0]);
+    expect(def.legalActions(state, 0)).toHaveLength(1);
+    expect(def.legalActions(state, 2)).toEqual([]);
 
-    s = round(def, s, { 2: "a", 3: "a" }).state;
-    s = round(def, s, { 4: "b", 5: "b" }).state;
+    let s = round(def, state, { 0: "dog", 1: "cat" }).state;
+    expect(s.pairs[0]!.chain).toEqual(["dog", "cat"]);
+    expect(activePairs(s)).toEqual([1]);
+    s = round(def, s, { 2: "sun", 3: "moon" }).state;
+    expect(activePairs(s)).toEqual([2]);
+    s = round(def, s, { 4: "red", 5: "blue" }).state;
+    // Back round to the first pair, bridging its own last two words.
+    expect(activePairs(s)).toEqual([0]);
+    expect(s.pairs.map((p) => p.tries)).toEqual([1, 1, 1]);
+  });
+
+  it("ends the round at the first meld, scored by that pair's own tries", () => {
+    const { def, state } = turns();
+    let s = round(def, state, { 0: "dog", 1: "cat" }).state;
+    s = round(def, s, { 2: "same", 3: "same" }).state;
     expect(def.isRoundOver!(s)).toBe(true);
-    expect(s.scores).toMatchObject({ 0: 10, 2: 10, 4: 10 });
+    expect(s.scores).toMatchObject({ 0: 0, 2: 10, 4: 0 });
+  });
+
+  it("starts each round with the next pair, so nobody always goes first", () => {
+    const { def, rng, state } = turns();
+    const done = round(def, state, { 0: "same", 1: "same" }).state;
+    const next = def.startRound!(done, rng).state;
+    expect(activePairs(next)).toEqual([1]);
   });
 });
 
@@ -409,5 +420,13 @@ describe("a whole match, bots on every seat", () => {
         }
       });
     }
+  }
+
+  for (const seats of [4, 10]) {
+    it(`${seats} seats, one pair at a time: ends, and every word a bot chooses is a valid one`, () => {
+      for (let seed = 1; seed <= 4; seed++) {
+        expect(play(seats, seed, { pace: "turns", tries: 8 }).winner).not.toBeNull();
+      }
+    });
   }
 });

@@ -26,6 +26,7 @@ export const DEFAULT_RULES: MindMeldRules = {
   start: "free",
   showLast: false,
   familySafe: true,
+  pace: "together",
 };
 
 /** How much longer the DRIVER waits than the clock a player is shown. */

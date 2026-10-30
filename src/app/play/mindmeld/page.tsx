@@ -65,6 +65,7 @@ export default function MindMeldPlayPage() {
       runtime={{ seats, difficulty: botTable(seats, setup.difficulty) }}
       gameTitle="Mind Meld"
       handZone={MINDMELD_HAND_ZONE}
+      seatPairs
       players={(state, live) => playerViews(view, state, live)}
       standings={(state, live, pods) => standings(view, state, live, pods)}
       stats={(state) => statsFor(view, state)}

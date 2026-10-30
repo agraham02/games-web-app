@@ -11,10 +11,15 @@
  * both have. Nothing on it could prompt anybody. The only moment the table is
  * loud is the reveal: a countdown, then both words, then the verdict.
  *
- * Seating needs no special geometry. Partners sit on adjacent seats, so every
- * other pair already lands side by side round the rim; my own partner's rim
- * pod is simply not drawn, and the two of us are shown together, as pods side by
- * side, in the strip above the input.
+ * Partners sit together: the table is laid out in pairs (`seatPairs`, see
+ * `ResolveOptions.pairs`), so every other pair's pods touch on the rim. My own
+ * partner's rim pod is not drawn; the two of us are shown together, as pods
+ * side by side, in the strip above the input.
+ *
+ * The other pairs are secondary but never faint (the user, 2026-10-30): the
+ * first meld ends the round, so how close they are matters. A race board under
+ * the orbs says where every pair is, and at a reveal their words come out
+ * beside their pods.
  */
 
 import { AnimatePresence, motion } from "motion/react";
@@ -22,10 +27,12 @@ import { useEffect, useRef, useState } from "react";
 import type { SeatId } from "@/engine/types";
 import { botColour, botName } from "@/games/_shared/botIdentity";
 import { wordProblem } from "@/games/mindmeld/rules";
+import { activePairs, activeSeats } from "@/games/mindmeld/schedule";
 import { isActive, pairIndexOf, pairOf, partnerOf } from "@/games/mindmeld/state";
 import type { MindMeldAction, MindMeldState, Pair, Reveal } from "@/games/mindmeld/types";
 import { onCue } from "@/table/fx";
 import type { GameSetting } from "@/table/gameSettings";
+import { podBox } from "@/table/geometry";
 import { HandZone } from "@/table/HandZone";
 import type { SeatView } from "@/table/SeatRing";
 import { useTableStore } from "@/table/store";
@@ -91,7 +98,21 @@ export function canLock(view: MindMeldView, live: Live): boolean {
   if (live.isOver || state.result !== null || !state.dealt || live.animating) return false;
   if (!isSeated(view, state)) return false;
   const pair = pairOf(state, view.viewerSeat);
-  return Boolean(pair) && isActive(pair!, state.rules) && state.locks[view.viewerSeat] === null;
+  if (!pair || !isActive(pair, state.rules) || state.locks[view.viewerSeat] !== null) return false;
+  // One pair at a time: only while it is ours.
+  return activeSeats(state).includes(view.viewerSeat);
+}
+
+/**
+ * The pair the middle of the table is about: mine while we are playing, or
+ * whoever is up when pairs take turns and it is not us. Undefined for a
+ * spectator of a table where everybody plays at once.
+ */
+function focusPair(view: MindMeldView, state: MindMeldState): Pair | undefined {
+  const mine = isSeated(view, state) ? pairOf(state, view.viewerSeat) : undefined;
+  if (state.rules.pace !== "turns") return mine;
+  const up = activePairs(state)[0];
+  return up === undefined ? mine : state.pairs[up];
 }
 
 /* ============================================================
@@ -165,6 +186,7 @@ export function MindMeldTable({
   return (
     <>
       <MeldField view={view} live={live} reveal={reveal} countdown={countdown} />
+      {reveal ? <PodWords view={view} state={state} reveal={reveal} /> : null}
       <HandZone
         panel={mine ? <PairStrip view={view} state={state} pair={mine} /> : undefined}
         bar={
@@ -205,11 +227,18 @@ function MeldField({
   const box = g.zones.play;
   const seated = isSeated(view, state);
   const mine = seated ? pairOf(state, view.viewerSeat) : undefined;
-  const myReveal = reveal?.find((r) => r.pair === mine?.id);
-  const partner = seated ? partnerOf(view.viewerSeat) : null;
-  const meLocked = seated && state.locks[view.viewerSeat] !== null;
-  const partnerLocked = partner !== null && state.locks[partner] !== null;
+  const focus = focusPair(view, state);
+  // What the big words show: our own reveal, or - when pairs take turns -
+  // the one pair that just went.
+  const shown =
+    reveal?.find((r) => r.pair === mine?.id) ?? (state.rules.pace === "turns" ? reveal?.[0] : undefined);
+  const shownPair = shown ? state.pairs[shown.pair] : undefined;
+  const orbsFor = shownPair ?? focus;
+  const ours = orbsFor !== undefined && orbsFor.id === mine?.id;
   const finished = Boolean(mine) && !isActive(mine!, state.rules);
+  // While a reveal is up, the try it showed is still the try being talked
+  // about; the next one starts when the words go.
+  const tryShown = mine ? Math.min(reveal ? mine.tries : mine.tries + 1, state.rules.tries) : 0;
 
   return (
     <div
@@ -219,18 +248,20 @@ function MeldField({
       <span className="eyebrow">
         Round {state.round}
         {state.rules.rounds > 0 ? ` of ${state.rules.rounds}` : ""}
-        {mine ? ` · Try ${Math.min(mine.tries + 1, state.rules.tries)} of ${state.rules.tries}` : ""}
+        {mine ? ` · Try ${tryShown} of ${state.rules.tries}` : ""}
       </span>
       {mine ? <TryPips pair={mine} cap={state.rules.tries} /> : null}
 
+      {orbsFor && !ours ? (
+        <span className="text-xs font-bold tracking-wide text-bone-300 uppercase">{pairName(view, orbsFor)}</span>
+      ) : null}
       <Orbs
         view={view}
-        meLocked={meLocked}
-        partnerLocked={partnerLocked}
-        outcome={myReveal?.outcome ?? null}
-        melded={finished && mine?.meldedOn !== null}
-        seated={seated}
-        pair={mine}
+        pair={orbsFor}
+        ours={ours}
+        locked={orbsFor ? [state.locks[orbsFor.seats[0]] !== null, state.locks[orbsFor.seats[1]] !== null] : [false, false]}
+        outcome={shown?.outcome ?? null}
+        melded={ours && finished && mine?.meldedOn !== null}
       />
 
       <AnimatePresence mode="wait" initial={false}>
@@ -245,8 +276,8 @@ function MeldField({
           >
             {countdown}
           </motion.div>
-        ) : reveal && myReveal && mine ? (
-          <RevealWords key={`words-${state.tryNo}`} view={view} pair={mine} reveal={myReveal} />
+        ) : shown && shownPair ? (
+          <RevealWords key={`words-${state.tryNo}`} view={view} pair={shownPair} reveal={shown} />
         ) : (
           <motion.p
             key="line"
@@ -256,18 +287,27 @@ function MeldField({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            {fieldLine(view, state, mine)}
+            {fieldLine(view, state, mine, focus)}
           </motion.p>
         )}
       </AnimatePresence>
 
-      {reveal ? <OtherPairs view={view} state={state} reveal={reveal} mineId={mine?.id} /> : null}
+      <RaceBoard view={view} state={state} mineId={mine?.id} reveal={reveal} />
     </div>
   );
 }
 
-function fieldLine(view: MindMeldView, state: MindMeldState, mine: Pair | undefined): string {
+function fieldLine(
+  view: MindMeldView,
+  state: MindMeldState,
+  mine: Pair | undefined,
+  focus: Pair | undefined,
+): string {
   if (state.result) return "Round over";
+  if (focus && focus.id !== mine?.id) {
+    const locked = focus.seats.filter((seat) => state.locks[seat] !== null).length;
+    return `${pairName(view, focus)}: ${locked === 2 ? "both in…" : "thinking…"}`;
+  }
   if (!mine) return "Watching";
   if (mine.meldedOn !== null) return `Melded in ${mine.meldedOn} — ${mine.points} points. Waiting for the others…`;
   if (!isActive(mine, state.rules)) return "Out of tries — waiting for the others…";
@@ -301,27 +341,31 @@ function TryPips({ pair, cap }: { pair: Pair; cap: number }) {
  */
 function Orbs({
   view,
-  meLocked,
-  partnerLocked,
+  pair,
+  ours,
+  locked,
   outcome,
   melded,
-  seated,
-  pair,
 }: {
   view: MindMeldView;
-  meLocked: boolean;
-  partnerLocked: boolean;
+  pair: Pair | undefined;
+  /** Mine and my partner's, mine on the left; otherwise that pair's, in seat order. */
+  ours: boolean;
+  /** Locked in, by the pair's seat order. */
+  locked: [boolean, boolean];
   outcome: Reveal["outcome"] | null;
   melded: boolean;
-  seated: boolean;
-  pair: Pair | undefined;
 }) {
-  const bothIn = meLocked && partnerLocked;
+  const me = view.viewerSeat;
+  const flip = ours && pair !== undefined && pair.seats[1] === me;
+  const [left, right] = pair ? (flip ? [pair.seats[1], pair.seats[0]] : pair.seats) : [0, 1];
+  const [leftLocked, rightLocked] = flip ? [locked[1], locked[0]] : locked;
+  const bothIn = leftLocked && rightLocked;
   // Distance of each orb from the centre.
   const gap = outcome === "meld" || melded ? 0 : outcome === "miss" || outcome === "timeout" ? 68 : outcome === "close" ? 18 : bothIn ? 26 : 52;
   const scale = outcome === "meld" || melded ? 1.45 : 1;
-  const mineColour = seated ? "var(--color-brass-300)" : "var(--color-bone-300)";
-  const theirsColour = seated && pair ? view.colourFor(partnerOf(view.viewerSeat)) : "var(--color-bone-400)";
+  const mineColour = !pair ? "var(--color-bone-300)" : ours ? "var(--color-brass-300)" : view.colourFor(left);
+  const theirsColour = !pair ? "var(--color-bone-400)" : view.colourFor(right);
 
   const orb = (colour: string, locked: boolean, side: -1 | 1) => (
     <motion.span
@@ -353,8 +397,8 @@ function Orbs({
       animate={outcome || melded ? { rotate: 0 } : { rotate: 360 }}
       transition={outcome || melded ? { duration: 0.4 } : { duration: 22, repeat: Infinity, ease: "linear" }}
     >
-      {orb(mineColour, meLocked, -1)}
-      {orb(theirsColour, partnerLocked, 1)}
+      {orb(mineColour, leftLocked, -1)}
+      {orb(theirsColour, rightLocked, 1)}
     </motion.div>
   );
 }
@@ -362,7 +406,8 @@ function Orbs({
 /** Both words of the viewer's pair, big, and what they came to. */
 function RevealWords({ view, pair, reveal }: { view: MindMeldView; pair: Pair; reveal: Reveal }) {
   const me = view.viewerSeat;
-  const iAmFirst = pair.seats[0] === me;
+  // Mine first when it is mine; anybody else's in seat order.
+  const iAmFirst = pair.seats[1] !== me;
   const mine = iAmFirst ? reveal.a : reveal.b;
   const theirs = iAmFirst ? reveal.b : reveal.a;
   const headline =
@@ -404,29 +449,135 @@ function RevealWords({ view, pair, reveal }: { view: MindMeldView; pair: Pair; r
   );
 }
 
-/** What every other pair said, small, for as long as the reveal is up. */
-function OtherPairs({
+/**
+ * Where every other pair has got to, always on show under the orbs: who is in,
+ * which try, how many points. Secondary to my own pair, but the first meld
+ * takes the round, so it is a race and this is the rest of the field. Says
+ * nothing about what anybody wrote - that is only ever shown at a reveal.
+ */
+function RaceBoard({
   view,
   state,
-  reveal,
   mineId,
+  reveal,
 }: {
   view: MindMeldView;
   state: MindMeldState;
-  reveal: Reveal[];
   mineId: number | undefined;
+  reveal: Reveal[] | null;
 }) {
-  const others = reveal.filter((r) => r.pair !== mineId && r.outcome !== "timeout");
+  const others = state.pairs.filter((p) => p.id !== mineId);
   if (others.length === 0) return null;
+  const up = state.rules.pace === "turns" ? activePairs(state)[0] : undefined;
   return (
-    <ul className="flex max-w-full flex-col gap-0.5 text-[11px] text-bone-400">
-      {others.map((r) => (
-        <li key={r.pair}>
-          <span className="font-bold text-bone-300">{pairName(view, state.pairs[r.pair]!)}</span>: {r.a} · {r.b}
-          {r.outcome === "meld" ? " ✓" : ""}
-        </li>
-      ))}
+    <ul className="flex max-w-full flex-wrap justify-center gap-1.5" aria-label="The other pairs">
+      {others.map((pair) => {
+        const shown = reveal?.find((r) => r.pair === pair.id);
+        const melded = pair.meldedOn !== null;
+        const playing = up === undefined ? isActive(pair, state.rules) : up === pair.id;
+        return (
+          <motion.li
+            key={pair.id}
+            className="flex items-center gap-2 rounded-full bg-felt-950/80 px-2.5 py-1 ring-1"
+            style={{
+              ["--tw-ring-color" as string]: melded
+                ? "var(--color-brass-300)"
+                : up === pair.id
+                  ? "rgb(245 242 234 / 0.45)"
+                  : "rgb(245 242 234 / 0.12)",
+            }}
+            animate={shown?.outcome === "meld" ? { scale: [1, 1.12, 1] } : { scale: 1 }}
+            transition={{ duration: 0.5 }}
+          >
+            <span className="flex -space-x-1" aria-hidden>
+              {pair.seats.map((seat) => (
+                <span
+                  key={seat}
+                  className="h-3.5 w-3.5 rounded-full ring-2 ring-felt-950 transition-opacity duration-200"
+                  style={{
+                    background: view.colourFor(seat),
+                    // Lit once that seat is in: progress, never a word.
+                    opacity: !playing || state.locks[seat] !== null ? 1 : 0.35,
+                  }}
+                />
+              ))}
+            </span>
+            <span className="text-[11px] font-bold text-bone-100">{pairName(view, pair)}</span>
+            <span className={`text-[11px] font-semibold ${melded ? "text-brass-300" : "text-bone-400"}`}>
+              {raceStatus(state, pair, up)}
+            </span>
+            <span className="text-[11px] font-extrabold text-brass-300 tabular-nums">
+              {state.scores[pair.seats[0]] ?? 0}
+            </span>
+          </motion.li>
+        );
+      })}
     </ul>
+  );
+}
+
+function raceStatus(state: MindMeldState, pair: Pair, up: number | undefined): string {
+  if (pair.meldedOn !== null) return `Melded on try ${pair.meldedOn}!`;
+  if (!isActive(pair, state.rules)) return "Out of tries";
+  if (up !== undefined && up !== pair.id) return `Try ${pair.tries} · waiting`;
+  const locked = pair.seats.filter((seat) => state.locks[seat] !== null).length;
+  const status = locked === 2 ? "both in" : locked === 1 ? "one in" : "thinking";
+  return `Try ${Math.min(pair.tries + 1, state.rules.tries)} · ${status}`;
+}
+
+/**
+ * Where a pod's word goes: toward the middle of the table, off whichever side
+ * of the pod faces it. Never above or below a SIDE pod - its partner is there.
+ */
+function wordSpot(anchor: string, x: number, y: number, pod: { x: number; y: number; w: number; h: number }) {
+  switch (anchor) {
+    case "left":
+      return { left: pod.x + pod.w + 6, top: y, x: 0, y: "-50%" };
+    case "right":
+      return { left: pod.x - 6, top: y, x: "-100%", y: "-50%" };
+    case "top":
+      return { left: x, top: pod.y + pod.h + 6, x: "-50%", y: 0 };
+    default:
+      return { left: x, top: pod.y - 6, x: "-50%", y: "-100%" };
+  }
+}
+
+/**
+ * At a reveal, each other pair's two words come out beside their own pods, so
+ * the whole table is seen answering at once - the words a pair said are the
+ * public part of the game, and the moment they are shown is the loud one.
+ * Anchored the way chat bubbles are (`SeatBubbles`), and gone with the reveal.
+ */
+function PodWords({ view, state, reveal }: { view: MindMeldView; state: MindMeldState; reveal: Reveal[] }) {
+  const g = useTableStore((s) => s.geometry);
+  if (!g) return null;
+  const mine = isSeated(view, state) ? pairIndexOf(view.viewerSeat) : -1;
+  return (
+    <div className="pointer-events-none absolute inset-0" style={{ zIndex: 975 }} aria-hidden>
+      {reveal.map((r) => {
+        const pair = state.pairs[r.pair];
+        if (r.pair === mine || r.outcome === "timeout" || !pair) return null;
+        return pair.seats.map((seat, i) => {
+          const slot = g.seats.find((s) => s.seat === seat);
+          if (!slot) return null;
+          const pod = podBox(slot, g.density);
+          return (
+            <motion.span
+              key={`${state.tryNo}-${seat}`}
+              className={`absolute rounded-lg px-2 py-0.5 font-display text-sm font-extrabold whitespace-nowrap text-felt-950 shadow-e2 ${
+                r.outcome === "meld" ? "bg-brass-300" : "bg-bone-50"
+              }`}
+              style={wordSpot(slot.anchor, slot.x, slot.y, pod)}
+              initial={{ opacity: 0, scale: 0.6 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: "spring", stiffness: 320, damping: 20, delay: i * 0.08 }}
+            >
+              {i === 0 ? r.a : r.b}
+            </motion.span>
+          );
+        });
+      })}
+    </div>
   );
 }
 
@@ -615,7 +766,7 @@ export function roundSummary(view: MindMeldView, state: MindMeldState) {
       seat,
       name: seatName(view, seat),
       colour: seatColour(view, seat),
-      detail: pair.meldedOn !== null ? `melded on try ${pair.meldedOn}` : "never met",
+      detail: pair.meldedOn !== null ? `melded on try ${pair.meldedOn}` : `no meld after ${pair.tries} ${pair.tries === 1 ? "try" : "tries"}`,
       delta: result.deltas[seat] ?? 0,
       total: state.scores[seat] ?? 0,
     };

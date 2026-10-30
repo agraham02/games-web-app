@@ -778,14 +778,13 @@ export function useOnlineRuntime<S, A>(opts: OnlineRuntimeOptions): GameRuntime<
   useEffect(() => {
     if (!applied || (!applied.isOver && !applied.isRoundOver)) return;
     const matchOver = applied.isOver;
+    // A game may ask for longer (`GameDefinition.roundHoldMs`), never less.
     const delay = prefersReducedMotion()
       ? 0
-      : matchOver
-        ? DEFAULT_END_HOLD_MS
-        : ROUND_END_HOLD_MS;
+      : Math.max(matchOver ? DEFAULT_END_HOLD_MS : ROUND_END_HOLD_MS, opts.definition?.roundHoldMs ?? 0);
     const t = setTimeout(() => (matchOver ? setGameEndRevealed(true) : setRoundEndRevealed(true)), delay);
     return () => clearTimeout(t);
-  }, [applied]);
+  }, [applied, opts.definition?.roundHoldMs]);
 
   // Releases the hold once a jump has been committed. See `holding`.
   useEffect(() => {
