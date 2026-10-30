@@ -1,13 +1,14 @@
 # Table Games — architecture
 
-Web app hosting six table games, alone against bots or in a room with
+Web app hosting seven table games, alone against bots or in a room with
 other people: Dominoes (Block & Draw, and the Caribbean game), Spades,
-Rummy 500, Poker (NL Hold'em), Left Right Center, BS (Cheat). Priority is
+Rummy 500, Poker (NL Hold'em), Left Right Center, BS (Cheat), Chromaly
+(an Uno-style game, named to keep clear of the trademark). Priority is
 UI/UX — real-table motion, distinct phase screens, and Rummy's board
 information shown without clutter.
 
-**Status: all six games are real**, with full rules, bots and play
-screens, and **all six run online in a room**. Rummy needed its rules
+**Status: all seven games are real**, with full rules, bots and play
+screens, and **all seven run online in a room**. Rummy needed its rules
 changed rather than its wiring to get there — see "A claim is a race"
 below. BS came after that work and cost almost nothing as a result, but
 it runs the same race after EVERY play rather than once every twelve
@@ -391,6 +392,83 @@ trims its backlog, a reconnect sends one position — all safe only because
 any frame stands alone. So "smaller messages" is permessage-deflate with a
 32KB shared window (`wsServer.ts`), measured at 100–250 bytes a turn, ~30x.
 Delta frames would save 20–40% more and break that property; don't.
+
+### One window for two races, and a table that is more than cards (Chromaly)
+
+Chromaly has the two races BS and Rummy taught the machinery about - jumping in
+on a card, and catching a seat that reached its last card without calling it -
+and the user's rules shaped them differently from BS's.
+
+**The window opens only when there is something in it.** BS runs one after every
+play; this one opens when a seat holds the identical card to the one just played,
+or a seat is on exactly one card and has not called it. Most turns cost nothing.
+Both can be true of one play, so there is ONE `window` (jumpers and offenders)
+rather than two races over the same table. Taking it, or every seat letting it
+go, ends it; so does `deadline`, and the deadline closes it for EVERYBODY at the
+first person's timeout. That is the price of not giving each seat a full turn at
+it in sequence: a person at the front of the queue starves the bots behind them
+for that long, and the whole wait stays near the three seconds the user asked for.
+
+**Who holds the twin is a read on a hand, so it is private.** `playerView` shows
+each viewer only their own entry in `jumpers` and `pending` (with offenders
+everybody is in the race, which gives nothing away). That only works because a
+client takes `currentSeat` from the server's frame rather than recomputing it
+from its redacted view. The turn glow stays on whoever MADE the play
+(`Window.by`), or it would walk the answering queue and show who was eligible.
+
+**The last-card button is the user's exception to the no-hand-holding rule**
+(2026-10-24): it pops up for the people it is for. It is the same button for
+saving yourself and for catching someone, and the pre-call (on two cards) is
+offered on your own turn only - offered to every seat it made every seat
+"entitled to act" permanently, which the entitlement suite caught.
+
+**Cards moving between hidden hands are `deal` events, not `move`s.** A 7's swap,
+a 0's pass and Wild Shuffle Hands relocate cards from one hidden hand to another,
+which nothing else does. `deal` is corrected per viewer (a card a seat receives
+turns face up for it, the ones it gave go face down); a `move`'s literal `faceUp`
+cannot do that for more than one viewer. Shuffle Hands goes through `sweep` +
+`shuffle` so the existing `mask` path makes what a viewer knew about their own
+hand anonymous. `redact.test.ts` runs Chromaly twice, by default and with every
+rule on, because the default rules never reach a swap, and asserts the
+every-rule case saw all three ways hands change places.
+
+**A rebuilt draw pile is seeded from a secret that is never sent.** `reduce`
+takes no rng, and seeding from the public discard would let any client work out
+the order of every card still to be drawn (the leak Poker and Rummy had, and
+[the session seed leak]). `playerView` also blanks the draw pile, `secret`, and a
++4's `guilty` flag - the whole answer to a challenge.
+
+**A timed-out seat has a plain card played for it, never a wild**, and the only
+forced move is drawing when nothing can be played. A table of people all away
+must still finish (the timer suite leaves every seat silent), so the timeout has
+to get rid of cards; and a wild names a colour for the whole table, so it is the
+one card not to spend for somebody who is not there.
+
+**`cue` is the one shared event for effects with no piece to move** (a skip, a
+reverse, a stack growing, a bluff called). One event with a closed `kind` rather
+than a union member per effect; `choreograph` gives each a real duration (an
+event with no case gets none and is stomped by the next in the same frame) and
+none blocks the queue, so a turn takes exactly as long to watch with cues as
+without (`cue.test.ts`). Like the slam it goes through `fx.ts`, not the store,
+and the game's own overlay (`ChromalyFx`) and sound hook subscribe once. Effects
+are tested by rendering the overlay against a real geometry, not by screenshot:
+they last under a second and fire on a beat. **Do not use `vi.useFakeTimers()`
+in a test that renders Motion**: it leaves the frame loop waiting on a fake
+`requestAnimationFrame`, and every exit animation after it hangs, which looks
+exactly like an effect that never clears.
+
+**The bots are held to winning, and the first measurement said they did not.**
+`sharp` was level with `steady`; making steady worse at catching and jumping did
+nothing for it, so those rates barely decide matches. A search over the card-
+choice weights found the lever (stay in the colour you hold most; care less about
+shedding points), while two plausible ideas measured as nothing or worse. The
+edge is real and modest (about 54% of Classic and 60% of Party matches), which is
+what skill is worth in a game this dependent on the draw. Seeds are pooled across
+families because one family of a hundred matches swung from 92-58 to 61-59. The
+same pooled run found a real freeze the single-seed sweep had missed: two seats
+on a last card, the last seat to answer catches one, and the window was left open
+with nobody pending. Reachability (catches, saves, jump-ins taken and not taken,
+bluffs and bluffs called, big stacks) is counted, not assumed.
 
 ### The turn gate and the action gate are different questions
 
@@ -1348,15 +1426,32 @@ path free.
 
 ## Adding a game
 
+The contract is five steps; the checklist is longer, because a game is also
+held to every suite that loops over `GAME_IDS`, and TypeScript will name the
+ones that need an entry.
+
 1. Implement `GameDefinition<S, A>` from
    [engine/types.ts](src/engine/types.ts) under `src/games/<id>/`.
 2. Emit events from `reduce` for everything the table should show.
-3. Provide `placements(state, viewer)` — the choreographer reconciles
+3. Provide `placements(state, viewer)` - the choreographer reconciles
    against it, so a missed event self-corrects instead of desyncing. It
    is also the authority for FACING: `projectEvents` corrects each
    event's `faceUp` against it per viewer, so `faceUp: seat === HERO` in
    a deal stays correct offline and online both.
 4. Compose the existing phase shells; only the slot content is new.
 5. Add bots per `BotDifficulty`. `thinkMs` is part of the feel, and a
-   head-to-head test that the tiers really are ordered is not optional —
-   see "A tier test has to be a match, not a diff" above.
+   head-to-head test that the tiers really are ordered is not optional -
+   see "A tier test has to be a match, not a diff" above. Measure it on pooled
+   fresh seeds before believing it, and count reachability for anything that
+   depends on a bot making a mistake.
+6. Register it: `session/registry.ts` (`GameId`, `GAME_IDS`, an entry),
+   `session/gameSetup.ts` (a spec; sections and presets if it has many rules),
+   `GameThumb` (a face and a blurb), `room/tables.tsx` plus an `<X>Online.tsx`,
+   and `table/measure.ts` + the band row in `layout.test.ts`.
+7. Fill the per-game tables the suites key off, which TypeScript lists:
+   `GameSession.test` (`SEATS`, and `raceEntitles` for any race), `redact.test`
+   (`SEATS`, `CONCEALS`, and a variant with every rule on if it moves cards
+   between hidden hands), `predict.test` (`FLOORS`), `turnTimer.test`,
+   `forcedMove.test`, and `seatPods.test`. Each caught a real bug in Chromaly.
+8. `scripts/ws-harness.ts` scenarios (a leak check, a stall check, forged
+   actions) and an `e2e/room.spec.ts` spec.
