@@ -37,6 +37,7 @@ import {
   type SettingValues,
 } from "./gameSettings";
 import { useSlamFeedback } from "./slamFeedback";
+import { playWinFlourish, useTableSounds } from "./tableSounds";
 import { useShownTurnClock } from "./shownTurnClock";
 import {
   GameEndSummary,
@@ -286,6 +287,7 @@ export function GameHostView<S, A>({
     sound: settingValues.sound !== false,
     vibration: settingValues.vibration !== false,
   });
+  useTableSounds({ sound: settingValues.sound !== false });
   // Hints off draws no game's `dimmed` marks — see `TableState.hintsShown`.
   // A game without a Hints setting keeps them, as it always has.
   const hintsShown = settingValues.hints !== false;
@@ -341,6 +343,15 @@ export function GameHostView<S, A>({
   // (Dominoes cut-throat, LRC) and correctly crowns BOTH partners when a
   // partnership game scores a round — team dominoes, the first to do so.
   const winningSeats = live.winningSeats ?? live.roundWinningSeats;
+  // The crown and confetti have a sound of their own, once per win.
+  const heroWon = viewerSeat !== null && (winningSeats?.includes(viewerSeat ?? HERO) ?? false);
+  const soundOn = settingValues.sound !== false;
+  const matchWon = live.winningSeats !== null;
+  useEffect(() => {
+    if (heroWon && soundOn) playWinFlourish(matchWon);
+    // Only on the edge into a win; a setting flipped mid-celebration is not one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroWon]);
   // Not before the seat is on turn on THIS screen — see `useShownTurnClock`.
   const shownClock = useShownTurnClock(turnClock, live);
   const seatViews = players(live.state, live).map((view) => {

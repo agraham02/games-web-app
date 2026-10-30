@@ -22,6 +22,7 @@ import type {
 import { STAGGER } from "@/motion/presets";
 import { emitCue, emitDice, emitSlam } from "./fx";
 import { useTableStore } from "./store";
+import { emitTableSound, noteSlam, soundFor } from "./tableSounds";
 
 /**
  * Pieces sharing a bucket are indexed and fanned together — EXCEPT a
@@ -138,6 +139,13 @@ export function applyEventToTable(event: GameEvent): void {
   const { placements, reset, meta } = useTableStore.getState();
   const map: PlacementMap = { ...placements };
   let touched = false;
+
+  // Its sound, on the frame its motion starts (see tableSounds.ts). Noted
+  // before the slam's own case below, so the play it rides in front of
+  // knows the slam already made the noise.
+  if (event.t === "slam") noteSlam(event.piece);
+  const sound = soundFor(event, (id) => meta[id]?.kind);
+  if (sound) emitTableSound(sound);
 
   switch (event.t) {
     case "deal":

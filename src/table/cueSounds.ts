@@ -78,12 +78,12 @@ export function playCue(kind: CueKind, amount = 0): void {
       noise(ctx, now, { seconds: 0.18, from: 500, to: 3200, q: 2, gain: 0.3 });
       noise(ctx, now + 0.16, { seconds: 0.22, from: 3200, to: 600, q: 2, gain: 0.3 });
       return;
-    case "draw": {
-      // Soft flicks, one a card up to a handful.
-      const n = Math.min(Math.max(amount, 1), 6);
-      for (let i = 0; i < n; i++) noise(ctx, now + i * 0.07, { seconds: 0.045, from: 2400, q: 1.5, gain: 0.22 });
+    case "draw":
+      // The cards themselves make their own sound as each one is drawn
+      // (`tableSounds`). A penalty gets the hit of it landing on you: a low
+      // thump that grows with the size of it.
+      if (amount >= 2) tone(ctx, now, { type: "triangle", from: 160, to: 70, seconds: 0.18 + Math.min(amount, 8) * 0.02, gain: 0.3 });
       return;
-    }
     case "stack":
       // A blip that rises a step with every card on the stack.
       tone(ctx, now, { type: "triangle", from: 300 * (1 + amount / 10), seconds: 0.16, gain: 0.3 });
