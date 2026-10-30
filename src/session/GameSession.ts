@@ -33,6 +33,7 @@
  */
 
 import type {
+  BotContext,
   BotDifficulty,
   GameDefinition,
   GameEvent,
@@ -465,10 +466,14 @@ export class GameSession<S, A> {
     // the bot only CHOOSES from what it can legitimately see.
     const view = this.definition.playerView(current, seat);
     const thinkMs = bot.thinkMs(view, seat, this.rng);
-    const action = bot.choose(view, seat, this.rng);
+    const action = bot.choose(view, seat, this.rng, this.botContext());
     // `think` rides first in the same batch, so playback waits out that
     // beat before the move itself animates.
     this.playFor(seat, action, [{ t: "think", seat, ms: thinkMs }]);
+  }
+
+  private botContext(): BotContext {
+    return { isLive: (seat) => this.isLive(seat) };
   }
 
   private botFor(seat: SeatId) {
@@ -502,7 +507,7 @@ export class GameSession<S, A> {
     if (this.definition.currentSeat(state) !== seat || !this.isLive(seat)) return;
     const action =
       this.definition.timeoutAction?.(state, seat) ??
-      this.botFor(seat).choose(this.definition.playerView(state, seat), seat, this.rng);
+      this.botFor(seat).choose(this.definition.playerView(state, seat), seat, this.rng, this.botContext());
     this.clearHold();
     this.lastAuto = { seat, at: this.clock.now(), kind: "timeout", before: state };
     // The table's toast — "Ada ran out of time", "You ran out of time" — so

@@ -607,13 +607,25 @@ export interface SetupOptions {
 
 export type BotDifficulty = "casual" | "steady" | "sharp";
 
+/**
+ * What a session knows that the game's own state does not. A game whose bots
+ * play differently WITH a person than against one (Mind Meld's partner) reads
+ * it; every other game ignores the argument.
+ */
+export interface BotContext {
+  /** Whether a person is in that seat right now (not a bot, not stepped away). */
+  isLive(seat: SeatId): boolean;
+}
+
 export interface BotStrategy<S, A> {
   id: string;
   /**
    * Chooses from `legalActions`. Must be pure given (state, seat, rng) so
-   * bot behaviour replays deterministically alongside the deal.
+   * bot behaviour replays deterministically alongside the deal. `ctx` is
+   * optional: a caller with no session behind it (a test, a simulation)
+   * omits it, and the bot then assumes nobody is live.
    */
-  choose(state: S, seat: SeatId, rng: Rng): A;
+  choose(state: S, seat: SeatId, rng: Rng, ctx?: BotContext): A;
   /** Deliberation window, in ms, before the action is emitted. */
   thinkMs(state: S, seat: SeatId, rng: Rng): number;
 }

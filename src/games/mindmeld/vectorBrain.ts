@@ -55,6 +55,20 @@ const MIN_WEIGHT = 0.6;
 /** What a word with no vector scores on closeness: middling, so the bonus decides it. */
 const UNKNOWN = 0.3;
 
+/*
+ * Against a PERSON (`BridgeOptions.partner`). A bot is only worth meeting if
+ * what it says is what people say, so the draw narrows to the very top, runs
+ * cold, and leans harder on what people say; a word BOTH inputs bring to mind
+ * is the one most people reach for; and a word far down the frequency order is
+ * not asked of anybody. It gets colder still the longer the pair has missed.
+ */
+const HUMAN_SHORTLIST: Record<BotDifficulty, number> = { casual: 0.8, steady: 0.67, sharp: 0.5 };
+const HUMAN_HEAT: Record<BotDifficulty, number> = { casual: 0.8, steady: 0.6, sharp: 0.25 };
+const HUMAN_PEOPLE: Record<BotDifficulty, number> = { casual: 1, steady: 1.4, sharp: 1.6 };
+const BOTH_BONUS = 0.3;
+/** Rank in the frequency order past which a word is obscure, unless a person would say it. */
+const FAMILIAR = 8000;
+
 export class VectorBrain implements WordBrain {
   private readonly index = new Map<string, number>();
 
@@ -132,15 +146,22 @@ export class VectorBrain implements WordBrain {
     return false;
   }
 
-  bridge(a: string, b: string, { exclude, tier, personality, rng }: BridgeOptions): string {
+  bridge(a: string, b: string, { exclude, tier, personality, rng, partner = "bot", misses = 0 }: BridgeOptions): string {
+    const human = partner === "human";
     const targets = [this.vectorOf(a), this.vectorOf(b)].filter((v): v is Float32Array => v !== null);
 
     // What people say for either input, best first: a bonus that fades down the list.
     const said = new Map<string, number>();
+    const brought = new Map<string, number>();
     for (const entry of [a, b]) {
       const list = associationsOf(normalize(entry));
-      list.forEach((w, i) => said.set(w, (said.get(w) ?? 0) + PEOPLE[tier] * (1 - (0.5 * i) / Math.max(1, list.length))));
+      const weight = PEOPLE[tier] * (human ? HUMAN_PEOPLE[tier] : 1);
+      list.forEach((w, i) => {
+        said.set(w, (said.get(w) ?? 0) + weight * (1 - (0.5 * i) / Math.max(1, list.length)));
+        brought.set(w, (brought.get(w) ?? 0) + 1);
+      });
     }
+    if (human) for (const [w, n] of brought) if (n > 1) said.set(w, said.get(w)! + BOTH_BONUS);
     if (targets.length === 0 && said.size === 0) return this.starter(rng, exclude);
 
     // Never an answer already said, a form of one of the two words, a longer
@@ -148,10 +169,18 @@ export class VectorBrain implements WordBrain {
     // tense of a word that is itself on offer.
     const blocked = new Set<string>();
     for (const e of [...exclude, a, b]) for (const t of tokens(e)) for (const l of lemmas(t)) blocked.add(l);
+    // A word that CONTAINS an input ("sunflower" for "sun"), or a mere
+    // fragment of one ("ate" in "water"). A real word inside a compound is
+    // fine: this used to refuse "ball" for "football", the answer a person
+    // gives, because "football" contains "ball".
     const containsInput = (word: string) =>
-      [a, b].some((e) => tokens(e).some((t) => t.length >= 3 && (word.includes(t) || t.includes(word))));
-    const skip = (word: string) => blocked.has(word) || containsInput(word) || this.isInflection(word);
+      [a, b].some((e) =>
+        tokens(e).some((t) => t.length >= 3 && ((word !== t && word.includes(t)) || (word.length <= 3 && t.includes(word)))),
+      );
+    const obscure = (word: string) => human && !said.has(word) && (this.index.get(word) ?? 0) > FAMILIAR;
+    const skip = (word: string) => blocked.has(word) || containsInput(word) || this.isInflection(word) || obscure(word);
 
+    const shortlist = human ? Math.max(2, Math.round(SHORTLIST[tier] * HUMAN_SHORTLIST[tier])) : SHORTLIST[tier];
     const units = targets.map((t) => {
       let norm = 0;
       for (let d = 0; d < DIM; d++) norm += t[d]! * t[d]!;
@@ -161,7 +190,7 @@ export class VectorBrain implements WordBrain {
     const pool = new Map<string, number>();
     if (units.length > 0) {
       // Wider than the shortlist: a word people say may sit below the closest few.
-      for (const { word, score } of this.nearest(units, COMMON[tier], skip, SHORTLIST[tier] * 3)) pool.set(word, score);
+      for (const { word, score } of this.nearest(units, COMMON[tier], skip, shortlist * 3)) pool.set(word, score);
     }
     // Every word a person would say, whether or not it has a vector.
     for (const word of said.keys()) {
@@ -173,14 +202,16 @@ export class VectorBrain implements WordBrain {
     const ranked = [...pool.entries()]
       .map(([word, score]) => ({ word, score: score + (said.get(word) ?? 0) }))
       .sort((x, y) => y.score - x.score)
-      .slice(0, SHORTLIST[tier]);
+      .slice(0, shortlist);
     if (ranked.length === 0) return this.starter(rng, exclude);
-    return pickFrom(ranked, HEAT[tier] * (0.6 + 0.8 * personality), rng);
+    const heat = HEAT[tier] * (0.6 + 0.8 * personality) * (human ? HUMAN_HEAT[tier] * Math.max(0.5, 1 - 0.1 * misses) : 1);
+    return pickFrom(ranked, heat, rng);
   }
 
   starter(rng: Rng, exclude: readonly string[] = []): string {
-    const used = new Set(exclude.flatMap((e) => tokens(e)));
-    const pool = STARTERS.filter((w) => !used.has(w));
+    // By base form too: after "stars", "star" is not a fresh start.
+    const used = new Set(exclude.flatMap((e) => tokens(e).flatMap((t) => [t, ...lemmas(t)])));
+    const pool = STARTERS.filter((w) => !used.has(w) && ![...lemmas(w)].some((l) => used.has(l)));
     return pool[rng.int(pool.length)] ?? "thing";
   }
 }

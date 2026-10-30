@@ -20,6 +20,17 @@ export interface BridgeOptions {
   /** Stable per seat, so two bots in one pair do not think alike. */
   personality: number;
   rng: Rng;
+  /**
+   * Who is on the other end. Two bots in a pair must not always say the same
+   * word (that is a meld every time, and no game), so with `bot` — the
+   * default — the draw is deliberately loose. A PERSON writing the obvious
+   * bridge is trying to meet you, so against `human` the bot says the most
+   * likely answer instead: a partner that drifts is a partner that cannot be
+   * met (the user, 2026-10-30).
+   */
+  partner?: "human" | "bot";
+  /** Reveals this pair has already missed on: a human partner is met harder the longer it takes. */
+  misses?: number;
 }
 
 export interface WordBrain {
