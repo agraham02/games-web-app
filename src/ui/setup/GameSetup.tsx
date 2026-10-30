@@ -49,6 +49,7 @@ export function GameSetup({
 
   return (
     <SetupShell
+      game={game}
       maxWidth={wide ? "max-w-xs md:max-w-2xl" : "max-w-xs"}
       footer={
         <>

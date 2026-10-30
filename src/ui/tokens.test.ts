@@ -13,6 +13,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { GAME_IDS } from "@/session/registry";
+import { GAME_THEMES, themeAttrs } from "./gameTheme";
 
 const SRC = path.resolve(__dirname, "..");
 const CSS = readFileSync(path.join(SRC, "app", "globals.css"), "utf8");
@@ -68,6 +70,82 @@ describe("theme tokens", () => {
   it("finds the palette it is guarding, so a moved stylesheet fails loudly", () => {
     for (const family of FAMILIES) {
       expect([...DEFINED].some((t) => t.startsWith(`${family}-`))).toBe(true);
+    }
+  });
+});
+
+/** A palette entry's hex, read from a declaration block's text. */
+function declared(block: string, token: string): string | undefined {
+  return new RegExp(`--color-${token}\\s*:\\s*(#[0-9a-fA-F]{6})`).exec(block)?.[1]?.toLowerCase();
+}
+
+/** What a `[data-game="…"]` subtree declares, merged across its blocks. */
+function gameBlock(id: string): string {
+  const blocks = [...CSS.matchAll(new RegExp(`\\[data-game="${id}"\\]\\s*\\{([^}]*)\\}`, "g"))];
+  return blocks.map((m) => m[1]).join("\n");
+}
+
+function luminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe("per-game surfaces", () => {
+  // The house green: everything declared before the first themed block.
+  const root = (token: string) => declared(CSS.slice(0, CSS.indexOf("[data-game=")), token)!;
+
+  it("gives every game a theme, and names it by the id the table reports", () => {
+    expect(Object.keys(GAME_THEMES).sort()).toEqual([...GAME_IDS].sort());
+    for (const id of GAME_IDS) expect(themeAttrs(id)).toEqual({ "data-game": id });
+    expect(themeAttrs("not-a-game")).toEqual({});
+  });
+
+  it("keeps the swatches in gameTheme.ts equal to the stylesheet", () => {
+    for (const id of GAME_IDS) {
+      const block = gameBlock(id);
+      const t = GAME_THEMES[id];
+      // Spades, Rummy and BS have no block: they ARE :root.
+      const read = (token: string) => declared(block, token) ?? root(token);
+      expect({ deep: t.deep, mid: t.mid, lit: t.lit, accent: t.accent }, id).toEqual({
+        deep: read("felt-950"),
+        mid: read("felt-850"),
+        lit: read("felt-700"),
+        accent: read("brass-400"),
+      });
+    }
+  });
+
+  it("re-declares the roles inside a themed subtree", () => {
+    // A role is a var() resolved where it is declared; left on :root alone
+    // it keeps the house green inside a themed table.
+    const match = /((?:\[data-game="[a-z]+"\],\s*)+\[data-game="[a-z]+"\])\s*\{([^}]*)\}/.exec(CSS);
+    const selectors = match?.[1] ?? "";
+    const grouped = match?.[2] ?? "";
+    for (const role of ["background", "card", "popover", "primary", "primary-foreground", "ring"]) {
+      expect(grouped, role).toContain(`--color-${role}:`);
+    }
+    for (const id of GAME_IDS) {
+      if (id === "spades" || id === "rummy" || id === "bs") continue;
+      expect(selectors, id).toContain(`[data-game="${id}"]`);
+    }
+  });
+
+  it("stays readable on every surface", () => {
+    const bone50 = root("bone-50");
+    for (const id of GAME_IDS) {
+      const t = GAME_THEMES[id];
+      expect(contrast(bone50, t.mid), `${id} text on panel`).toBeGreaterThanOrEqual(7);
+      expect(contrast(t.accent, t.deep), `${id} accent on page`).toBeGreaterThanOrEqual(4.5);
+      // A card must stand off the lit centre of its own table.
+      expect(contrast("#fbf8f1", t.lit), `${id} card on felt`).toBeGreaterThanOrEqual(3);
     }
   });
 });

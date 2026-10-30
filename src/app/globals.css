@@ -148,6 +148,126 @@
 }
 
 /* ============================================================
+   Per-game surfaces.
+   A subtree with `data-game="…"` re-skins the felt and the brass
+   accent. Everything that reads `felt-*`, `brass-*` or a role
+   (background, card, popover, primary, ring) follows, because
+   Tailwind utilities compile to `var(--color-…)`.
+
+   Roles are RE-DECLARED here: a `var()` in a custom property is
+   resolved on the element that declares it, so the roles set once on
+   :root would otherwise keep the house green inside the subtree.
+
+   Spades, Rummy 500 and BS are the house green and need no block.
+   Bone (text), status, team, card stock and chroma-* stay global.
+   `--surface-texture` / `--surface-opacity` feed `felt-weave`.
+   No images anywhere: gradients only.
+   The hexes are mirrored (as swatches) in src/ui/gameTheme.ts, and
+   tokens.test.ts checks the two agree and that contrast holds.
+   ============================================================ */
+[data-game="poker"],
+[data-game="dominoes"],
+[data-game="chromaly"],
+[data-game="lrc"],
+[data-game="mindmeld"] {
+  --color-background: var(--color-felt-950);
+  --color-card: var(--color-felt-900);
+  --color-popover: var(--color-felt-850);
+  --color-primary: var(--color-brass-400);
+  --color-primary-foreground: var(--color-felt-950);
+  --color-ring: var(--color-brass-300);
+  --shadow-glow: 0 0 16px color-mix(in srgb, var(--color-brass-400) 50%, transparent);
+  --shadow-glow-inset: inset 0 0 8px color-mix(in srgb, var(--color-brass-400) 55%, transparent);
+}
+
+/* Poker — midnight navy, champagne gold. */
+[data-game="poker"] {
+  --color-felt-950: #060b18;
+  --color-felt-900: #0a1226;
+  --color-felt-850: #0e1b36;
+  --color-felt-800: #14264a;
+  --color-felt-700: #1b3260;
+  --color-felt-600: #26438a;
+  --color-brass-200: #f6ead0;
+  --color-brass-300: #efdcb0;
+  --color-brass-400: #e6cf9a;
+  --color-brass-500: #c9ae72;
+  --color-brass-600: #9c8451;
+  --color-brass-700: #655433;
+}
+
+/* Dominoes — walnut, copper-brass. The grain is gradients only. */
+[data-game="dominoes"] {
+  --color-felt-950: #170d07;
+  --color-felt-900: #22140c;
+  --color-felt-850: #2f1d11;
+  --color-felt-800: #3b2616;
+  --color-felt-700: #4a2f1c;
+  --color-felt-600: #5e3d25;
+  --color-brass-200: #f3d9bc;
+  --color-brass-300: #e8bf94;
+  --color-brass-400: #d9a370;
+  --color-brass-500: #b8814f;
+  --color-brass-600: #8a5e36;
+  --color-brass-700: #5a3d24;
+  --surface-opacity: 1;
+  --surface-texture:
+    repeating-linear-gradient(90deg, rgb(0 0 0 / 0.26) 0 2px, rgb(255 225 180 / 0.04) 2px 3px, transparent 3px 168px),
+    repeating-linear-gradient(0.35deg, rgb(255 225 180 / 0.035) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-0.2deg, rgb(0 0 0 / 0.07) 0 2px, transparent 2px 11px);
+}
+
+/* Chromaly — ember. Darker than chroma-red so a red card still reads. */
+[data-game="chromaly"] {
+  --color-felt-950: #1f0905;
+  --color-felt-900: #2c0e07;
+  --color-felt-850: #3d140b;
+  --color-felt-800: #5a1d0e;
+  --color-felt-700: #7a2c14;
+  --color-felt-600: #9b3d1c;
+  --color-brass-200: #fbe9a8;
+  --color-brass-300: #f4d676;
+  --color-brass-400: #e8b92f;
+  --color-brass-500: #c4981f;
+  --color-brass-600: #8f6c15;
+  --color-brass-700: #5c4510;
+  --surface-opacity: 0.18;
+}
+
+/* LRC — mustard, cream. Ruby chips and ivory dice sit on it. */
+[data-game="lrc"] {
+  --color-felt-950: #1e1504;
+  --color-felt-900: #2b1e06;
+  --color-felt-850: #3f2d0a;
+  --color-felt-800: #55400e;
+  --color-felt-700: #6e4f12;
+  --color-felt-600: #8a6618;
+  --color-brass-200: #fff6df;
+  --color-brass-300: #f8ebc6;
+  --color-brass-400: #efdfae;
+  --color-brass-500: #cdbb86;
+  --color-brass-600: #9a8a5c;
+  --color-brass-700: #61583a;
+}
+
+/* Mind Meld — indigo dusk. Smooth satin, no weave: the orbs are the show. */
+[data-game="mindmeld"] {
+  --color-felt-950: #0b0a1c;
+  --color-felt-900: #11102b;
+  --color-felt-850: #16153d;
+  --color-felt-800: #1e1d52;
+  --color-felt-700: #2a2766;
+  --color-felt-600: #3a3787;
+  --color-brass-200: #e9e4ff;
+  --color-brass-300: #d5ccfa;
+  --color-brass-400: #bfb2f2;
+  --color-brass-500: #9a8bd6;
+  --color-brass-600: #6f629f;
+  --color-brass-700: #453d68;
+  --surface-texture: none;
+}
+
+/* ============================================================
    Piece dimensions per density tier.
    The piece layer reads these through the geometry store, not
    CSS — but they are declared here so the two never drift.
@@ -225,10 +345,12 @@ body {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    opacity: 0.3;
-    background-image:
+    opacity: var(--surface-opacity, 0.3);
+    background-image: var(
+      --surface-texture,
       repeating-linear-gradient(90deg, rgb(255 255 255 / 0.028) 0 1px, transparent 1px 3px),
-      repeating-linear-gradient(0deg, rgb(0 0 0 / 0.045) 0 1px, transparent 1px 3px);
+      repeating-linear-gradient(0deg, rgb(0 0 0 / 0.045) 0 1px, transparent 1px 3px)
+    );
   }
 }
 

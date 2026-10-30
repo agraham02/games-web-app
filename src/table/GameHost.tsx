@@ -426,6 +426,7 @@ export function GameHostView<S, A>({
       viewerSeat={viewerSeat}
       handBleed={handBleed}
       pairs={seatPairs}
+      game={definition.id}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />

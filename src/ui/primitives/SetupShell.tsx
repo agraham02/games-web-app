@@ -31,6 +31,7 @@
  * sticky inside the centred block, not pinned to the window's edge.
  */
 
+import { themeAttrs } from "@/ui/gameTheme";
 import { Credit } from "./Credit";
 
 export interface SetupShellProps {
@@ -39,11 +40,16 @@ export interface SetupShellProps {
   maxWidth?: string;
   /** The primary action, kept in reach — see the file's doc. */
   footer?: React.ReactNode;
+  /** The game whose surface this screen wears; omit for the house green. */
+  game?: string;
 }
 
-export function SetupShell({ children, maxWidth = "max-w-sm", footer }: SetupShellProps) {
+export function SetupShell({ children, maxWidth = "max-w-sm", footer, game }: SetupShellProps) {
   return (
-    <main className="felt felt-weave h-svh overflow-y-auto overscroll-contain">
+    <main
+      className="felt felt-weave h-svh overflow-y-auto overscroll-contain"
+      {...(game ? themeAttrs(game) : {})}
+    >
       <div className="flex min-h-full flex-col px-6 pt-10 pb-6">
         <div className={`m-auto flex w-full ${maxWidth} flex-col items-center gap-7`}>
           {children}

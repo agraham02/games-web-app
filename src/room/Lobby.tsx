@@ -55,7 +55,7 @@ import type { RoomApi } from "./useRoom";
 export function Lobby({ api }: { api: RoomApi }) {
   const room = api.room!;
   return (
-    <SetupShell maxWidth="max-w-md lg:max-w-4xl" footer={<LobbyFooter api={api} />}>
+    <SetupShell game={room.gameId ?? undefined} maxWidth="max-w-md lg:max-w-4xl" footer={<LobbyFooter api={api} />}>
       {/* First, while there is one: after a game played for money this is
           what everybody came back to the lobby needing. It stays until the
           next game starts. */}
