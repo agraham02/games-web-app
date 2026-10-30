@@ -30,19 +30,25 @@ const KINDS: Record<CueKind, true> = {
   swap: true,
   pass: true,
   shuffleHands: true,
+  countdown: true,
+  meld: true,
+  close: true,
+  miss: true,
 };
 
 const cue = (kind: CueKind): GameEvent => ({ t: "cue", kind, seat: 1, amount: 2, dir: 1, colour: "R" });
 
 describe("every cue kind", () => {
   for (const kind of Object.keys(KINDS) as CueKind[]) {
-    it(`${kind}: has a real duration, and holds nothing up`, () => {
+    it(`${kind}: has a real duration${kind === "countdown" ? ", and holds the queue for it" : ", and holds nothing up"}`, () => {
       expect(CUE_SECONDS[kind], `${kind} has no duration`).toBeGreaterThan(0);
       const [step] = choreograph([cue(kind)]);
       expect(step!.duration).toBeGreaterThan(0);
-      // It rides with what follows (offset 0) rather than making it wait.
       const next: GameEvent = { t: "play", piece: "R3.1", from: 0, to: "discard", faceUp: true };
-      expect(gapAfter(cue(kind), next)).toBe(0);
+      // Most ride with what follows (offset 0) rather than making it wait; the
+      // countdown is the exception, because the words come after it.
+      if (kind === "countdown") expect(gapAfter(cue(kind), next)).toBe(step!.duration);
+      else expect(gapAfter(cue(kind), next)).toBe(0);
     });
   }
 

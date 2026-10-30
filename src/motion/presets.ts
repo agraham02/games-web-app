@@ -80,6 +80,11 @@ export const CUE_SECONDS: Record<string, number> = {
     swap: 0.8,
     pass: 0.8,
     shuffleHands: 1.0,
+    // Mind Meld's reveal: a beat per number and a hold on the last.
+    countdown: 2.4,
+    meld: 1.4,
+    close: 1.0,
+    miss: 0.7,
 };
 
 /**

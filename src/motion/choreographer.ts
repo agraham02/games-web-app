@@ -273,6 +273,8 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  */
 function blockingMs(event: GameEvent, step: TimedStep | undefined): number {
   if (event.t === "think") return event.ms;
+  // The countdown is time itself: what is revealed after it must wait for it.
+  if (event.t === "cue" && event.kind === "countdown") return step?.duration ?? 0;
   if (event.t === "unmask" || event.t === "mask" || event.t === "pause" || event.t === "dice") {
     return step?.duration ?? 0;
   }

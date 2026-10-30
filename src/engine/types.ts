@@ -333,7 +333,15 @@ export type CueKind =
   /** Every hand moves one seat on (a 0). */
   | "pass"
   /** Every hand is gathered, shuffled and dealt out again. */
-  | "shuffleHands";
+  | "shuffleHands"
+  /** A shared three-two-one before words are revealed. Holds the queue. */
+  | "countdown"
+  /** A pair said the same word: `seat` is one of them, `amount` the try. */
+  | "meld"
+  /** A pair was a letter out from the same word - a flourish, never a match. */
+  | "close"
+  /** A pair did not match, and goes round again. */
+  | "miss";
 
 export type GameEvent =
   /** Deck is randomised. Carries the seed so a log replays exactly. */
