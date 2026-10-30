@@ -15,6 +15,7 @@
  */
 
 import { memo } from "react";
+import { motion } from "motion/react";
 import { ArrowLeftRight, Ban, Shuffle } from "lucide-react";
 import type { PieceId } from "@/engine/types";
 import { cardLabel, parseCard, type Color } from "@/games/chromaly/cards";
@@ -25,6 +26,9 @@ const COLOUR_VAR: Record<Color, string> = {
   G: "var(--color-chroma-green)",
   B: "var(--color-chroma-blue)",
 };
+
+/** For a screen reader: what a wild turned into. */
+const COLOR_WORD: Record<Color, string> = { R: "now red", Y: "now yellow", G: "now green", B: "now blue" };
 
 /** The shape that goes with each colour. */
 export const SHAPE_GLYPH: Record<Color, string> = {
@@ -50,11 +54,19 @@ export interface ChromaFaceProps {
   detail?: "full" | "index";
   /** Hides this face while the flip container is showing the back. */
   ariaHidden?: boolean;
+  /**
+   * The colour a played wild named. Its ink grows into that colour from the
+   * medallion out, once - so the change is SEEN happening, a beat after the
+   * card lands (the user, 2026-10-30), rather than a wild that arrives
+   * already coloured.
+   */
+  tint?: string;
 }
 
-function ChromaFaceImpl({ card, w, h, detail = "full", ariaHidden = false }: ChromaFaceProps) {
+function ChromaFaceImpl({ card, w, h, detail = "full", ariaHidden = false, tint }: ChromaFaceProps) {
   const parsed = parseCard(card);
-  const label = ariaHidden ? undefined : cardLabel(card);
+  const named = tint !== undefined && tint in COLOUR_VAR ? (tint as Color) : null;
+  const label = ariaHidden ? undefined : named ? `${cardLabel(card)}, ${COLOR_WORD[named]}` : cardLabel(card);
   const colour = parsed?.color ? COLOUR_VAR[parsed.color] : "var(--color-chroma-ink)";
   const wild = parsed !== null && parsed.color === undefined;
   const full = detail === "full";
@@ -90,6 +102,20 @@ function ChromaFaceImpl({ card, w, h, detail = "full", ariaHidden = false }: Chr
           overflow: "hidden",
         }}
       >
+        {wild && named ? (
+          <motion.div
+            key={named}
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: `linear-gradient(158deg, rgb(255 255 255 / 0.16), rgb(0 0 0 / 0.14)), ${COLOUR_VAR[named]}`,
+            }}
+            initial={{ clipPath: "circle(0% at 50% 50%)" }}
+            animate={{ clipPath: "circle(75% at 50% 50%)" }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          />
+        ) : null}
         {full && parsed?.color ? (
           // A large, faint shape behind the medallion: it fills the card's
           // corners so the colour reads even where the value is hidden by a

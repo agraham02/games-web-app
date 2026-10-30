@@ -221,6 +221,18 @@ export interface Placement {
    * three different players.
    */
   ownerTag?: string;
+  /**
+   * A colour the piece has taken on in play, as a game-defined key - a
+   * Chromaly wild that has named its colour. The face grows into it. Belongs
+   * to the piece's PLACE, like `ownerTag`: cleared by any move.
+   */
+  tint?: string;
+  /**
+   * The hand this piece is in has closed into one stack (`gather`), and
+   * stays closed until `spread`. Kept through a `deal`, so a gathered hand
+   * travels to its new seat still stacked.
+   */
+  gathered?: boolean;
   /** Pushed back as an invalid target during a targeting mode. */
   dimmed?: boolean;
   /**
@@ -346,8 +358,12 @@ export type CueKind =
 export type GameEvent =
   /** Deck is randomised. Carries the seed so a log replays exactly. */
   | { t: "shuffle"; seed: number }
-  /** Opening deal. Choreographer staggers these automatically. */
-  | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean }
+  /**
+   * Opening deal. Choreographer staggers these automatically - unless
+   * `together`, for a whole hand handed over as one stack (see `gather`),
+   * whose cards travel side by side rather than one after another.
+   */
+  | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean; together?: boolean }
   /** Taking a piece from a shared pile into a hand. */
   | { t: "draw"; piece: PieceId; from: ZoneId; to: SeatId; faceUp: boolean }
   /**
@@ -466,6 +482,33 @@ export type GameEvent =
    * whatever the emitting game happened to guess.
    */
   | { t: "pause" }
+  /**
+   * What follows is a CONSEQUENCE of what came before, and must wait for it.
+   *
+   * The user's rule, said about LRC and again about Chromaly's +2
+   * (2026-10-30): an action plays out first, and only then does what it
+   * caused - the two cards a +2 deals, the colour a wild names - with a beat
+   * between, or the table "feels rushed, and players might not get the
+   * chance to see everything that happened". Events run concurrently unless
+   * something holds the queue, so this is the hold.
+   *
+   * `after` names the GESTURE being waited for rather than a number of
+   * milliseconds, for `pause`'s reason: how long a slam takes is a motion
+   * decision, and `choreograph` turns the name into a duration from
+   * `presets.ts`. Omitted, it is an ordinary play.
+   */
+  | { t: "settle"; after?: "play" | "deal" | "slam" | "slamFinal" }
+  /**
+   * A hand picks itself up: every card in the seat's hand closes into one
+   * stack where the hand is, ready to travel as a single thing (Chromaly's 7
+   * and 0, which hand whole hands round the table). The `deal`s that follow
+   * keep the stack closed on the way (`Placement.gathered`); `spread` fans
+   * it out where it lands. Names a seat and no piece, so it passes through
+   * redaction untouched, like `cue`.
+   */
+  | { t: "gather"; seat: SeatId }
+  /** The hand at `seat` opens back out into its fan. See `gather`. */
+  | { t: "spread"; seat: SeatId }
   /**
    * Dice are thrown — LRC's roll, shown before anything it decided moves.
    * A cosmetic flourish, like `slam`, and an event for the same reason: it

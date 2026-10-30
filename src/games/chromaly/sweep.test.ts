@@ -18,6 +18,17 @@ const PRESETS: Record<string, Partial<ChromalyRules>> = {
     shuffleHands: true,
   },
   honest: { plusFour: "honest", stacking: "upward" },
+  // The setup's Crazy preset, exactly: every house rule at its loudest.
+  crazy: {
+    drawToMatch: true,
+    forcePlay: true,
+    stacking: "upward",
+    plusFour: "challenge",
+    jumpIn: true,
+    sevenZero: true,
+    doubles: true,
+    shuffleHands: true,
+  },
 };
 
 describe("whole matches", () => {

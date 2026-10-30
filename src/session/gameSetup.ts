@@ -614,6 +614,19 @@ const CHROMALY: GameSetupSpec = {
         doubles: true,
         shuffleHands: false,
       },
+      // Every house rule on at once (the user, 2026-10-30). Stacking at its
+      // widest and the +4 left challengeable, because "on" for those two
+      // choices means the version with the most going on.
+      crazy: {
+        drawToMatch: true,
+        forcePlay: true,
+        stacking: "upward",
+        plusFour: "challenge",
+        jumpIn: true,
+        sevenZero: true,
+        doubles: true,
+        shuffleHands: true,
+      },
     },
   },
   options: [
@@ -627,13 +640,16 @@ const CHROMALY: GameSetupSpec = {
           ? "Draw until you can play, stack draw cards, jump in with the identical card, and 7s swap hands."
           : s.preset === "caribbean"
             ? "Two of a number at once: the same colour is a Skip, different colours a Reverse."
-            : s.preset === "custom"
-              ? "Your own mix — see House rules below."
-              : "The official rules, as Mattel prints them.",
+            : s.preset === "crazy"
+              ? "Every house rule at once: stacking, jump-ins, swaps, doubles, draw to match, and the Shuffle Hands wild."
+              : s.preset === "custom"
+                ? "Your own mix — see House rules below."
+                : "The official rules, as Mattel prints them.",
       choices: [
         { value: "classic", label: "Classic" },
         { value: "party", label: "Party" },
         { value: "caribbean", label: "Caribbean" },
+        { value: "crazy", label: "Crazy" },
         { value: "custom", label: "Custom" },
       ],
       default: "classic",

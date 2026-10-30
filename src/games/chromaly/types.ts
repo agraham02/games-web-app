@@ -195,6 +195,14 @@ export interface ChromalyState {
    */
   misses: Record<SeatId, Color[]>;
 
+  /**
+   * The colour each wild still on the discard pile named, so the card can
+   * wear it (`Placement.tint`) - including one already covered, whose edge
+   * still shows. Public: the whole table saw it named. Optional so a state
+   * from before it existed still loads.
+   */
+  named?: Record<PieceId, Color>;
+
   result: RoundResult | null;
   winner: SeatId | null;
 }

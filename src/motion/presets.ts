@@ -98,10 +98,22 @@ export const CUE_SECONDS: Record<string, number> = {
  */
 export const HOLD = {
     trick: 0.9,
+    /**
+     * The beat between an action landing and what it caused starting (a
+     * `settle` event): long enough to SEE the card that did it before the
+     * cards it deals start moving, short enough not to read as a stall.
+     */
+    consequence: 0.32,
 } as const;
 
 export const STAGGER = {
     deal: 0.065,
+    /**
+     * A run of draws into one hand - a +2's penalty, a caught last card. A
+     * stream the eye can count, not a clump that lands as one: every draw
+     * had offset 0, so a penalty of six arrived as a single card-shaped blur.
+     */
+    draw: 0.11,
     collect: 0.04,
     meld: 0.05,
     /** See DURATION.sweep — capped low deliberately, not a per-piece pace. */

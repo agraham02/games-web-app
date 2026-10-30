@@ -274,6 +274,13 @@ body {
   pointer-events: none;
 }
 
+/* A piece mid-slam comes forward over everything (PieceLayer's `useSlamFx`).
+   `!important` because the piece's own z-index is an inline style that React
+   owns; the attribute coming off hands it straight back. */
+.piece-layer > [data-slamming] {
+  z-index: 6000 !important;
+}
+
 /* ============================================================
    Reduced motion: the choreographer collapses durations to 0
    in JS, but kill CSS transitions here too as a backstop.

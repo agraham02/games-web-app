@@ -87,14 +87,41 @@ export function choreograph(
       case "deal":
         steps.push({
           event,
-          offset: sameRunAsPrev ? dealStagger : 0,
+          // A hand handed over whole travels as one stack: side by side.
+          offset: sameRunAsPrev && !event.together ? dealStagger : 0,
           duration: DURATION.deal * MS,
         });
         break;
 
       case "draw":
+        steps.push({
+          event,
+          offset: sameRunAsPrev ? STAGGER.draw * MS : 0,
+          duration: DURATION.play * MS,
+        });
+        break;
+
       case "play":
         steps.push({ event, offset: 0, duration: DURATION.play * MS });
+        break;
+
+      case "settle":
+        // Holds the queue for the gesture it names plus a beat: see the
+        // event's doc, and `blockingMs`.
+        steps.push({
+          event,
+          offset: 0,
+          duration: (DURATION[event.after ?? "play"] + HOLD.consequence) * MS,
+        });
+        break;
+
+      case "gather":
+        // The hand closing up; a `settle` behind it holds the travel back.
+        steps.push({ event, offset: 0, duration: DURATION.play * MS });
+        break;
+
+      case "spread":
+        steps.push({ event, offset: 0, duration: DURATION.deal * MS });
         break;
 
       case "highlight":
@@ -265,6 +292,7 @@ export function totalDuration(steps: readonly TimedStep[]): number {
  *    stand-ins, so the shuffle and deal behind it wait for them to land.
  *  - `dice` has to be SEEN: the chips a roll decides wait until the dice
  *    have tumbled and been read.
+ *  - `settle` is the hold between an action and its consequences.
  *  - `pause` is a beat by definition. LRC emits one ahead of a roll's
  *    chip moves so the dice can be READ before the chips they decided
  *    start flying, and the draining loop used to honour only the first
@@ -275,7 +303,13 @@ function blockingMs(event: GameEvent, step: TimedStep | undefined): number {
   if (event.t === "think") return event.ms;
   // The countdown is time itself: what is revealed after it must wait for it.
   if (event.t === "cue" && event.kind === "countdown") return step?.duration ?? 0;
-  if (event.t === "unmask" || event.t === "mask" || event.t === "pause" || event.t === "dice") {
+  if (
+    event.t === "unmask" ||
+    event.t === "mask" ||
+    event.t === "pause" ||
+    event.t === "dice" ||
+    event.t === "settle"
+  ) {
     return step?.duration ?? 0;
   }
   return 0;

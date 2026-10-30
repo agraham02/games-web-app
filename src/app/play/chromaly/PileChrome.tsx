@@ -17,7 +17,9 @@
  * and the same facts are in the band's badge for a screen reader.
  */
 
-import { AnimatePresence, motion } from "motion/react";
+import { useRef } from "react";
+import { AnimatePresence, motion, useAnimationFrame, useMotionValue } from "motion/react";
+import { prefersReducedMotion } from "@/motion/presets";
 import type { ChromalyState } from "@/games/chromaly/types";
 import { useGeometry } from "@/table/store";
 
@@ -33,8 +35,43 @@ const LAP_SECONDS = 26;
 
 const CHEVRONS = 10;
 
+/** A Reverse whips the ring round the new way: this much faster at first... */
+const WHIP_BOOST = 14;
+/** ...easing back to the ambient drift over this long. */
+const WHIP_MS = 700;
+
+/**
+ * The ring's angle, advanced every frame at a constant rate in the direction
+ * of play.
+ *
+ * Not `animate={{ rotate: dir * 360 }}` with a repeat, which it used to be:
+ * that animates from wherever the ring HAPPENS to be to the new target over a
+ * fixed 26 seconds, so after a Reverse the speed was however far it had left
+ * to go - and after a few Reverses it could be crawling (the user,
+ * 2026-10-30). A rate never depends on where the ring has got to.
+ */
+function useDrift(dir: 1 | -1) {
+  const angle = useMotionValue(0);
+  const reversedAt = useRef<number | null>(null);
+  const lastDir = useRef(dir);
+  useAnimationFrame((time, delta) => {
+    if (lastDir.current !== dir) {
+      lastDir.current = dir;
+      reversedAt.current = time;
+    }
+    if (prefersReducedMotion()) return;
+    const since = reversedAt.current === null ? Infinity : time - reversedAt.current;
+    const boost = since < WHIP_MS ? 1 + WHIP_BOOST * (1 - since / WHIP_MS) ** 2 : 1;
+    // A frame dropped by a background tab is not made up all at once.
+    const step = Math.min(delta, 100);
+    angle.set((angle.get() + (dir * 360 * boost * step) / (LAP_SECONDS * 1000)) % 360);
+  });
+  return angle;
+}
+
 export function PileChrome({ state }: { state: ChromalyState }) {
   const g = useGeometry();
+  const angle = useDrift(state.direction);
   if (!g || !state.dealt || state.discard.length === 0) return null;
 
   // The discard is drawn at the table card's size, scaled by how far the
@@ -80,13 +117,11 @@ export function PileChrome({ state }: { state: ChromalyState }) {
         />
       </AnimatePresence>
 
-      {/* The way round. One continuous turn, whose sign is the direction; a
-          Reverse changes the target and the ring comes about on its own. */}
+      {/* The way round, drifting the way play goes (`useDrift`). */}
       <motion.svg
         viewBox="0 0 100 100"
         className="absolute inset-0 h-full w-full"
-        animate={{ rotate: dir * 360 }}
-        transition={{ duration: LAP_SECONDS, repeat: Infinity, ease: "linear" }}
+        style={{ rotate: angle }}
       >
         {Array.from({ length: CHEVRONS }, (_, i) => (
           <g key={i} transform={`rotate(${(360 / CHEVRONS) * i} 50 50) translate(50 6)`}>

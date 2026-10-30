@@ -477,12 +477,33 @@ describe("stacking", () => {
     const { def, state } = stack("same");
     const a = act(def, state, 0, { t: "play", cards: ["RD.1"] }).state;
     const b = act(def, a, 1, { t: "play", cards: ["GD.1"] });
-    expect(b.state.pendingDraw).toEqual({ amount: 4, kind: "draw2" });
-    expect(b.state.turn).toBe(2);
-    const c = act(def, b.state, 2, { t: "acceptPenalty" });
-    expect(c.state.hands[2]).toHaveLength(2 + 4);
-    expect(c.state.turn).toBe(3);
-    expect(c.state.pendingDraw).toBeNull();
+    // Seat 2 holds nothing that answers it, so the grown stack is simply
+    // theirs: taken at once, with nothing to confirm (the user, 2026-10-30).
+    expect(b.state.hands[2]).toHaveLength(2 + 4);
+    expect(b.state.turn).toBe(3);
+    expect(b.state.pendingDraw).toBeNull();
+  });
+
+  it("a stack is only taken for a seat when taking it is all they can do", () => {
+    const { def, state } = stack("same");
+    // Seat 1 holds a +2, so the choice is real and waits for them.
+    const a = act(def, state, 0, { t: "play", cards: ["RD.1"] }).state;
+    expect(a.pendingDraw?.amount).toBe(2);
+    expect(a.turn).toBe(1);
+    expect(def.legalActions(a, 1).map((x) => x.t)).toContain("acceptPenalty");
+    const taken = act(def, a, 1, { t: "acceptPenalty" }).state;
+    expect(taken.hands[1]).toHaveLength(3 + 2);
+    expect(taken.turn).toBe(2);
+  });
+
+  it("the cards a stack costs wait for the card that grew it to land", () => {
+    const { def, state } = stack("same");
+    const a = act(def, state, 0, { t: "play", cards: ["RD.1"] }).state;
+    const events = act(def, a, 1, { t: "play", cards: ["GD.1"] }).events.map((e) => e.t);
+    const play = events.indexOf("play");
+    const firstDraw = events.indexOf("draw");
+    expect(play).toBeGreaterThanOrEqual(0);
+    expect(events.slice(play, firstDraw)).toContain("settle");
   });
 
   it("same: a +4 does not go on a +2; upward: it does", () => {
@@ -501,8 +522,12 @@ describe("stacking", () => {
       hands: { 0: ["F.1", "B1.1", "B2.1"], 1: ["GD.1", "Y1.1"], 2: ["Y2.1"], 3: ["Y3.1"] },
       top: TOP,
     });
-    const a = act(def, state, 0, { t: "play", cards: ["F.1"], color: "G" }).state;
-    expect(def.validate!(a, 1, { t: "play", cards: ["GD.1"] })).toMatch(/cannot be played/);
+    const a = act(def, state, 0, { t: "play", cards: ["F.1"], color: "G" });
+    // Nothing answers a +4 under "upward" but another +4, so seat 1 is not
+    // asked: the four are theirs and play has moved on.
+    expect(a.state.hands[1]).toHaveLength(2 + 4);
+    expect(a.state.turn).toBe(2);
+    expect(def.validate!(a.state, 1, { t: "play", cards: ["GD.1"] })).not.toBeNull();
   });
 
   it("while a penalty stands the seat cannot simply draw, play an ordinary card, or pass", () => {
@@ -570,11 +595,33 @@ describe("Draw to Match and Force Play", () => {
     expect(r.state.drawn).toBeNull();
   });
 
-  it("Force Play: a drawn card that can be played must be - no Keep", () => {
-    const { def, state } = position({ rules: { forcePlay: true }, hands: { 0: ["B1.1", "B2.1"] }, top: TOP, draw: ["R9.1"] });
+  it("Force Play: a drawn card that can be played plays itself", () => {
+    const { def, state } = position({
+      rules: { forcePlay: true },
+      hands: { 0: ["B1.1", "B2.1", "B3.1"] },
+      top: TOP,
+      draw: ["R9.1"],
+    });
+    const r = act(def, state, 0, { t: "draw" });
+    expect(r.state.discard.at(-1)).toBe("R9.1");
+    expect(r.state.hands[0]).toEqual(["B1.1", "B2.1", "B3.1"]);
+    expect(r.state.turn).toBe(1);
+    // Seen arriving before it goes down.
+    const kinds = r.events.map((e) => e.t);
+    expect(kinds.indexOf("draw")).toBeLessThan(kinds.indexOf("settle"));
+    expect(kinds.indexOf("settle")).toBeLessThan(kinds.indexOf("play"));
+  });
+
+  it("Force Play: a drawn card that still needs a decision waits - no Keep", () => {
+    // Two cards in hand after the draw: the seat must get its chance to call.
+    const { def, state } = position({ rules: { forcePlay: true }, hands: { 0: ["B1.1"] }, top: TOP, draw: ["R9.1"] });
     const drew = act(def, state, 0, { t: "draw" }).state;
+    expect(drew.drawn).toBe("R9.1");
     expect(def.validate!(drew, 0, { t: "keep" })).toMatch(/must be/);
     expect(def.legalActions(drew, 0).some((a) => a.t === "keep")).toBe(false);
+    // A wild still wants its colour named.
+    const wild = position({ rules: { forcePlay: true }, hands: { 0: ["B1.1", "B2.1"] }, top: TOP, draw: ["W.1"] });
+    expect(act(wild.def, wild.state, 0, { t: "draw" }).state.drawn).toBe("W.1");
     // ...and an unplayable draw just ends the turn, as ever.
     const miss = position({ rules: { forcePlay: true }, hands: { 0: ["B1.1"] }, top: TOP, draw: ["G2.1"] });
     expect(act(miss.def, miss.state, 0, { t: "draw" }).state.turn).toBe(1);
@@ -654,9 +701,13 @@ describe("Jump-In", () => {
     });
     const opened = act(def, state, 0, { t: "play", cards: ["RD.1"] }).state;
     expect(opened.pendingDraw?.amount).toBe(2);
+    // Held open by the window: a jump-in can still add to it.
+    expect(opened.window).not.toBeNull();
     const r = act(def, opened, 2, { t: "jumpIn", seat: 2, card: "RD.2" }).state;
-    expect(r.pendingDraw).toEqual({ amount: 4, kind: "draw2" });
-    expect(r.turn).toBe(3);
+    // Seat 3 cannot answer, so the four are theirs at once.
+    expect(r.pendingDraw).toBeNull();
+    expect(r.hands[3]).toHaveLength(2 + 4);
+    expect(r.turn).toBe(0);
   });
 
   it("without stacking, a jumped-in +2 hits the seat after the jumper normally", () => {

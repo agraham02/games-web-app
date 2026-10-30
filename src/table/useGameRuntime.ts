@@ -47,6 +47,7 @@ import { prefersReducedMotion } from "@/motion/presets";
 import { announce } from "@/ui/disclosure";
 import { botName } from "@/games/_shared/botIdentity";
 import { composeAnnounce } from "@/session/announce";
+import { withFacing } from "@/session/redact";
 import {
   DEFAULT_TURN_HOLD_MS,
   GameSession,
@@ -411,7 +412,14 @@ export function useGameRuntime<S, A>(
     if (frame.dealtRound !== null) setDealingRound(frame.dealtRound);
     setHasPending(session.pendingReveal);
     if (frame.events.length > 0) {
-      choreographer.push(frame.events);
+      // Facing corrected for the hero exactly as a room corrects it for each
+      // viewer (`projectEvents`): a game that deals `faceUp: false` and lets
+      // the board say who may see what (BS, Chromaly) dealt the hero's cards
+      // face DOWN here and turned them over at the end of the deal. The user
+      // wants a deal face up (2026-10-30); a hand that is not theirs to see
+      // yet (Spades' blind bid) stays down, because the board says so.
+      const after = definition.placements(session.snapshot(), HERO);
+      choreographer.push(frame.events.map((event) => withFacing(event, after)));
     } else {
       // A legal action that moves nothing — Spades' `look`. The
       // choreographer bails on an empty batch without ever calling

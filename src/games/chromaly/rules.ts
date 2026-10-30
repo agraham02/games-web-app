@@ -164,6 +164,7 @@ function draft(state: ChromalyState): ChromalyState {
     discard: [...state.discard],
     calls: { ...state.calls },
     scores: { ...state.scores },
+    named: { ...(state.named ?? {}) },
   };
 }
 
@@ -229,6 +230,7 @@ export function startRound(state: ChromalyState, rng: Rng): ReduceResult<Chromal
       calls: {},
       plays: 0,
       misses,
+      named: {},
       result: null,
     },
     events,
@@ -257,6 +259,8 @@ function reshuffle(d: ChromalyState, events: GameEvent[]): boolean {
   const rng = createRng(hashString(`chromaly|${d.secret}|${d.round}|${d.reshuffles}`));
   d.drawPile = rng.shuffle(rest);
   d.discard = [top];
+  const kept = d.named?.[top];
+  d.named = kept === undefined ? {} : { [top]: kept };
   events.push({ t: "sweep", pieces: rest, to: "deck" }, { t: "shuffle", seed: d.reshuffles });
   return true;
 }
@@ -334,6 +338,8 @@ export function reduce(state: ChromalyState, action: ChromalyAction): ReduceResu
       break;
   }
   normalizeCalls(d);
+  takeUnanswerable(d, events);
+  normalizeCalls(d);
   // `validate` refuses everything that would change nothing, so an empty
   // batch here is an internal caller getting it wrong. A `pause` rather than
   // nothing, because a driver paced off animation still needs something to
@@ -369,6 +375,44 @@ function reducePlay(
   jump: boolean,
   events: GameEvent[],
 ): void {
+  const start = events.length;
+  playCards(d, seat, cards, opts, jump, events);
+  holdConsequences(events, start);
+}
+
+/**
+ * Everything a play CAUSED waits until the play itself has landed and been
+ * seen: the cards a +2 deals, the colour a wild turns, a skip's stamp, a
+ * hand changing seats. The standing rule (the user, about LRC and again
+ * about Chromaly, 2026-10-30), and the hold is a `settle` in front of the
+ * first consequence - none at all when nothing follows but toasts.
+ */
+function holdConsequences(events: GameEvent[], start: number): void {
+  let lastPlay = -1;
+  for (let i = events.length - 1; i >= start; i--) {
+    if (events[i]!.t === "play") {
+      lastPlay = i;
+      break;
+    }
+  }
+  if (lastPlay < 0) return;
+  const follows = events
+    .slice(lastPlay + 1)
+    .some((e) => e.t !== "announce" && e.t !== "score" && e.t !== "roundEnd" && e.t !== "gameEnd");
+  if (!follows) return;
+  const slam = events.slice(start, lastPlay).find((e) => e.t === "slam");
+  const after = slam?.t !== "slam" ? "play" : slam.final ? "slamFinal" : "slam";
+  events.splice(lastPlay + 1, 0, { t: "settle", after });
+}
+
+function playCards(
+  d: ChromalyState,
+  seat: SeatId,
+  cards: readonly PieceId[],
+  opts: { color?: Color; swapWith?: SeatId; call?: boolean },
+  jump: boolean,
+  events: GameEvent[],
+): void {
   const last = cards[cards.length - 1]!;
   const lastCard = parseCard(last)!;
   const parsed = cards.map((id) => parseCard(id)!);
@@ -397,7 +441,10 @@ function reducePlay(
   d.drawn = null;
   d.plays += 1;
   d.color = isWild(lastCard) ? (opts.color ?? bestColor(d.hands[seat]!)) : lastCard.color!;
-  if (isWild(lastCard)) events.push({ t: "cue", kind: "colour", seat, colour: d.color });
+  if (isWild(lastCard)) {
+    d.named = { ...(d.named ?? {}), [last]: d.color };
+    events.push({ t: "cue", kind: "colour", seat, colour: d.color });
+  }
   if (opts.call && d.hands[seat]!.length === 1) d.calls[seat] = "called";
 
   const next = (n = 1) => nextSeat(d, seat, n);
@@ -546,8 +593,27 @@ function swapHands(d: ChromalyState, a: SeatId, b: SeatId, events: GameEvent[]):
   // `deal` rather than `move`: it is corrected per viewer, so the cards a
   // seat receives turn face up for it and the ones it gave go face down,
   // which a `move`'s literal `faceUp` cannot do for more than one viewer.
-  for (const id of handB) events.push({ t: "deal", piece: id, to: a, faceUp: false });
-  for (const id of handA) events.push({ t: "deal", piece: id, to: b, faceUp: false });
+  handOver(events, [a, b], [
+    ...handB.map((id) => ({ id, to: a })),
+    ...handA.map((id) => ({ id, to: b })),
+  ]);
+}
+
+/**
+ * Whole hands change seats the way a person would hand one over (the user,
+ * 2026-10-30): each hand closes into a stack, the stacks travel, and they
+ * fan out where they land.
+ */
+function handOver(
+  events: GameEvent[],
+  seats: readonly SeatId[],
+  cards: ReadonlyArray<{ id: PieceId; to: SeatId }>,
+): void {
+  for (const seat of seats) events.push({ t: "gather", seat });
+  events.push({ t: "settle", after: "play" });
+  for (const { id, to } of cards) events.push({ t: "deal", piece: id, to, faceUp: false, together: true });
+  events.push({ t: "settle", after: "deal" });
+  for (const seat of seats) events.push({ t: "spread", seat });
 }
 
 /** Every hand moves one seat along, the way play is going. */
@@ -555,14 +621,18 @@ function passHands(d: ChromalyState, events: GameEvent[]): void {
   events.push({ t: "cue", kind: "pass", dir: d.direction });
   const old: Record<SeatId, PieceId[]> = {};
   for (let s = 0; s < d.seats; s++) old[s as SeatId] = d.hands[s as SeatId]!;
+  const seats: SeatId[] = [];
+  const cards: Array<{ id: PieceId; to: SeatId }> = [];
   for (let s = 0; s < d.seats; s++) {
     const seat = s as SeatId;
     // The hand at `seat` goes to the next seat on, so a seat receives the one
     // behind it.
     const from = stepSeat(d.seats, seat, d.direction, -1);
     d.hands[seat] = old[from]!;
-    for (const id of old[from]!) events.push({ t: "deal", piece: id, to: seat, faceUp: false });
+    seats.push(seat);
+    for (const id of old[from]!) cards.push({ id, to: seat });
   }
+  handOver(events, seats, cards);
 }
 
 /**
@@ -608,6 +678,9 @@ function reduceDraw(d: ChromalyState, events: GameEvent[]): void {
   let playable: PieceId | null = null;
   const tries = d.rules.drawToMatch ? Number.POSITIVE_INFINITY : 1;
   for (let i = 0; i < tries; i++) {
+    // One at a time (the user, 2026-10-30): each card lands, and is seen,
+    // before the next leaves the pile.
+    if (i > 0) events.push({ t: "pause" });
     const [card] = drawCards(d, seat, 1, events);
     if (card === undefined) break;
     if (playableNow(d, seat, card)) {
@@ -624,6 +697,42 @@ function reduceDraw(d: ChromalyState, events: GameEvent[]): void {
   // Playable: the seat now chooses between playing it and keeping it - or,
   // under Force Play, has no choice at all.
   d.drawn = playable;
+  if (playsItself(d, seat, playable)) {
+    events.push({ t: "settle", after: "play" });
+    reducePlay(d, seat, [playable], {}, false, events);
+  }
+}
+
+/**
+ * Under Force Play a drawn card that can go must go, so it goes by itself
+ * (the user, 2026-10-30: having to press "play the card I drew" when there is
+ * nothing else to do is a chore). Not when the play still has a choice in it:
+ * a wild's colour, a 7's swap, or the last-card call a seat on two cards
+ * would otherwise lose the chance to make.
+ */
+function playsItself(d: ChromalyState, seat: SeatId, id: PieceId): boolean {
+  if (!d.rules.forcePlay) return false;
+  const card = parseCard(id)!;
+  if (isWild(card)) return false;
+  if (d.rules.sevenZero && card.kind === "number" && card.value === 7) return false;
+  // "passed" is a call that lapsed on the way up to two (see `normalizeCalls`).
+  if (d.hands[seat]!.length === 2 && d.calls[seat] !== "called") return false;
+  return true;
+}
+
+/**
+ * A penalty on the table that the seat on turn can only take: nothing in
+ * hand answers it, and no +4 to call a bluff on. Taken for them (the user,
+ * 2026-10-30: "if that was my only option, why do I have to confirm?"),
+ * once whatever put it there has been seen. Never while a window is open:
+ * a jump-in can still add to the stack, and a last card can still be caught.
+ */
+function takeUnanswerable(d: ChromalyState, events: GameEvent[]): void {
+  if (d.result !== null || d.winner !== null || d.window !== null) return;
+  if (d.pendingDraw === null || d.challenge !== null) return;
+  if (playableIds(d, d.turn).length > 0) return;
+  events.push({ t: "settle", after: "play" });
+  reduceAccept(d, events);
 }
 
 function reduceKeep(d: ChromalyState, events: GameEvent[]): void {
@@ -662,6 +771,7 @@ function reduceChallenge(d: ChromalyState, events: GameEvent[]): void {
   if (guilty) {
     events.push({ t: "cue", kind: "bluff", seat: offender });
     events.push(say(offender, "was bluffing", "were bluffing", "info", "bad"));
+    events.push({ t: "settle", after: "play" });
     events.push({ t: "cue", kind: "draw", seat: offender, amount });
     drawCards(d, offender, amount, events);
     // Turn stays with the victim: the +4 never happened to them.
@@ -669,6 +779,7 @@ function reduceChallenge(d: ChromalyState, events: GameEvent[]): void {
     events.push({ t: "cue", kind: "clean", seat: offender });
     events.push(say(offender, "played it straight", "played it straight", "info", "good"));
     const total = amount + FAILED_CHALLENGE_EXTRA;
+    events.push({ t: "settle", after: "play" });
     events.push({ t: "cue", kind: "draw", seat: victim, amount: total });
     drawCards(d, victim, total, events);
     d.turn = nextSeat(d, victim);
@@ -753,6 +864,7 @@ function reduceCall(d: ChromalyState, seat: SeatId, events: GameEvent[]): void {
     events.push({ t: "cue", kind: "caught", seat: caught });
     events.push(
       say(caught, "was caught on a last card", "were caught on a last card", "info", "bad"),
+      { t: "settle", after: "play" },
       { t: "cue", kind: "draw", seat: caught, amount: CALL_PENALTY },
     );
     drawCards(d, caught, CALL_PENALTY, events);
@@ -1193,6 +1305,7 @@ export function placements(state: ChromalyState, viewer: SeatId): PlacementMap {
       count: state.discard.length,
       faceUp: true,
       hidden: index < shown ? true : undefined,
+      tint: state.named?.[id],
     };
   });
 
@@ -1263,7 +1376,12 @@ export function createChromaly(
     // verdict about a hand (a challenge). A play is predicted unless a
     // jump-in could open a window on it, which depends on hands the mover
     // cannot see.
-    unpredictable: (state, _seat, action) => action.t !== "play" || state.rules.jumpIn,
+    unpredictable: (state, _seat, action) =>
+      action.t !== "play" ||
+      state.rules.jumpIn ||
+      // Whether the victim can answer a draw card decides if it is taken for
+      // them at once, and that is their hand.
+      (state.rules.stacking !== "off" && endsOnDrawCard(action.cards)),
     deadline,
     turnHold,
     timeoutAction,
@@ -1277,6 +1395,11 @@ export function createChromaly(
     isRoundOver,
     bots: chromalyBots,
   };
+}
+
+function endsOnDrawCard(cards: readonly PieceId[]): boolean {
+  const top = cards.length > 0 ? parseCard(cards[cards.length - 1]!) : null;
+  return top !== null && isDraw(top);
 }
 
 export const chromaly = createChromaly();

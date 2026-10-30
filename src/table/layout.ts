@@ -796,6 +796,14 @@ export function layoutPiece(
     const lift = Math.min(p.index, CHIP_STACK_LIFT_MAX) * step;
     return { ...first, y: first.y + settle - lift, z: first.z + p.index };
   }
+  // A hand picked up to be handed over (`gather`): every card on the fan's
+  // middle slot, a hair apart, so it reads as one squared-up stack.
+  if (p.gathered && p.zone === "hand") {
+    const mid = Math.floor((p.count - 1) / 2);
+    const at = layoutLoose({ ...p, gathered: false, index: mid }, g, { ...ctx, handIndex: mid });
+    const order = ctx?.handIndex ?? p.index;
+    return { ...at, x: at.x + order * 0.4, y: at.y - order * 0.4, z: at.z - mid + order };
+  }
   return layoutLoose(p, g, ctx);
 }
 
