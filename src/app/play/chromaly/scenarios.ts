@@ -16,6 +16,7 @@ import { HERO, type PieceId, type SeatId } from "@/engine/types";
 import { deckIds, parseCard } from "@/games/chromaly/cards";
 import { reduce } from "@/games/chromaly/rules";
 import type { ChromalyAction, ChromalyRules, ChromalyState } from "@/games/chromaly/types";
+import { emitCue } from "@/table/fx";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
 type Live = GameRuntime<ChromalyState, ChromalyAction>;
@@ -96,6 +97,28 @@ export function chromalyScenarios(live: Live) {
   const go = (build: (s: ChromalyState) => ChromalyState) => () => live.replaceState(build(live.rawState));
 
   return [
+    {
+      // Every cue in turn, a second and a half apart, for tuning the show and
+      // the sounds without playing to each one.
+      label: "Fire every cue",
+      run: () => {
+        const cues = [
+          { kind: "skip", seat: 1 },
+          { kind: "reverse", seat: 0, dir: -1 },
+          { kind: "draw", seat: 2, amount: 4 },
+          { kind: "colour", seat: 0, colour: "B" },
+          { kind: "called", seat: 1 },
+          { kind: "caught", seat: 2 },
+          { kind: "jump", seat: 3 },
+          { kind: "bluff", seat: 1 },
+          { kind: "clean", seat: 2 },
+          { kind: "swap", seat: 0 },
+          { kind: "pass", seat: 0 },
+          { kind: "shuffleHands", seat: 0 },
+        ] as const;
+        cues.forEach((cue, i) => setTimeout(() => emitCue({ t: "cue", ...cue }), (i + 2) * 1500));
+      },
+    },
     {
       // Seat 1 goes down to one card without saying so. The button comes up
       // for everybody; the first to press it wins.

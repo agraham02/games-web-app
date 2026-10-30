@@ -141,7 +141,9 @@ export function ChromalyOnline({ api, room, frame, held, onClearHeld, setHeld, c
           api.exitGame();
         }}
       >
-        {(l) => <ChromalyTable view={view} live={l} held={held} onPick={pickUp} onClearHeld={putDown} />}
+        {(l, settings) => (
+          <ChromalyTable view={view} live={l} held={held} onPick={pickUp} onClearHeld={putDown} settings={settings} />
+        )}
       </GameHostView>
     </div>
   );

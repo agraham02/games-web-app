@@ -20,7 +20,7 @@ import type {
   ZoneId,
 } from "@/engine/types";
 import { STAGGER } from "@/motion/presets";
-import { emitDice, emitSlam } from "./fx";
+import { emitCue, emitDice, emitSlam } from "./fx";
 import { useTableStore } from "./store";
 
 /**
@@ -251,6 +251,11 @@ export function applyEventToTable(event: GameEvent): void {
     case "dice":
       // Like the slam: nothing moves, so nothing is touched here.
       emitDice({ seat: event.seat, faces: event.faces });
+      break;
+
+    case "cue":
+      // Like the slam: nothing moves, so nothing is touched here.
+      emitCue(event);
       break;
 
     case "slam":

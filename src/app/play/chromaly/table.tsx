@@ -45,7 +45,7 @@ import {
 import { legalDoubles, whyNotPlayable } from "@/games/chromaly/state";
 import { validate } from "@/games/chromaly/rules";
 import type { ChromalyAction, ChromalyState } from "@/games/chromaly/types";
-import { HAND_SPACING_SETTING, hintsSetting, type GameSetting } from "@/table/gameSettings";
+import { HAND_SPACING_SETTING, hintsSetting, type GameSetting, type SettingValues } from "@/table/gameSettings";
 import { HandPan } from "@/table/HandPan";
 import { HandZone } from "@/table/HandZone";
 import type { SeatStat, SeatView } from "@/table/SeatRing";
@@ -56,7 +56,9 @@ import { useHeldMarks } from "@/table/useHeldMarks";
 import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { SHAPE_GLYPH } from "@/ui/primitives/ChromaFace";
 import { announce } from "@/ui/disclosure";
+import { ChromalyFx } from "./ChromalyFx";
 import { PileChrome } from "./PileChrome";
+import { useCueFeedback } from "./chromaSounds";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 
 /** Chromaly's own Settings: Hints (dimming what cannot be played) and Card spacing. */
@@ -309,6 +311,7 @@ export function ChromalyTable({
   held,
   onPick,
   onClearHeld,
+  settings,
 }: {
   view: ChromalyView;
   live: Live;
@@ -316,12 +319,19 @@ export function ChromalyTable({
   /** Picks a card up (the shells own where the selection is kept). */
   onPick: (id: PieceId) => void;
   onClearHeld: () => void;
+  /** The player's Sound and Vibration, which the cues' feedback follows. */
+  settings?: SettingValues;
 }) {
   const state = live.state;
   // Re-asserted after every batch: you can be picking a pair for your own
   // turn while opponents answer a window, and each answer resets the store.
   useHeldMarks(held, HELD_MARKS, live.state);
   useWindowCountdown(view, live);
+  useCueFeedback({
+    sound: settings?.sound !== false,
+    vibration: settings?.vibration !== false,
+    viewerSeat: view.viewerSeat,
+  });
 
   const mode = barMode(view, live);
   const choice = pickedChoice(view, state, held);
@@ -343,6 +353,7 @@ export function ChromalyTable({
   return (
     <>
       <PileChrome state={state} />
+      <ChromalyFx names={view.nameFor} />
       {/* Thirty cards after a few penalties is possible; past a point the hand
           pans rather than compressing into slivers too thin to tap. */}
       {isSeated(view, state) ? <HandPan count={(state.hands[view.viewerSeat] ?? []).length} /> : null}

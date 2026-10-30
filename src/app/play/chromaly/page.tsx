@@ -89,8 +89,15 @@ export default function ChromalyPlayPage() {
         setStarted(false);
       }}
     >
-      {(live) => (
-        <ChromalyTable view={view} live={live} held={held} onPick={pickUp(live)} onClearHeld={clearHeld} />
+      {(live, settings) => (
+        <ChromalyTable
+          view={view}
+          live={live}
+          held={held}
+          onPick={pickUp(live)}
+          onClearHeld={clearHeld}
+          settings={settings}
+        />
       )}
     </GameHost>
   );
