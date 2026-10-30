@@ -44,6 +44,15 @@ describe("sanitizeSetup", () => {
     expect(got.difficulty).toBe("sharp");
   });
 
+  it("takes an option added since the save from the preset the save names", () => {
+    // Saved before "Pairs are just pairs" existed: Crazy turns it on.
+    const crazy = sanitizeSetup("chromaly", { settings: { preset: "crazy", doubles: true }, seats: 4 });
+    expect(crazy.settings.plainPairs).toBe(true);
+    // A preset that leaves it off, and an explicit save, are both kept.
+    expect(sanitizeSetup("chromaly", { settings: { preset: "caribbean" } }).settings.plainPairs).toBe(false);
+    expect(sanitizeSetup("chromaly", { settings: { preset: "crazy", plainPairs: false } }).settings.plainPairs).toBe(false);
+  });
+
   it("never takes a volatile option (money) from a save", () => {
     const got = sanitizeSetup("poker", { settings: { buyIn: 10000, bigBlind: 50 }, seats: 4, difficulty: "steady" });
     expect(got.settings.buyIn).toBe(0);

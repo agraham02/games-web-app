@@ -42,7 +42,7 @@ import {
   points,
   type Color,
 } from "@/games/chromaly/cards";
-import { legalDoubles, whyNotPlayable } from "@/games/chromaly/state";
+import { groupable, legalDoubles, sameGroup, whyNotPlayable } from "@/games/chromaly/state";
 import { validate } from "@/games/chromaly/rules";
 import type { ChromalyAction, ChromalyState } from "@/games/chromaly/types";
 import { HAND_SPACING_SETTING, hintsSetting, type GameSetting, type SettingValues } from "@/table/gameSettings";
@@ -112,6 +112,7 @@ export function canAct(view: ChromalyView, live: Live): boolean {
   const state = live.state;
   if (live.isOver || state.result !== null || !state.dealt) return false;
   if (state.window !== null || live.latest.window !== null) return false;
+  if (state.swapping || live.latest.swapping) return false;
   if (live.animating) return false;
   return state.turn === view.viewerSeat;
 }
@@ -143,15 +144,15 @@ export function needsChoice(state: ChromalyState, seat: SeatId, id: PieceId): "c
   return null;
 }
 
-/** Is there another card in the hand of the same number, so this one could be half of a pair? */
+/** Is there another card in the hand it could go down with, so this one could be half of a pair? */
 function couldPair(state: ChromalyState, seat: SeatId, id: PieceId): boolean {
   if (!state.rules.doubles) return false;
   const card = parseCard(id);
-  if (card?.kind !== "number") return false;
+  if (!card || !groupable(card)) return false;
   return (state.hands[seat] ?? []).some((other) => {
     if (other === id) return false;
     const c = parseCard(other);
-    return c?.kind === "number" && c.value === card.value;
+    return c !== null && sameGroup(c, card);
   });
 }
 
@@ -181,9 +182,9 @@ export function barMode(view: ChromalyView, live: Live): BarMode {
  * table follow from the list (`useHeldMarks`), never from inside a React state
  * updater, where a store write is a write during render.
  *
- * A pair is one number, so a card of a different number starts a new pick
- * rather than joining the old one; a wild or a 7 that must make a choice
- * first is always picked alone.
+ * A pair is one number (or all Skips, or all Reverses), so a card that does
+ * not go with the pick starts a new one rather than joining it; a wild or a 7
+ * that must make a choice first is always picked alone.
  */
 export function togglePlayCard(
   held: readonly PieceId[],
@@ -194,9 +195,9 @@ export function togglePlayCard(
   if (held.includes(id)) return held.filter((x) => x !== id);
   const card = parseCard(id);
   const alone = state !== undefined && seat !== undefined && needsChoice(state, seat, id) !== null;
-  if (alone || card?.kind !== "number") return [id];
+  if (alone || !card || !groupable(card)) return [id];
   const first = held[0] ? parseCard(held[0]) : null;
-  if (first?.kind !== "number" || first.value !== card.value) return [id];
+  if (!first || !sameGroup(first, card)) return [id];
   return [...held, id];
 }
 
@@ -257,8 +258,10 @@ export function onPieceTap(
       announce("Only the identical card can jump in", "bad");
       return;
     }
-    if (needsChoice(state, seat, id) === "swap") toggleHeld(id);
-    else sendPlay(view, live, [id]);
+    // One tap is the whole claim, a 7 included: it goes down now, and whom
+    // it swaps with is asked after (`swapping`), so the window's clock can
+    // never run out on a jump already made (the user, 2026-10-30).
+    sendPlay(view, live, [id]);
     return;
   }
 
@@ -337,7 +340,7 @@ export function ChromalyTable({
   });
 
   const mode = barMode(view, live);
-  const choice = pickedChoice(view, state, held);
+  const choice = swappingNow(view, live) ? "swap" : pickedChoice(view, state, held);
   const panel = choice ? (
     <ChoicePanel view={view} live={live} held={held} choice={choice} onClearHeld={onClearHeld} />
   ) : undefined;
@@ -367,11 +370,16 @@ export function ChromalyTable({
         panel={panel}
         left={<PlayBadge state={state} />}
         center={
-          <TurnIndicator label={turnLabel(view, state)} show={mode === "turn" || mode === "drawn" || mode === "penalty"} />
+          <TurnIndicator label={turnLabel(view, state)} show={mode === "turn" || mode === "drawn" || mode === "penalty" || Boolean(state.swapping)} />
         }
       />
     </>
   );
+}
+
+/** Has the viewer jumped in with a 7 and still to say whom it swaps with? */
+function swappingNow(view: ChromalyView, live: Live): boolean {
+  return live.state.swapping?.seat === view.viewerSeat && live.latest.swapping?.seat === view.viewerSeat;
 }
 
 /** What the held card is waiting on, if it is waiting on anything. */
@@ -408,6 +416,11 @@ function PlayBadge({ state }: { state: ChromalyState }) {
 }
 
 function turnLabel(view: ChromalyView, state: ChromalyState): string {
+  if (state.swapping) {
+    return state.swapping.seat === view.viewerSeat
+      ? "Choose whom to swap with"
+      : `${view.nameFor(state.swapping.seat)} is choosing whom to swap with`;
+  }
   if (state.window !== null) {
     const lone = state.window.offenders[0];
     if (lone !== undefined) {
@@ -621,7 +634,14 @@ function ChoicePanel({
 }) {
   const state = live.state;
   const id = held[0]!;
+  // A jumped-in 7 is already down: only its seat is left to send, and it
+  // cannot be taken back.
+  const jumped = state.swapping?.seat === view.viewerSeat;
   const done = (extra: { color?: Color; swapWith?: SeatId }) => {
+    if (jumped) {
+      if (extra.swapWith !== undefined) live.submitAction({ t: "chooseSwap", seat: view.viewerSeat, with: extra.swapWith });
+      return;
+    }
     if (sendPlay(view, live, [id], extra)) onClearHeld();
   };
   const others = Array.from({ length: state.seats }, (_, s) => s as SeatId).filter(
@@ -663,9 +683,11 @@ function ChoicePanel({
           ))}
         </div>
       )}
-      <button type="button" onClick={onClearHeld} className="text-[11px] font-bold text-bone-400 hover:text-bone-200">
-        Cancel
-      </button>
+      {jumped ? null : (
+        <button type="button" onClick={onClearHeld} className="text-[11px] font-bold text-bone-400 hover:text-bone-200">
+          Cancel
+        </button>
+      )}
     </div>
   );
 }

@@ -670,6 +670,28 @@ describe("Jump-In", () => {
     expect(r.events.some((e) => e.t === "cue" && e.kind === "jump")).toBe(true);
   });
 
+  it("a 7 jumps in on the tap alone, and whom it swaps with is chosen after, with the table waiting", () => {
+    const { def, state } = position({ ...jump, rules: { jumpIn: true, sevenZero: true } });
+    const opened = act(def, state, 0, { t: "play", cards: ["R7.1"], swapWith: 1 }).state;
+    // The claim: no seat named, and the window is over - nothing left to time out.
+    const claimed = act(def, opened, 2, { t: "jumpIn", seat: 2, card: "R7.2" });
+    expect(claimed.state.window).toBeNull();
+    expect(claimed.state.swapping).toEqual({ seat: 2, card: "R7.2" });
+    expect(claimed.state.discard.at(-1)).toBe("R7.2");
+    expect(def.currentSeat(claimed.state)).toBe(2);
+    // Nobody else moves until it is chosen, not even the seat after.
+    expect(def.legalActions(claimed.state, 3)).toEqual([]);
+    expect(def.validate!(claimed.state, 3, { t: "draw" })).toMatch(/swap/);
+    // A clock running out only picks the seat; the jump stands.
+    expect(def.timeoutAction!(claimed.state, 2)).toMatchObject({ t: "chooseSwap", seat: 2 });
+
+    const swapped = act(def, claimed.state, 2, { t: "chooseSwap", seat: 2, with: 0 }).state;
+    expect(swapped.swapping).toBeNull();
+    expect(swapped.hands[2]).toEqual(["Y1.1", "Y9.1"]);
+    expect(swapped.hands[0]).toEqual(["G1.1", "G2.1"]);
+    expect(swapped.turn).toBe(3);
+  });
+
   it("refuses a jump from a seat that does not hold the twin, and a card that is not identical", () => {
     const { def, state } = position(jump);
     const opened = act(def, state, 0, { t: "play", cards: ["R7.1"] }).state;
@@ -928,13 +950,39 @@ describe("doubles", () => {
     expect(ok.def.validate!(ok.state, 0, { t: "play", cards: ["G3.1", "R3.1"] })).toBeNull();
   });
 
-  it("is for numbers only, and only of one number", () => {
+  it("is for one number, or Skips, or Reverses - never a mix", () => {
     const { def, state } = position({
       ...doubles,
-      hands: { ...doubles.hands, 0: ["RS.1", "RS.2", "R3.1", "B4.1", "R4.1"] },
+      hands: { ...doubles.hands, 0: ["RS.1", "BS.1", "RV.1", "R3.1", "B4.1", "R4.1", "RD.1", "RD.2"] },
     });
-    expect(def.validate!(state, 0, { t: "play", cards: ["RS.1", "RS.2"] })).toMatch(/together/);
+    expect(def.validate!(state, 0, { t: "play", cards: ["RS.1", "BS.1"] })).toBeNull();
+    expect(def.validate!(state, 0, { t: "play", cards: ["RS.1", "RV.1"] })).toMatch(/together/);
     expect(def.validate!(state, 0, { t: "play", cards: ["R3.1", "R4.1"] })).toMatch(/together/);
+    expect(def.validate!(state, 0, { t: "play", cards: ["RD.1", "RD.2"] })).toMatch(/together/);
+  });
+
+  it("several Skips skip one player each, and never the player who laid them", () => {
+    const { def, state } = position({ ...doubles, hands: { ...doubles.hands, 0: ["RS.1", "RS.2", "BS.1", "B8.1"] } });
+    expect(act(def, state, 0, { t: "play", cards: ["BS.1", "RS.1"] }).state.turn).toBe(3);
+    // Three Skips at a table of four skip everybody else: you go again.
+    expect(act(def, state, 0, { t: "play", cards: ["BS.1", "RS.2", "RS.1"] }).state.turn).toBe(0);
+  });
+
+  it("several Reverses turn play round once per card", () => {
+    const { def, state } = position({ ...doubles, hands: { ...doubles.hands, 0: ["RV.1", "BV.1", "GV.1", "B8.1"] } });
+    const even = act(def, state, 0, { t: "play", cards: ["BV.1", "RV.1"] }).state;
+    expect(even.direction).toBe(1);
+    expect(even.turn).toBe(1);
+    const odd = act(def, state, 0, { t: "play", cards: ["GV.1", "BV.1", "RV.1"] }).state;
+    expect(odd.direction).toBe(-1);
+    expect(odd.turn).toBe(3);
+  });
+
+  it("under 'pairs are just pairs', two of a number does nothing but shed", () => {
+    const { def, state } = position({ ...doubles, rules: { doubles: true, plainPairs: true } });
+    const r = act(def, state, 0, { t: "play", cards: ["R3.1", "R3.2"] }).state;
+    expect(r.turn).toBe(1);
+    expect(r.direction).toBe(1);
   });
 
   it("is off unless the house rule is on", () => {

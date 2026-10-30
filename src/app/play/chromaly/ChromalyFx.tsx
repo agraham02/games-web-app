@@ -138,7 +138,14 @@ function Effect({
       return <Bubble at={at} text="Caught!" tone="rose" />;
 
     case "reverse":
-      return <Ribbon at={pile} text="Reverse" icon={<Repeat2 size={22} strokeWidth={3} />} spin={cue.dir ?? 1} />;
+      return (
+        <Ribbon
+          at={pile}
+          text={cue.amount && cue.amount > 1 ? `Reverse ×${cue.amount}` : "Reverse"}
+          icon={<Repeat2 size={22} strokeWidth={3} />}
+          spin={cue.dir ?? 1}
+        />
+      );
     case "jump":
       return <Ribbon at={at} text="Jump in!" lift />;
     case "bluff":

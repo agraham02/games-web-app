@@ -85,6 +85,7 @@ export const DEFAULT_RULES: ChromalyRules = {
   jumpIn: false,
   sevenZero: false,
   doubles: false,
+  plainPairs: false,
   shuffleHands: false,
   windowMs: DEFAULT_WINDOW_MS,
 };
@@ -173,9 +174,11 @@ export function playableIds(state: ChromalyState, seat: SeatId): PieceId[] {
 /**
  * Is this a legal play of several cards under `doubles`?
  *
- * Two or more NUMBER cards of one number, at least one of which could go on
- * the pile; the last named is the top and so sets the colour. Not while a
- * penalty is pending, and not for the card just drawn, which is played alone.
+ * Two or more cards of one kind, in any colours, at least one of which could
+ * go on the pile: NUMBER cards of one number, or Skips, or Reverses (the
+ * user, 2026-10-30). The last named is the top and so sets the colour. Not
+ * while a penalty is pending, and not for the card just drawn, which is
+ * played alone.
  */
 export function legalDoubles(state: ChromalyState, seat: SeatId, cards: readonly PieceId[]): boolean {
   if (!state.rules.doubles || cards.length < 2) return false;
@@ -187,11 +190,22 @@ export function legalDoubles(state: ChromalyState, seat: SeatId, cards: readonly
   const parsed: ParsedCard[] = [];
   for (const id of cards) {
     const card = hand.has(id) ? parseCard(id) : null;
-    if (!card || card.kind !== "number") return false;
+    if (!card || !groupable(card)) return false;
     parsed.push(card);
   }
-  if (parsed.some((c) => c.value !== parsed[0]!.value)) return false;
+  if (parsed.some((c) => !sameGroup(c, parsed[0]!))) return false;
   return parsed.some((c) => matches(c, top));
+}
+
+/** May this card be one of several played at once? */
+export function groupable(card: ParsedCard): boolean {
+  return card.kind === "number" || card.kind === "skip" || card.kind === "reverse";
+}
+
+/** Could these two go down together: one number, or both Skips, or both Reverses? */
+export function sameGroup(a: ParsedCard, b: ParsedCard): boolean {
+  if (a.kind !== b.kind || !groupable(a)) return false;
+  return a.kind !== "number" || a.value === b.value;
 }
 
 /** Seats other than `by` holding a card identical to `id`, in seat order. */
