@@ -62,6 +62,7 @@ import {
 } from "@/session/structural";
 import { applyEventToTable } from "./applyEvent";
 import { useTableStore } from "./store";
+import { logFrame } from "./moveLog";
 
 /**
  * Re-exported from its new home so the existing test keeps its import
@@ -408,6 +409,7 @@ export function useGameRuntime<S, A>(
 
   /** One batch of things the session says happened. */
   const onFrame = (frame: SessionFrame<A>) => {
+    logFrame(frame.lastAction, frame.events);
     setLastAction(frame.lastAction);
     setLatest(session.snapshot());
     if (frame.dealtRound !== null) setDealingRound(frame.dealtRound);

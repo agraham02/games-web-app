@@ -364,6 +364,12 @@ const POT_GRID_MAX = 10;
 /** Each chip up a stack sits this share of a chip higher, up to this many. */
 const CHIP_STACK_STEP = 0.04;
 const CHIP_STACK_LIFT_MAX = 6;
+/**
+ * How far apart a gathered hand's cards sit (see `layoutPiece`), and the most
+ * the whole stack may spread, so a 25-card hand stays a stack and not a fan.
+ */
+const GATHERED_STEP_PX = 3;
+const GATHERED_SPREAD_MAX_PX = 36;
 
 export function chipPileStacks(g: TableGeometry, p: Pick<Placement, "zone" | "seat" | "count">): boolean {
   if (p.count < 2) return false;
@@ -796,13 +802,17 @@ export function layoutPiece(
     const lift = Math.min(p.index, CHIP_STACK_LIFT_MAX) * step;
     return { ...first, y: first.y + settle - lift, z: first.z + p.index };
   }
-  // A hand picked up to be handed over (`gather`): every card on the fan's
-  // middle slot, a hair apart, so it reads as one squared-up stack.
+  // A hand picked up to be handed over (`gather`): every card closed in on
+  // the fan's middle slot, still fanned a few pixels apart. Squared up a hair
+  // apart it read as ONE card (the user, 2026-10-31); this way it still reads
+  // as a hand of so many, travelling together.
   if (p.gathered && p.zone === "hand") {
     const mid = Math.floor((p.count - 1) / 2);
     const at = layoutLoose({ ...p, gathered: false, index: mid }, g, { ...ctx, handIndex: mid });
     const order = ctx?.handIndex ?? p.index;
-    return { ...at, x: at.x + order * 0.4, y: at.y - order * 0.4, z: at.z - mid + order };
+    const step = p.count > 1 ? Math.min(GATHERED_STEP_PX, GATHERED_SPREAD_MAX_PX / (p.count - 1)) : 0;
+    const off = (order - (p.count - 1) / 2) * step;
+    return { ...at, x: at.x + off, y: at.y - order * 0.4, z: at.z - mid + order };
   }
   return layoutLoose(p, g, ctx);
 }

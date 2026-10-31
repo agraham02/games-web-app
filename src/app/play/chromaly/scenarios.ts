@@ -233,6 +233,19 @@ export function chromalyScenarios(live: Live) {
       ),
     },
     {
+      label: "Long draw through a reshuffle",
+      run: go((s) =>
+        arrange(s, {
+          hands: { [HERO]: ["B2.1", "G4.1"] },
+          top: "R5.1",
+          turn: HERO,
+          draw: ["B3.1", "G6.1", "Y7.1"],
+          drawPileSize: 0,
+          rules: { drawToMatch: true, forcePlay: true, doubles: true, plainPairs: true, sevenZero: true, jumpIn: true },
+        }),
+      ),
+    },
+    {
       label: "Pair to play",
       run: go((s) =>
         arrange(s, {

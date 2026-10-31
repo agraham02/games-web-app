@@ -361,9 +361,11 @@ export type GameEvent =
   /**
    * Opening deal. Choreographer staggers these automatically - unless
    * `together`, for a whole hand handed over as one stack (see `gather`),
-   * whose cards travel side by side rather than one after another.
+   * whose cards travel side by side rather than one after another. `paced`
+   * deals at half the speed, for a deal in the middle of play that the
+   * table should be able to follow card by card (Chromaly's Shuffle Hands).
    */
-  | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean; together?: boolean }
+  | { t: "deal"; piece: PieceId; to: SeatId; faceUp: boolean; together?: boolean; paced?: boolean }
   /** Taking a piece from a shared pile into a hand. */
   | { t: "draw"; piece: PieceId; from: ZoneId; to: SeatId; faceUp: boolean }
   /**

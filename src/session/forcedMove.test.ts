@@ -224,6 +224,32 @@ describe("a forced move plays itself", () => {
     expect(session.autoPlayed(seat, 3_000, roll)).toBeNull();
   });
 
+  it("marks the move it made as forced, and a pressed one as the player's", () => {
+    // What the dev move log reads to tell a move made FOR somebody from one
+    // they made (the user, 2026-10-31).
+    const frames: Array<{ by?: string } | null> = [];
+    const clock = new TestClock();
+    const definition = createLrc(3);
+    const session: GameSession<LrcState, unknown> = new GameSession<LrcState, unknown>({
+      definition: definition as GameDefinition<LrcState, unknown>,
+      seats: 3,
+      seed: 99,
+      clock,
+      isSeatLive: () => true,
+      turnHoldMs: () => 0,
+      emit: (frame) => {
+        frames.push(frame.lastAction);
+        session.settled();
+      },
+    });
+    session.start();
+    clock.advance(FORCED_MOVE_MS);
+    expect(frames.at(-1)?.by).toBe("forced");
+    const seat = definition.currentSeat(session.snapshot())!;
+    session.submit(seat, definition.legalActions(session.snapshot(), seat)[0]);
+    expect(frames.at(-1)?.by).toBe("player");
+  });
+
   it("plays a whole table of silent people to the end", () => {
     // The reachability claim for LRC, whose only move is always forced.
     const { clock, session, definition } = silentLrc();

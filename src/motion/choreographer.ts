@@ -54,6 +54,9 @@ const UNMASK_SETTLE = 50;
  */
 const MASK_SETTLE = 300;
 
+/** How much slower a `paced` deal goes than a round's opening one. */
+const PACED_DEAL = 2;
+
 export interface ChoreographOptions {
   /**
    * Overrides `STAGGER.deal` (ms between one deal event starting and the
@@ -88,7 +91,7 @@ export function choreograph(
         steps.push({
           event,
           // A hand handed over whole travels as one stack: side by side.
-          offset: sameRunAsPrev && !event.together ? dealStagger : 0,
+          offset: sameRunAsPrev && !event.together ? dealStagger * (event.paced ? PACED_DEAL : 1) : 0,
           duration: DURATION.deal * MS,
         });
         break;

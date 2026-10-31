@@ -19,6 +19,7 @@ import { motion, AnimatePresence, useDragControls } from "motion/react";
 import type { PieceId, PieceMeta } from "@/engine/types";
 import { useDevSettings } from "./devSettings";
 import { DevStateEditor } from "./DevStateEditor";
+import { useMoveLog } from "./moveLog";
 import { TRANSITIONS } from "@/motion/presets";
 
 export interface DevPanelProps {
@@ -216,6 +217,8 @@ export function DevPanel({
               </div>
             ) : null}
 
+            <MoveLog />
+
             {debugState !== undefined && pieces && onDebugStateChange ? (
               <div className="flex flex-col gap-1.5 border-t border-bone-50/10 pt-2">
                 <button
@@ -252,6 +255,58 @@ export function DevPanel({
           </motion.button>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/**
+ * The last moves, newest first, and who made each (see `moveLog.ts`). Copy
+ * puts the whole log on the clipboard, oldest first, to paste into a report.
+ */
+function MoveLog() {
+  const entries = useMoveLog((s) => s.entries);
+  const [shown, setShown] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const text = entries.map((e) => `${e.n} ${e.at} ${e.line}`).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      console.info(text);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-bone-50/10 pt-2">
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setShown((v) => !v)}
+          className="flex grow items-center justify-between text-left text-[11px] font-bold text-bone-200 hover:text-brass-300"
+        >
+          <span>Move log ({entries.length})</span>
+          <span className="text-bone-400">{shown ? "▾" : "▸"}</span>
+        </button>
+      </div>
+      {shown ? (
+        <>
+          <button
+            type="button"
+            onClick={copy}
+            className="self-start rounded bg-bone-50/8 px-2 py-1 text-[10px] font-bold text-bone-200 ring-1 ring-bone-50/14 hover:bg-brass-400/18 hover:text-brass-300"
+          >
+            {copied ? "Copied" : "Copy all"}
+          </button>
+          <ol className="flex max-h-56 flex-col gap-1 overflow-y-auto font-mono text-[9px] leading-tight break-all text-bone-300">
+            {[...entries].reverse().slice(0, 20).map((e) => (
+              <li key={e.n}>
+                <span className="text-bone-500">{e.at}</span> {e.line}
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : null}
     </div>
   );
 }
