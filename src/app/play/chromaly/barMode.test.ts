@@ -11,6 +11,7 @@ import {
   canAct,
   canCall,
   canJump,
+  drawnChoice,
   needsChoice,
   onPieceTap,
   pickedChoice,
@@ -153,6 +154,49 @@ describe("what a card asks for", () => {
     expect(needsChoice(without.state, 0, "R7.1")).toBeNull();
     const last = position({ ...BASE, rules: { sevenZero: true }, hands: { ...BASE.hands, 0: ["R7.1"] } });
     expect(needsChoice(last.state, 0, "R7.1")).toBeNull();
+  });
+});
+
+describe("a drawn card that has to be played", () => {
+  // The user, 2026-10-31: a drawn wild went down with a colour they had not
+  // chosen. Under Force Play the card must go, so the question it asks is
+  // asked at once, with no "Play it" press in front of it to burn the clock.
+  const drawing = (rules: Record<string, unknown>, draw: string[]) => {
+    const { def, state } = position({
+      ...BASE,
+      rules,
+      hands: { ...BASE.hands, 0: ["B2.1"] },
+      draw,
+      turn: 0,
+    });
+    return act(def, state, 0, { t: "draw" }).state;
+  };
+
+  it("asks for the colour straight away when the card is a wild", () => {
+    const drew = drawing({ forcePlay: true }, ["W.1"]);
+    expect(drew.drawn).toBe("W.1");
+    expect(drawnChoice(view(0), live(drew, 0))).toBe("colour");
+  });
+
+  it("asks whom to swap with straight away when the card is a 7 that swaps", () => {
+    const drew = drawing({ forcePlay: true, sevenZero: true }, ["R7.1"]);
+    expect(drawnChoice(view(0), live(drew, 0))).toBe("swap");
+  });
+
+  it("leaves the choice to play or keep alone without Force Play", () => {
+    const drew = drawing({}, ["W.1"]);
+    expect(barMode(view(0), live(drew, 0))).toBe("drawn");
+    expect(drawnChoice(view(0), live(drew, 0))).toBeNull();
+  });
+
+  it("asks nothing of an ordinary card (it played itself already)", () => {
+    const drew = drawing({ forcePlay: true }, ["R9.1"]);
+    expect(drawnChoice(view(0), live(drew, 0))).toBeNull();
+  });
+
+  it("is nobody else's question", () => {
+    const drew = drawing({ forcePlay: true }, ["W.1"]);
+    expect(drawnChoice(view(1), live(drew, 1))).toBeNull();
   });
 });
 

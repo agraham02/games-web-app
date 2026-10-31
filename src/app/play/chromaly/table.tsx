@@ -348,9 +348,17 @@ export function ChromalyTable({
   });
 
   const mode = barMode(view, live);
-  const choice = swappingNow(view, live) ? "swap" : pickedChoice(view, state, held);
+  const forced = drawnChoice(view, live);
+  const choice = swappingNow(view, live) ? "swap" : (forced ?? pickedChoice(view, state, held));
   const panel = choice ? (
-    <ChoicePanel view={view} live={live} held={held} choice={choice} onClearHeld={onClearHeld} />
+    <ChoicePanel
+      view={view}
+      live={live}
+      held={forced && state.drawn !== null ? [state.drawn] : held}
+      choice={choice}
+      onClearHeld={onClearHeld}
+      mustPlay={forced !== null}
+    />
   ) : undefined;
 
   const bar =
@@ -383,6 +391,19 @@ export function ChromalyTable({
       />
     </>
   );
+}
+
+/**
+ * A drawn card that MUST be played (Force Play) but still asks something - a
+ * wild's colour, a 7's swap: the question, asked at once. It used to wait
+ * behind a "Play it" press that was no choice at all, and in a room that was
+ * time off a turn clock that, run out, plays the wild with a colour picked FOR
+ * you (the user, 2026-10-31: "it did not allow me to select the color").
+ */
+export function drawnChoice(view: ChromalyView, live: Live): "colour" | "swap" | null {
+  const state = live.state;
+  if (barMode(view, live) !== "drawn" || state.drawn === null || !state.rules.forcePlay) return null;
+  return needsChoice(state, view.viewerSeat, state.drawn);
 }
 
 /** Has the viewer jumped in with a 7 and still to say whom it swaps with? */
@@ -635,12 +656,15 @@ function ChoicePanel({
   held,
   choice,
   onClearHeld,
+  mustPlay = false,
 }: {
   view: ChromalyView;
   live: Live;
   held: PieceId[];
   choice: "colour" | "swap";
   onClearHeld: () => void;
+  /** The card has to go (a drawn card under Force Play): there is nothing to cancel back to. */
+  mustPlay?: boolean;
 }) {
   const state = live.state;
   // A jumped-in 7 is already down: only its seat is left to send, and it
@@ -692,7 +716,7 @@ function ChoicePanel({
           ))}
         </div>
       )}
-      {jumped ? null : (
+      {jumped || mustPlay ? null : (
         <button type="button" onClick={onClearHeld} className="text-[11px] font-bold text-bone-400 hover:text-bone-200">
           Cancel
         </button>
