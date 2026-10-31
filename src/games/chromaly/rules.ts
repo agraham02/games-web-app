@@ -69,13 +69,14 @@ import {
   entitledToWindow,
   facingPenalty,
   jumpersFor,
-  legalDoubles,
+  groupProblem,
   nextSeat,
   offendersOf,
   pendingFor,
   playableIds,
   plusFourIsBluff,
   stepSeat,
+  swapsHands,
 } from "./state";
 import type { ChromalyAction, ChromalyRules, ChromalyState, RoundResult } from "./types";
 
@@ -474,6 +475,13 @@ function playCards(
   // rest fall through to the next seat on.
   d.turn = next();
   if (cards.length >= 2) {
+    // A group of 7s swaps hands ONCE and a group of 0s passes them ONCE, not
+    // once per card (the user, 2026-10-31): the swap is done first, while the
+    // seat after this one is still the one the play started from.
+    if (d.rules.sevenZero && parsed[0]!.kind === "number") {
+      if (parsed[0]!.value === 7) swapHands(d, seat, opts.swapWith ?? nextSeat(d, seat), events);
+      else if (parsed[0]!.value === 0) passHands(d, events);
+    }
     if (lastCard.kind === "skip") {
       // Several Skips: one player skipped per card (the user, 2026-10-30).
       applySkip(d, seat, events, cards.length);
@@ -1043,9 +1051,7 @@ function representative(state: ChromalyState, seat: SeatId, id: PieceId): Chroma
   const hand = state.hands[seat] ?? [];
   const play: ChromalyAction & { t: "play" } = { t: "play", cards: [id] };
   if (isWild(card)) play.color = bestColor(hand, id);
-  if (card.kind === "number" && state.rules.sevenZero && card.value === 7 && hand.length > 1) {
-    play.swapWith = nextSeat(state, seat);
-  }
+  if (swapsHands(state, seat, [id])) play.swapWith = nextSeat(state, seat);
   return play;
 }
 
@@ -1133,12 +1139,8 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
 
   const validSeat = (v: unknown): v is SeatId =>
     typeof v === "number" && Number.isInteger(v) && v >= 0 && v < state.seats;
-  const wantsSwap = (id: PieceId) => {
-    const c = parseCard(id);
-    return c !== null && c.kind === "number" && c.value === 7 && state.rules.sevenZero && hand.length > 1;
-  };
-  const swapProblem = (id: PieceId, swapWith: unknown, later = false): string | null => {
-    if (!wantsSwap(id)) return swapWith === undefined ? null : "there is nothing to swap";
+  const swapProblem = (cards: readonly PieceId[], swapWith: unknown, later = false): string | null => {
+    if (!swapsHands(state, seat, cards)) return swapWith === undefined ? null : "there is nothing to swap";
     // A jump-in may leave the seat to be chosen after (`swapping`).
     if (later && swapWith === undefined) return null;
     if (!validSeat(swapWith) || swapWith === seat) return "choose another seat to swap hands with";
@@ -1170,12 +1172,12 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
         return "only a wild names a colour";
       }
       if (ids.length > 1) {
-        if (!legalDoubles(state, seat, ids)) return "those cards cannot be played together";
-        return action.swapWith === undefined ? null : "there is nothing to swap";
+        // A group of 7s swaps hands ONCE, so it names a seat once.
+        return groupProblem(state, seat, ids) ?? swapProblem(ids, action.swapWith);
       }
       if (state.drawn !== null && ids[0] !== state.drawn) return "only the card just drawn may be played";
       if (!canPlay(state, seat, ids[0]!)) return "that card cannot be played now";
-      return swapProblem(ids[0]!, action.swapWith);
+      return swapProblem(ids, action.swapWith);
     }
 
     case "draw":
@@ -1216,7 +1218,7 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
       const mine = parseCard(action.card);
       const top = w.card === null ? null : parseCard(w.card);
       if (!mine || !top || !identical(mine, top)) return "only an identical card may jump in";
-      return swapProblem(action.card, action.swapWith, true);
+      return swapProblem([action.card], action.swapWith, true);
     }
 
     case "chooseSwap":

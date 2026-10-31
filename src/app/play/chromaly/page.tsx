@@ -14,7 +14,6 @@ import { type PieceId } from "@/engine/types";
 import type { ChromalyAction, ChromalyState } from "@/games/chromaly/types";
 import { GAMES, clampSeats } from "@/session/registry";
 import { GameHost } from "@/table/GameHost";
-import type { GameRuntime } from "@/table/useGameRuntime";
 import { botTable } from "@/ui/primitives/DifficultyPicker";
 import { GameSetup, useGameSetup } from "@/ui/setup/GameSetup";
 import {
@@ -35,8 +34,6 @@ import {
 } from "./table";
 import { chromalyScenarios } from "./scenarios";
 
-type Live = GameRuntime<ChromalyState, ChromalyAction>;
-
 export default function ChromalyPlayPage() {
   const [setup, setSetup] = useGameSetup("chromaly");
   const [started, setStarted] = useState(false);
@@ -55,10 +52,9 @@ export default function ChromalyPlayPage() {
     setHeld([]);
   };
   const view = OFFLINE_VIEW;
-  // Through the shared rule, which needs the position: a wild or a 7 is
-  // always picked alone, because it has a choice to make.
-  const pickUp = (live: Live) => (id: PieceId) =>
-    setHeld((prev) => togglePlayCard(prev, id, live.state, view.viewerSeat));
+  // Through the shared rule: a wild is always picked alone, because it has a
+  // colour to name; 7s may be picked together.
+  const pickUp = () => (id: PieceId) => setHeld((prev) => togglePlayCard(prev, id));
 
   if (!started) {
     return <GameSetup game="chromaly" value={setup} onChange={setSetup} onStart={() => setStarted(true)} />;
@@ -76,7 +72,7 @@ export default function ChromalyPlayPage() {
       stats={(state) => statsFor(view, state)}
       roundSummary={(state) => roundSummary(view, state)}
       pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
-      onPieceTap={(id, live) => tapCard(view, id, live, pickUp(live))}
+      onPieceTap={(id, live) => tapCard(view, id, live, pickUp(), held)}
       handActive={(live) => canAct(view, live) || canJump(view, live)}
       turnSeat={turnSeat}
       scenarios={chromalyScenarios}
@@ -94,7 +90,7 @@ export default function ChromalyPlayPage() {
           view={view}
           live={live}
           held={held}
-          onPick={pickUp(live)}
+          onPick={pickUp()}
           onClearHeld={clearHeld}
           settings={settings}
         />

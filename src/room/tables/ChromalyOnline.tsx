@@ -91,11 +91,11 @@ export function ChromalyOnline({ api, room, frame, held, onClearHeld, setHeld, c
   const seatExtras = useSeatExtras(room, api.chat);
   if (!live) return <TableWaiting onLeave={api.exitGame} />;
 
-  // Through the shared rule, not a bare toggle: a wild or a 7 is always
-  // picked alone. `RoomScreen` owns WHERE the selection lives, so it survives
-  // a trip to the lobby; what a tap means lives next to `onPieceTap`.
-  const pickUp = (id: PieceId) =>
-    setHeld((prev) => togglePlayCard(prev, id, live.state, view.viewerSeat));
+  // Through the shared rule, not a bare toggle: a wild is always picked alone
+  // (7s may be picked together). `RoomScreen` owns WHERE the selection lives,
+  // so it survives a trip to the lobby; what a tap means lives next to
+  // `onPieceTap`.
+  const pickUp = (id: PieceId) => setHeld((prev) => togglePlayCard(prev, id));
   const putDown = () => {
     clearPlayCards(held);
     onClearHeld();
@@ -131,7 +131,7 @@ export function ChromalyOnline({ api, room, frame, held, onClearHeld, setHeld, c
         stats={(state) => statsFor(view, state)}
         roundSummary={(state) => roundSummary(view, state)}
         pendingLabel={(state, seat) => pendingLabel(view, state, seat)}
-        onPieceTap={(id, l) => tapCard(view, id, l, pickUp)}
+        onPieceTap={(id, l) => tapCard(view, id, l, pickUp, held)}
         // Your hand is live when you may PLAY or JUMP IN - not merely when the
         // table is waiting on your answer to a window.
         handActive={(l) => canAct(view, l) || canJump(view, l)}

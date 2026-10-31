@@ -201,6 +201,24 @@ export function chromalyScenarios(live: Live) {
       ),
     },
     {
+      // The user's own hand (2026-10-31): yellow 7 then blue 7 on a yellow 8,
+      // with Crazy's rules. The yellow goes down on the pile; the blue goes
+      // WITH it; and the pair swaps hands once.
+      label: "Two 7s to swap",
+      run: go((s) =>
+        arrange(s, {
+          hands: {
+            [HERO]: ["RS.1", "Y6.1", "Y7.1", "B5.1", "B7.1", "F.1"],
+            1: ["Y1.1", "Y2.1", "Y3.1"],
+            2: ["G1.1", "G2.1", "G3.1", "G4.1", "G5.1"],
+          },
+          top: "Y8.1",
+          turn: HERO,
+          rules: { doubles: true, plainPairs: true, sevenZero: true },
+        }),
+      ),
+    },
+    {
       label: "Pair to play",
       run: go((s) =>
         arrange(s, {

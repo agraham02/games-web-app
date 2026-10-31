@@ -922,16 +922,17 @@ describe("doubles", () => {
 
   it("two of a number in DIFFERENT colours is a Reverse", () => {
     const { def, state } = position(doubles);
-    const r = act(def, state, 0, { t: "play", cards: ["B3.1", "R3.1"] });
+    const r = act(def, state, 0, { t: "play", cards: ["R3.1", "B3.1"] });
     expect(r.state.direction).toBe(-1);
     expect(r.state.turn).toBe(3);
-    // The last named is the top, and sets the colour.
-    expect(r.state.color).toBe("R");
+    // They land in the order they were picked: the last is the top, and sets the colour.
+    expect(r.state.discard.slice(-2)).toEqual(["R3.1", "B3.1"]);
+    expect(r.state.color).toBe("B");
   });
 
   it("with two players a Reverse pair is a Skip, so both kinds of pair are", () => {
     const { def, state } = position({ ...doubles, seats: 2, hands: { 0: ["R3.1", "B3.1", "B8.1"], 1: ["Y1.1"] } });
-    expect(act(def, state, 0, { t: "play", cards: ["B3.1", "R3.1"] }).state.turn).toBe(0);
+    expect(act(def, state, 0, { t: "play", cards: ["R3.1", "B3.1"] }).state.turn).toBe(0);
   });
 
   it("three or more is a plain dump: no Skip, no Reverse - it pays to dump fewer", () => {
@@ -942,12 +943,32 @@ describe("doubles", () => {
     expect(r.state.hands[0]).toEqual(["G3.1", "B8.1"]);
   });
 
-  it("needs at least one of the cards to go on the pile", () => {
+  it("needs the FIRST card to go on the pile, whatever else is in the group", () => {
     const { def, state } = position({ ...doubles, hands: { ...doubles.hands, 0: ["G3.1", "B3.1", "B8.1"] } });
-    expect(def.validate!(state, 0, { t: "play", cards: ["G3.1", "B3.1"] })).toMatch(/together/);
-    // R3 would match; G3 and B3 do not, but a pair containing a match does.
+    // Neither G3 nor B3 goes on a red 5.
+    expect(def.validate!(state, 0, { t: "play", cards: ["G3.1", "B3.1"] })).toMatch(/first card has to match/);
+    // R3 would — but only as the FIRST: a group that merely CONTAINS a match used
+    // to be allowed in any order (the user, 2026-10-31).
     const ok = position({ ...doubles });
-    expect(ok.def.validate!(ok.state, 0, { t: "play", cards: ["G3.1", "R3.1"] })).toBeNull();
+    expect(ok.def.validate!(ok.state, 0, { t: "play", cards: ["R3.1", "G3.1"] })).toBeNull();
+    expect(ok.def.validate!(ok.state, 0, { t: "play", cards: ["G3.1", "R3.1"] })).toMatch(/first card has to match/);
+  });
+
+  it("matches the first card by colour OR by number, and the pile's colour after a wild", () => {
+    // Same number as the pile: any colour will do first.
+    const byNumber = position({
+      ...doubles,
+      hands: { ...doubles.hands, 0: ["B5.1", "G5.1", "B8.1"] },
+    });
+    expect(byNumber.def.validate!(byNumber.state, 0, { t: "play", cards: ["B5.1", "G5.1"] })).toBeNull();
+    // A wild named yellow: the pile is yellow, whatever the wild looked like.
+    const wild = position({
+      ...doubles,
+      hands: { ...doubles.hands, 0: ["Y9.1", "Y9.2", "B8.1"] },
+      top: "W.1",
+      color: "Y",
+    });
+    expect(wild.def.validate!(wild.state, 0, { t: "play", cards: ["Y9.1", "Y9.2"] })).toBeNull();
   });
 
   it("is for one number, or Skips, or Reverses - never a mix", () => {
@@ -963,17 +984,17 @@ describe("doubles", () => {
 
   it("several Skips skip one player each, and never the player who laid them", () => {
     const { def, state } = position({ ...doubles, hands: { ...doubles.hands, 0: ["RS.1", "RS.2", "BS.1", "B8.1"] } });
-    expect(act(def, state, 0, { t: "play", cards: ["BS.1", "RS.1"] }).state.turn).toBe(3);
+    expect(act(def, state, 0, { t: "play", cards: ["RS.1", "BS.1"] }).state.turn).toBe(3);
     // Three Skips at a table of four skip everybody else: you go again.
-    expect(act(def, state, 0, { t: "play", cards: ["BS.1", "RS.2", "RS.1"] }).state.turn).toBe(0);
+    expect(act(def, state, 0, { t: "play", cards: ["RS.2", "BS.1", "RS.1"] }).state.turn).toBe(0);
   });
 
   it("several Reverses turn play round once per card", () => {
     const { def, state } = position({ ...doubles, hands: { ...doubles.hands, 0: ["RV.1", "BV.1", "GV.1", "B8.1"] } });
-    const even = act(def, state, 0, { t: "play", cards: ["BV.1", "RV.1"] }).state;
+    const even = act(def, state, 0, { t: "play", cards: ["RV.1", "BV.1"] }).state;
     expect(even.direction).toBe(1);
     expect(even.turn).toBe(1);
-    const odd = act(def, state, 0, { t: "play", cards: ["GV.1", "BV.1", "RV.1"] }).state;
+    const odd = act(def, state, 0, { t: "play", cards: ["RV.1", "GV.1", "BV.1"] }).state;
     expect(odd.direction).toBe(-1);
     expect(odd.turn).toBe(3);
   });
@@ -987,19 +1008,88 @@ describe("doubles", () => {
 
   it("is off unless the house rule is on", () => {
     const { def, state } = position({ ...doubles, rules: {} });
-    expect(def.validate!(state, 0, { t: "play", cards: ["R3.1", "R3.2"] })).toMatch(/together/);
+    expect(def.validate!(state, 0, { t: "play", cards: ["R3.1", "R3.2"] })).toMatch(/not on/);
   });
 
-  it("a pair of 7s or 0s does its Skip or Reverse INSTEAD of a swap", () => {
-    const { def, state } = position({
-      rules: { doubles: true, sevenZero: true },
-      hands: { 0: ["R7.1", "R7.2", "B1.1"], 1: ["Y1.1"], 2: ["Y2.1"], 3: ["Y4.1"] },
+  describe("7s and 0s played as a group (the user, 2026-10-31)", () => {
+    // Used to be refused outright ("nothing to swap") and, under plain pairs,
+    // played without swapping at all. A group does the card's thing ONCE.
+    const sevens = {
+      rules: { doubles: true, sevenZero: true, plainPairs: true },
+      hands: {
+        0: ["R7.1", "B7.1", "G7.1", "B1.1"],
+        1: ["Y1.1"],
+        2: ["Y2.1", "Y3.1"],
+        3: ["Y4.1", "Y5.1", "Y6.1"],
+      },
       top: TOP,
+    };
+
+    it("a pair of 7s swaps hands ONCE, with the seat named", () => {
+      const { def, state } = position(sevens);
+      const r = act(def, state, 0, { t: "play", cards: ["R7.1", "B7.1"], swapWith: 2 });
+      // Once: swapped twice with the same seat it would all be back where it began.
+      expect(r.state.hands[0]).toEqual(["Y2.1", "Y3.1"]);
+      expect(r.state.hands[2]).toEqual(["G7.1", "B1.1"]);
+      expect(r.state.discard.slice(-2)).toEqual(["R7.1", "B7.1"]);
+      // Pairs are plain here, so nothing else happens to the turn.
+      expect(r.state.turn).toBe(1);
+      expect(everyCard(r.state)).toHaveLength(108);
     });
-    expect(def.validate!(state, 0, { t: "play", cards: ["R7.1", "R7.2"], swapWith: 1 })).toMatch(/nothing to swap/);
-    const r = act(def, state, 0, { t: "play", cards: ["R7.1", "R7.2"] });
-    expect(r.state.turn).toBe(2);
-    expect(r.state.hands[1]).toEqual(["Y1.1"]);
+
+    it("three 7s swap once too", () => {
+      const { def, state } = position(sevens);
+      const r = act(def, state, 0, { t: "play", cards: ["R7.1", "B7.1", "G7.1"], swapWith: 3 });
+      expect(r.state.hands[0]).toEqual(["Y4.1", "Y5.1", "Y6.1"]);
+      expect(r.state.hands[3]).toEqual(["B1.1"]);
+    });
+
+    it("must name the seat, and cannot name a seat when there is nothing to swap", () => {
+      const { def, state } = position(sevens);
+      const group = ["R7.1", "B7.1"];
+      expect(def.validate!(state, 0, { t: "play", cards: group })).toMatch(/choose another seat/);
+      expect(def.validate!(state, 0, { t: "play", cards: group, swapWith: 0 })).toMatch(/choose another seat/);
+      expect(def.validate!(state, 0, { t: "play", cards: group, swapWith: 2 })).toBeNull();
+      // Going out on the group: no hand left to swap.
+      const out = position({ ...sevens, hands: { ...sevens.hands, 0: ["R7.1", "B7.1"] } });
+      expect(out.def.validate!(out.state, 0, { t: "play", cards: group })).toBeNull();
+      expect(out.def.validate!(out.state, 0, { t: "play", cards: group, swapWith: 1 })).toMatch(/nothing to swap/);
+    });
+
+    it("the first 7 has to go on the pile, like any group", () => {
+      const { def, state } = position({ ...sevens, top: "Y3.1", color: "Y" });
+      expect(def.validate!(state, 0, { t: "play", cards: ["R7.1", "B7.1"], swapWith: 2 })).toMatch(/first card has to match/);
+    });
+
+    it("a pair of 0s passes every hand along ONCE", () => {
+      const { def, state } = position({
+        ...sevens,
+        hands: { ...sevens.hands, 0: ["R0.1", "B0.1", "B1.1"] },
+      });
+      const r = act(def, state, 0, { t: "play", cards: ["R0.1", "B0.1"] });
+      // One step clockwise: seat 0's remaining hand is now seat 1's.
+      expect(r.state.hands[1]).toEqual(["B1.1"]);
+      expect(r.state.hands[0]).toEqual(["Y4.1", "Y5.1", "Y6.1"]);
+      expect(r.state.hands[2]).toEqual(["Y1.1"]);
+      expect(r.state.hands[3]).toEqual(["Y2.1", "Y3.1"]);
+      expect(def.validate!(state, 0, { t: "play", cards: ["R0.1", "B0.1"], swapWith: 1 })).toMatch(/nothing to swap/);
+    });
+
+    it("without the 7/0 rule, a group of 7s is just a group", () => {
+      const { def, state } = position({ ...sevens, rules: { doubles: true, plainPairs: true } });
+      expect(def.validate!(state, 0, { t: "play", cards: ["R7.1", "B7.1"], swapWith: 2 })).toMatch(/nothing to swap/);
+      const r = act(def, state, 0, { t: "play", cards: ["R7.1", "B7.1"] });
+      expect(r.state.hands[2]).toEqual(["Y2.1", "Y3.1"]);
+    });
+
+    it("where pairs carry their own Skip or Reverse, a pair of 7s does that AS WELL as the swap", () => {
+      // Used to be "INSTEAD of a swap", because a group could not name a seat.
+      const { def, state } = position({ ...sevens, rules: { doubles: true, sevenZero: true } });
+      const r = act(def, state, 0, { t: "play", cards: ["R7.1", "B7.1"], swapWith: 1 });
+      expect(r.state.hands[1]).toEqual(["G7.1", "B1.1"]);
+      // Two colours: a Reverse.
+      expect(r.state.direction).toBe(-1);
+    });
   });
 
   it("a pair cannot be jumped in on", () => {

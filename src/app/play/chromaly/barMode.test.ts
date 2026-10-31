@@ -1,7 +1,7 @@
 import { createRng } from "@/engine/rng";
 import type { SeatId } from "@/engine/types";
 import { describe, expect, it } from "vitest";
-import { createChromaly } from "@/games/chromaly/rules";
+import { createChromaly, validate } from "@/games/chromaly/rules";
 import { act, position, type Scenario } from "@/games/chromaly/testkit";
 import type { ChromalyAction, ChromalyState } from "@/games/chromaly/types";
 import type { GameRuntime } from "@/table/useGameRuntime";
@@ -12,6 +12,8 @@ import {
   canCall,
   canJump,
   needsChoice,
+  onPieceTap,
+  pickedChoice,
   togglePlayCard,
   type ChromalyView,
 } from "./table";
@@ -155,31 +157,94 @@ describe("what a card asks for", () => {
 });
 
 describe("picking cards up", () => {
-  const { state } = position({
-    ...BASE,
-    rules: { doubles: true, sevenZero: true },
-    hands: { ...BASE.hands, 0: ["R3.1", "R3.2", "B3.1", "G4.1", "W.1", "R7.1"] },
-  });
-
   it("builds a pair of one number, a card at a time", () => {
-    let held = togglePlayCard([], "R3.1", state, 0);
-    held = togglePlayCard(held, "B3.1", state, 0);
+    let held = togglePlayCard([], "R3.1");
+    held = togglePlayCard(held, "B3.1");
     expect(held).toEqual(["R3.1", "B3.1"]);
-    expect(togglePlayCard(held, "B3.1", state, 0)).toEqual(["R3.1"]);
+    expect(togglePlayCard(held, "B3.1")).toEqual(["R3.1"]);
   });
 
   it("starts afresh on a card of another number", () => {
-    expect(togglePlayCard(["R3.1"], "G4.1", state, 0)).toEqual(["G4.1"]);
+    expect(togglePlayCard(["R3.1"], "G4.1")).toEqual(["G4.1"]);
   });
 
-  it("picks a wild or a 7 alone, because each has a choice to make", () => {
-    expect(togglePlayCard(["R3.1", "B3.1"], "W.1", state, 0)).toEqual(["W.1"]);
-    expect(togglePlayCard(["R3.1"], "R7.1", state, 0)).toEqual(["R7.1"]);
-    expect(togglePlayCard(["W.1"], "R3.1", state, 0)).toEqual(["R3.1"]);
+  it("picks a wild alone, because it has a colour to name", () => {
+    expect(togglePlayCard(["R3.1", "B3.1"], "W.1")).toEqual(["W.1"]);
+    expect(togglePlayCard(["W.1"], "R3.1")).toEqual(["R3.1"]);
   });
 
-  it("does not need a state to put a card down", () => {
+  it("lets 7s be picked together: they swap hands once (the user, 2026-10-31)", () => {
+    expect(togglePlayCard(["R7.1"], "B7.1")).toEqual(["R7.1", "B7.1"]);
+    expect(togglePlayCard(["R7.1", "B7.1"], "G7.1")).toEqual(["R7.1", "B7.1", "G7.1"]);
+    // A 7 and a different number are not a group.
+    expect(togglePlayCard(["R7.1"], "R3.1")).toEqual(["R3.1"]);
+  });
+
+  it("keeps the ORDER they were picked in, because that is the order they land", () => {
+    expect(togglePlayCard(togglePlayCard([], "B7.1"), "R7.1")).toEqual(["B7.1", "R7.1"]);
+    // Put one back and pick it again: it goes to the END, the top.
+    expect(togglePlayCard(togglePlayCard(["R7.1", "B7.1"], "R7.1"), "R7.1")).toEqual(["B7.1", "R7.1"]);
+  });
+
+  it("puts a card down by tapping it again, with no position needed", () => {
     expect(togglePlayCard(["R3.1"], "R3.1")).toEqual([]);
+  });
+});
+
+describe("a group of 7s, as the user tried to play it (2026-10-31)", () => {
+  // Crazy's rules: doubles, plain pairs and the 7/0 swap. A yellow 8 is the
+  // pile, so the yellow 7 goes on it and the blue 7 only goes WITH it.
+  const crazy = position({
+    ...BASE,
+    rules: { doubles: true, plainPairs: true, sevenZero: true },
+    hands: { ...BASE.hands, 0: ["RS.1", "Y6.1", "Y7.1", "B5.1", "B7.1", "F.1"] },
+    top: "Y8.1",
+    color: "Y",
+    turn: 0,
+  });
+  const { state } = crazy;
+  const lv = live(state, 0);
+  /** What a run of taps leaves held. */
+  const tap = (...ids: string[]) => {
+    let held: string[] = [];
+    for (const id of ids) {
+      onPieceTap(view(0), id, lv, (x) => (held = togglePlayCard(held, x)), held);
+    }
+    return held;
+  };
+
+  it("takes the yellow 7, then the blue 7, as one group", () => {
+    expect(tap("Y7.1", "B7.1")).toEqual(["Y7.1", "B7.1"]);
+  });
+
+  it("asks whom to swap with for the group, not for each 7", () => {
+    expect(pickedChoice(view(0), lv.state, ["Y7.1"])).toBe("swap");
+    expect(pickedChoice(view(0), lv.state, ["Y7.1", "B7.1"])).toBe("swap");
+    expect(pickedChoice(view(0), lv.state, ["Y7.1", "B7.1"])).not.toBeNull();
+    // Another number: no seat to name.
+    expect(pickedChoice(view(0), lv.state, ["Y6.1"])).toBeNull();
+  });
+
+  it("lets the group go down with the one seat named", () => {
+    expect(state.rules.sevenZero).toBe(true);
+    const group: ChromalyAction = { t: "play", cards: ["Y7.1", "B7.1"], swapWith: 2 };
+    expect(validate(state, 0, group)).toBeNull();
+    // ...and in the other order it is refused: the blue 7 cannot go first.
+    expect(validate(state, 0, { t: "play", cards: ["B7.1", "Y7.1"], swapWith: 2 })).toMatch(/first card has to match/);
+  });
+
+  it("will not START a group with a card that cannot go on the pile", () => {
+    expect(tap("B7.1")).toEqual([]);
+    // But it may JOIN one, because the first card is what has to match.
+    expect(tap("Y7.1", "B7.1")).toEqual(["Y7.1", "B7.1"]);
+  });
+
+  it("puts a held card back on a second tap", () => {
+    expect(tap("Y7.1", "B7.1", "B7.1")).toEqual(["Y7.1"]);
+  });
+
+  it("does not let a wild join the 7s: it is picked alone, to name its colour", () => {
+    expect(tap("Y7.1", "B7.1", "F.1")).toEqual(["F.1"]);
   });
 });
 

@@ -172,29 +172,56 @@ export function playableIds(state: ChromalyState, seat: SeatId): PieceId[] {
 }
 
 /**
- * Is this a legal play of several cards under `doubles`?
+ * Why these cards may not be played together, or null if they may.
  *
- * Two or more cards of one kind, in any colours, at least one of which could
- * go on the pile: NUMBER cards of one number, or Skips, or Reverses (the
- * user, 2026-10-30). The last named is the top and so sets the colour. Not
- * while a penalty is pending, and not for the card just drawn, which is
- * played alone.
+ * Two or more cards of one kind, in any colours: NUMBER cards of one number, or
+ * Skips, or Reverses (the user, 2026-10-30). The ORDER is the order they were
+ * picked and the order they land: the FIRST must go on the pile by itself —
+ * match its colour or number — and the last is the top, so it sets the colour
+ * (the user, 2026-10-31). Before this, any one card of the group matching was
+ * enough, in whatever order, so a pile that took only the second card still
+ * took the pair. Not while a penalty is pending, and not for the card just
+ * drawn, which is played alone.
  */
-export function legalDoubles(state: ChromalyState, seat: SeatId, cards: readonly PieceId[]): boolean {
-  if (!state.rules.doubles || cards.length < 2) return false;
-  if (facingPenalty(state) || state.drawn !== null) return false;
-  if (new Set(cards).size !== cards.length) return false;
+export function groupProblem(state: ChromalyState, seat: SeatId, cards: readonly PieceId[]): string | null {
+  if (!state.rules.doubles) return "playing several cards at once is not on";
+  if (cards.length < 2) return "that is not a group of cards";
+  if (facingPenalty(state)) return "there is a penalty to answer first";
+  if (state.drawn !== null) return "the card just drawn is played alone";
+  if (new Set(cards).size !== cards.length) return "the same card twice";
   const top = topOf(state);
-  if (!top) return false;
+  if (!top) return "there is no pile to play on";
   const hand = new Set(state.hands[seat] ?? []);
   const parsed: ParsedCard[] = [];
   for (const id of cards) {
     const card = hand.has(id) ? parseCard(id) : null;
-    if (!card || !groupable(card)) return false;
+    if (!card) return "a card this seat does not hold";
+    if (!groupable(card)) return "those cards cannot be played together";
     parsed.push(card);
   }
-  if (parsed.some((c) => !sameGroup(c, parsed[0]!))) return false;
-  return parsed.some((c) => matches(c, top));
+  if (parsed.some((c) => !sameGroup(c, parsed[0]!))) return "those cards cannot be played together";
+  if (!matches(parsed[0]!, top)) return "the first card has to match the pile";
+  return null;
+}
+
+/** Is this a legal play of several cards under `doubles`? See `groupProblem`. */
+export function legalDoubles(state: ChromalyState, seat: SeatId, cards: readonly PieceId[]): boolean {
+  return groupProblem(state, seat, cards) === null;
+}
+
+/**
+ * Does playing these cards swap hands, so a seat has to be named? A 7 under
+ * `sevenZero` does — and so does a group of 7s, ONCE however many (the user,
+ * 2026-10-31). Not when the play empties the hand: there is nothing left to
+ * swap, and the round is over.
+ */
+export function swapsHands(state: ChromalyState, seat: SeatId, cards: readonly PieceId[]): boolean {
+  if (!state.rules.sevenZero || cards.length === 0) return false;
+  if ((state.hands[seat] ?? []).length <= cards.length) return false;
+  return cards.every((id) => {
+    const c = parseCard(id);
+    return c !== null && c.kind === "number" && c.value === 7;
+  });
 }
 
 /** May this card be one of several played at once? */

@@ -42,7 +42,7 @@ import {
   points,
   type Color,
 } from "@/games/chromaly/cards";
-import { groupable, legalDoubles, sameGroup, whyNotPlayable } from "@/games/chromaly/state";
+import { groupable, legalDoubles, sameGroup, swapsHands, whyNotPlayable } from "@/games/chromaly/state";
 import { validate } from "@/games/chromaly/rules";
 import type { ChromalyAction, ChromalyState } from "@/games/chromaly/types";
 import { HAND_SPACING_SETTING, hintsSetting, type GameSetting, type SettingValues } from "@/table/gameSettings";
@@ -139,9 +139,7 @@ export function needsChoice(state: ChromalyState, seat: SeatId, id: PieceId): "c
   const card = parseCard(id);
   if (!card) return null;
   if (isWild(card)) return "colour";
-  const hand = state.hands[seat] ?? [];
-  if (state.rules.sevenZero && card.kind === "number" && card.value === 7 && hand.length > 1) return "swap";
-  return null;
+  return swapsHands(state, seat, [id]) ? "swap" : null;
 }
 
 /** Is there another card in the hand it could go down with, so this one could be half of a pair? */
@@ -182,20 +180,18 @@ export function barMode(view: ChromalyView, live: Live): BarMode {
  * table follow from the list (`useHeldMarks`), never from inside a React state
  * updater, where a store write is a write during render.
  *
- * A pair is one number (or all Skips, or all Reverses), so a card that does
- * not go with the pick starts a new one rather than joining it; a wild or a 7
- * that must make a choice first is always picked alone.
+ * A group is one number (or all Skips, or all Reverses), so a card that does
+ * not go with the pick starts a new one rather than joining it; a wild, which
+ * names a colour, is always picked alone. A 7 is NOT: several 7s are picked
+ * together and swap hands once (the user, 2026-10-31).
+ *
+ * The list is the order they were picked, which is the order they land: the
+ * first has to go on the pile, and the last is the top.
  */
-export function togglePlayCard(
-  held: readonly PieceId[],
-  id: PieceId,
-  state?: ChromalyState,
-  seat?: SeatId,
-): PieceId[] {
+export function togglePlayCard(held: readonly PieceId[], id: PieceId): PieceId[] {
   if (held.includes(id)) return held.filter((x) => x !== id);
   const card = parseCard(id);
-  const alone = state !== undefined && seat !== undefined && needsChoice(state, seat, id) !== null;
-  if (alone || !card || !groupable(card)) return [id];
+  if (!card || !groupable(card)) return [id];
   const first = held[0] ? parseCard(held[0]) : null;
   if (!first || !sameGroup(first, card)) return [id];
   return [...held, id];
@@ -244,6 +240,8 @@ export function onPieceTap(
   id: PieceId,
   live: Live,
   toggleHeld: (id: PieceId) => void,
+  /** What is picked up already, in the order it was picked. */
+  held: readonly PieceId[] = [],
 ): void {
   const state = live.state;
   const seat = view.viewerSeat;
@@ -267,10 +265,20 @@ export function onPieceTap(
 
   if (!canAct(view, live)) return;
 
+  // Putting a card back is always allowed.
+  if (held.includes(id)) {
+    toggleHeld(id);
+    return;
+  }
+
   const refused = whyNotPlayable(state, seat, id);
-  // A pair is picked a card at a time, so a card that could be half of one may
-  // be picked even when it could not go down alone.
-  if (refused && !(couldPair(state, seat, id) && state.drawn === null)) {
+  // A group is picked a card at a time, and the FIRST has to go on the pile by
+  // itself: a card that could not may JOIN a group already picked up, but never
+  // start one (the user, 2026-10-31).
+  const first = held[0] === undefined ? null : parseCard(held[0]);
+  const mine = parseCard(id);
+  const joins = first !== null && mine !== null && sameGroup(first, mine) && state.drawn === null;
+  if (refused && !joins) {
     announce(refused, "bad");
     return;
   }
@@ -383,13 +391,15 @@ function swappingNow(view: ChromalyView, live: Live): boolean {
 }
 
 /** What the held card is waiting on, if it is waiting on anything. */
-function pickedChoice(
+export function pickedChoice(
   view: ChromalyView,
   state: ChromalyState,
   held: readonly PieceId[],
 ): "colour" | "swap" | null {
-  if (held.length !== 1 || !isSeated(view, state)) return null;
-  return needsChoice(state, view.viewerSeat, held[0]!);
+  if (held.length === 0 || !isSeated(view, state)) return null;
+  if (held.length === 1) return needsChoice(state, view.viewerSeat, held[0]!);
+  // A group of 7s swaps once, so it asks once; no other group asks for anything.
+  return swapsHands(state, view.viewerSeat, held) ? "swap" : null;
 }
 
 /**
@@ -633,7 +643,6 @@ function ChoicePanel({
   onClearHeld: () => void;
 }) {
   const state = live.state;
-  const id = held[0]!;
   // A jumped-in 7 is already down: only its seat is left to send, and it
   // cannot be taken back.
   const jumped = state.swapping?.seat === view.viewerSeat;
@@ -642,7 +651,7 @@ function ChoicePanel({
       if (extra.swapWith !== undefined) live.submitAction({ t: "chooseSwap", seat: view.viewerSeat, with: extra.swapWith });
       return;
     }
-    if (sendPlay(view, live, [id], extra)) onClearHeld();
+    if (sendPlay(view, live, [...held], extra)) onClearHeld();
   };
   const others = Array.from({ length: state.seats }, (_, s) => s as SeatId).filter(
     (s) => s !== view.viewerSeat,
@@ -650,7 +659,7 @@ function ChoicePanel({
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-2 rounded-2xl bg-felt-950/88 px-3 py-3 ring-1 ring-brass-400/30 backdrop-blur-sm">
       <span className="text-[11px] font-bold tracking-wide text-bone-300 uppercase">
-        {choice === "colour" ? "Name a colour" : "Swap hands with"}
+        {choice === "colour" ? "Name a colour" : held.length > 1 ? `Swap hands with (${held.length} sevens, once)` : "Swap hands with"}
       </span>
       {choice === "colour" ? (
         <div className="flex gap-2">

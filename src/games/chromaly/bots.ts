@@ -26,6 +26,7 @@ import {
   COLORS,
   identical,
   isWild,
+  matches,
   parseCard,
   points,
   type Color,
@@ -39,6 +40,8 @@ import {
   nextSeat,
   plusFourIsBluff,
   playableIds,
+  swapsHands,
+  topOf,
 } from "./state";
 import type { ChromalyAction, ChromalyState } from "./types";
 
@@ -246,9 +249,17 @@ function doublesOptions(state: ChromalyState, seat: SeatId): PieceId[][] {
   const out: PieceId[][] = [];
   for (const group of byValue.values()) {
     if (group.length < 2) continue;
-    // The pair, then the biggest dump; the last named is the top.
+    // The pair, then the biggest dump. The FIRST card has to go on the pile by
+    // itself, so a card that does is put first; the last named is the top.
+    const top = topOf(state);
+    const first = group.find((id) => {
+      const c = parseCard(id);
+      return c !== null && top !== null && matches(c, top);
+    });
+    if (first === undefined) continue;
+    const ordered = [first, ...group.filter((id) => id !== first)];
     for (const size of new Set([2, group.length])) {
-      const picked = group.slice(0, size);
+      const picked = ordered.slice(0, size);
       if (legalDoubles(state, seat, picked)) out.push(picked);
     }
   }
@@ -331,6 +342,8 @@ function play(state: ChromalyState, seat: SeatId, id: PieceId, tier: Tier, rng: 
 
 function doublePlay(state: ChromalyState, seat: SeatId, cards: PieceId[], tier: Tier): ChromalyAction {
   const action: ChromalyAction & { t: "play" } = { t: "play", cards };
+  // A group of 7s swaps hands once, with whoever has the fewest cards.
+  if (swapsHands(state, seat, cards)) action.swapWith = swapTarget(state, seat);
   if (withCall(state, seat, handSize(state, seat) - cards.length, tier)) action.call = true;
   return action;
 }
