@@ -219,12 +219,12 @@ export function chromalyScenarios(live: Live) {
       ),
     },
     {
-      // The user, 2026-10-31: down to one card, nothing to play, and the draw
-      // turns up a wild under Crazy's rules - it must name a colour.
+      // The user, 2026-10-31: on two cards with nothing to play, CHROMA! called,
+      // and the draw turns up a wild under Crazy's rules - it must name a colour.
       label: "Draw a wild",
       run: go((s) =>
         arrange(s, {
-          hands: { [HERO]: ["B2.1"] },
+          hands: { [HERO]: ["B2.1", "G4.1"] },
           top: "R5.1",
           turn: HERO,
           draw: ["W.1"],

@@ -763,12 +763,18 @@ function playsItself(d: ChromalyState, seat: SeatId, id: PieceId): boolean {
  * 2026-10-30: "if that was my only option, why do I have to confirm?"),
  * once whatever put it there has been seen. Never while a window is open:
  * a jump-in can still add to the stack, and a last card can still be caught.
+ *
+ * Said in words, because nobody pressed anything: the cards just arrive and
+ * the next seat plays. A wild among them read as "I drew a wild and it was
+ * played for me, then a Reverse went down" (the user, 2026-10-31, twice).
  */
 function takeUnanswerable(d: ChromalyState, events: GameEvent[]): void {
   if (d.result !== null || d.winner !== null || d.window !== null) return;
   if (d.pendingDraw === null || d.challenge !== null) return;
   if (playableIds(d, d.turn).length > 0) return;
+  const amount = d.pendingDraw.amount;
   events.push({ t: "settle", after: "play" });
+  events.push(say(d.turn, `drew ${amount}, a penalty with nothing to stack on it`, `drew ${amount}, a penalty with nothing to stack on it`, "info", "bad"));
   reduceAccept(d, events);
 }
 
@@ -1169,6 +1175,9 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
       if (new Set(cards).size !== cards.length) return "the same card twice";
       if (cards.some((id) => !hand.includes(id as PieceId))) return "a card this seat does not hold";
       const ids = cards as PieceId[];
+      // Before the group branch, which used to skip it: with a card just
+      // drawn, that card is the only play there is.
+      if (state.drawn !== null && (ids.length > 1 || ids[0] !== state.drawn)) return "only the card just drawn may be played";
       const top = parseCard(ids[ids.length - 1]!)!;
       if (isWild(top)) {
         if (!COLORS.includes(action.color as Color)) return "name a colour for a wild";
@@ -1179,7 +1188,6 @@ export function validate(state: ChromalyState, seat: SeatId, action: ChromalyAct
         // A group of 7s swaps hands ONCE, so it names a seat once.
         return groupProblem(state, seat, ids) ?? swapProblem(ids, action.swapWith);
       }
-      if (state.drawn !== null && ids[0] !== state.drawn) return "only the card just drawn may be played";
       if (!canPlay(state, seat, ids[0]!)) return "that card cannot be played now";
       return swapProblem(ids, action.swapWith);
     }

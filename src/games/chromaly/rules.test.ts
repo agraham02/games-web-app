@@ -132,6 +132,21 @@ describe("drawing", () => {
     expect(played.state.discard.at(-1)).toBe("R9.1");
   });
 
+  it("will not take a GROUP while a drawn card is waiting, even one that includes it", () => {
+    // The group branch of `validate` used to skip the drawn-card rule.
+    const { def, state } = position({
+      rules: { doubles: true, plainPairs: true },
+      hands: { 0: ["B3.1", "G3.1"] },
+      top: "R3.1",
+      draw: ["Y3.1"],
+    });
+    const drew = act(def, state, 0, { t: "draw" }).state;
+    expect(drew.drawn).toBe("Y3.1");
+    expect(def.validate!(drew, 0, { t: "play", cards: ["B3.1", "G3.1"] })).toMatch(/only the card just drawn/);
+    expect(def.validate!(drew, 0, { t: "play", cards: ["Y3.1", "B3.1"] })).toMatch(/only the card just drawn/);
+    expect(def.validate!(drew, 0, { t: "play", cards: ["Y3.1"] })).toBeNull();
+  });
+
   it("rebuilds the draw pile from the discard, keeping the top card showing", () => {
     const { def, state } = position({ hands: { 0: ["B1.1"] }, top: TOP, draw: [] });
     const lean = {
@@ -482,6 +497,22 @@ describe("stacking", () => {
     expect(b.state.hands[2]).toHaveLength(2 + 4);
     expect(b.state.turn).toBe(3);
     expect(b.state.pendingDraw).toBeNull();
+  });
+
+  it("says so when a penalty is taken for a seat, since nobody pressed anything", () => {
+    // A wild among the cards, then the next seat's play, read as "my wild was
+    // played for me" (the user, 2026-10-31).
+    const { def, state } = stack("same");
+    const a = act(def, state, 0, { t: "play", cards: ["RD.1"] }).state;
+    const events = act(def, a, 1, { t: "play", cards: ["GD.1"] }).events;
+    const said = events.find((e) => e.t === "announce");
+    expect(said).toMatchObject({ actor: 2, tone: "info", selfTone: "bad" });
+    expect(said && "text" in said ? said.text : "").toMatch(/drew 4/);
+    // Said before the cards arrive, so it explains them.
+    expect(events.indexOf(said!)).toBeLessThan(events.findIndex((e) => e.t === "draw"));
+    // A penalty the seat chose to take is not announced: they pressed it.
+    const own = act(def, a, 1, { t: "acceptPenalty" }).events;
+    expect(own.some((e) => e.t === "announce")).toBe(false);
   });
 
   it("a stack is only taken for a seat when taking it is all they can do", () => {
