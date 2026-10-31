@@ -82,7 +82,8 @@ export interface SeatCue {
  *  - `mover` (the default): the seat that just moved stays lit. LRC's case:
  *    the dice it rolled are still on screen, and naming the next seat over
  *    them would be wrong.
- *  - `next`: the seat about to move is lit, and pulses. A card game's case:
+ *  - `next`: the seat about to move is lit, and pulses. Every game but LRC
+ *    (2026-10-31). A card game's case:
  *    nothing of the last move is still being shown, and with `mover` the
  *    ring sat on the PREVIOUS player for the whole of the next one's think,
  *    while the table's own line already said "Mia is thinking…" — so the ring

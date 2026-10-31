@@ -660,6 +660,23 @@ describe("Jump-In", () => {
     expect(act(def, state, 0, { t: "play", cards: ["R7.1"] }).state.window).toBeNull();
   });
 
+  it("lets the same seat jump in again on the very next play (the user, 2026-10-31)", () => {
+    const { def, state } = position({
+      rules: { jumpIn: true },
+      hands: { 0: ["R8.1", "B1.1", "B2.1"], 1: ["Y1.1", "Y9.1"], 2: ["R8.2", "R3.2", "G1.1", "G2.1"], 3: ["R3.1", "Y5.1", "Y6.1"] },
+      top: "R5.1",
+    });
+    const opened = act(def, state, 0, { t: "play", cards: ["R8.1"] }).state;
+    const jumped = act(def, opened, 2, { t: "jumpIn", seat: 2, card: "R8.2" }).state;
+    // On from the jumper: seat 3, not seat 1 who was next before the jump.
+    expect(jumped.turn).toBe(3);
+    const next = act(def, jumped, 3, { t: "play", cards: ["R3.1"] }).state;
+    expect(next.window?.jumpers).toEqual([2]);
+    const again = act(def, next, 2, { t: "jumpIn", seat: 2, card: "R3.2" }).state;
+    expect(again.discard.slice(-2)).toEqual(["R3.1", "R3.2"]);
+    expect(again.turn).toBe(3);
+  });
+
   it("plays on from the jumper's seat", () => {
     const { def, state } = position(jump);
     const opened = act(def, state, 0, { t: "play", cards: ["R7.1"] }).state;

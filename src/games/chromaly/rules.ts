@@ -712,8 +712,12 @@ function reduceDraw(d: ChromalyState, events: GameEvent[]): void {
   const tries = d.rules.drawToMatch ? Number.POSITIVE_INFINITY : 1;
   for (let i = 0; i < tries; i++) {
     // One at a time (the user, 2026-10-30): each card lands, and is seen,
-    // before the next leaves the pile.
-    if (i > 0) events.push({ t: "pause" });
+    // before the next leaves the pile. A `settle` after the deal, not a
+    // `pause`: a pause is one move's length (0.3 s) and started as the card
+    // was still flying, so a long draw ran past at three a second - "still
+    // too fast" (the user, 2026-10-31). This waits for the card to land, then
+    // holds a beat: about 0.7 s a card.
+    if (i > 0) events.push({ t: "settle", after: "deal" });
     const [card] = drawCards(d, seat, 1, events);
     if (card === undefined) break;
     if (playableNow(d, seat, card)) {

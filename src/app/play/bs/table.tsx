@@ -450,7 +450,7 @@ export function playerViews(view: BsView, state: BsState, live: Live): SeatView[
       ? { active: seat === challenged, thinking: false }
       : letGo
         ? { active: seat === live.currentSeat, thinking: false }
-        : seatCue(live, seat);
+        : seatCue(live, seat, "next");
   for (let i = 0; i < state.seats; i++) {
     const seat = i as SeatId;
     if (seat === view.viewerSeat) continue;

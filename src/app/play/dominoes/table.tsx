@@ -389,7 +389,7 @@ export function playerViews(view: DomView, state: DomState, live: Live): SeatVie
     // "Who just moved" and "who are we waiting on" — see `seatCue`. The
     // second used to have no answer, so a human's pod only lit once they
     // acted, a whole turn late.
-    const cue = seatCue(live, seat);
+    const cue = seatCue(live, seat, "next");
     const isPartner = seat === hero;
     out.push({
       seat,
