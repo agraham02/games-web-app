@@ -751,7 +751,9 @@ export function playerViews(view: ChromalyView, state: ChromalyState, live: Live
       ? { active: seat === by, thinking: false }
       : letGo
         ? { active: seat === live.currentSeat, thinking: false }
-        : seatCue(live, seat);
+        : // The seat about to move lights for its whole pause, not the one
+          // that moved before it (see `HoldShows`).
+          seatCue(live, seat, "next");
   // Every seat but the VIEWER's own, counted from 0: the two are the same
   // thing only while the viewer is seat 0, and online they are not.
   for (let i = 0; i < state.seats; i++) {
