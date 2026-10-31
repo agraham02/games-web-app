@@ -284,10 +284,12 @@ describe("the shipped data", () => {
   it("is the size the build script says, and small enough to ship", () => {
     // 15,000 common words, less the few Numberbatch does not know.
     expect(vocab.length).toBeGreaterThan(14_900);
-    expect(brain.dim).toBe(300);
+    expect(brain.dim).toBe(150);
     expect(vectors.length).toBe(vocab.length * brain.dim);
-    // Solo Mind Meld fetches these before its first deal.
-    expect(vectors.length + vocabJson.length).toBeLessThan(5 * 1024 * 1024);
+    // Solo Mind Meld fetches these before its first deal, from a host that may
+    // have just woken up (Render's free tier): keep it small. Half this size,
+    // and half the work per word, is why it is 150 numbers a word, not 300.
+    expect(vectors.length + vocabJson.length).toBeLessThan(2.5 * 1024 * 1024);
   });
 
   it("is lowercase words of three to fourteen letters, with no duplicates", () => {

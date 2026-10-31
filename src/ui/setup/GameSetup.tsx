@@ -17,6 +17,7 @@ import { GAMES, type GameId } from "@/session/registry";
 import { Reveal } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
 import { SetupShell } from "@/ui/primitives/SetupShell";
+import { GameCredit } from "@/ui/GameCredit";
 import { GameOptions, fieldCount, type SetupValue } from "./GameOptions";
 import { defaultSetup, isDefaultSetup, useSavedSetup } from "./savedSetup";
 
@@ -85,6 +86,7 @@ export function GameSetup({
         <div className="w-full rounded-md border border-bone-50/10 p-5">
           <GameOptions game={game} mode="solo" value={value} onChange={onChange} />
         </div>
+        <GameCredit game={game} className="w-full" />
       </Reveal>
     </SetupShell>
   );

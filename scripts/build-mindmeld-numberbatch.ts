@@ -28,6 +28,11 @@
  * stop words, nothing rude); pass the shipped `vocab-v2.json` to rebuild. A
  * word Numberbatch does not know is dropped.
  *
+ * The shipped build is 150 (`... words.json 150`): the vectors are half the
+ * size to download — which matters on a free host that has just woken up — and
+ * a bot's word takes half the CPU, on a host with a fraction of one. Measured
+ * on the bot panel it is within noise of 300.
+ *
  * `dims` (default 300, Numberbatch's own): fewer is a smaller download. The
  * vectors are reduced by PCA — the directions the kept words vary along most —
  * not truncated, because Numberbatch's dimensions are not ordered by importance.
@@ -37,6 +42,7 @@
  */
 
 import { createReadStream, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { createGunzip } from "node:zlib";
@@ -90,8 +96,13 @@ async function main() {
   });
 
   mkdirSync(OUT, { recursive: true });
+  const vocabJson = JSON.stringify(words);
   writeFileSync(join(OUT, "vectors-v2.bin"), bytes);
-  writeFileSync(join(OUT, "vocab-v2.json"), JSON.stringify(words));
+  writeFileSync(join(OUT, "vocab-v2.json"), vocabJson);
+  // Served instead of the raw file to a browser that accepts gzip
+  // (`src/server/wordFiles.ts`); a test holds the two in step.
+  writeFileSync(join(OUT, "vectors-v2.bin.gz"), gzipSync(bytes, { level: 9 }));
+  writeFileSync(join(OUT, "vocab-v2.json.gz"), gzipSync(vocabJson, { level: 9 }));
   const missing = order.filter((w) => !found.has(w));
   console.log(`kept ${words.length} of ${order.length} words at ${DIMS} dims -> ${(bytes.length / 1024).toFixed(0)} KB`);
   console.log(`not in Numberbatch (${missing.length}): ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ", ..." : ""}`);

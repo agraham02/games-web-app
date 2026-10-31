@@ -3,9 +3,8 @@
  * screen that is not a game table (home, setup, room entry, the lobby).
  * Rendered by `SetupShell` and the home page, never over a table.
  *
- * Under it, the credit Mind Meld's word data requires: its vectors are
- * ConceptNet Numberbatch (CC BY-SA 4.0), whose licence asks for attribution
- * where people can see it. See `public/mindmeld/NOTICE.txt`.
+ * Mind Meld's data credit is NOT here: it belongs on Mind Meld's own screens
+ * (`ui/GameCredit.tsx`).
  */
 
 const LINK =
@@ -23,27 +22,6 @@ export function Credit() {
       <a href="https://www.instagram.com/ahmad_g02" target="_blank" rel="noopener noreferrer" className={LINK}>
         Instagram
       </a>
-      <p className="w-full pt-1 text-center text-[10px] leading-relaxed text-bone-600">
-        Mind Meld&rsquo;s bots use{" "}
-        <a
-          href="https://github.com/commonsense/conceptnet-numberbatch"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={LINK}
-        >
-          ConceptNet Numberbatch
-        </a>{" "}
-        by Luminoso Technologies, Inc., under{" "}
-        <a
-          href="https://creativecommons.org/licenses/by-sa/4.0/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={LINK}
-        >
-          CC BY-SA 4.0
-        </a>
-        .
-      </p>
     </footer>
   );
 }

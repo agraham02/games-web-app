@@ -1,7 +1,7 @@
 /**
  * A bot's brain made of word vectors, steered by what people actually say.
  *
- * Each word is a point in a 300-dimensional space where related words sit close
+ * Each word is a point in a 150-dimensional space where related words sit close
  * together (ConceptNet Numberbatch, trimmed to the commonest 15,000 words and
  * kept as signed bytes: `scripts/build-mindmeld-numberbatch.ts`; CC BY-SA 4.0,
  * credited in `ui/primitives/Credit.tsx`). A word that connects "beach"
@@ -35,7 +35,11 @@ import { associationsOf } from "./associations";
 import { STARTERS, type BridgeOptions, type WordBrain } from "./brain";
 import { lemmas, normalize, tokens } from "./words";
 
-/** The shipped files, versioned so a page with an old brain cached never reads a new one wrongly. */
+/**
+ * The shipped files. The version is in the NAME because they are served as
+ * immutable for a year (`next.config.ts`): change the data, change the name,
+ * or every browser that has the old one keeps it.
+ */
 export const VOCAB_FILE = "vocab-v2.json";
 export const VECTORS_FILE = "vectors-v2.bin";
 
