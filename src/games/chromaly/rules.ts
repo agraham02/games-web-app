@@ -689,9 +689,9 @@ function shuffleHands(d: ChromalyState, seat: SeatId, events: GameEvent[]): void
   const all: PieceId[] = [];
   for (let s = 0; s < d.seats; s++) all.push(...d.hands[s as SeatId]!);
   events.push({ t: "sweep", pieces: all, to: "deck" }, { t: "shuffle", seed: d.plays });
-  // The pile sits in the middle for a beat before it goes out again, and goes
-  // out at a pace the table can follow: gathered and dealt at the speed of a
-  // round's deal, it was over before it read (the user, 2026-10-31).
+  // The pile sits in the middle for a beat before it goes out again: gathered
+  // and dealt in one breath it was over before it read. The deal itself stays
+  // at a round's pace; slowed, it dragged (the user, 2026-10-31).
   events.push({ t: "settle", after: "deal" });
   d.reshuffles += 1;
   const rng = createRng(hashString(`chromaly|${d.secret}|${d.round}|${d.reshuffles}|hands`));
@@ -700,7 +700,7 @@ function shuffleHands(d: ChromalyState, seat: SeatId, events: GameEvent[]): void
   let to = nextSeat(d, seat);
   for (const id of pile) {
     d.hands[to]!.push(id);
-    events.push({ t: "deal", piece: id, to, faceUp: false, paced: true });
+    events.push({ t: "deal", piece: id, to, faceUp: false });
     to = nextSeat(d, to);
   }
 }

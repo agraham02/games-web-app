@@ -20,12 +20,6 @@ describe("choreograph", () => {
     }
   });
 
-  it("deals a `paced` run at half the speed, and only that run", () => {
-    const deal = (paced: boolean): GameEvent => ({ t: "deal", piece: "S", to: 0, faceUp: false, paced });
-    const steps = choreograph([deal(true), deal(true), deal(false), deal(false)]);
-    expect(steps.map((s) => s.offset)).toEqual([0, STAGGER.deal * 2000, STAGGER.deal * 1000, STAGGER.deal * 1000]);
-  });
-
   it("keeps a full 52-card deal under four seconds", () => {
     // End-to-end at 380ms each would be twenty seconds, which is why
     // the run overlaps at all.
