@@ -667,7 +667,7 @@ export function axisReach(ux: number, uy: number, size: PieceSize): number {
  * the hand's inner end would dip far into the table. See layout.ts's
  * `fannedFrame`.
  */
-export const TOP_HAND_LEAN = 25;
+export const TOP_HAND_LEAN = 15;
 /** The extra tilt a fanned opponent hand gives its outermost cards, in degrees. */
 export const HAND_FAN_TILT = 7;
 /** How far a fanned opponent hand's ends bow back toward its pod, in px. */

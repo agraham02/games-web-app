@@ -1233,9 +1233,14 @@ describe("chip piles that become one stack", () => {
 
   it("stacks a seat's pile past three rows", () => {
     const top = (g: ReturnType<typeof resolveTable>) => g.seats.find((s) => s.anchor === "top")!.seat;
-    const g = phone();
+    // Three seats: nobody at the sides for a top seat's pile to reach.
+    const g = resolveTable({ seats: 3, width: 390, height: 844, handZone: 16, bandZone: 64 });
     expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 6 })).toBe(false);
     expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 7 })).toBe(true);
+    // Nine: a third row would land on the high side seat's pile beside it.
+    const crowded = phone();
+    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 4 })).toBe(false);
+    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 5 })).toBe(true);
     const l = laptop();
     expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 9 })).toBe(false);
     expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 10 })).toBe(true);
@@ -1432,3 +1437,54 @@ describe("opponents' hands - never on another seat", () => {
   }
 });
 
+
+/**
+ * The same rule for what a seat has won: LRC's chips, and any face-up pile
+ * beside a pod, never land on another seat's pod or pile, on any screen.
+ */
+describe("chip piles - never on another seat", () => {
+  const SCREENS = [
+    ...TABLE_VIEWPORTS,
+    { name: "phone small", w: 360, h: 780 },
+    { name: "phone big", w: 430, h: 932 },
+    { name: "laptop wide 125%", w: 2038, h: 973 },
+  ];
+
+  it("keeps every seat's chips off every other seat's pod and chips", () => {
+    const hits = new Set<string>();
+    for (const vp of SCREENS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, handZone: 64, bandZone: 64 });
+        const d = g.miniCard.w;
+        for (const count of [1, 3, 6, 9, 12, 20]) {
+          const piles = g.seats
+            .filter((s) => !s.isHero)
+            .map((slot) => ({
+              slot,
+              discs: Array.from({ length: count }, (_, index): Box => {
+                const c = pieceOnScreen("collected", slot.seat, index, count, g);
+                const cx = (c.left + c.right) / 2;
+                const cy = (c.top + c.bottom) / 2;
+                return { x: cx - d / 2, y: cy - d / 2, w: d, h: d };
+              }),
+            }));
+          for (const a of piles) {
+            for (const other of g.seats) {
+              if (other.isHero || other.seat === a.slot.seat) continue;
+              if (a.discs.some((disc) => overlapsBox(disc, podBox(other, g.density)))) {
+                hits.add(`${vp.name} ${seats} seats, ${count} chips: seat ${a.slot.seat}'s on seat ${other.seat}'s pod`);
+              }
+            }
+            for (const b of piles) {
+              if (b.slot.seat <= a.slot.seat) continue;
+              if (a.discs.some((x) => b.discs.some((y) => overlapsBox(x, y)))) {
+                hits.add(`${vp.name} ${seats} seats, ${count} chips: seats ${a.slot.seat} and ${b.slot.seat}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect([...hits]).toEqual([]);
+  });
+});

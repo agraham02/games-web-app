@@ -30,7 +30,6 @@ import {
   topHandDrop,
   HAND_FAN_BOW,
   HAND_FAN_TILT,
-  TOP_HAND_DIP,
   TOP_HAND_LEAN,
   HAND_LIFT_ROOM,
   MAX_DISCARD_STEP_FRACTION,
@@ -105,7 +104,7 @@ const Z_SHOWN = 960;
  * every seat's pile but a rim side seat's (`rimPileSpot`), the viewer's own
  * included.
  */
-function groundPileSpot(g: TableGeometry, seat: SeatSlot, index: number, count: number) {
+function groundPileSpot(g: TableGeometry, seat: SeatSlot, index: number, count: number, shift = 0, narrow = false) {
   // A real grid, not a stack: a 0.6px-per-card offset (the old
   // value) is imperceptible on a ~30px chip, so two or three chips
   // rendered as one indistinguishable blob — exactly the "why does
@@ -142,7 +141,7 @@ function groundPileSpot(g: TableGeometry, seat: SeatSlot, index: number, count: 
   const chipSize = g.miniCard.w;
   // Two abreast on the rim (phones), like a side seat's pile above: three
   // under a top pod reached into the side pod beside it on a small phone.
-  const cols = g.tuck ? 2 : 3;
+  const cols = narrow ? 1 : g.tuck ? 2 : 3;
   const col = index % cols;
   const row = Math.floor(index / cols);
   const colSpacing = chipSize * 0.85;
@@ -199,8 +198,8 @@ function groundPileSpot(g: TableGeometry, seat: SeatSlot, index: number, count: 
   // confirmed once already at exactly this gap (~2-3px) in
   // /play/lrc before this was axis-correct.
   const clamped = clampToBox(
-    rowOriginX + px * colOffset,
-    rowOriginY + py * colOffset,
+    rowOriginX + px * (colOffset + shift),
+    rowOriginY + py * (colOffset + shift),
     g.box,
     g.miniCard.w / 2,
     g.miniCard.h / 2,
@@ -222,7 +221,7 @@ function isRimSidePile(g: TableGeometry, seat: SeatSlot): boolean {
  * a pile from a seat in the top corner ran up into the top seat's pod or
  * down into the pod stacked below it — `layout.test.ts` found both.
  */
-function rimPileSpot(g: TableGeometry, seat: SeatSlot, index: number, shape: RimPileShape) {
+function rimPileSpot(g: TableGeometry, seat: SeatSlot, index: number, shape: RimPileShape, shift = 0) {
   const pod = POD_SIZE[g.density];
   const d = g.miniCard.w;
   if (shape.kind === "hang") {
@@ -231,7 +230,7 @@ function rimPileSpot(g: TableGeometry, seat: SeatSlot, index: number, shape: Rim
     const row = Math.floor(index / 2);
     return clampToBox(
       seat.x + (col - 0.5) * d * 0.86,
-      seat.y + pod.h / 2 + 4 + d / 2 + row * shape.step,
+      seat.y + pod.h / 2 + 4 + d / 2 + row * shape.step + shift,
       g.box,
       g.miniCard.w / 2,
       g.miniCard.h / 2,
@@ -256,7 +255,7 @@ function rimPileSpot(g: TableGeometry, seat: SeatSlot, index: number, shape: Rim
   );
   return clampToBox(
     seat.x + inward * (pod.w / 2 + 6 + d / 2 + col * step),
-    rowY,
+    rowY + shift,
     g.box,
     g.miniCard.w / 2,
     g.miniCard.h / 2,
@@ -320,19 +319,144 @@ function rowsClear(g: TableGeometry, cols: number, spot: (index: number) => { cx
 interface PilePlan {
   shape: RimPileShape | null;
   cap: number;
+  /** How far the whole pile slid along its row (or a rim side pile's column) to keep off another seat. */
+  shift: number;
+  /** One chip wide, where two or three abreast left a neighbour no room. */
+  narrow?: boolean;
 }
 
 const pilePlans = new WeakMap<TableGeometry, Map<SeatId, PilePlan>>();
 
 function pilePlan(g: TableGeometry, seat: SeatSlot): PilePlan {
   let plans = pilePlans.get(g);
-  if (!plans) pilePlans.set(g, (plans = new Map()));
-  let plan = plans.get(seat.seat);
-  if (!plan) plans.set(seat.seat, (plan = planPile(g, seat)));
-  return plan;
+  if (!plans) pilePlans.set(g, (plans = planPiles(g)));
+  return plans.get(seat.seat) ?? { ...planPile(g, seat), shift: 0 };
 }
 
-function planPile(g: TableGeometry, seat: SeatSlot): PilePlan {
+/** Where chip `index` of a seat's pile goes, as planned. */
+function pileSpot(
+  g: TableGeometry,
+  seat: SeatSlot,
+  index: number,
+  count: number,
+  plan: Pick<PilePlan, "shape" | "shift" | "narrow">,
+) {
+  return isRimSidePile(g, seat)
+    ? rimPileSpot(g, seat, index, plan.shape!, plan.shift)
+    : groundPileSpot(g, seat, index, count, plan.shift, plan.narrow);
+}
+
+/**
+ * Every seat's pile at once, so that none lands on another's (the user,
+ * 2026-10-31: no overlaps, LRC included). Seat by seat - the viewer's, then
+ * the side seats', then the top seats' - each pile keeps off every pod, the
+ * dice and pot, and the piles already placed: where its first chip would not,
+ * it slides a little along its row; past the last chip that keeps clear, it
+ * becomes a stack. In a phone's top corner the side seat's pile and the
+ * top seat's used to share the same few pixels.
+ */
+function planPiles(g: TableGeometry): Map<SeatId, PilePlan> {
+  // Narrower piles only where they leave fewer piles unplaced: first the
+  // side seats' piles one chip wide, then the top seats' too. A pile that
+  // cannot be placed at any width (a top seat over the dice on a landscape
+  // phone) is no reason to narrow everybody else's.
+  let best: { plans: Map<SeatId, PilePlan>; unplaced: number } | null = null;
+  for (const narrow of [0, 1, 2] as const) {
+    const tried = tryPiles(g, narrow);
+    if (!best || tried.unplaced < best.unplaced) best = tried;
+    if (tried.unplaced === 0) break;
+  }
+  // Every opponent's pile stacks at the same count, so the table reads
+  // alike: some seats' chips loose and others' a numbered stack looked
+  // like two different states (the user, 2026-10-31, of hands; the same
+  // holds for chips). The tightest seat sets it. The viewer's own is apart.
+  const plans = best!.plans;
+  const opponents = g.seats.filter((s) => !s.isHero).map((s) => plans.get(s.seat)!);
+  const cap = Math.min(...opponents.map((plan) => plan.cap));
+  for (const plan of opponents) plan.cap = cap;
+  return plans;
+}
+
+function tryPiles(g: TableGeometry, narrow: 0 | 1 | 2): { plans: Map<SeatId, PilePlan>; unplaced: number } {
+  const plans = new Map<SeatId, PilePlan>();
+  let unplaced = 0;
+  const d = g.miniCard.w;
+  const disc = (at: { cx: number; cy: number }, pad = 0): Box => ({
+    x: at.cx - d / 2 - pad,
+    y: at.cy - d / 2 - pad,
+    w: d + 2 * pad,
+    h: d + 2 * pad,
+  });
+  const meets = (a: Box, b: Box) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  const keep = centreKeepOut(g);
+  // How far a stack reaches from its pile's first spot (see `layoutPiece`).
+  const stackHeight = d * CHIP_STACK_STEP * CHIP_STACK_LIFT_MAX;
+  const placed: Box[] = [];
+  const rank = (s: SeatSlot) => (s.isHero ? 0 : s.anchor === "left" || s.anchor === "right" ? 1 : 2);
+  // Nearest the middle of the board first, so where two piles want the same
+  // stretch it is the seat further out whose pile stacks: a side pile grows
+  // toward the middle, and placed first, the upper of two side seats ran its
+  // column down through the lower one's.
+  const { cx: midX, cy: midY } = boxCentre(g.zones.play);
+  const off = (s: SeatSlot) => Math.hypot(s.x - midX, s.y - midY);
+  const order = [...g.seats].sort((a, b) => rank(a) - rank(b) || off(a) - off(b) || a.seat - b.seat);
+  const pieces = order.map((seat) => {
+    const planned = planPile(g, seat);
+    const side = isRimSidePile(g, seat);
+    const base = {
+      ...planned,
+      // A side pile two abreast becomes one; a pile on the felt, one chip wide.
+      shape: side && narrow >= 1 && planned.shape?.kind === "beside" ? ({ kind: "beside", cols: 1 } as const) : planned.shape,
+      narrow: !side && !seat.isHero && narrow >= 2,
+    };
+    const pods = g.seats.filter((s) => !s.isHero && s.seat !== seat.seat).map((s) => podBox(s, g.density));
+    const spot = (index: number, count: number, shift: number) =>
+      pileSpot(g, seat, index, count, { shape: base.shape, shift, narrow: base.narrow });
+    // Every chip of a pile of `count`: a short row is centred, so a pile of
+    // one does not sit where the first of a pile of three does. A pile of one
+    // is also where a stack stands, reaching a few px the way the pile grows.
+    const discs = (count: number, shift: number) => {
+      const out = Array.from({ length: count }, (_, index) => disc(spot(index, count, shift), 2));
+      if (count === 1) {
+        const first = spot(0, 1, shift);
+        const down = spot(base.cap, base.cap + 1, shift).cy > first.cy + 0.5;
+        out.push(disc({ cx: first.cx, cy: first.cy + (down ? stackHeight : -stackHeight) }, 2));
+      }
+      return out;
+    };
+    return { seat, base, pods, discs, shift: 0 };
+  });
+  const clear = (boxes: Box[], blockers: Box[]) => boxes.every((c) => !blockers.some((b) => meets(c, b)));
+
+  // First every seat's first spot - the one its stack stands on - so each has
+  // at least that, wherever the piles nearer the middle would have grown.
+  const firsts = new Map<SeatId, Box[]>();
+  for (const piece of pieces) {
+    const blockers = [...keep, ...piece.pods, ...[...firsts.values()].flat()];
+    let shift: number | null = null;
+    for (let k = 0; k <= d * 3 && shift === null; k += 2) {
+      if (clear(piece.discs(1, k), blockers)) shift = k;
+      else if (k > 0 && clear(piece.discs(1, -k), blockers)) shift = -k;
+    }
+    if (shift === null) unplaced++;
+    piece.shift = shift ?? 0;
+    firsts.set(piece.seat.seat, piece.discs(1, piece.shift));
+  }
+
+  // Then each pile grows, one chip at a time, while it keeps clear of the
+  // others' first spots and of the piles already grown.
+  for (const piece of pieces) {
+    const others = [...firsts.entries()].filter(([seat]) => seat !== piece.seat.seat).flatMap(([, boxes]) => boxes);
+    const blockers = [...placed, ...keep, ...piece.pods, ...others];
+    let cap = 1;
+    while (cap < piece.base.cap && clear(piece.discs(cap + 1, piece.shift), blockers)) cap++;
+    plans.set(piece.seat.seat, { shape: piece.base.shape, cap, shift: piece.shift, narrow: piece.base.narrow });
+    for (let count = 1; count <= cap; count++) placed.push(...piece.discs(count, piece.shift));
+  }
+  return { plans, unplaced };
+}
+
+function planPile(g: TableGeometry, seat: SeatSlot): Omit<PilePlan, "shift"> {
   if (!isRimSidePile(g, seat)) {
     const cols = g.tuck ? 2 : 3;
     const rows = rowsClear(g, cols, (i) => groundPileSpot(g, seat, i, cols * 3));
@@ -370,6 +494,7 @@ const POT_GRID_MAX = 10;
 /** Each chip up a stack sits this share of a chip higher, up to this many. */
 const CHIP_STACK_STEP = 0.04;
 const CHIP_STACK_LIFT_MAX = 6;
+
 /**
  * How far apart a gathered hand's cards sit (see `layoutPiece`), and the most
  * the whole stack may spread, so a 25-card hand stays a stack and not a fan.
@@ -657,6 +782,8 @@ interface Lane {
   frame: HandFrame;
   lo: number;
   hi: number;
+  /** The longest any hand at this table may run, where they are all to look alike. */
+  most?: number;
 }
 
 function laneFor(g: TableGeometry, f: HandFrame, frames: readonly HandFrame[]): Lane {
@@ -707,6 +834,7 @@ function lanesFor(
   g: TableGeometry,
   key: string,
   frameOf: (seat: SeatSlot) => HandFrame,
+  uniform = false,
 ): Map<SeatId, Lane> {
   let byKey = laneCache.get(g);
   if (!byKey) laneCache.set(g, (byKey = new Map()));
@@ -714,6 +842,13 @@ function lanesFor(
   if (lanes) return lanes;
   const frames = g.seats.filter((s) => !s.isHero).map(frameOf);
   lanes = new Map(frames.map((f) => [f.seat.seat, laneFor(g, f, frames)]));
+  if (uniform) {
+    // Hands tucked behind their pods all spread alike: a side seat pinched
+    // under a top corner pod showed a sliver beside everyone else's fan
+    // (the user, 2026-10-31). The tightest lane sets it for every seat.
+    const most = Math.min(...[...lanes.values()].map((l) => Math.max(0, l.hi - l.lo)));
+    for (const lane of lanes.values()) lane.most = most;
+  }
   byKey.set(key, lanes);
   return lanes;
 }
@@ -725,7 +860,7 @@ function lanesFor(
 function laneSlot(lane: Lane, index: number, count: number) {
   const f = lane.frame;
   const room = Math.max(0, lane.hi - lane.lo);
-  const span = Math.min(f.span(count), room);
+  const span = Math.min(f.span(count), room, lane.most ?? Infinity);
   const centre =
     lane.hi < lane.lo ? (lane.lo + lane.hi) / 2 : Math.min(Math.max(0, lane.lo + span / 2), lane.hi - span / 2);
   return radialFanSlot({
@@ -802,13 +937,13 @@ function fannedFrame(g: TableGeometry, seat: SeatSlot, kind: PieceKind | undefin
     const turned = (miniW / 2) * Math.abs(v.x) + (miniH / 2) * v.y;
     const leant: HandFrame = {
       ...frame,
-      // Under the pod, a little toward the board, and halfway down the room
-      // its lean is given: the inner end rises as the outer one dips, and
-      // started level with a flat hand the inner end ran into the pod and
-      // pushed the whole hand out past the pod's far side.
+      // Tucked up under the pod's inner corner: the inner end rises beside
+      // the pod, the outer end under it. Hung lower, or further out, the
+      // hand left an empty wedge of felt between itself and the pod (the
+      // user, 2026-10-31).
       anchor: {
-        x: seat.x + v.x * (pod.w / 2),
-        y: seat.y + pod.h / 2 + TILE_HAND_GAP + turned + (g.miniCard.h * TOP_HAND_DIP) / 2,
+        x: seat.x + Math.sign(v.x) * (pod.w / 2),
+        y: seat.y + pod.h / 2 + TILE_HAND_GAP + turned,
       },
       spread: { x: -v.y, y: v.x },
       away: { x: -v.x, y: -v.y },
@@ -878,7 +1013,7 @@ function tuckedHand(
   // Kept to its own stretch of the rim: spread wider than its pod, a hand
   // ran under the next pod along and its peek showed from beneath it, or
   // from under a top-corner pod (the user, 2026-10-31: no overlaps).
-  const lane = lanesFor(g, `tuck|${kind}`, (s) => tuckedFrame(g, s, kind)).get(seat.seat)!;
+  const lane = lanesFor(g, `tuck|${kind}`, (s) => tuckedFrame(g, s, kind), true).get(seat.seat)!;
   const slot = laneSlot(lane, p.index, p.count);
   return {
     x: slot.x - base.w / 2,
@@ -1600,14 +1735,10 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
         return { x, y, rotate: seat.rotation, scale: miniScale, z: Z_TUCKED_WON + p.index, opacity };
       }
 
-      // A face-up pile beside a SIDE pod on the rim: see `rimPileSpot`.
-      if (isRimSidePile(g, seat)) {
-        const spot = rimPileSpot(g, seat, p.index, pilePlan(g, seat).shape!);
-        const { x, y } = centred(spot.cx, spot.cy, g);
-        return { x, y, rotate: 0, scale: miniScale, z, opacity };
-      }
-
-      const spot = groundPileSpot(g, seat, p.index, p.count);
+      // A face-up pile: beside a SIDE pod on the rim (`rimPileSpot`), on the
+      // felt toward the board everywhere else (`groundPileSpot`), as planned
+      // for the whole table so no two meet (`planPiles`).
+      const spot = pileSpot(g, seat, p.index, p.count, pilePlan(g, seat));
       const { x, y } = centred(spot.cx, spot.cy, g);
       return { x, y, rotate: 0, scale: miniScale, z, opacity };
     }
