@@ -32,6 +32,7 @@ import type {
   PieceMeta,
   Placement,
   PlacementMap,
+  SeatId,
 } from "@/engine/types";
 
 /**
@@ -226,9 +227,23 @@ export function withFacing(event: GameEvent, after: PlacementMap): GameEvent {
   // in the hand it went to. One played away in the same batch (Chromaly's
   // draw-until-playable under Force Play) ends face up on the discard, and
   // correcting its DRAW to match showed an opponent's card arriving in their
-  // hand face up (the user, 2026-10-30).
-  if ((event.t === "deal" || event.t === "draw") && (landed.zone !== "hand" || landed.seat !== event.to)) return event;
+  // hand face up (the user, 2026-10-30). Into a hand this viewer can see, it
+  // arrives face up: arriving face down, a player's own Skip landed as a back,
+  // whose colour wheel reads as a wild, and then "a Skip played itself"
+  // (the user, 2026-10-31).
+  if ((event.t === "deal" || event.t === "draw") && (landed.zone !== "hand" || landed.seat !== event.to)) {
+    return landed.faceUp && handShown(after, event.to) ? { ...event, faceUp: true } : event;
+  }
   return { ...event, faceUp: landed.faceUp };
+}
+
+/** Whether a seat's hand is face up in this picture: the viewer's own, offline or on. */
+function handShown(after: PlacementMap, seat: SeatId): boolean {
+  for (const id in after) {
+    const at = after[id]!;
+    if (at.zone === "hand" && at.seat === seat && at.faceUp) return true;
+  }
+  return false;
 }
 
 function withPiece(event: GameEvent, map: (id: PieceId) => PieceId): GameEvent {

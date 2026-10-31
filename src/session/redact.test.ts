@@ -954,4 +954,21 @@ describe("withFacing", () => {
     const out = withFacing({ t: "draw", piece: "AS", from: "deck", to: 2, faceUp: false }, { AS: at("discard", 0, true) });
     expect(out).toMatchObject({ faceUp: false });
   });
+
+  it("shows a draw played away in the same batch when it went into the viewer's own hand", () => {
+    // Face down, the hero's own drawn Skip landed as a back - whose wheel reads as a wild.
+    const out = withFacing(
+      { t: "draw", piece: "AS", from: "deck", to: 0, faceUp: false },
+      { AS: at("discard", 0, true), KH: at("hand", 0, true) },
+    );
+    expect(out).toMatchObject({ faceUp: true });
+  });
+
+  it("keeps it down when the card ends face down, even from the viewer's own hand", () => {
+    const out = withFacing(
+      { t: "draw", piece: "AS", from: "deck", to: 0, faceUp: false },
+      { AS: at("discard", 0, false), KH: at("hand", 0, true) },
+    );
+    expect(out).toMatchObject({ faceUp: false });
+  });
 });

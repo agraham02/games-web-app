@@ -68,5 +68,5 @@ export function logFrame<A>(lastAction: MoveRecord<A> | null, events: readonly G
   if (process.env.NODE_ENV === "production") return;
   const line = describeFrame(lastAction, events);
   useMoveLog.getState().add(line);
-  console.debug(`[moves] ${line}`);
+  if (process.env.NODE_ENV !== "test") console.debug(`[moves] ${line}`);
 }
