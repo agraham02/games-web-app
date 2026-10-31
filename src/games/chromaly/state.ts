@@ -58,8 +58,13 @@ export const WINDOW_GRACE_MS = 900;
  */
 export const WINDOW_BEAT_MS = 120;
 
-/** A bot never answers a window sooner than this, in ms from it opening. */
-export const REACTION_MIN = 700;
+/**
+ * A bot never answers a window sooner than this, in ms from it opening. Raised
+ * from 700 (the user, 2026-10-31: a bot caught them a second or two after the
+ * button appeared). The first catch is the fastest of several bots, so the
+ * floor matters more than the average: it moved from about 1.1s to 1.4s.
+ */
+export const REACTION_MIN = 1100;
 /** ...nor later than this, or than the window less `REACTION_TAIL_MS`. */
 export const REACTION_MAX = 2600;
 export const REACTION_TAIL_MS = 600;
