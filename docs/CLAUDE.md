@@ -1188,6 +1188,46 @@ difficulty slider, and let Caribbean be set to three seats. Add an option
 to the spec and all three follow. Defaults are the solo values everywhere
 (the user's call).
 
+## Mind Meld's word data
+
+The bots think with word vectors, not an AI service, so the game costs nothing
+to run and works offline in a solo game (`games/mindmeld/vectorBrain.ts`).
+
+- **ConceptNet Numberbatch, 150 numbers a word, 15k common words.** It
+  replaced GloVe (2026-10-30): GloVe knows which words sit near each other in
+  news, so bots offered "palm" for beach + sun; Numberbatch is built from what
+  people say things relate to. It is CC BY-SA 4.0, which allows commercial use —
+  the app may go commercial, which is why the human free-association data
+  (Small World of Words NC-ND, Edinburgh EAT NC-SA) is NOT used, and the USF
+  norms' terms could not be read. Attribution is REQUIRED and lives in
+  `ui/GameCredit.tsx` (Mind Meld's solo setup, its lobby card and the bottom of
+  its Settings drawer — not the shared footer) and `public/mindmeld/NOTICE.txt`.
+  The two shipped word files are themselves CC BY-SA; the app's code is not.
+- **Rebuild:** `scripts/build-mindmeld-numberbatch.ts <numberbatch-en-19.08.txt.gz>
+  <words.json> 150`. The 325 MB source is downloaded by hand into the
+  git-ignored `.cache/mindmeld/` (never committed); `words.json` is the shipped
+  `vocab-v2.json` (the vocabulary, most common first — that order IS the
+  bot's idea of how common a word is). It writes `vectors-v2.bin`,
+  `vocab-v2.json` and a `.gz` of each; a test fails if a `.gz` is stale.
+- **Why 150 and not 300:** the host is Render's free tier — it sleeps when
+  idle (a request that finds it asleep waits ~50 s) and has a fraction of a CPU.
+  150 halves the download and the work per bot word (a word scans all 15k) and
+  measured within noise of 300 on the bot panel.
+- **Serving (`server/wordFiles.ts`):** the vectors are `application/octet-stream`,
+  which Next will not compress, so the server answers `/mindmeld/vectors|vocab-vN`
+  itself — the `.gz` to a browser that accepts gzip (1.5 MB on the wire, from
+  2.2), `Cache-Control: immutable` for a year so a returning player never asks
+  again (not even to revalidate against a sleeping server). **The version is in
+  the file name for that reason: change the data, bump `VECTORS_FILE`/`VOCAB_FILE`
+  in `vectorBrain.ts`.** Only a solo game downloads them; an online room's bots
+  run on the server, which reads them at start-up WHILE Next prepares.
+- **Bots meet a person differently from a bot:** `BotStrategy.choose` takes an
+  optional `BotContext` (`isLive`), which `GameSession` supplies; Mind Meld's bot
+  reads whether its partner's seat is live and says the likely answer to a
+  person (`BridgeOptions.partner`), but keeps the loose draw against another bot,
+  or two bots would meld every time. `brain.test.ts` measures both against a
+  modelled person and a simulated bot pair.
+
 ## Every game has its own surface (and the shell is near-black)
 
 Added 2026-10-30. Before it, every table, setup screen and lobby sat on one

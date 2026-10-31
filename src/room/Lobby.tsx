@@ -44,6 +44,7 @@ import { GameThumb, seatRange } from "@/ui/primitives/GameThumb";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { Toggle } from "@/ui/primitives/Toggle";
 import { SetupShell } from "@/ui/primitives/SetupShell";
+import { GameCredit } from "@/ui/GameCredit";
 import { GameOptions } from "@/ui/setup/GameOptions";
 import { readSavedSetup, saveSetup } from "@/ui/setup/savedSetup";
 import { useMediaQuery } from "@/ui/useMediaQuery";
@@ -353,6 +354,7 @@ function GamePanel({ api }: { api: RoomApi }) {
           </div>
         </Swap>
       ) : null}
+      {entry ? <GameCredit game={entry.id} className="border-t border-bone-50/8 pt-4" /> : null}
     </Card>
   );
 }

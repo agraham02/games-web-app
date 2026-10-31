@@ -24,6 +24,8 @@ import { attachWebSocketServer, WS_PATH } from "@/server/wsServer";
 import { debugEnabled, handleDebugRequest } from "@/server/debug";
 import { handleRejoinRequest } from "@/server/rejoin";
 import { handlePhotoRequest } from "@/server/photo";
+import { serveWordFile } from "@/server/wordFiles";
+import { join } from "node:path";
 import { log, setLogLevel } from "@/server/log";
 import { loadServerBrain } from "@/games/mindmeld/serverBrain";
 
@@ -37,6 +39,8 @@ const port = Number(process.env.PORT ?? 3000);
  */
 const hostname = process.env.HOSTNAME ?? "localhost";
 
+const WORD_DIR = join(process.cwd(), "public", "mindmeld");
+
 async function main(): Promise<void> {
   if (process.env.LOG_LEVEL) {
     setLogLevel(process.env.LOG_LEVEL as "debug" | "info" | "warn" | "error");
@@ -45,12 +49,15 @@ async function main(): Promise<void> {
   // Mind Meld's bots think with word vectors read from disk. Before the first
   // room can exist, so a table never starts on the stand-in by accident; if the
   // files are missing it is logged and the game plays on the stand-in.
-  const brainLoaded = await loadServerBrain();
-  if (brainLoaded) log.info("word brain loaded", { event: "mindmeld-brain" });
-  else log.warn("word brain missing: Mind Meld bots will use the stand-in", { event: "mindmeld-brain" });
-
+  //
+  // Read WHILE Next prepares, not before it: a cold start (a free host waking
+  // up) is the sum of its steps, and these two do not depend on each other.
+  const loadingBrain = loadServerBrain();
   const app = next({ dev, hostname, port });
   await app.prepare();
+  const brainLoaded = await loadingBrain;
+  if (brainLoaded) log.info("word brain loaded", { event: "mindmeld-brain" });
+  else log.warn("word brain missing: Mind Meld bots will use the stand-in", { event: "mindmeld-brain" });
   const handle = app.getRequestHandler();
 
   // `ROOM_GRACE_MS` shortens how long a dropped lobby member is kept, so the
@@ -93,6 +100,8 @@ async function main(): Promise<void> {
     if (handleRejoinRequest(req, res, registry)) return;
     // Members' photos — see server/photo.ts.
     if (handlePhotoRequest(req, res, registry)) return;
+    // Mind Meld's word files: gzipped and cached for good — see wordFiles.ts.
+    if (serveWordFile(req, res, WORD_DIR)) return;
     void handle(req, res);
   });
 

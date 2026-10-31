@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { installBrain } from "./brain";
-import { vectorBrainFrom } from "./vectorBrain";
+import { VECTORS_FILE, VOCAB_FILE, vectorBrainFrom } from "./vectorBrain";
 
 let loading: Promise<boolean> | null = null;
 
@@ -21,8 +21,8 @@ export function loadClientBrain(): Promise<boolean> {
   loading ??= (async () => {
     try {
       const [vocab, vectors] = await Promise.all([
-        fetch("/mindmeld/vocab-v1.json").then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status))))),
-        fetch("/mindmeld/vectors-v1.bin").then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status))))),
+        fetch(`/mindmeld/${VOCAB_FILE}`).then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status))))),
+        fetch(`/mindmeld/${VECTORS_FILE}`).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status))))),
       ]);
       installBrain(vectorBrainFrom(vocab, vectors));
       return true;

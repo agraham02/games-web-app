@@ -304,6 +304,16 @@ describe("the room client", () => {
       expect(screen.getByLabelText(/bot skill/i)).toBeDisabled();
     });
 
+    it("credits Mind Meld's word data in a Mind Meld lobby, and in no other", async () => {
+      await enterLobby({ gameId: "mindmeld", seats: 4 });
+      expect(screen.getByText(/ConceptNet Numberbatch/)).toBeInTheDocument();
+    });
+
+    it("does not credit it in a Spades lobby", async () => {
+      await enterLobby({ gameId: "spades", seats: 4, seatPlan: ["me", "bo", null, null] });
+      expect(screen.queryByText(/Numberbatch/)).toBeNull();
+    });
+
     it("does not tell the maker of a fresh room that the table is full", async () => {
       // No game yet means no seats: the plan's count is 0, and every row
       // used to read "No seat — Will watch — table full".

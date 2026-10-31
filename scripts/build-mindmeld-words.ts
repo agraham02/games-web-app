@@ -1,4 +1,9 @@
 /**
+ * SUPERSEDED for the vectors by `build-mindmeld-numberbatch.ts` (2026-10-30).
+ * Kept because its filters made the VOCABULARY — and its frequency order — that
+ * the Numberbatch build still uses (`vocab-v2.json`). Its own output (`-v1`
+ * files) is no longer shipped.
+ *
  * Builds Mind Meld's word vectors: `npx tsx scripts/build-mindmeld-words.ts <glove.gz>`.
  *
  * Run by hand, with the output committed (`public/mindmeld/`). Nothing here is

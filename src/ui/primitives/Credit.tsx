@@ -2,6 +2,9 @@
  * "Made by Ahmad Graham", with his site and Instagram: the footer of every
  * screen that is not a game table (home, setup, room entry, the lobby).
  * Rendered by `SetupShell` and the home page, never over a table.
+ *
+ * Mind Meld's data credit is NOT here: it belongs on Mind Meld's own screens
+ * (`ui/GameCredit.tsx`).
  */
 
 const LINK =

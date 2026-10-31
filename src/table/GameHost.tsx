@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { HERO, type GameDefinition, type PieceId, type SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
+import { GameCredit, hasGameCredit } from "@/ui/GameCredit";
 import { TableSurface } from "./TableSurface";
 import { SeatRing } from "./SeatRing";
 import { SeatBubbles } from "./SeatBubbles";
@@ -537,6 +538,11 @@ export function GameHostView<S, A>({
         // A game on this device can always be ended from here; a room's
         // table brings its own buttons instead.
         actions={menuActions ?? (serverDriven || !onLobby ? undefined : <EndGameAction onEnd={onLobby} />)}
+        footnote={
+          hasGameCredit(definition.id) ? (
+            <GameCredit game={definition.id} className="border-t border-bone-50/10 pt-3" />
+          ) : undefined
+        }
       />
     </TableSurface>
   );

@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
 import type { BotDifficulty } from "@/engine/types";
+import { associationsOf } from "./associations";
 import { fallbackBrain } from "./brain";
 import { isProfane } from "./profanity";
-import { DIM, vectorBrainFrom } from "./vectorBrain";
+import { VECTORS_FILE, VOCAB_FILE, vectorBrainFrom } from "./vectorBrain";
 import { sameWord, tokens } from "./words";
 
 /**
@@ -18,8 +19,8 @@ import { sameWord, tokens } from "./words";
  * every time, which is no game at all.
  */
 
-const vocabJson = readFileSync("public/mindmeld/vocab-v1.json", "utf8");
-const vectors = readFileSync("public/mindmeld/vectors-v1.bin");
+const vocabJson = readFileSync(`public/mindmeld/${VOCAB_FILE}`, "utf8");
+const vectors = readFileSync(`public/mindmeld/${VECTORS_FILE}`);
 const brain = vectorBrainFrom(vocabJson, vectors);
 const TIERS: BotDifficulty[] = ["casual", "steady", "sharp"];
 
@@ -103,6 +104,106 @@ describe("it says what a person would", () => {
   });
 });
 
+/**
+ * What a person would say, as a distribution over the panel's answers: the
+ * list is written most-likely first, so the chance of the i-th is 1/(i+1),
+ * normalised. A MODEL — the panel's order is this repo's own judgement, not
+ * measured people — so it supports comparisons (does this change help?) and
+ * not absolute claims about how often a real partner will be met.
+ */
+function personSays(ok: readonly string[], word: string): number {
+  const total = ok.reduce((t, _, i) => t + 1 / (i + 1), 0);
+  const i = ok.findIndex((w) => sameWord(w, word));
+  return i < 0 ? 0 : 1 / (i + 1) / total;
+}
+
+describe("a bot with a person for a partner", () => {
+  /** Mean chance, over the panel, that the bot's word is the one a modelled person writes. */
+  function meets(tier: BotDifficulty, partner: "human" | "bot"): number {
+    let sum = 0;
+    let n = 0;
+    for (const [a, b, ok] of PANEL) {
+      for (let k = 0; k < 24; k++) {
+        const word = brain.bridge(a, b, {
+          exclude: [],
+          tier,
+          personality: (k % 6) / 5,
+          rng: createRng(k * 11 + 5),
+          partner,
+          misses: k % 4,
+        });
+        sum += personSays(ok, word);
+        n++;
+      }
+    }
+    return sum / n;
+  }
+  const bot = Object.fromEntries(TIERS.map((t) => [t, meets(t, "bot")])) as Record<BotDifficulty, number>;
+  const person = Object.fromEntries(TIERS.map((t) => [t, meets(t, "human")])) as Record<BotDifficulty, number>;
+
+  it("is met more often than the loose draw that keeps two bots apart, at every tier", () => {
+    // Recorded before the change (partner "bot", which is unchanged): casual
+    // 0.066, steady 0.168, sharp 0.234.
+    for (const tier of TIERS) {
+      expect(person[tier], `${tier}: ${JSON.stringify({ bot, person })}`).toBeGreaterThan(bot[tier] * 1.1);
+    }
+    expect(person.casual).toBeGreaterThan(bot.casual * 1.8);
+    expect(person.steady).toBeGreaterThan(0.2);
+  });
+
+  it("is still a better partner the higher the tier", () => {
+    expect(person.casual, JSON.stringify(person)).toBeLessThan(person.steady);
+    expect(person.steady).toBeLessThanOrEqual(person.sharp + 0.02);
+    expect(person.sharp).toBeGreaterThan(person.casual * 1.5);
+  });
+
+  it("does not ask a person to guess an obscure word it only knows from vectors", () => {
+    // Words people say (the hand-written associations) are exempt: a frequency
+    // order trained on news calls "sandwich" and "witch" rare, and people do
+    // not. It is the vector-only picks — "palm" for beach — this holds back.
+    const vocab = JSON.parse(vocabJson) as string[];
+    let obscure = 0;
+    let n = 0;
+    for (const [a, b] of PANEL) {
+      const said = new Set([...associationsOf(a), ...associationsOf(b)]);
+      for (let k = 0; k < 10; k++) {
+        const w = brain.bridge(a, b, { exclude: [], tier: "steady", personality: (k % 5) / 4, rng: createRng(k), partner: "human" });
+        n++;
+        if (!said.has(w) && vocab.indexOf(w) > 8000) obscure++;
+      }
+    }
+    expect(obscure, `${obscure}/${n}`).toBe(0);
+  });
+
+  it("still never repeats a word, says an input, or contains one", () => {
+    const said = ["summer", "sand", "ocean"];
+    for (let i = 0; i < 40; i++) {
+      const w = brain.bridge("beach", "sun", { exclude: said, tier: TIERS[i % 3]!, personality: (i % 5) / 4, rng: createRng(i), partner: "human" });
+      expect(said.some((x) => sameWord(x, w)), w).toBe(false);
+      for (const input of ["beach", "sun"]) {
+        expect(sameWord(w, input), w).toBe(false);
+        expect(w.includes(input), w).toBe(false);
+      }
+    }
+  });
+
+  it("can say a real word that is merely inside an input: ball for football", () => {
+    // Reachable, not necessarily preferred ("play" and "team" bridge the two
+    // better): keep excluding what it prefers until it has nothing better.
+    const exclude: string[] = [];
+    for (let i = 0; i < 60; i++) {
+      const w = brain.bridge("football", "game", { exclude, tier: "sharp", personality: 0.5, rng: createRng(i), partner: "human" });
+      if (w === "ball") return;
+      exclude.push(w);
+    }
+    expect.fail(`never said "ball"; said ${exclude.join(", ")}`);
+  });
+
+  it("does not start afresh on a word whose base form was just said", () => {
+    for (let i = 0; i < 120; i++) expect(brain.starter(createRng(i), ["stars"])).not.toBe("star");
+  });
+});
+
 describe("a pair of bots takes about as long to meet as a pair of people", () => {
   /** Tries two bots of one tier take to say the same word, from a free start. */
   function tries(tier: BotDifficulty, seed: number, cap = 10): number {
@@ -181,9 +282,14 @@ describe("the shipped data", () => {
   const vocab = JSON.parse(vocabJson) as string[];
 
   it("is the size the build script says, and small enough to ship", () => {
-    expect(vocab).toHaveLength(15_000);
-    expect(vectors.length).toBe(vocab.length * DIM);
-    expect(vectors.length + vocabJson.length).toBeLessThan(2 * 1024 * 1024);
+    // 15,000 common words, less the few Numberbatch does not know.
+    expect(vocab.length).toBeGreaterThan(14_900);
+    expect(brain.dim).toBe(150);
+    expect(vectors.length).toBe(vocab.length * brain.dim);
+    // Solo Mind Meld fetches these before its first deal, from a host that may
+    // have just woken up (Render's free tier): keep it small. Half this size,
+    // and half the work per word, is why it is 150 numbers a word, not 300.
+    expect(vectors.length + vocabJson.length).toBeLessThan(2.5 * 1024 * 1024);
   });
 
   it("is lowercase words of three to fourteen letters, with no duplicates", () => {
