@@ -451,7 +451,14 @@ function playCards(
     d.named = { ...(d.named ?? {}), [last]: d.color };
     events.push({ t: "cue", kind: "colour", seat, colour: d.color });
   }
-  if (opts.call && d.hands[seat]!.length === 1) d.calls[seat] = "called";
+  if (opts.call && d.hands[seat]!.length === 1 && d.calls[seat] !== "called") {
+    // Said out loud as the card goes down (a bot's way of calling). It did
+    // this silently once: no window opened, so a +2 stacked down to one card
+    // looked like a seat that had got away with it (the user, 2026-10-31).
+    d.calls[seat] = "called";
+    events.push({ t: "cue", kind: "called", seat });
+    events.push(say(seat, "called last card", "called last card"));
+  }
 
   const next = (n = 1) => nextSeat(d, seat, n);
 

@@ -317,6 +317,18 @@ describe("calling the last card", () => {
     expect(r.state.calls[0]).toBe("called");
   });
 
+  it("a call that rides on a play is said out loud, with the cue the button gives", () => {
+    // It was silent: a bot's +2 stacked down to one card looked like a seat that
+    // had got away with it, with no window and nothing said (the user, 2026-10-31).
+    const { def, state } = position(twoLeft);
+    const r = act(def, state, 0, { t: "play", cards: ["R3.1"], call: true });
+    expect(r.events).toContainEqual({ t: "cue", kind: "called", seat: 0 });
+    expect(r.events.some((e) => e.t === "announce" && e.actor === 0 && e.text === "called last card")).toBe(true);
+    // And nothing is said when it was not called.
+    const quiet = act(def, state, 0, { t: "play", cards: ["R3.1"] });
+    expect(quiet.events.some((e) => e.t === "cue" && e.kind === "called")).toBe(false);
+  });
+
   it("is offered on two cards on your own turn, and not on three or off turn", () => {
     const { def, state } = position(twoLeft);
     expect(def.legalActions(state, 0).map((a) => a.t)).toContain("callLast");
