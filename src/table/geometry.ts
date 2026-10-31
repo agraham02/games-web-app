@@ -661,6 +661,33 @@ export function axisReach(ux: number, uy: number, size: PieceSize): number {
 }
 
 /**
+ * The most a top seat's face-down hand leans toward the board's centre, in
+ * degrees. A seat off to one side of the top edge holds its cards facing the
+ * board rather than square to the screen (the user, 2026-10-31); past this
+ * the hand's inner end would dip far into the table. See layout.ts's
+ * `fannedFrame`.
+ */
+export const TOP_HAND_LEAN = 25;
+/** The extra tilt a fanned opponent hand gives its outermost cards, in degrees. */
+export const HAND_FAN_TILT = 7;
+/** How far a fanned opponent hand's ends bow back toward its pod, in px. */
+export const HAND_FAN_BOW = 4;
+/** How far a leaning hand's inner end may dip below a level hand's, in mini-card heights. */
+export const TOP_HAND_DIP = 0.6;
+
+/**
+ * How far below its pod, past the gap, a top seat's fanned card hand may
+ * reach. A level hand: one card's height, exactly as it always was. A leaning
+ * one: the card as turned and tilted, the bow, and the dip of its inner end,
+ * which layout.ts holds every leaning hand within.
+ */
+export function topHandDrop(mini: PieceSize, leaning: boolean): number {
+  if (!leaning) return mini.h;
+  const r = ((TOP_HAND_LEAN + HAND_FAN_TILT) * Math.PI) / 180;
+  return Math.abs(Math.sin(r)) * mini.w + Math.abs(Math.cos(r)) * mini.h + 2 * HAND_FAN_BOW + mini.h * TOP_HAND_DIP;
+}
+
+/**
  * Minimum distance between two seat-pod centres before the names
  * collide on screen. Enforced by geometry.test.ts.
  */
@@ -1263,8 +1290,10 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
   //
   // As with `line`, `podInset / 2` converts a pod-CENTRE-relative reach
   // (what layout.ts computes) into a `play`-EDGE-relative one.
+  // With two or more top seats, none of them sits over the centre and each
+  // hand leans toward it, which takes more height (`topHandDrop`).
   const cardTopReach =
-    Math.max(0, topShift + podSize.h / 2 - podInset / 2) + spec.miniCard.h + TILE_HAND_GAP;
+    Math.max(0, topShift + podSize.h / 2 - podInset / 2) + topHandDrop(spec.miniCard, nTop >= 2) + TILE_HAND_GAP;
   // A left/right seat's cards are rotated a quarter turn, so the
   // footprint facing the table is the card's HEIGHT, not its width —
   // matching `cardFootprint` in layout.ts's own opponent-card branch.

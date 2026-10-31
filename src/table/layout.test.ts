@@ -1350,3 +1350,85 @@ describe("chip piles that become one stack", () => {
     expect(pot.cy).toBeCloseTo(top.y, 5);
   });
 });
+
+/**
+ * No opponent's card ever lands on another seat - its cards or its pod
+ * (the user, 2026-10-31: three seats down a laptop's left edge, and the
+ * middle one's sixteen cards ran into both neighbours' hands). Measured as
+ * the cards are DRAWN, turned and tilted, not as their upright boxes: a
+ * tilted card's own corners are what reach a neighbour.
+ */
+describe("opponents' hands - never on another seat", () => {
+  /** A rotated rectangle, as its centre, half sizes and angle. */
+  interface Obb { cx: number; cy: number; hw: number; hh: number; rad: number }
+
+  function cardObb(g: ReturnType<typeof resolveTable>, p: Placement, kind: "card" | "tile"): Obb {
+    const t = layoutPiece(p, g, { kind });
+    const base = baseSize(g);
+    const w = (kind === "tile" ? Math.min(base.w, base.h / 2) : base.w) * t.scale;
+    const h = kind === "tile" ? w * 2 : base.h * t.scale;
+    return { cx: t.x + base.w / 2, cy: t.y + base.h / 2, hw: w / 2, hh: h / 2, rad: (t.rotate * Math.PI) / 180 };
+  }
+
+  const boxObb = (b: Box): Obb => ({ cx: b.x + b.w / 2, cy: b.y + b.h / 2, hw: b.w / 2, hh: b.h / 2, rad: 0 });
+
+  /** Separating axes: two rectangles overlap unless one of their four edge normals parts them. */
+  function overlaps(a: Obb, b: Obb, slack = 0.5): boolean {
+    const axes = [a.rad, a.rad + Math.PI / 2, b.rad, b.rad + Math.PI / 2].map((r) => ({ x: Math.cos(r), y: Math.sin(r) }));
+    const reach = (o: Obb, ax: { x: number; y: number }) =>
+      o.hw * Math.abs(Math.cos(o.rad) * ax.x + Math.sin(o.rad) * ax.y) +
+      o.hh * Math.abs(-Math.sin(o.rad) * ax.x + Math.cos(o.rad) * ax.y);
+    for (const ax of axes) {
+      const gap = Math.abs((b.cx - a.cx) * ax.x + (b.cy - a.cy) * ax.y);
+      if (gap >= reach(a, ax) + reach(b, ax) - slack) return false;
+    }
+    return true;
+  }
+
+  const SCREENS = [
+    ...TABLE_VIEWPORTS,
+    { name: "phone small", w: 360, h: 780 },
+    { name: "phone big", w: 430, h: 932 },
+    // The report's own window: a 2547px-wide screenshot at 125%.
+    { name: "laptop wide 125%", w: 2038, h: 973 },
+  ];
+  const COUNTS = [1, 2, 4, 7, 10, 13, 16, 20, 26];
+
+  for (const kind of ["card", "tile"] as const) {
+    it(`${kind}s: no seat's hand touches another seat's hand or pod, at any size or seat count`, () => {
+      const hits = new Set<string>();
+      for (const vp of SCREENS) {
+        for (const seats of kind === "tile" ? [2, 3, 4] : SEAT_COUNTS) {
+          const g = resolveTable({ seats, width: vp.w, height: vp.h });
+          const others = g.seats.filter((s) => !s.isHero);
+          for (const count of kind === "tile" ? [1, 4, 7, 10, 14] : COUNTS) {
+            const hands = others.map((slot) => ({
+              slot,
+              cards: Array.from({ length: count }, (_, index) =>
+                cardObb(g, { zone: "hand", seat: slot.seat, index, count, faceUp: false }, kind),
+              ),
+            }));
+            for (const a of hands) {
+              for (const b of others) {
+                // Its own pod too: a hand sits beside it, never on it.
+                if (b.seat === a.slot.seat && g.tuck) continue;
+                const pod = boxObb(podBox(b, g.density));
+                if (a.cards.some((c) => overlaps(c, pod))) {
+                  hits.add(`${vp.name} ${seats} seats, ${count} cards: seat ${a.slot.seat}'s hand on seat ${b.seat}'s pod`);
+                }
+              }
+              for (const b of hands) {
+                if (b.slot.seat <= a.slot.seat) continue;
+                if (a.cards.some((c) => b.cards.some((d) => overlaps(c, d)))) {
+                  hits.add(`${vp.name} ${seats} seats, ${count} cards: seats ${a.slot.seat} and ${b.slot.seat}'s hands`);
+                }
+              }
+            }
+          }
+        }
+      }
+      expect([...hits]).toEqual([]);
+    });
+  }
+});
+

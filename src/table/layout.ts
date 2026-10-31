@@ -26,6 +26,12 @@ import {
   radialFanSlot,
   slotForSeat,
   tileShortSide,
+  podBox,
+  topHandDrop,
+  HAND_FAN_BOW,
+  HAND_FAN_TILT,
+  TOP_HAND_DIP,
+  TOP_HAND_LEAN,
   HAND_LIFT_ROOM,
   MAX_DISCARD_STEP_FRACTION,
   MIN_HAND_GAP_FRACTION,
@@ -535,6 +541,209 @@ function clampToBox(cx: number, cy: number, box: Box, marginW: number, marginH: 
 }
 
 /* ============================================================
+   Opponent hand lanes — no hand ever on another seat.
+   ============================================================ */
+
+type Vec = { x: number; y: number };
+
+/**
+ * How one opponent's face-down hand is laid, before its card count is known:
+ * the point it fans about, the way it runs, and how its cards stand.
+ */
+interface HandFrame {
+  seat: SeatSlot;
+  anchor: Vec;
+  /** Unit vector the fan runs along. */
+  spread: Vec;
+  /** Unit vector away from the board: the way the fan's ends bow. */
+  away: Vec;
+  /** Base rotation of every card, in degrees. */
+  rotation: number;
+  /** The most a card at either end tilts past `rotation`, in degrees. */
+  tilt: number;
+  /** How far the ends bow along `away`, in px. */
+  bow: number;
+  /** A card's size, unturned: `w` runs along the fan. */
+  size: PieceSize;
+  /** The longest the fan would run if nothing were in its way, centre to centre. */
+  span: (count: number) => number;
+  maxGap: number;
+  /** Its own pod is in its way too (a fanned hand), or not (a tucked one, which sits behind it). */
+  clearsOwnPod: boolean;
+  /** The lowest any of its cards may reach on screen, when that is less than the board's own edge. */
+  floor?: number;
+  /** How far from its anchor a card centre may go at most, either way (a tucked hand stays at its pod). */
+  reach?: number;
+}
+
+/** Air kept between a hand and anything else on the rim. */
+const LANE_GAP = 4;
+
+/** How far a card of this frame reaches along `a`, at any tilt its fan gives it. */
+function frameReach(f: HandFrame, a: Vec): number {
+  let most = 0;
+  for (const deg of [f.rotation - f.tilt, f.rotation, f.rotation + f.tilt]) {
+    const r = (deg * Math.PI) / 180;
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    const reach = (f.size.w / 2) * Math.abs(c * a.x + s * a.y) + (f.size.h / 2) * Math.abs(-s * a.x + c * a.y);
+    most = Math.max(most, reach);
+  }
+  return most + f.bow * Math.abs(f.away.x * a.x + f.away.y * a.y);
+}
+
+/**
+ * Where along a frame's line a card's CENTRE may go without touching `box`,
+ * as the stretch it may NOT go (empty when the box is never in the way).
+ * Separating axes: the card and the box are apart if any of the four edge
+ * normals parts them, so the card overlaps only where all four overlap.
+ */
+function blockedBy(f: HandFrame, box: Box): [number, number] | null {
+  const centre = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+  const r = (f.rotation * Math.PI) / 180;
+  const axes: Vec[] = [
+    { x: 1, y: 0 },
+    { x: 0, y: 1 },
+    { x: Math.cos(r), y: Math.sin(r) },
+    { x: -Math.sin(r), y: Math.cos(r) },
+  ];
+  let lo = -Infinity;
+  let hi = Infinity;
+  for (const a of axes) {
+    const k = f.spread.x * a.x + f.spread.y * a.y;
+    const c = (centre.x - f.anchor.x) * a.x + (centre.y - f.anchor.y) * a.y;
+    const reach = frameReach(f, a) + axisReach(a.x, a.y, box) + LANE_GAP;
+    if (Math.abs(k) < 1e-9) {
+      // Moving along the fan never changes this axis: apart on it is apart everywhere.
+      if (Math.abs(c) >= reach) return null;
+      continue;
+    }
+    const t1 = (c - reach) / k;
+    const t2 = (c + reach) / k;
+    lo = Math.max(lo, Math.min(t1, t2));
+    hi = Math.min(hi, Math.max(t1, t2));
+    if (lo >= hi) return null;
+  }
+  return [lo, hi];
+}
+
+/**
+ * The stretch two neighbouring hands each keep to, as a cap on how far along
+ * its own line `f` may run toward `other`: the two are split halfway along
+ * whichever axis leaves the more room to the tighter of them. Both seats
+ * work it out the same way, so they agree on the split.
+ */
+function splitWith(f: HandFrame, other: HandFrame): { k: number; room: number } {
+  const dx = other.anchor.x - f.anchor.x;
+  const dy = other.anchor.y - f.anchor.y;
+  const len = Math.hypot(dx, dy) || 1;
+  let best: { k: number; room: number; score: number } | null = null;
+  for (const a of [{ x: dx / len, y: dy / len }, { x: 1, y: 0 }, { x: 0, y: 1 }]) {
+    const apart = dx * a.x + dy * a.y;
+    const sign = apart >= 0 ? 1 : -1;
+    const half = Math.abs(apart) / 2 - LANE_GAP / 2;
+    const mine = half - frameReach(f, a);
+    const theirs = half - frameReach(other, a);
+    const score = Math.min(mine, theirs);
+    if (!best || score > best.score) {
+      best = { k: sign * (f.spread.x * a.x + f.spread.y * a.y), room: mine, score };
+    }
+  }
+  return best!;
+}
+
+/** The stretch of its own line, about its anchor, where a frame's card centres may go. */
+interface Lane {
+  frame: HandFrame;
+  lo: number;
+  hi: number;
+}
+
+function laneFor(g: TableGeometry, f: HandFrame, frames: readonly HandFrame[]): Lane {
+  // What only ever limits one end: the neighbouring hands, and (a side
+  // seat's) the bottom of the ring, below which is the viewer's own band.
+  let lo = -(f.reach ?? 1e6);
+  let hi = f.reach ?? 1e6;
+  const cap = (k: number, room: number) => {
+    if (Math.abs(k) < 1e-9) return;
+    if (k > 0) hi = Math.min(hi, room / k);
+    else lo = Math.max(lo, room / k);
+  };
+  for (const other of frames) {
+    if (other.seat.seat === f.seat.seat) continue;
+    const { k, room } = splitWith(f, other);
+    cap(k, room);
+  }
+  const bottom = Math.min(g.zones.play.y + g.zones.play.h, f.floor ?? Infinity);
+  cap(f.spread.y, bottom - frameReach(f, { x: 0, y: 1 }) - f.anchor.y);
+
+  // What can sit in the middle of it: every pod but the viewer's.
+  const blocked: Array<[number, number]> = [];
+  for (const slot of g.seats) {
+    if (slot.isHero || (slot.seat === f.seat.seat && !f.clearsOwnPod)) continue;
+    const b = blockedBy(f, podBox(slot, g.density));
+    if (b) blocked.push(b);
+  }
+  blocked.sort((a, b) => a[0] - b[0]);
+  // The free stretches left, and of them the one nearest the anchor.
+  const free: Array<[number, number]> = [];
+  let from = lo;
+  for (const [a, b] of blocked) {
+    if (a > from) free.push([from, Math.min(a, hi)]);
+    from = Math.max(from, b);
+  }
+  if (from < hi) free.push([from, hi]);
+  const usable = free.filter(([a, b]) => b > a);
+  if (usable.length === 0) return { frame: f, lo: 0, hi: 0 };
+  const distance = ([a, b]: [number, number]) => (a > 0 ? a : b < 0 ? -b : 0);
+  const [nearLo, nearHi] = usable.reduce((best, s) => (distance(s) < distance(best) ? s : best));
+  return { frame: f, lo: nearLo, hi: nearHi };
+}
+
+const laneCache = new WeakMap<TableGeometry, Map<string, Map<SeatId, Lane>>>();
+
+/** Every opponent's lane at this table, worked out once per geometry. */
+function lanesFor(
+  g: TableGeometry,
+  key: string,
+  frameOf: (seat: SeatSlot) => HandFrame,
+): Map<SeatId, Lane> {
+  let byKey = laneCache.get(g);
+  if (!byKey) laneCache.set(g, (byKey = new Map()));
+  let lanes = byKey.get(key);
+  if (lanes) return lanes;
+  const frames = g.seats.filter((s) => !s.isHero).map(frameOf);
+  lanes = new Map(frames.map((f) => [f.seat.seat, laneFor(g, f, frames)]));
+  byKey.set(key, lanes);
+  return lanes;
+}
+
+/**
+ * One card of a hand laid in its lane: the fan runs as long as it would, or
+ * as long as the lane allows, and sits as near its anchor as the lane lets it.
+ */
+function laneSlot(lane: Lane, index: number, count: number) {
+  const f = lane.frame;
+  const room = Math.max(0, lane.hi - lane.lo);
+  const span = Math.min(f.span(count), room);
+  const centre =
+    lane.hi < lane.lo ? (lane.lo + lane.hi) / 2 : Math.min(Math.max(0, lane.lo + span / 2), lane.hi - span / 2);
+  return radialFanSlot({
+    anchor: { x: f.anchor.x + f.spread.x * centre, y: f.anchor.y + f.spread.y * centre },
+    spread: f.spread,
+    away: f.away,
+    index,
+    count,
+    spreadWidth: span + f.size.w,
+    size: f.size,
+    baseRotation: f.rotation,
+    maxTilt: f.tilt,
+    arcLift: f.bow,
+    maxGap: f.maxGap,
+  });
+}
+
+/* ============================================================
    Tucked and shown hands — an opponent's hand on a phone.
    ============================================================ */
 
@@ -548,14 +757,80 @@ function clampToBox(cx: number, cy: number, box: Box, marginW: number, marginH: 
  * they stood for is in the pod's own text. Every card still has a place, so
  * a deal flies to its player and a play flies from them.
  */
-function tuckedHand(
-  g: TableGeometry,
-  seat: SeatSlot,
-  p: Placement,
-  kind: PieceKind | undefined,
-  opacity: number,
-): PieceTransform {
-  const base = baseSize(g);
+/**
+ * A face-down opponent hand fanned on the felt, beside its pod.
+ *
+ * A top seat off to one side holds its cards facing the board: the fan leans
+ * toward the board's centre (up to `TOP_HAND_LEAN`), each card turned with
+ * it, and the hand sits below its pod rather than off to the side of it (the
+ * user, 2026-10-31). Its inner end dips as it leans, as far as geometry's
+ * `topHandDrop` allows, and no further. A top seat over the centre, and a
+ * side seat, sit as they always did: pushed straight out toward the centre,
+ * a side seat's cards a quarter turn round and running down its edge.
+ */
+function fannedFrame(g: TableGeometry, seat: SeatSlot, kind: PieceKind | undefined): HandFrame {
+  const miniW = miniArt(g, kind);
+  const miniH = g.miniCard.h;
+  const pod = POD_SIZE[g.density];
+  const { cx, cy } = boxCentre(g.zones.play);
+  const len = Math.hypot(cx - seat.x, cy - seat.y) || 1;
+  const u = { x: (cx - seat.x) / len, y: (cy - seat.y) / len };
+  const maxGap = miniW * 0.42;
+  const frame: HandFrame = {
+    seat,
+    anchor: { x: seat.x, y: seat.y },
+    spread: { x: -u.y, y: u.x },
+    away: { x: -u.x, y: -u.y },
+    rotation: seat.rotation,
+    tilt: HAND_FAN_TILT,
+    bow: HAND_FAN_BOW,
+    size: { w: miniW, h: miniH },
+    // A domino hand's 2.4x floor, scaled with the count so a big hand gets
+    // room before the fan has to compress.
+    span: (count) => Math.min(maxGap * Math.max(0, count - 1), miniW * Math.max(2.4, count * 0.9) - miniW),
+    maxGap,
+    // Pushed straight out, a fan running square to that push never comes back to its pod.
+    clearsOwnPod: false,
+  };
+
+  const leaning = seat.anchor === "top" && g.seats.filter((s) => s.anchor === "top").length >= 2;
+  if (leaning) {
+    const limit = (TOP_HAND_LEAN * Math.PI) / 180;
+    const lean = Math.max(-limit, Math.min(limit, Math.atan2(u.x, u.y)));
+    // Toward the board, leaning: the way the cards point and the fan bows from.
+    const v = { x: Math.sin(lean), y: Math.cos(lean) };
+    const turned = (miniW / 2) * Math.abs(v.x) + (miniH / 2) * v.y;
+    const leant: HandFrame = {
+      ...frame,
+      // Under the pod, a little toward the board, and halfway down the room
+      // its lean is given: the inner end rises as the outer one dips, and
+      // started level with a flat hand the inner end ran into the pod and
+      // pushed the whole hand out past the pod's far side.
+      anchor: {
+        x: seat.x + v.x * (pod.w / 2),
+        y: seat.y + pod.h / 2 + TILE_HAND_GAP + turned + (g.miniCard.h * TOP_HAND_DIP) / 2,
+      },
+      spread: { x: -v.y, y: v.x },
+      away: { x: -v.x, y: -v.y },
+      rotation: 180 - (lean * 180) / Math.PI,
+    };
+    return {
+      ...leant,
+      // Its upper end rises back toward its own pod as it leans.
+      clearsOwnPod: true,
+      floor: seat.y + pod.h / 2 + TILE_HAND_GAP + topHandDrop(g.miniCard, true),
+    };
+  }
+
+  // A side seat's card is turned a quarter, so its reach toward the board is
+  // its height.
+  const quarter = seat.anchor === "left" || seat.anchor === "right";
+  const footprint: PieceSize = quarter ? { w: miniH, h: miniW } : { w: miniW, h: miniH };
+  const inset = axisReach(u.x, u.y, pod) + axisReach(u.x, u.y, footprint) + TILE_HAND_GAP;
+  return { ...frame, anchor: { x: seat.x + u.x * inset, y: seat.y + u.y * inset } };
+}
+
+function tuckedFrame(g: TableGeometry, seat: SeatSlot, kind: PieceKind | undefined): HandFrame {
   const pod = POD_SIZE[g.density];
   const { along, inward } = rimVectors(seat.anchor);
   const miniW = miniArt(g, kind);
@@ -570,21 +845,41 @@ function tuckedHand(
   const peek = seat.anchor === "left" || seat.anchor === "right" ? g.tuckPeek.side : g.tuckPeek.top;
   const offset = podDepth / 2 + peek - miniH / 2;
   const tile = kind === "tile";
-  const slot = radialFanSlot({
+  const maxGap = miniW * (tile ? 0.55 : 0.3);
+  // A little wider than the pod, so the backs show at its sides too —
+  // much wider where they do not peek past it at all.
+  const width = podAlong * (peek > 0 ? 1.25 : 1.9);
+  return {
+    seat,
     anchor: { x: seat.x + inward.x * offset, y: seat.y + inward.y * offset },
     spread: along,
     away: { x: -inward.x, y: -inward.y },
-    index: p.index,
-    count: p.count,
-    // A little wider than the pod, so the backs show at its sides too —
-    // much wider where they do not peek past it at all.
-    spreadWidth: podAlong * (peek > 0 ? 1.25 : 1.9),
+    rotation: seat.rotation,
+    tilt: tile ? 0 : 5,
+    bow: tile ? 0 : 2,
     size: { w: miniW, h: miniH },
-    baseRotation: seat.rotation,
-    maxTilt: tile ? 0 : 5,
-    arcLift: tile ? 0 : 2,
-    maxGap: miniW * (tile ? 0.55 : 0.3),
-  });
+    span: (count) => Math.min(maxGap * Math.max(0, count - 1), Math.max(0, width - miniW)),
+    maxGap,
+    clearsOwnPod: false,
+    // Squeezed rather than slid away from its own pod: it stands for that seat.
+    reach: Math.max(0, width - miniW) / 2,
+  };
+}
+
+function tuckedHand(
+  g: TableGeometry,
+  seat: SeatSlot,
+  p: Placement,
+  kind: PieceKind | undefined,
+  opacity: number,
+): PieceTransform {
+  const base = baseSize(g);
+  const miniW = miniArt(g, kind);
+  // Kept to its own stretch of the rim: spread wider than its pod, a hand
+  // ran under the next pod along and its peek showed from beneath it, or
+  // from under a top-corner pod (the user, 2026-10-31: no overlaps).
+  const lane = lanesFor(g, `tuck|${kind}`, (s) => tuckedFrame(g, s, kind)).get(seat.seat)!;
+  const slot = laneSlot(lane, p.index, p.count);
   return {
     x: slot.x - base.w / 2,
     y: slot.y - base.h / 2,
@@ -1270,64 +1565,15 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
       }
 
       // Card hands fan PERPENDICULAR to this seat's own line to table
-      // centre, not always along screen-x — a side seat's hand runs
-      // top-to-bottom, the way a fan of cards actually looks held by
-      // someone sitting to your left or right (LRC's chip piles already
-      // fan this way; see `collected` below for the same perpendicular
-      // vector). Each card also inherits the seat's own base rotation
-      // (`SeatSlot.rotation`) so it visually stands toward the table
-      // rather than always reading screen-upright regardless of which
-      // edge it was dealt to. Dominoes' tile racks (above) deliberately
-      // don't get this yet — real dominoes stand upright in a rack
-      // regardless of seat, and that redesign is tracked separately
-      // ([[domino-side-seat-hand-overlap]]) — this only ever runs for a
-      // card game.
-      //
-      // Clearance from the pod is a plain axisReach along the push
-      // direction, same idea as the tile branch's own axis-derived
-      // anchor above: since the fan now always spreads PERPENDICULAR to
-      // (ux, uy), its width never adds to how far the hand reaches
-      // along (ux, uy) — only one card's own thickness does — so this
-      // has none of the fanW-leaking-into-the-wrong-axis coupling the
-      // tile branch's doc above describes; there is no shared scalar
-      // between the two axes to leak through in the first place.
-      // `axisReach` assumes an axis-aligned box, but a left/right seat's
-      // card is rotated a quarter turn (`baseRotation` below) — its true
-      // on-screen footprint along the push direction is governed by its
-      // ROTATED bounding box, which swaps width and height. A top seat's
-      // 180° rotation doesn't swap anything, so only left/right needs this.
-      const rotatedQuarter = seat.anchor === "left" || seat.anchor === "right";
-      const cardFootprint: PieceSize = rotatedQuarter
-        ? { w: miniH, h: miniW }
-        : { w: miniW, h: miniH };
-      const podReach = axisReach(ux, uy, pod);
-      const cardReach = axisReach(ux, uy, cardFootprint);
-      const inset = podReach + cardReach + TILE_HAND_GAP;
-      const anchorX = seat.x + ux * inset;
-      const anchorY = seat.y + uy * inset;
-
-      // A side seat's fan runs down the screen, centred on the seat, and
-      // the lowest one's used to hang past the ring's bottom edge — under
-      // the band, over the viewer's own controls. It compresses instead.
-      const spreadWidth = rotatedQuarter ? Math.min(fanW, sideFanRoom(g, anchorY, miniH)) : fanW;
-
-      const slot = radialFanSlot({
-        anchor: { x: anchorX, y: anchorY },
-        // Perpendicular to (ux, uy) — the axis the fan spreads along.
-        spread: { x: -uy, y: ux },
-        // Away from table centre — the ends of the fan bow toward this,
-        // the same convention fanSlot's own arcLift uses for the hero's
-        // hand (its ends dip toward the screen edge behind the hero).
-        away: { x: -ux, y: -uy },
-        index: p.index,
-        count: p.count,
-        spreadWidth,
-        size: { w: miniW, h: miniH },
-        baseRotation: seat.rotation,
-        maxTilt: 7,
-        arcLift: 4,
-        maxGap: miniW * 0.42,
-      });
+      // centre, not always along screen-x: a side seat's hand runs
+      // top-to-bottom, the way a fan of cards looks held by someone sitting
+      // to your left or right. Each one keeps to its own lane (`laneFor`),
+      // so no hand ever runs onto another seat's cards or pod: three side
+      // seats down a laptop's edge used to run into each other as their
+      // hands grew (the user, 2026-10-31). See `fannedFrame` for where it
+      // sits and how its cards stand.
+      const lane = lanesFor(g, `fan|${ctx?.kind}`, (s) => fannedFrame(g, s, ctx?.kind)).get(seat.seat)!;
+      const slot = laneSlot(lane, p.index, p.count);
 
       return {
         x: slot.x - base.w / 2,

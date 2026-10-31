@@ -601,11 +601,12 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // `placements()`), so this is a plain if/else, not a priority
         // fight.
         //
-        // Illegal-target dimming (POLICY.md: "dim, don't hide") stays a
-        // grayscale/darken filter rather than reduced opacity — a light
-        // card face loses too much legibility fading toward the felt,
-        // and this reuses the exact "disabled" idiom SeatRing already
-        // uses for an eliminated seat's avatar. `filter` is not a
+        // Illegal-target dimming (POLICY.md: "dim, don't hide") is a deep
+        // darken, not reduced opacity (a light card face loses too much
+        // legibility fading toward the felt) and NOT grayscale: a greyed
+        // card hid its colour, which is the very thing a player choosing a
+        // wild's colour needs to read off the rest of their hand (the user,
+        // 2026-10-31). `filter` is not a
         // compositor-only property the way transform/opacity are (see
         // CLAUDE.md), but at hand-sized piece counts (a dozen or so
         // cards, not a 52-card deal) the cost is not visible.
@@ -616,7 +617,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // bidding, where every seat's hand dims while waiting its turn
         // and nothing has actually been ruled illegal yet.
         filter: dimmed
-          ? "grayscale(0.85) brightness(0.78)"
+          ? "brightness(0.45)"
           : isHeroHand && !heroTurnActive
             ? "brightness(0.86)"
             : "none",
