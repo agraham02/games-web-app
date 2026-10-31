@@ -115,16 +115,23 @@ export function playCardSlap(final: boolean): void {
   slap.connect(high).connect(gain).connect(ctx.destination);
   slap.start(now);
 
-  // A little of the table under it, so it lands rather than ticks.
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.frequency.setValueAtTime(final ? 160 : 210, now);
-  body.frequency.exponentialRampToValueAtTime(final ? 70 : 110, now + 0.09);
-  bodyGain.gain.setValueAtTime(final ? 0.35 : 0.2, now);
-  bodyGain.gain.exponentialRampToValueAtTime(0.001, now + (final ? 0.16 : 0.1));
-  body.connect(bodyGain).connect(ctx.destination);
-  body.start(now);
-  body.stop(now + 0.2);
+  // The "pap" of a hand flat on the card: mid-range noise, quick to die. It
+  // used to be a falling low sine, which is exactly the domino slam's body,
+  // and a +2 slammed down still sounded like a tile (the user, 2026-10-31).
+  const pLength = Math.floor(ctx.sampleRate * (final ? 0.09 : 0.06));
+  const pBuffer = ctx.createBuffer(1, pLength, ctx.sampleRate);
+  const pData = pBuffer.getChannelData(0);
+  for (let i = 0; i < pLength; i++) pData[i] = (Math.random() * 2 - 1) * (1 - i / pLength) ** 4;
+  const pap = ctx.createBufferSource();
+  pap.buffer = pBuffer;
+  const mid = ctx.createBiquadFilter();
+  mid.type = "bandpass";
+  mid.frequency.value = final ? 800 : 1000;
+  mid.Q.value = 1.1;
+  const papGain = ctx.createGain();
+  papGain.gain.value = final ? 0.6 : 0.4;
+  pap.connect(mid).connect(papGain).connect(ctx.destination);
+  pap.start(now);
 }
 
 /**

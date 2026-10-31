@@ -427,16 +427,29 @@ function tryPiles(g: TableGeometry, narrow: 0 | 1 | 2): { plans: Map<SeatId, Pil
     return { seat, base, pods, discs, shift: 0 };
   });
   const clear = (boxes: Box[], blockers: Box[]) => boxes.every((c) => !blockers.some((b) => meets(c, b)));
+  // Another seat's chips are kept further off than a pod or the dice: two
+  // piles merely not touching read as one, and nobody could tell Jo's chips
+  // from Ada's (the user, 2026-10-31).
+  const apart = d * 0.75;
+  const widen = (b: Box): Box => ({ x: b.x - apart, y: b.y - apart, w: b.w + 2 * apart, h: b.h + 2 * apart });
 
   // First every seat's first spot - the one its stack stands on - so each has
   // at least that, wherever the piles nearer the middle would have grown.
   const firsts = new Map<SeatId, Box[]>();
   for (const piece of pieces) {
-    const blockers = [...keep, ...piece.pods, ...[...firsts.values()].flat()];
+    const taken = [...firsts.values()].flat();
+    // Well apart from the others if there is room for that, merely clear of
+    // them where there is not (a 360px phone's top corners).
     let shift: number | null = null;
-    for (let k = 0; k <= d * 3 && shift === null; k += 2) {
-      if (clear(piece.discs(1, k), blockers)) shift = k;
-      else if (k > 0 && clear(piece.discs(1, -k), blockers)) shift = -k;
+    for (const blockers of [
+      [...keep, ...piece.pods, ...taken.map(widen)],
+      [...keep, ...piece.pods, ...taken],
+    ]) {
+      for (let k = 0; k <= d * 3 && shift === null; k += 2) {
+        if (clear(piece.discs(1, k), blockers)) shift = k;
+        else if (k > 0 && clear(piece.discs(1, -k), blockers)) shift = -k;
+      }
+      if (shift !== null) break;
     }
     if (shift === null) unplaced++;
     piece.shift = shift ?? 0;
@@ -447,7 +460,7 @@ function tryPiles(g: TableGeometry, narrow: 0 | 1 | 2): { plans: Map<SeatId, Pil
   // others' first spots and of the piles already grown.
   for (const piece of pieces) {
     const others = [...firsts.entries()].filter(([seat]) => seat !== piece.seat.seat).flatMap(([, boxes]) => boxes);
-    const blockers = [...placed, ...keep, ...piece.pods, ...others];
+    const blockers = [...placed.map(widen), ...keep, ...piece.pods, ...others.map(widen)];
     let cap = 1;
     while (cap < piece.base.cap && clear(piece.discs(cap + 1, piece.shift), blockers)) cap++;
     plans.set(piece.seat.seat, { shape: piece.base.shape, cap, shift: piece.shift, narrow: piece.base.narrow });

@@ -682,7 +682,13 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // Flipper's dual-face 3D wrapper entirely: one motion.div
         // instead of two per piece, which matters once a game like LRC
         // can have 30 chips on screen at once.
-        <PieceFace kind={meta.kind} face={meta.face} w={base.w} h={base.h} detail={detail} />
+        //
+        // Centred in its card-shaped box: drawn at the box's top, a chip sat
+        // a few px above where layout puts it, and a stack's count (written
+        // at the box's centre) read low on the chip (the user, 2026-10-31).
+        <div className="flex h-full w-full items-center justify-center">
+          <PieceFace kind={meta.kind} face={meta.face} w={base.w} h={base.h} detail={detail} />
+        </div>
       ) : (
         // Cards AND tiles both have a real face-down state — dominoes
         // deal into hidden hands and draw from a face-down boneyard, so

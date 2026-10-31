@@ -1237,10 +1237,11 @@ describe("chip piles that become one stack", () => {
     const g = resolveTable({ seats: 3, width: 390, height: 844, handZone: 16, bandZone: 64 });
     expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 6 })).toBe(false);
     expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 7 })).toBe(true);
-    // Nine: a third row would land on the high side seat's pile beside it.
+    // Nine: the seats crowd each other's piles, and every opponent's pile
+    // stacks as soon as the tightest one must (they all look alike).
     const crowded = phone();
-    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 4 })).toBe(false);
-    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 5 })).toBe(true);
+    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 1 })).toBe(false);
+    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 2 })).toBe(true);
     const l = laptop();
     expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 9 })).toBe(false);
     expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 10 })).toBe(true);

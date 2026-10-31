@@ -150,9 +150,11 @@ export function playTableSound(sound: TableSound): void {
           noise(ctx, now, { s: 0.06, f: jitter(2600, 0.1), to: 3600, q: 0.9, gain: 0.14 });
           return;
         case "play":
-          // Laid down with a little snap: a papery slap and the felt under it.
-          noise(ctx, now, { s: 0.05, f: jitter(1900, 0.1), q: 0.8, gain: 0.22 });
-          ring(ctx, now, { f: 170, to: 110, s: 0.06, gain: 0.07, type: "triangle" });
+          // Laid down with a little snap: a papery slap and the crack of its
+          // edge. No low tone under it: a falling low note is the domino's
+          // thud, and it made every card sound like a tile (the user, 2026-10-31).
+          noise(ctx, now, { s: 0.05, f: jitter(2100, 0.1), q: 0.8, gain: 0.22 });
+          noise(ctx, now + 0.006, { s: 0.018, f: jitter(5200, 0.08), q: 1.6, gain: 0.1 });
           return;
         case "flip":
           noise(ctx, now, { s: 0.03, f: jitter(4200, 0.1), q: 1.2, gain: 0.08 });

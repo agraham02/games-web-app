@@ -69,9 +69,9 @@ export function playCue(kind: CueKind, amount = 0): void {
   const now = ctx.currentTime;
   switch (kind) {
     case "skip":
-      // A stamp.
-      tone(ctx, now, { type: "triangle", from: 240, to: 90, seconds: 0.16, gain: 0.5 });
-      noise(ctx, now, { seconds: 0.05, from: 1400, gain: 0.35 });
+      // A stamp: a hard tok, pitched up and out of the domino thud's range.
+      tone(ctx, now, { type: "triangle", from: 620, to: 380, seconds: 0.1, gain: 0.32 });
+      noise(ctx, now, { seconds: 0.04, from: 2400, q: 1.6, gain: 0.32 });
       return;
     case "reverse":
       // A whip round: up, then back down.
@@ -82,7 +82,13 @@ export function playCue(kind: CueKind, amount = 0): void {
       // The cards themselves make their own sound as each one is drawn
       // (`tableSounds`). A penalty gets the hit of it landing on you: a low
       // thump that grows with the size of it.
-      if (amount >= 2) tone(ctx, now, { type: "triangle", from: 160, to: 70, seconds: 0.18 + Math.min(amount, 8) * 0.02, gain: 0.3 });
+      // Two falling notes, "uh-oh", in the middle of the range: a low thump
+      // here was the domino's thud again (the user, 2026-10-31).
+      if (amount >= 2) {
+        const hold = 0.14 + Math.min(amount, 8) * 0.015;
+        tone(ctx, now, { type: "triangle", from: 494, seconds: hold, gain: 0.22 });
+        tone(ctx, now + hold * 0.8, { type: "triangle", from: 370, to: 330, seconds: hold * 1.4, gain: 0.22 });
+      }
       return;
     case "stack":
       // A blip that rises a step with every card on the stack.
@@ -93,8 +99,9 @@ export function playCue(kind: CueKind, amount = 0): void {
       for (const f of [392, 494, 587]) tone(ctx, now, { from: f, seconds: 0.42, gain: 0.14 });
       return;
     case "jump":
-      noise(ctx, now, { seconds: 0.07, from: 3000, q: 2, gain: 0.35 });
-      tone(ctx, now + 0.04, { type: "triangle", from: 200, to: 80, seconds: 0.14, gain: 0.4 });
+      // In out of turn: a quick zip upward and a ping.
+      noise(ctx, now, { seconds: 0.09, from: 1800, to: 6000, q: 2, gain: 0.3 });
+      tone(ctx, now + 0.06, { type: "triangle", from: 880, to: 1175, seconds: 0.12, gain: 0.2 });
       return;
     case "called":
       // A bright chime.
