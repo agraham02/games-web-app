@@ -106,6 +106,17 @@ class Client {
     this.inbox.length = 0;
   }
 
+  /**
+   * Forgets the errors and nothing else, for a loop that goes on reading the
+   * latest frame. `clear()` wipes the frames too, and a seat whose turn came
+   * round again before the server had sent it another found none: "Cannot
+   * read properties of undefined (reading 'frame')", on a CI machine slower
+   * than a laptop (the Rummy scenario, 2026-10-31).
+   */
+  clearErrors(): void {
+    for (let i = this.inbox.length - 1; i >= 0; i--) if (this.inbox[i]!.t === "error") this.inbox.splice(i, 1);
+  }
+
   close(): void {
     this.ws.close();
   }
@@ -894,7 +905,7 @@ async function main(): Promise<void> {
           // deciding is the whole point.
           const mine = f.state.hands[String(f.seat)] ?? [];
           for (const card of mine) {
-            who.clear();
+            who.clearErrors();
             who.send({ t: "action", action: { t: "discard", card } });
             await sleep(60);
             if (!who.latest("error")) break;
