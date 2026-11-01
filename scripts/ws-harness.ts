@@ -848,7 +848,8 @@ async function main(): Promise<void> {
     a.send({ t: "selectGame", gameId: "rummy", settings: { target: 200 }, seats: 4, difficulty: "casual" });
     await sleep(50);
     a.send({ t: "startGame" });
-    await sleep(400);
+    // Until they are dealt in, not for a guessed time: a slow machine took longer.
+    await Promise.all([a, b].map((c) => c.until((m) => m.t === "frame")));
 
     const seatOf = new Map<Client, number>();
     for (const c of [a, b]) {
@@ -861,11 +862,15 @@ async function main(): Promise<void> {
     let acted = 0;
     let sawDealPrompt = false;
     let sawClaim = false;
+    let deepestPile = 0;
 
     for (let tick = 0; tick < 260; tick++) {
       const state = await dump(code);
       const table = state.table as { currentSeat: number | null; round: number } | null;
       if (!table) break;
+
+      const seen = a.latest("frame")?.frame as { state: { discard: string[] } } | undefined;
+      if (seen) deepestPile = Math.max(deepestPile, seen.state.discard.length);
 
       // A claim window is the one time a seat may act without being the
       // seat on turn, so it is checked first and for BOTH clients.
@@ -924,12 +929,12 @@ async function main(): Promise<void> {
     const moved = await dump(code);
     const finalTable = moved.table as { round: number } | null;
     assert(finalTable !== null, "the game should still be running");
-    const frame = a.latest("frame")!.frame as {
-      seat: number;
-      state: { hands: Record<string, string[]>; discard: string[] };
-    };
+    // The deepest the pile got, not how deep it is at the moment the loop
+    // ends: bots draw from it and every new round restarts it at one card, so
+    // a snapshot is at most one card a good fraction of the time (4% to 28% of
+    // ticks, measured) and failed this scenario on CI, which is slower.
     assert(
-      frame.state.discard.length > 1,
+      deepestPile > 1,
       "cards should have been discarded through the wire and accepted by the server",
     );
   });
