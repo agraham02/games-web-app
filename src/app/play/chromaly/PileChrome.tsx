@@ -17,8 +17,8 @@
  * and the same facts are in the band's badge for a screen reader.
  */
 
-import { useRef } from "react";
-import { AnimatePresence, motion, useAnimationFrame, useMotionValue } from "motion/react";
+import { useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { prefersReducedMotion } from "@/motion/presets";
 import type { ChromalyState } from "@/games/chromaly/types";
 import { useGeometry } from "@/table/store";
@@ -39,39 +39,95 @@ const CHEVRONS = 10;
 const WHIP_BOOST = 14;
 /** ...easing back to the ambient drift over this long. */
 const WHIP_MS = 700;
+/**
+ * How far the whip carries the ring beyond its drift: the extra speed,
+ * `WHIP_BOOST` laps' worth falling away as (1 - t)^2, summed over `WHIP_MS`.
+ * Falling away like that is exactly an ease-out cubic, which is the curve the
+ * whip is played on.
+ */
+const WHIP_DEG = ((360 * WHIP_BOOST) / (LAP_SECONDS * 1000)) * (WHIP_MS / 3);
+const EASE_OUT_CUBIC = "cubic-bezier(0.33, 1, 0.68, 1)";
 
 /**
- * The ring's angle, advanced every frame at a constant rate in the direction
- * of play.
+ * The way round: a ring of chevrons turning at a constant rate in the
+ * direction of play.
  *
  * Not `animate={{ rotate: dir * 360 }}` with a repeat, which it used to be:
  * that animates from wherever the ring HAPPENS to be to the new target over a
  * fixed 26 seconds, so after a Reverse the speed was however far it had left
  * to go - and after a few Reverses it could be crawling (the user,
  * 2026-10-30). A rate never depends on where the ring has got to.
+ *
+ * And not a value set from JavaScript every frame either, which it was after
+ * that. The ring never stops, so neither did the main thread: every frame of
+ * the whole game re-laid the table out for it, which made every card's flight
+ * choppy on a phone (the user, 2026-10-31). This hands both turns to the
+ * browser's compositor - the drift on the outer element, reversed in place by
+ * flipping its playback rate, and the whip as a one-off extra turn on the
+ * inner one - so between card moves the page does no work at all.
  */
-function useDrift(dir: 1 | -1) {
-  const angle = useMotionValue(0);
-  const reversedAt = useRef<number | null>(null);
+function DriftRing({ dir }: { dir: 1 | -1 }) {
+  const drift = useRef<HTMLDivElement>(null);
+  const whip = useRef<SVGSVGElement>(null);
+  const lap = useRef<Animation | null>(null);
+  const whipped = useRef(0);
   const lastDir = useRef(dir);
-  useAnimationFrame((time, delta) => {
-    if (lastDir.current !== dir) {
-      lastDir.current = dir;
-      reversedAt.current = time;
-    }
-    if (prefersReducedMotion()) return;
-    const since = reversedAt.current === null ? Infinity : time - reversedAt.current;
-    const boost = since < WHIP_MS ? 1 + WHIP_BOOST * (1 - since / WHIP_MS) ** 2 : 1;
-    // A frame dropped by a background tab is not made up all at once.
-    const step = Math.min(delta, 100);
-    angle.set((angle.get() + (dir * 360 * boost * step) / (LAP_SECONDS * 1000)) % 360);
-  });
-  return angle;
+
+  useEffect(() => {
+    const el = drift.current;
+    if (!el || typeof el.animate !== "function" || prefersReducedMotion()) return;
+    const a = el.animate([{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }], {
+      duration: LAP_SECONDS * 1000,
+      iterations: Infinity,
+    });
+    a.playbackRate = lastDir.current;
+    lap.current = a;
+    return () => {
+      a.cancel();
+      lap.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (lastDir.current === dir) return;
+    lastDir.current = dir;
+    // Turns round from where it is, rather than jumping to the mirror angle.
+    lap.current?.updatePlaybackRate(dir);
+    const el = whip.current;
+    if (!lap.current || !el || typeof el.animate !== "function") return;
+    const from = whipped.current;
+    whipped.current = (from + dir * WHIP_DEG) % 360;
+    // Left at the end angle, so nothing has to hold the animation's last frame.
+    el.style.transform = `rotate(${whipped.current}deg)`;
+    el.animate([{ transform: `rotate(${from}deg)` }, { transform: `rotate(${from + dir * WHIP_DEG}deg)` }], {
+      duration: WHIP_MS,
+      easing: EASE_OUT_CUBIC,
+    });
+  }, [dir]);
+
+  return (
+    <div ref={drift} className="absolute inset-0">
+      <svg ref={whip} viewBox="0 0 100 100" className="absolute inset-0 h-full w-full">
+        {Array.from({ length: CHEVRONS }, (_, i) => (
+          <g key={i} transform={`rotate(${(360 / CHEVRONS) * i} 50 50) translate(50 6)`}>
+            <path
+              // Points along the tangent; mirrored when play runs the other way.
+              d={dir === 1 ? "M -2.6 -3 L 2.6 0 L -2.6 3" : "M 2.6 -3 L -2.6 0 L 2.6 3"}
+              fill="none"
+              stroke="rgb(251 248 241 / 0.5)"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
 }
 
 export function PileChrome({ state }: { state: ChromalyState }) {
   const g = useGeometry();
-  const angle = useDrift(state.direction);
   if (!g || !state.dealt || state.discard.length === 0) return null;
 
   // The discard is drawn at the table card's size, scaled by how far the
@@ -117,26 +173,8 @@ export function PileChrome({ state }: { state: ChromalyState }) {
         />
       </AnimatePresence>
 
-      {/* The way round, drifting the way play goes (`useDrift`). */}
-      <motion.svg
-        viewBox="0 0 100 100"
-        className="absolute inset-0 h-full w-full"
-        style={{ rotate: angle }}
-      >
-        {Array.from({ length: CHEVRONS }, (_, i) => (
-          <g key={i} transform={`rotate(${(360 / CHEVRONS) * i} 50 50) translate(50 6)`}>
-            <path
-              // Points along the tangent; mirrored when play runs the other way.
-              d={dir === 1 ? "M -2.6 -3 L 2.6 0 L -2.6 3" : "M 2.6 -3 L -2.6 0 L 2.6 3"}
-              fill="none"
-              stroke="rgb(251 248 241 / 0.5)"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </g>
-        ))}
-      </motion.svg>
+      {/* The way round, drifting the way play goes. */}
+      <DriftRing dir={dir} />
 
       {/* No countdown for a jump-in window here: a shared ring on the pile
           showed every seat a clock that was only ever one seat's to use. The

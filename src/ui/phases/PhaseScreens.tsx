@@ -139,7 +139,8 @@ export function TurnIndicator({ label, show }: { label: string; show: boolean })
                 background: "radial-gradient(closest-side, rgb(212 175 106 / 0.65), transparent 72%)",
                 filter: "blur(10px)",
               }}
-              animate={{ opacity: [0.35, 1, 0.35], scale: [0.9, 1.08, 0.9] }}
+              // `transform`, never `scale`: see FOREVER_SAFE in motion/presets.ts.
+              animate={{ opacity: [0.35, 1, 0.35], transform: ["scale(0.9)", "scale(1.08)", "scale(0.9)"] }}
               transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
             />
             <span

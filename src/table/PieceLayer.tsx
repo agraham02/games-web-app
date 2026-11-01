@@ -90,6 +90,31 @@ const INACTIVE_HAND_SCALE = 0.94;
 const MIN_TAPPABLE_OPACITY = 0.5;
 
 /**
+ * How long a piece nobody can see goes on being painted after it became
+ * unseen: long enough for the flight that put it there, its stagger included,
+ * to land first. The spring settles well inside this.
+ *
+ * Not painting it is the point. Every frame of every animation on the table
+ * rebuilds the compositor's layer list, and that costs in proportion to what
+ * is painted - with a Chromaly deck's sixty buried cards and a discard of
+ * faded ones, about half of each frame went on cards no one could see.
+ */
+const UNSEEN_AFTER_MS = 1000;
+
+/** The same, for whichever face of a card is turned away once a flip ends. */
+const FACE_AWAY_AFTER_MS = 600;
+
+/**
+ * Stops painting something once `away` has held for `afterMs`, and paints it
+ * again the instant `away` ends. `visibility` switches at the END of a
+ * transition, so the delay keeps it drawn while it is still moving there,
+ * and dropping the transition makes the way back immediate.
+ */
+function unpaintedAfter(away: boolean, afterMs: number): React.CSSProperties {
+  return away ? { visibility: "hidden", transition: `visibility 0s linear ${afterMs}ms` } : {};
+}
+
+/**
  * How far the hovered card's neighbours are pushed aside, as a fraction
  * of the piece's own DRAWN width. Deliberately modest: the push only has
  * to break the overlap enough to read the hovered card's edge, and a
@@ -506,6 +531,8 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
   // Settles to a slightly smaller rest size while it isn't the hero's
   // turn at all — see INACTIVE_HAND_SCALE's own doc.
   const turnScale = isHeroHand && !heroTurnActive ? INACTIVE_HAND_SCALE : 1;
+  // Faded out where it lies, or buried in a pile: see UNSEEN_AFTER_MS.
+  const unseen = t.opacity === 0 || Boolean(t.covered);
 
   const interactive =
     Boolean(onTap) &&
@@ -675,6 +702,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
           width: base.w,
           height: base.h,
           transformOrigin: "center center",
+          ...unpaintedAfter(unseen, UNSEEN_AFTER_MS + (placement.motionDelayMs ?? 0)),
         }}
       >
       {meta.kind === "chip" ? (
@@ -746,7 +774,8 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
                 "radial-gradient(closest-side, rgb(212 175 106 / 0.65), transparent 72%)",
               filter: "blur(6px)",
             }}
-            animate={{ opacity: [0.35, 0.95, 0.35], scale: [0.94, 1.05, 0.94] }}
+            // `transform`, never `scale`: see FOREVER_SAFE in motion/presets.ts.
+            animate={{ opacity: [0.35, 0.95, 0.35], transform: ["scale(0.94)", "scale(1.05)", "scale(0.94)"] }}
             transition={{ duration: 0.45, repeat: Infinity, ease: "easeInOut" }}
           />
           <span
@@ -833,7 +862,16 @@ function Flipper({
         position: "relative",
       }}
     >
-      <div style={{ position: "absolute", inset: 0, backfaceVisibility: "hidden" }}>
+      {/* `backfaceVisibility` hides the face turned away; it is still painted
+          underneath, though, so it is also unpainted once the flip is over. */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          backfaceVisibility: "hidden",
+          ...unpaintedAfter(!faceUp, FACE_AWAY_AFTER_MS),
+        }}
+      >
         {children}
       </div>
       <div
@@ -842,6 +880,7 @@ function Flipper({
           inset: 0,
           backfaceVisibility: "hidden",
           transform: "rotateY(180deg)",
+          ...unpaintedAfter(faceUp, FACE_AWAY_AFTER_MS),
         }}
       >
         {back}

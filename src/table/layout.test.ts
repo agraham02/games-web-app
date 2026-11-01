@@ -1489,3 +1489,59 @@ describe("chip piles - never on another seat", () => {
     expect([...hits]).toEqual([]);
   });
 });
+
+describe("a pile's buried cards", () => {
+  /**
+   * The piece layer stops painting a `covered` piece, so a card flagged
+   * wrongly would vanish from the table. Every one flagged must have a later
+   * card drawn on exactly the same spot, above it; the top card never is.
+   */
+  const PILES: { zone: Placement["zone"]; kind: "card" | "chroma"; max: number; live?: number }[] = [
+    { zone: "deck", kind: "chroma", max: 108 },
+    { zone: "stub", kind: "card", max: 52 },
+    { zone: "burnt", kind: "card", max: 52 },
+    // BS's live play (1 to 4 cards on top) steps clear of the stack.
+    { zone: "pile", kind: "card", max: 52, live: 4 },
+  ];
+
+  it("are only ever cards drawn exactly under a later one", () => {
+    const g = resolveTable({ seats: 6, width: 390, height: 844 });
+    for (const pile of PILES) {
+      for (let count = 1; count <= pile.max; count++) {
+        for (const live of pile.live ? [0, 1, pile.live] : [0]) {
+          const at = (index: number) =>
+            layoutPiece(
+              { zone: pile.zone, index, count, faceUp: false, highlighted: index >= count - live ? true : undefined },
+              g,
+              { kind: pile.kind },
+            );
+          const all = Array.from({ length: count }, (_, i) => at(i));
+          expect(all[count - 1]!.covered, `${pile.zone} top of ${count}`).toBeFalsy();
+          all.forEach((t, i) => {
+            if (!t.covered) return;
+            const over = all.slice(i + 1).some(
+              (u) => u.z > t.z && u.x === t.x && u.y === t.y && u.rotate === t.rotate && u.scale === t.scale && u.opacity > 0,
+            );
+            expect(over, `${pile.zone} card ${i} of ${count}, ${live} live`).toBe(true);
+          });
+        }
+      }
+    }
+  });
+
+  it("covers most of a deep pile, so it is worth having", () => {
+    const g = resolveTable({ seats: 6, width: 390, height: 844 });
+    const covered = (zone: Placement["zone"], count: number) =>
+      Array.from({ length: count }, (_, index) => layoutPiece({ zone, index, count, faceUp: false }, g, { kind: "card" }))
+        .filter((t) => t.covered).length;
+    expect(covered("deck", 66)).toBe(66 - 11);
+    expect(covered("stub", 40)).toBe(40 - 6 - 9);
+  });
+
+  it("leaves a small pile entirely painted", () => {
+    const g = resolveTable({ seats: 4, width: 390, height: 844 });
+    for (let index = 0; index < 8; index++) {
+      expect(layoutPiece({ zone: "deck", index, count: 8, faceUp: false }, g, { kind: "card" }).covered).toBe(false);
+    }
+  });
+});

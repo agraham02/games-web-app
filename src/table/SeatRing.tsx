@@ -370,7 +370,8 @@ function ThinkingRing() {
     <motion.span
       aria-hidden
       className="absolute -inset-0.5 rounded-full border border-brass-300"
-      animate={{ opacity: [0.15, 0.85, 0.15], scale: [1, 1.14, 1] }}
+      // `transform`, never `scale`: see FOREVER_SAFE in motion/presets.ts.
+      animate={{ opacity: [0.15, 0.85, 0.15], transform: ["scale(1)", "scale(1.14)", "scale(1)"] }}
       transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
     />
   );
@@ -412,7 +413,7 @@ function WinnerCrown() {
     >
       <motion.span
         className="block"
-        animate={{ y: [0, -1.5, 0] }}
+        animate={{ transform: ["translateY(0px)", "translateY(-1.5px)", "translateY(0px)"] }}
         transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
       >
         👑
