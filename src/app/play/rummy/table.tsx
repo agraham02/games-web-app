@@ -1546,8 +1546,9 @@ function ClosingRing() {
         border: "2px solid var(--color-closed)",
         boxShadow: "0 0 14px 1px rgb(121 198 242 / 0.45)",
       }}
-      initial={{ opacity: 0, scale: 0.985 }}
-      animate={{ opacity: [0.45, 1, 0.45], scale: [1, 1.012, 1] }}
+      // `transform`, never `scale`: see FOREVER_SAFE in motion/presets.ts.
+      initial={{ opacity: 0, transform: "scale(0.985)" }}
+      animate={{ opacity: [0.45, 1, 0.45], transform: ["scale(1)", "scale(1.012)", "scale(1)"] }}
       // The exit carries its OWN transition, and it has to. A component's
       // `transition` prop applies to every state INCLUDING exit, so the
       // repeating pulse above was being used to animate the exit too —
@@ -1556,12 +1557,12 @@ function ClosingRing() {
       // that had already turned over.
       exit={{
         opacity: 0,
-        scale: 1.05,
+        transform: "scale(1.05)",
         transition: { duration: 0.26, ease: "easeOut" },
       }}
       transition={{
         opacity: { duration: 0.52, repeat: Infinity, ease: "easeInOut" },
-        scale: { duration: 0.52, repeat: Infinity, ease: "easeInOut" },
+        transform: { duration: 0.52, repeat: Infinity, ease: "easeInOut" },
       }}
     />
   );

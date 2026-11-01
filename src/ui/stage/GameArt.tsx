@@ -122,7 +122,8 @@ export function GameArt({ id, scale = 1, still = false }: { id: GameId; scale?: 
             style={{ left: p.x, top: p.y, transform: `rotate(${p.rot}deg)` }}
           >
             <motion.div
-              animate={still ? undefined : { y: [0, -7, 0] }}
+              // `transform`, never `y`: see FOREVER_SAFE in motion/presets.ts.
+              animate={still ? undefined : { transform: ["translateY(0px)", "translateY(-7px)", "translateY(0px)"] }}
               transition={{ duration: 5, ease: "easeInOut", repeat: Infinity, delay: p.phase ?? 0 }}
             >
               {p.el}

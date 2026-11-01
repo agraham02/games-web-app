@@ -161,6 +161,22 @@ export const TRANSITIONS = {
     reflow: { duration: 0 },
 } satisfies Record<string, Transition>;
 
+/**
+ * The only values an animation that never ends (`repeat: Infinity`, a pulse,
+ * a halo, a slow turn) may animate.
+ *
+ * Motion hands these to the browser's compositor, which plays them with no
+ * help from the page. Everything else - `scale`, `rotate`, `x`, `y` included,
+ * however cheap they look - Motion sets from JavaScript on every frame, and a
+ * frame the page has to make makes the whole table re-lay its layers out.
+ * One such pulse running for a whole game made every card's flight choppy on
+ * a phone (the user, 2026-10-31). So a pulse writes its transform out in full:
+ * `transform: ["scale(1)", "scale(1.1)", "scale(1)"]`, never `scale: [...]`.
+ *
+ * `motion/forever.test.ts` holds every endless animation in `src` to it.
+ */
+export const FOREVER_SAFE = ["opacity", "filter", "clipPath", "transform", "backgroundColor"] as const;
+
 /* ============================================================
    The slam
    ============================================================ */

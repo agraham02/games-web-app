@@ -404,8 +404,9 @@ function Orbs({
     <motion.div
       aria-hidden
       className="relative h-36 w-52"
-      // Circling slowly; stops when the table is showing a result.
-      animate={outcome || melded ? { rotate: 0 } : { rotate: 360 }}
+      // Circling slowly; stops when the table is showing a result. As a
+      // `transform`, never `rotate`: see FOREVER_SAFE in motion/presets.ts.
+      animate={outcome || melded ? { transform: "rotate(0deg)" } : { transform: ["rotate(0deg)", "rotate(360deg)"] }}
       transition={outcome || melded ? { duration: 0.4 } : { duration: 22, repeat: Infinity, ease: "linear" }}
     >
       {orb(mineColour, leftLocked, -1)}

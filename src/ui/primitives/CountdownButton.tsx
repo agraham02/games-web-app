@@ -55,7 +55,8 @@ export function CountdownButton({ ms, onClick, children, tone = "loud" }: Countd
             background: "radial-gradient(closest-side, rgb(212 175 106 / 0.75), transparent 70%)",
             filter: "blur(7px)",
           }}
-          animate={{ opacity: [0.45, 1, 0.45], scale: [0.95, 1.08, 0.95] }}
+          // `transform`, never `scale`: see FOREVER_SAFE in motion/presets.ts.
+          animate={{ opacity: [0.45, 1, 0.45], transform: ["scale(0.95)", "scale(1.08)", "scale(0.95)"] }}
           transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
         />
       )}

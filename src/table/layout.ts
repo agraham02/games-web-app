@@ -54,6 +54,42 @@ export interface PieceTransform {
   scale: number;
   z: number;
   opacity: number;
+  /**
+   * Drawn exactly under another piece of the same pile, so not a pixel of it
+   * can show. The piece layer stops painting such a piece once it has
+   * settled - see `Piece`'s `unseen`.
+   */
+  covered?: boolean;
+}
+
+/**
+ * How many cards of a deck step up before the stack stops growing: past this
+ * every card sits exactly where the one above it does.
+ */
+const DECK_LIFT_CAP = 10;
+
+/** The same, for Poker's stub and burn pile (`miniStackSlot`) and BS's pile. */
+const MINI_LIFT_CAP = 6;
+const PILE_LIFT_CAP = 12;
+
+/**
+ * How many cards a thrown pile's tilt, `((index * 37) % 9) - 4`, takes to come
+ * round again: 37 leaves 1 over nines, so exactly every 9th card.
+ */
+const TILT_PERIOD = 9;
+
+/** BS's live play steps clear of its pile (`pile`), so it covers nothing: at most this many cards. */
+const BS_LIVE_PLAY_MAX = 4;
+
+/**
+ * Whether pile card `index` is drawn exactly under a later one - see
+ * `PieceTransform.covered`. Past `liftCap` a pile stops stepping up, and its
+ * look repeats every `period` cards, so card `index + period` lands on
+ * precisely the same spot, above it. `clearTop` cards at the top may be drawn
+ * somewhere else and cover nothing.
+ */
+function buried(p: Placement, liftCap: number, period: number, clearTop = 0): boolean {
+  return p.index >= liftCap && p.index + period < p.count - clearTop;
 }
 
 /**
@@ -657,7 +693,7 @@ function sideFanRoom(g: TableGeometry, anchorY: number, tilt: number): number {
 
 function miniStackSlot(zone: Box, index: number) {
   const { cx, cy } = boxCentre(zone);
-  const lift = Math.min(index, 6) * 0.6;
+  const lift = Math.min(index, MINI_LIFT_CAP) * 0.6;
   const tilt = ((index * 37) % 9) - 4;
   return { cx: cx + lift, cy: cy - lift, tilt };
 }
@@ -1301,9 +1337,12 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
               return { cx: deckX, cy: deckY };
             })();
       // A tall stack reads as depth, not as 52 offset cards — cap it.
-      const lift = Math.min(p.index, 10) * 0.4;
+      const lift = Math.min(p.index, DECK_LIFT_CAP) * 0.4;
       const { x, y } = centred(anchor.cx + lift, anchor.cy - lift, g);
-      return { x, y, rotate: 0, scale: tableScale * zs, z, opacity };
+      // Everything past the cap is under the top card, to the pixel. A
+      // Chromaly deck holds sixty-odd of them, and painting each one costs
+      // every frame of every animation on the table.
+      return { x, y, rotate: 0, scale: tableScale * zs, z, opacity, covered: buried(p, DECK_LIFT_CAP, 1) };
     }
 
     /* ----------------------------------------------- discard */
@@ -1825,7 +1864,7 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
       // than a repositioning of it.
       const { cx, cy, tilt } = miniStackSlot(g.zones.stub, p.index);
       const { x, y } = centred(cx, cy, g);
-      return { x, y, rotate: tilt, scale: miniScale * zs, z, opacity };
+      return { x, y, rotate: tilt, scale: miniScale * zs, z, opacity, covered: buried(p, MINI_LIFT_CAP, TILT_PERIOD) };
     }
 
     /* -------------------------------------------------- burnt */
@@ -1834,7 +1873,7 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
       // for why this is a separate zone from Rummy's `"discard"`.
       const { cx, cy, tilt } = miniStackSlot(g.zones.burnt, p.index);
       const { x, y } = centred(cx, cy, g);
-      return { x, y, rotate: tilt, scale: miniScale * zs, z, opacity };
+      return { x, y, rotate: tilt, scale: miniScale * zs, z, opacity, covered: buried(p, MINI_LIFT_CAP, TILT_PERIOD) };
     }
 
     /* -------------------------------------------------- pile */
@@ -1846,7 +1885,7 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
       const { cx, cy } = boxCentre(zone);
       // A deep stack reads as depth, not as 52 individually offset cards
       // — capped, the same way `deck` caps its own lift.
-      const lift = Math.min(p.index, 12) * 0.45;
+      const lift = Math.min(p.index, PILE_LIFT_CAP) * 0.45;
       // A small deterministic tilt makes a pile somebody threw cards at
       // rather than a machine-stacked block. Same recipe as `discard`.
       const tilt = ((p.index * 37) % 9) - 4;
@@ -1863,7 +1902,15 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
         cy - lift - fromTop * step * 0.4,
         g,
       );
-      return { x, y, rotate: tilt, scale: tableScale * zs, z, opacity };
+      return {
+        x,
+        y,
+        rotate: tilt,
+        scale: tableScale * zs,
+        z,
+        opacity,
+        covered: buried(p, PILE_LIFT_CAP, TILT_PERIOD, BS_LIVE_PLAY_MAX),
+      };
     }
 
     /* ------------------------------------------------ reveal */
