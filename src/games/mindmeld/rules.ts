@@ -35,7 +35,7 @@ import type {
 } from "@/engine/types";
 import { currentBrain, type WordBrain } from "./brain";
 import { makeBots } from "./bots";
-import { isProfane } from "./profanity";
+import { isProfane } from "@/lib/profanity";
 import { activePairs, activeSeats, scheduleFor, type Schedule } from "./schedule";
 import {
   DEFAULT_RULES,

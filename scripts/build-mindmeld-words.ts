@@ -33,7 +33,7 @@ import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { createGunzip } from "node:zlib";
 import wordListEnglish from "wordlist-english";
-import { isProfane } from "../src/games/mindmeld/profanity";
+import { isProfane } from "../src/lib/profanity";
 
 const GLOVE = process.argv[2];
 if (!GLOVE) throw new Error("usage: build-mindmeld-words.ts <glove-wiki-gigaword-100.gz>");

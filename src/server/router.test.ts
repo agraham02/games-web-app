@@ -264,6 +264,26 @@ describe("the server, in process", () => {
       }
     });
 
+    it("stars out rude words for everybody, until the leader switches the filter off", () => {
+      const { peer, conn, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "chat", text: "sh1t happens" });
+      for (const who of [conn, bo.conn]) expect(who.last("chat")!.message.text).toBe("**** happens");
+
+      send(peer, { t: "setProfanityFilter", on: false });
+      send(bo.peer, { t: "chat", text: "sh1t happens" });
+      expect(conn.last("chat")!.message.text).toBe("sh1t happens");
+    });
+
+    it("lets only the leader switch the filter, and tells everybody its state", () => {
+      const { peer, conn, bo } = lobbyOfTwo();
+      send(bo.peer, { t: "setProfanityFilter", on: false });
+      expect(bo.conn.last("error")?.code).toBe("not-leader");
+      expect(conn.last("room")!.room.profanityFilter).toBe(true);
+
+      send(peer, { t: "setProfanityFilter", on: false });
+      expect(bo.conn.last("room")!.room.profanityFilter).toBe(false);
+    });
+
     it("sends a quick reply by what it says, not what the client claims", () => {
       const { conn, bo } = lobbyOfTwo();
       send(bo.peer, { t: "chat", quick: "luck" });

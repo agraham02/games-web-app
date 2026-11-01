@@ -872,6 +872,8 @@ const MINDMELD: GameSetupSpec = {
       label: "Family-safe words",
       hint: "Refuses a rude word before it is locked in, so nobody ever sees it.",
       default: true,
+      // In a room the leader's Language switch decides (`Room.profanityFilter`).
+      mode: "solo",
     },
   ],
   // See `HEAT` and `SHORTLIST` in vectorBrain.ts: the tiers are how many of its best

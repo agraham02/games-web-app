@@ -15,7 +15,7 @@
 import { hashString } from "@/engine/rng";
 import type { BotContext, BotDifficulty, BotStrategy, SeatId } from "@/engine/types";
 import type { WordBrain } from "./brain";
-import { isProfane } from "./profanity";
+import { isProfane } from "@/lib/profanity";
 import { lastTwo, pairOf } from "./state";
 import type { MindMeldAction, MindMeldState } from "./types";
 import { refusal, sameAsAny } from "./words";

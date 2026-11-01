@@ -641,6 +641,8 @@ function toCommand(message: ClientMessage): RoomCommand | null {
       return { t: "endGame" };
     case "setTurnTimer":
       return { t: "setTurnTimer", on: message.on, seconds: message.seconds };
+    case "setProfanityFilter":
+      return { t: "setProfanityFilter", on: message.on };
     case "resume":
       return { t: "resume" };
     default:

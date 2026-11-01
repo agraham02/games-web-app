@@ -866,6 +866,46 @@ describe("the turn timer, as a room setting", () => {
   });
 });
 
+describe("the profanity filter, as a room setting", () => {
+  it("is on in a new room", () => {
+    expect(room().profanityFilter).toBe(true);
+  });
+
+  it("is the leader's to change", () => {
+    const r = withMembers(["Sam"]);
+    expect(applyCommand(r, { t: "setProfanityFilter", on: false }, { actor: "s-0", now: 1 })).toEqual({
+      ok: false,
+      error: "not-leader",
+    });
+    const off = ok(r, { t: "setProfanityFilter", on: false }, { actor: LEADER });
+    expect(off.profanityFilter).toBe(false);
+    expect(ok(off, { t: "setProfanityFilter", on: true }, { actor: LEADER }).profanityFilter).toBe(true);
+  });
+
+  it("is fixed while a game is running", () => {
+    const r = ok(spades(withMembers(["Sam"])), { t: "startGame" }, { actor: LEADER });
+    expect(applyCommand(r, { t: "setProfanityFilter", on: false }, { actor: LEADER, now: 2 })).toEqual({
+      ok: false,
+      error: "game-already-running",
+    });
+  });
+
+  it("is what Mind Meld is dealt with, whatever the saved game options said", () => {
+    const dealt = (filter: boolean, saved: boolean) => {
+      let r = ok(
+        withMembers(["Sam"]),
+        { t: "selectGame", gameId: "mindmeld", settings: { familySafe: saved }, seats: 2, difficulty: "steady" },
+        { actor: LEADER },
+      );
+      r = ok(r, { t: "setProfanityFilter", on: filter }, { actor: LEADER });
+      const start = effectsOf(r, { t: "startGame" }, { actor: LEADER }).find((e) => e.t === "startSession");
+      return start?.t === "startSession" ? start.settings.familySafe : undefined;
+    };
+    expect(dealt(true, false)).toBe(true);
+    expect(dealt(false, true)).toBe(false);
+  });
+});
+
 describe("idle: the timer gave somebody's seat to a bot", () => {
   function started(): Room {
     const r = spades(withMembers(["Sam"]));

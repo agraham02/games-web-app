@@ -97,6 +97,8 @@ export type ClientMessage =
   | ({ t: "chat"; text?: string; quick?: string } & Addressed)
   /** Leader only, between games: the turn timer on or off, and how long. */
   | ({ t: "setTurnTimer"; on?: boolean; seconds?: number } & Addressed)
+  /** Leader only, between games: mask rude words in chat, and refuse them in Mind Meld. */
+  | ({ t: "setProfanityFilter"; on: boolean } & Addressed)
   /** "I'm back" — after the turn timer handed your seat to a bot. */
   | ({ t: "resume" } & Addressed)
   /**
@@ -192,6 +194,8 @@ export interface RoomView {
   chat: ChatMode;
   /** Between games, what the next one will be played with. */
   turnTimer: TurnTimer;
+  /** Whether rude words are masked in chat and refused in Mind Meld. */
+  profanityFilter: boolean;
 }
 
 /**
@@ -554,6 +558,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (on === undefined && seconds === undefined) return null;
       return { t: "setTurnTimer", on, seconds, reqId };
     }
+
+    case "setProfanityFilter":
+      return typeof data.on === "boolean" ? { t: "setProfanityFilter", on: data.on, reqId } : null;
 
     case "bye":
       return { t: "bye" };

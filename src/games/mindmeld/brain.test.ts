@@ -4,7 +4,7 @@ import { createRng } from "@/engine/rng";
 import type { BotDifficulty } from "@/engine/types";
 import { associationsOf } from "./associations";
 import { fallbackBrain } from "./brain";
-import { isProfane } from "./profanity";
+import { isProfane } from "@/lib/profanity";
 import { VECTORS_FILE, VOCAB_FILE, vectorBrainFrom } from "./vectorBrain";
 import { sameWord, tokens } from "./words";
 

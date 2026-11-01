@@ -174,6 +174,11 @@ export interface Room {
   seatPlan?: (SessionId | null)[];
   /** See `TurnTimer`. */
   turnTimer: TurnTimer;
+  /**
+   * Whether rude words are masked in chat and refused in Mind Meld (`lib/profanity`).
+   * On in every new room; the leader may switch it off, between games.
+   */
+  profanityFilter: boolean;
 }
 
 export type RoomError =
@@ -251,6 +256,8 @@ export type RoomCommand =
   | { t: "closeRoom" }
   /** Leader only, between games: the turn timer on or off, and how long. */
   | { t: "setTurnTimer"; on?: boolean; seconds?: number }
+  /** Leader only, between games: rude words masked in chat and refused in Mind Meld. */
+  | { t: "setProfanityFilter"; on: boolean }
   /**
    * Server only, never from the wire: the actor let the turn timer run out
    * twice in a row (`RoomRuntime` counts). A bot takes their seat.
@@ -303,6 +310,7 @@ export function createRoom(opts: {
     difficulty: "steady",
     game: null,
     turnTimer: { on: true, seconds: TURN_TIMER_DEFAULT_S },
+    profanityFilter: true,
   };
 }
 
@@ -882,7 +890,8 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
           {
             t: "startSession",
             gameId: room.gameId,
-            settings: room.settings,
+            // The room's filter is the game's: Mind Meld's own switch is solo-only.
+            settings: { ...room.settings, familySafe: room.profanityFilter },
             seats,
             difficulty: room.difficulty,
           },
@@ -986,6 +995,15 @@ export function applyCommand(room: Room, command: RoomCommand, ctx: RoomContext)
       }
       const on = typeof command.on === "boolean" ? command.on : room.turnTimer.on;
       return { ok: true, room: { ...room, turnTimer: { on, seconds } }, effects };
+    }
+
+    case "setProfanityFilter": {
+      const err = requireLeader();
+      if (err) return fail(err);
+      // Fixed for the length of a game, like the turn timer: Mind Meld's rules
+      // were built with it.
+      if (room.game) return fail("game-already-running");
+      return { ok: true, room: { ...room, profanityFilter: command.on === true }, effects };
     }
 
     case "markIdle": {

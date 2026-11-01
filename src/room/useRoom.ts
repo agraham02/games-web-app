@@ -166,6 +166,8 @@ export interface RoomApi {
   resumeSeat: () => void;
   /** Leader only, between games. */
   setTurnTimer: (change: { on?: boolean; seconds?: number }) => void;
+  /** Leader only, between games. */
+  setProfanityFilter: (on: boolean) => void;
   send: (message: ClientMessage) => void;
 }
 
@@ -499,6 +501,7 @@ export function useRoom(): RoomApi {
       refusedMove,
       resumeSeat: () => send({ t: "resume" }),
       setTurnTimer: (change) => send({ t: "setTurnTimer", ...change }),
+      setProfanityFilter: (on) => send({ t: "setProfanityFilter", on }),
     }),
     [
       phase,

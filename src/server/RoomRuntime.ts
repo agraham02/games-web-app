@@ -79,6 +79,7 @@ import {
   type ChatMessage,
   type ChatMode,
 } from "@/session/chat";
+import { maskProfanity } from "@/lib/profanity";
 
 /**
  * The seat a spectator "occupies". Every game's `placements` and
@@ -510,6 +511,9 @@ export class RoomRuntime {
       if (locked) return "chat-locked";
       text = cleanChatText(input.text ?? "");
       if (chatTextProblem(text)) return "chat-invalid";
+      // After the length check, which is about what was typed: stars are the
+      // same width as the word they replace, so the two never disagree.
+      if (this.room.profanityFilter) text = maskProfanity(text);
     }
 
     recent.push(now);
@@ -1227,6 +1231,7 @@ export class RoomRuntime {
       settlement: this.settlement,
       chat: this.chatModeFor(session),
       turnTimer: room.turnTimer,
+      profanityFilter: room.profanityFilter,
     };
   }
 

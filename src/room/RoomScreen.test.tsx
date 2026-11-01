@@ -98,6 +98,7 @@ function roomView(over: Partial<RoomView> = {}): RoomView {
     settlement: null,
     chat: "open",
     turnTimer: { on: true, seconds: 30 },
+    profanityFilter: true,
     ...over,
   };
 }
@@ -532,6 +533,20 @@ describe("the room client", () => {
       expect(screen.getByText("15")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("switch", { name: /time each move/i }));
       expect(socket().lastSent("setTurnTimer")).toBeUndefined();
+    });
+
+    it("lets the leader switch the profanity filter, and shows everybody else where it stands", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("switch", { name: /filter rude words/i }));
+      expect(socket().lastSent("setProfanityFilter")).toMatchObject({ on: false });
+    });
+
+    it("does not let anybody else change it", async () => {
+      await enterLobby({ youAreLeader: false, profanityFilter: false });
+      const toggle = screen.getByRole("switch", { name: /filter rude words/i });
+      expect(toggle).not.toBeChecked();
+      fireEvent.click(toggle);
+      expect(socket().lastSent("setProfanityFilter")).toBeUndefined();
     });
 
     it("says who closed the room, on the form", async () => {

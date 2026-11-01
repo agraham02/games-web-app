@@ -469,6 +469,21 @@ function RoomPanel({ api }: { api: RoomApi }) {
         locked={!leader || room.gameRunning}
         onChange={api.setTurnTimer}
       />
+      <div className="flex flex-col gap-2">
+        <span className="text-xs font-bold text-bone-200">Language</span>
+        <Toggle
+          label="Filter rude words"
+          hint={
+            room.profanityFilter
+              ? "Starred out in chat, and refused in Mind Meld before anybody sees them."
+              : "Anything goes in chat and in Mind Meld."
+          }
+          checked={room.profanityFilter}
+          // Like the turn timer: Mind Meld's rules are built with it at the deal.
+          locked={!leader || room.gameRunning}
+          onChange={api.setProfanityFilter}
+        />
+      </div>
     </Card>
   );
 }
