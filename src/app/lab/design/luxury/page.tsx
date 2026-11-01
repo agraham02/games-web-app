@@ -15,7 +15,7 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Instrument_Serif } from "next/font/google";
+import localFont from "next/font/local";
 import { Bot, Crown } from "lucide-react";
 import { GAME_IDS, GAMES, type GameId } from "@/session/registry";
 import { GameOptions, type SetupValue } from "@/ui/setup/GameOptions";
@@ -23,7 +23,14 @@ import { defaultSetup } from "@/ui/setup/savedSetup";
 import { GAME_BLURBS, GameThumb, seatRange } from "@/ui/primitives/GameThumb";
 import { Carousel, GameArt, GameBackdrop, MOCK_CODE, MOCK_ROSTER } from "../shared";
 
-const serif = Instrument_Serif({ variable: "--font-lux", subsets: ["latin"], weight: "400", style: ["normal", "italic"] });
+// Served from the app's own fonts, not fetched at build time: see src/app/fonts/README.md.
+const serif = localFont({
+  variable: "--font-lux",
+  src: [
+    { path: "../../../fonts/instrument-serif-400.woff2", weight: "400", style: "normal" },
+    { path: "../../../fonts/instrument-serif-italic-400.woff2", weight: "400", style: "italic" },
+  ],
+});
 
 const CAPS = "text-[10.5px] font-medium tracking-[0.28em] uppercase";
 const PRIMARY =

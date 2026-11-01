@@ -1,32 +1,35 @@
 import type { Metadata, Viewport } from "next";
-import { Cinzel, Figtree, Jost, Source_Serif_4 } from "next/font/google";
+import localFont from "next/font/local";
 import type { ReactNode } from "react";
 import { captureInstallPrompt } from "./installCapture";
 import { MotionProvider } from "./MotionProvider";
 import "./globals.css";
 
-const cinzel = Cinzel({
+// Served from ./fonts, not fetched from Google at build time: see fonts/README.md.
+const cinzel = localFont({
   variable: "--font-cinzel",
-  subsets: ["latin"],
-  weight: ["400", "600", "700"],
+  src: "./fonts/cinzel.woff2",
+  weight: "400 700",
 });
 
-const figtree = Figtree({
+const figtree = localFont({
   variable: "--font-figtree",
-  subsets: ["latin"],
+  src: "./fonts/figtree.woff2",
+  weight: "300 900",
 });
 
 // The shell's title face (home, setup, lobby): a light geometric sans. The
 // user does not like serifs (2026-10-30); tables keep Cinzel for now.
-const jost = Jost({
+const jost = localFont({
   variable: "--font-jost",
-  subsets: ["latin"],
+  src: "./fonts/jost.woff2",
+  weight: "100 900",
 });
 
-const sourceSerif = Source_Serif_4({
+const sourceSerif = localFont({
   variable: "--font-source-serif",
-  subsets: ["latin"],
-  weight: ["400", "600", "700"],
+  src: "./fonts/source-serif-4.woff2",
+  weight: "400 700",
 });
 
 export const metadata: Metadata = {

@@ -16,7 +16,7 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bricolage_Grotesque } from "next/font/google";
+import localFont from "next/font/local";
 import { ArrowRight, Bot, Copy, Crown, KeyRound, Share2, Users } from "lucide-react";
 import { GAME_IDS, GAMES, type GameId } from "@/session/registry";
 import { GAME_THEMES } from "@/ui/gameTheme";
@@ -25,7 +25,12 @@ import { defaultSetup } from "@/ui/setup/savedSetup";
 import { GAME_BLURBS, GameThumb, seatRange } from "@/ui/primitives/GameThumb";
 import { Carousel, GameArt, GameBackdrop, MOCK_CODE, MOCK_ROSTER } from "../shared";
 
-const display = Bricolage_Grotesque({ variable: "--font-bold", subsets: ["latin"] });
+// Served from the app's own fonts, not fetched at build time: see src/app/fonts/README.md.
+const display = localFont({
+  variable: "--font-bold",
+  src: "../../../fonts/bricolage-grotesque-200-800.woff2",
+  weight: "200 800",
+});
 
 // Literal names: Tailwind only emits a theme variable it sees written out.
 const TEAM = ["var(--color-team-a)", "var(--color-team-b)", "var(--color-team-c)", "var(--color-team-d)", "var(--color-team-e)"];
