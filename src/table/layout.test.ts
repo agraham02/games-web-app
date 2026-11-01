@@ -953,6 +953,8 @@ describe("the band above the hand — nothing on the table sits under it", () =>
       reserve: (vp) => (vp.w >= 1024 ? 104 : vp.h < 560 && vp.w >= 640 ? 84 : 114),
     },
     { game: "bs", seats: [2, 4, 6], hand: 13, zones: ["reveal", "pile"] },
+    // Up to ten seats, and a hand a few penalties can swell well past seven.
+    { game: "chromaly", seats: [2, 4, 6, 8, 10], hand: 14, zones: ["deck", "discard"] },
     { game: "spades", seats: [4], hand: 13, zones: ["trick"] },
     { game: "rummy", seats: [2, 4, 6], hand: 10, zones: ["deck", "discard"], bottomZone: 140 },
     { game: "dominoes", seats: [2, 3, 4], hand: 7, zones: ["line"] },
@@ -1231,9 +1233,15 @@ describe("chip piles that become one stack", () => {
 
   it("stacks a seat's pile past three rows", () => {
     const top = (g: ReturnType<typeof resolveTable>) => g.seats.find((s) => s.anchor === "top")!.seat;
-    const g = phone();
+    // Three seats: nobody at the sides for a top seat's pile to reach.
+    const g = resolveTable({ seats: 3, width: 390, height: 844, handZone: 16, bandZone: 64 });
     expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 6 })).toBe(false);
     expect(chipPileStacks(g, { zone: "collected", seat: top(g), count: 7 })).toBe(true);
+    // Nine: the seats crowd each other's piles, and every opponent's pile
+    // stacks as soon as the tightest one must (they all look alike).
+    const crowded = phone();
+    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 1 })).toBe(false);
+    expect(chipPileStacks(crowded, { zone: "collected", seat: top(crowded), count: 2 })).toBe(true);
     const l = laptop();
     expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 9 })).toBe(false);
     expect(chipPileStacks(l, { zone: "collected", seat: top(l), count: 10 })).toBe(true);
@@ -1346,5 +1354,138 @@ describe("chip piles that become one stack", () => {
     const top = centre("center", undefined, 3, 4, g);
     expect(pot.cx).toBeCloseTo(top.x, 5);
     expect(pot.cy).toBeCloseTo(top.y, 5);
+  });
+});
+
+/**
+ * No opponent's card ever lands on another seat - its cards or its pod
+ * (the user, 2026-10-31: three seats down a laptop's left edge, and the
+ * middle one's sixteen cards ran into both neighbours' hands). Measured as
+ * the cards are DRAWN, turned and tilted, not as their upright boxes: a
+ * tilted card's own corners are what reach a neighbour.
+ */
+describe("opponents' hands - never on another seat", () => {
+  /** A rotated rectangle, as its centre, half sizes and angle. */
+  interface Obb { cx: number; cy: number; hw: number; hh: number; rad: number }
+
+  function cardObb(g: ReturnType<typeof resolveTable>, p: Placement, kind: "card" | "tile"): Obb {
+    const t = layoutPiece(p, g, { kind });
+    const base = baseSize(g);
+    const w = (kind === "tile" ? Math.min(base.w, base.h / 2) : base.w) * t.scale;
+    const h = kind === "tile" ? w * 2 : base.h * t.scale;
+    return { cx: t.x + base.w / 2, cy: t.y + base.h / 2, hw: w / 2, hh: h / 2, rad: (t.rotate * Math.PI) / 180 };
+  }
+
+  const boxObb = (b: Box): Obb => ({ cx: b.x + b.w / 2, cy: b.y + b.h / 2, hw: b.w / 2, hh: b.h / 2, rad: 0 });
+
+  /** Separating axes: two rectangles overlap unless one of their four edge normals parts them. */
+  function overlaps(a: Obb, b: Obb, slack = 0.5): boolean {
+    const axes = [a.rad, a.rad + Math.PI / 2, b.rad, b.rad + Math.PI / 2].map((r) => ({ x: Math.cos(r), y: Math.sin(r) }));
+    const reach = (o: Obb, ax: { x: number; y: number }) =>
+      o.hw * Math.abs(Math.cos(o.rad) * ax.x + Math.sin(o.rad) * ax.y) +
+      o.hh * Math.abs(-Math.sin(o.rad) * ax.x + Math.cos(o.rad) * ax.y);
+    for (const ax of axes) {
+      const gap = Math.abs((b.cx - a.cx) * ax.x + (b.cy - a.cy) * ax.y);
+      if (gap >= reach(a, ax) + reach(b, ax) - slack) return false;
+    }
+    return true;
+  }
+
+  const SCREENS = [
+    ...TABLE_VIEWPORTS,
+    { name: "phone small", w: 360, h: 780 },
+    { name: "phone big", w: 430, h: 932 },
+    // The report's own window: a 2547px-wide screenshot at 125%.
+    { name: "laptop wide 125%", w: 2038, h: 973 },
+  ];
+  const COUNTS = [1, 2, 4, 7, 10, 13, 16, 20, 26];
+
+  for (const kind of ["card", "tile"] as const) {
+    it(`${kind}s: no seat's hand touches another seat's hand or pod, at any size or seat count`, () => {
+      const hits = new Set<string>();
+      for (const vp of SCREENS) {
+        for (const seats of kind === "tile" ? [2, 3, 4] : SEAT_COUNTS) {
+          const g = resolveTable({ seats, width: vp.w, height: vp.h });
+          const others = g.seats.filter((s) => !s.isHero);
+          for (const count of kind === "tile" ? [1, 4, 7, 10, 14] : COUNTS) {
+            const hands = others.map((slot) => ({
+              slot,
+              cards: Array.from({ length: count }, (_, index) =>
+                cardObb(g, { zone: "hand", seat: slot.seat, index, count, faceUp: false }, kind),
+              ),
+            }));
+            for (const a of hands) {
+              for (const b of others) {
+                // Its own pod too: a hand sits beside it, never on it.
+                if (b.seat === a.slot.seat && g.tuck) continue;
+                const pod = boxObb(podBox(b, g.density));
+                if (a.cards.some((c) => overlaps(c, pod))) {
+                  hits.add(`${vp.name} ${seats} seats, ${count} cards: seat ${a.slot.seat}'s hand on seat ${b.seat}'s pod`);
+                }
+              }
+              for (const b of hands) {
+                if (b.slot.seat <= a.slot.seat) continue;
+                if (a.cards.some((c) => b.cards.some((d) => overlaps(c, d)))) {
+                  hits.add(`${vp.name} ${seats} seats, ${count} cards: seats ${a.slot.seat} and ${b.slot.seat}'s hands`);
+                }
+              }
+            }
+          }
+        }
+      }
+      expect([...hits]).toEqual([]);
+    });
+  }
+});
+
+
+/**
+ * The same rule for what a seat has won: LRC's chips, and any face-up pile
+ * beside a pod, never land on another seat's pod or pile, on any screen.
+ */
+describe("chip piles - never on another seat", () => {
+  const SCREENS = [
+    ...TABLE_VIEWPORTS,
+    { name: "phone small", w: 360, h: 780 },
+    { name: "phone big", w: 430, h: 932 },
+    { name: "laptop wide 125%", w: 2038, h: 973 },
+  ];
+
+  it("keeps every seat's chips off every other seat's pod and chips", () => {
+    const hits = new Set<string>();
+    for (const vp of SCREENS) {
+      for (const seats of SEAT_COUNTS) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, handZone: 64, bandZone: 64 });
+        const d = g.miniCard.w;
+        for (const count of [1, 3, 6, 9, 12, 20]) {
+          const piles = g.seats
+            .filter((s) => !s.isHero)
+            .map((slot) => ({
+              slot,
+              discs: Array.from({ length: count }, (_, index): Box => {
+                const c = pieceOnScreen("collected", slot.seat, index, count, g);
+                const cx = (c.left + c.right) / 2;
+                const cy = (c.top + c.bottom) / 2;
+                return { x: cx - d / 2, y: cy - d / 2, w: d, h: d };
+              }),
+            }));
+          for (const a of piles) {
+            for (const other of g.seats) {
+              if (other.isHero || other.seat === a.slot.seat) continue;
+              if (a.discs.some((disc) => overlapsBox(disc, podBox(other, g.density)))) {
+                hits.add(`${vp.name} ${seats} seats, ${count} chips: seat ${a.slot.seat}'s on seat ${other.seat}'s pod`);
+              }
+            }
+            for (const b of piles) {
+              if (b.slot.seat <= a.slot.seat) continue;
+              if (a.discs.some((x) => b.discs.some((y) => overlapsBox(x, y)))) {
+                hits.add(`${vp.name} ${seats} seats, ${count} chips: seats ${a.slot.seat} and ${b.slot.seat}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect([...hits]).toEqual([]);
   });
 });

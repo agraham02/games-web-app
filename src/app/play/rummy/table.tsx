@@ -1879,7 +1879,7 @@ export function playerViews(view: RummyView, seats: number) {
     // right: they are watching all of them.
     for (let s = 0; s < seats; s++) {
       if (s === view.viewerSeat) continue;
-      const cue = seatCue(live, s);
+      const cue = seatCue(live, s, "next");
       views.push({
         seat: s,
         name: view.nameFor(s),

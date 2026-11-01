@@ -100,7 +100,10 @@ describe("useGameRuntime — every game still runs through the extracted session
       });
 
       const placements = useTableStore.getState().placements;
-      expect(Object.keys(placements).length).toBeGreaterThan(0);
+      // Mind Meld is the one game with no pieces at all: its table is words, and
+      // an empty board that still equals the game's own account is the pass.
+      if (name === "Mind Meld") expect(Object.keys(placements)).toHaveLength(0);
+      else expect(Object.keys(placements).length).toBeGreaterThan(0);
 
       // Whatever the board shows must be the game's own account of it —
       // this is the self-correcting reconcile, and it is the single thing

@@ -523,7 +523,7 @@ export function playerViews(view: SpadesView, state: SpadesState, live: Live): S
     // "Who just moved" and "who are we waiting on" — see `seatCue`. The
     // second used to have no answer, so a human's pod only lit once they
     // acted, a whole turn late.
-    const cue = seatCue(live, s);
+    const cue = seatCue(live, s, "next");
     out.push({
       seat: s,
       name: view.nameFor(s),

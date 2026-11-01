@@ -88,6 +88,21 @@ export function useChoreographer({
 
     applyRef.current(event);
 
+    // A run of the same gesture with no gap between (a hand handed over
+    // whole, a pair played at once, every hand closing up) is applied in this
+    // same tick, so the store writes land in ONE render and the pieces leave
+    // together. A `setTimeout(0)` each put a render between every card, and
+    // twenty cards handed over left one by one (the user, 2026-10-30).
+    let last = event;
+    while (
+      queue.current.length > 0 &&
+      queue.current[0]!.t === last.t &&
+      gapAfter(last, queue.current[0]!, { dealStaggerMs: dealStaggerRef.current }) === 0
+    ) {
+      last = queue.current.shift()!;
+      applyRef.current(last);
+    }
+
     if (queue.current.length === 0) {
       running.current = false;
       setPlaying(false);
@@ -101,7 +116,7 @@ export function useChoreographer({
     // a batch pushed mid-play is timed against what is actually next, not
     // against a plan made before it arrived.
     const factor = prefersReducedMotion() ? 0 : 1 / Math.max(0.05, speedRef.current);
-    const wait = gapAfter(event, queue.current[0]!, { dealStaggerMs: dealStaggerRef.current }) * factor;
+    const wait = gapAfter(last, queue.current[0]!, { dealStaggerMs: dealStaggerRef.current }) * factor;
 
     timer.current = setTimeout(() => drainRef.current(), Math.max(0, wait));
   }, []);

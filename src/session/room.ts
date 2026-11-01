@@ -28,7 +28,7 @@
 
 import type { BotDifficulty, SeatId } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
-import { clampSeats, gameEntry, type GameId, type RawSettings } from "./registry";
+import { clampSeats, gameEntry, teamIndexOf, type GameId, type RawSettings } from "./registry";
 
 export type SessionId = string;
 export type RoomCode = string;
@@ -366,7 +366,7 @@ export function seatingOrder(room: Room): Member[] {
  */
 export function teamOfSeat(room: Room, index: number): number | null {
   if (!room.gameId || !gameEntry(room.gameId).teams(room.settings)) return null;
-  return index >= 0 && index < room.seats ? index % 2 : null;
+  return index >= 0 && index < room.seats ? teamIndexOf(room.gameId, index) : null;
 }
 
 export function connectedCount(room: Room): number {

@@ -57,6 +57,30 @@ export const buttonVariants = cva(
         pill: "rounded-full px-6 py-2.5 text-sm",
       },
     },
+    // The shell's look (the home, setup and lobby screens): flat, square-ish,
+    // wide-tracked capitals, hairlines instead of fills. Only the `rounded`
+    // shape — the `pill` is the TABLE's action button, and keeps the brass
+    // gradient it is read against felt with. `cn` is tailwind-merge, so these
+    // win over the tone's own classes where they overlap.
+    compoundVariants: [
+      {
+        shape: "rounded",
+        tone: "primary",
+        class:
+          "rounded-sm bg-none bg-brass-300 font-semibold tracking-[0.2em] text-felt-950 uppercase shadow-none hover:bg-brass-200",
+      },
+      {
+        shape: "rounded",
+        tone: "ghost",
+        class:
+          "rounded-sm bg-transparent font-medium tracking-[0.2em] text-bone-200 uppercase ring-bone-50/22 hover:bg-bone-50/6 hover:ring-bone-50/45",
+      },
+      {
+        shape: "rounded",
+        tone: "danger",
+        class: "rounded-sm font-medium tracking-[0.2em] uppercase",
+      },
+    ],
     defaultVariants: { tone: "ghost", size: "md", shape: "rounded" },
   },
 );

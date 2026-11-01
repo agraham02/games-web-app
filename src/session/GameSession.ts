@@ -33,6 +33,7 @@
  */
 
 import type {
+  BotContext,
   BotDifficulty,
   GameDefinition,
   GameEvent,
@@ -96,12 +97,24 @@ export interface TurnClock {
  * would be the older of the two. When the wire needs a state payload it is
  * a per-viewer REDACTION of `snapshot()` computed at send time, not this.
  */
+/**
+ * One move and where it came from. `by` separates the moves a seat made from
+ * the ones made FOR it - a bot's turn, the turn clock, a forced draw - which
+ * the seat number alone cannot: offline, seat 0 is both the person and the
+ * seat a forced draw is made for.
+ */
+export interface MoveRecord<A> {
+  seat: SeatId;
+  action: A;
+  by?: "player" | "bot" | "timeout" | "forced";
+}
+
 export interface SessionFrame<A> {
   /** Monotonic per session. The wire uses it to spot a client falling behind. */
   seq: number;
   events: GameEvent[];
   /** Who acted and what they did, or null for a deal. */
-  lastAction: { seat: SeatId; action: A } | null;
+  lastAction: MoveRecord<A> | null;
   /**
    * Non-null only on a round's opening deal, carrying that round's number.
    * Published as the deal is DISPATCHED rather than derived from state
@@ -224,7 +237,9 @@ export class GameSession<S, A> {
 
   private state: S;
   private seq = 0;
-  private last: { seat: SeatId; action: A } | null = null;
+  private last: MoveRecord<A> | null = null;
+  /** Set while a deadline is submitting a forced move, so `submit` can say so. */
+  private forcing = false;
 
   private holdTimer: TimerHandle | null = null;
   /** A live seat's deadline, when its game declared one. */
@@ -465,10 +480,14 @@ export class GameSession<S, A> {
     // the bot only CHOOSES from what it can legitimately see.
     const view = this.definition.playerView(current, seat);
     const thinkMs = bot.thinkMs(view, seat, this.rng);
-    const action = bot.choose(view, seat, this.rng);
+    const action = bot.choose(view, seat, this.rng, this.botContext());
     // `think` rides first in the same batch, so playback waits out that
     // beat before the move itself animates.
     this.playFor(seat, action, [{ t: "think", seat, ms: thinkMs }]);
+  }
+
+  private botContext(): BotContext {
+    return { isLive: (seat) => this.isLive(seat) };
   }
 
   private botFor(seat: SeatId) {
@@ -486,7 +505,7 @@ export class GameSession<S, A> {
   private playFor(seat: SeatId, action: A, lead: GameEvent[], timedOut?: SeatId): void {
     const { state: next, events } = this.definition.reduce(this.state, action);
     this.state = next;
-    this.last = { seat, action };
+    this.last = { seat, action, by: timedOut === undefined ? "bot" : "timeout" };
     this.emit([...lead, ...events], null, timedOut);
   }
 
@@ -502,7 +521,7 @@ export class GameSession<S, A> {
     if (this.definition.currentSeat(state) !== seat || !this.isLive(seat)) return;
     const action =
       this.definition.timeoutAction?.(state, seat) ??
-      this.botFor(seat).choose(this.definition.playerView(state, seat), seat, this.rng);
+      this.botFor(seat).choose(this.definition.playerView(state, seat), seat, this.rng, this.botContext());
     this.clearHold();
     this.lastAuto = { seat, at: this.clock.now(), kind: "timeout", before: state };
     // The table's toast — "Ada ran out of time", "You ran out of time" — so
@@ -579,7 +598,7 @@ export class GameSession<S, A> {
 
     const { state: next, events } = this.definition.reduce(this.state, resolved);
     this.state = next;
-    this.last = { seat, action: resolved };
+    this.last = { seat, action: resolved, by: this.forcing ? "forced" : "player" };
     this.emit(events, null);
     return { ok: true, animated: events.length > 0 };
   }
@@ -716,7 +735,13 @@ export class GameSession<S, A> {
       // illegal in the meantime is refused exactly as a client's would be
       // — the seat may have acted a moment before this fired.
       const before = this.state;
-      const result = this.submit(seat, (due as { action: A }).action);
+      this.forcing = kind === "forced";
+      let result: SubmitResult;
+      try {
+        result = this.submit(seat, (due as { action: A }).action);
+      } finally {
+        this.forcing = false;
+      }
       if (result.ok && kind === "forced") this.lastAuto = { seat, at: this.clock.now(), kind: "forced", before };
       if (result.ok && !result.animated) this.settled();
     }, ms);

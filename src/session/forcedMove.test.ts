@@ -57,6 +57,13 @@ function publicReason(game: GameId, state: unknown, seat: SeatId, action: { t: s
       return `Rummy forced a ${action.t}`;
     case "poker":
       return "poker has no forced move";
+    case "mindmeld":
+      // A word is anything, so no word is ever the only move.
+      return "Mind Meld has no forced move";
+    case "chromaly":
+      // Drawing when nothing can be played: the table is told they drew
+      // either way, so who made it is not a secret.
+      return action.t === "draw" ? null : `Chromaly forced a ${action.t}`;
   }
 }
 
@@ -102,7 +109,7 @@ describe("which moves are forced", () => {
         }
       }
 
-      if (game === "poker") {
+      if (game === "poker" || game === "mindmeld") {
         expect(forcedSeen).toBe(0);
         return;
       }
@@ -215,6 +222,32 @@ describe("a forced move plays itself", () => {
     expect(session.autoPlayed((seat + 1) % 3, 3_000, roll)).toBeNull();
     clock.advance(3_001);
     expect(session.autoPlayed(seat, 3_000, roll)).toBeNull();
+  });
+
+  it("marks the move it made as forced, and a pressed one as the player's", () => {
+    // What the dev move log reads to tell a move made FOR somebody from one
+    // they made (the user, 2026-10-31).
+    const frames: Array<{ by?: string } | null> = [];
+    const clock = new TestClock();
+    const definition = createLrc(3);
+    const session: GameSession<LrcState, unknown> = new GameSession<LrcState, unknown>({
+      definition: definition as GameDefinition<LrcState, unknown>,
+      seats: 3,
+      seed: 99,
+      clock,
+      isSeatLive: () => true,
+      turnHoldMs: () => 0,
+      emit: (frame) => {
+        frames.push(frame.lastAction);
+        session.settled();
+      },
+    });
+    session.start();
+    clock.advance(FORCED_MOVE_MS);
+    expect(frames.at(-1)?.by).toBe("forced");
+    const seat = definition.currentSeat(session.snapshot())!;
+    session.submit(seat, definition.legalActions(session.snapshot(), seat)[0]);
+    expect(frames.at(-1)?.by).toBe("player");
   });
 
   it("plays a whole table of silent people to the end", () => {

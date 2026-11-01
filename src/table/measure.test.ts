@@ -26,7 +26,7 @@ describe("the board — at least as big as the targets say", () => {
   const PORTRAIT = ["phone 360x780", "phone 390x844", "phone 430x932"];
 
   it("draws every card game's board close to hand size on a phone held upright", () => {
-    for (const id of ["spades", "rummy", "poker", "bs"]) {
+    for (const id of ["spades", "rummy", "poker", "bs", "chromaly"]) {
       for (const vp of PORTRAIT) {
         expect(at(id, vp).ratio, `${id} on ${vp}`).toBeGreaterThanOrEqual(0.85);
       }

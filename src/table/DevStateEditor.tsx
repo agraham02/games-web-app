@@ -15,6 +15,7 @@
 import { useState } from "react";
 import type { PieceId, PieceMeta } from "@/engine/types";
 import { CardFace } from "@/ui/primitives/CardFace";
+import { ChromaFace } from "@/ui/primitives/ChromaFace";
 import { TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { fillPile, findPiles, movePiece, type Pile } from "./debugState";
@@ -147,5 +148,6 @@ function MiniPiece({ id, meta }: { id: PieceId; meta?: PieceMeta }) {
   if (!meta) return null;
   if (meta.kind === "tile") return <TileFace tile={meta.face} w={14} h={28} />;
   if (meta.kind === "chip") return <ChipFace colour={meta.face} size={16} />;
+  if (meta.kind === "chroma") return <ChromaFace card={id} w={18} h={25} detail="index" />;
   return <CardFace card={id} w={18} h={25} detail="index" />;
 }

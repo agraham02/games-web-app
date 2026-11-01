@@ -27,8 +27,10 @@ import { SeatPod, type SeatView } from "@/table/SeatRing";
 import { render } from "@testing-library/react";
 
 import { playerViews as bs, standings as bsStandings } from "./bs/table";
+import { playerViews as chromaly, standings as chromalyStandings } from "./chromaly/table";
 import { standings as dominoesStandings } from "./dominoes/table";
 import { standings as lrcStandings } from "./lrc/table";
+import { playerViews as mindmeld, standings as mindmeldStandings } from "./mindmeld/table";
 import { standings as pokerStandings } from "./poker/table";
 import { standings as rummyStandings } from "./rummy/table";
 import { standings as spadesStandings } from "./spades/table";
@@ -45,7 +47,26 @@ const SEATS: Record<GameId, number> = {
   lrc: 6,
   rummy: 4,
   bs: 4,
+  chromaly: 4,
+  mindmeld: 6,
 };
+
+/**
+ * Seats a viewer is deliberately NOT given a rim pod for, besides their own.
+ * Mind Meld draws your partner beside you, in the strip above the input, so a
+ * second pod for them on the rim would be the same person twice.
+ */
+const PODLESS: Partial<Record<GameId, (viewer: SeatId) => SeatId[]>> = {
+  mindmeld: (viewer) => [viewer, (viewer % 2 === 0 ? viewer + 1 : viewer - 1) as SeatId],
+};
+
+/**
+ * The two seats the bot/away probes look at, from seat 0: one to flag and one
+ * to leave alone. Seat 1 and 2 everywhere but Mind Meld, where seat 1 is the
+ * viewer's partner (no rim pod), so it is the next pair's two instead.
+ */
+const PROBE: Partial<Record<GameId, [SeatId, SeatId]>> = { mindmeld: [2, 4] };
+const probeOf = (gameId: GameId): [SeatId, SeatId] => PROBE[gameId] ?? [1, 2];
 
 /** Enough of a runtime for a `players` callback; none of them reduce. */
 function fakeLive(state: unknown): GameRuntime<unknown, unknown> {
@@ -94,6 +115,9 @@ const CALLERS: Record<GameId, Caller> = {
   poker: (v, state, _s, away, bot) => (poker as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
   spades: (v, state, _s, away, bot) => (spades as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
   bs: (v, state, _s, away, bot) => (bs as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
+  chromaly: (v, state, _s, away, bot) =>
+    (chromaly as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
+  mindmeld: (v, state, _s, away, bot) => (mindmeld as AnyFn)(viewFor(v, away, bot), state, fakeLive(state)),
   // Rummy curries the seat count; the rest read it off state.
   rummy: (v, state, seats, away, bot) =>
     (rummy as AnyFn)(viewFor(v, away, bot), seats)(state, fakeLive(state)),
@@ -128,8 +152,9 @@ describe("seat pods", () => {
       it(`${gameId}: seat ${viewerSeat} gets a pod for everyone else and none for itself`, () => {
         const views = CALLERS[gameId](viewerSeat, dealt(gameId, seats), seats);
         const seen = views.map((v) => v.seat).sort((a, b) => a - b);
+        const without = PODLESS[gameId]?.(viewerSeat as SeatId) ?? [viewerSeat];
         const expected = Array.from({ length: seats }, (_, i) => i).filter(
-          (i) => i !== viewerSeat,
+          (i) => !without.includes(i as SeatId),
         );
 
         expect(seen, `${gameId} from seat ${viewerSeat}`).toEqual(expected);
@@ -198,9 +223,10 @@ describe("a seat a bot has taken over", () => {
     it(`${gameId}: carries the bot flag onto the pod`, () => {
       const seats = SEATS[gameId];
       const state = dealt(gameId, seats);
-      const marked = CALLERS[gameId](0, state, seats, undefined, (seat) => seat === 1);
-      expect(marked.find((v) => v.seat === 1)?.bot, `${gameId} seat 1`).toBe(true);
-      expect(marked.find((v) => v.seat === 2)?.bot, `${gameId} seat 2`).toBe(false);
+      const [flagged, other] = probeOf(gameId);
+      const marked = CALLERS[gameId](0, state, seats, undefined, (seat) => seat === flagged);
+      expect(marked.find((v) => v.seat === flagged)?.bot, `${gameId} seat ${flagged}`).toBe(true);
+      expect(marked.find((v) => v.seat === other)?.bot, `${gameId} seat ${other}`).toBe(false);
       // Solo tables supply nothing, and say nothing.
       expect(CALLERS[gameId](0, state, seats).every((v) => v.bot === false)).toBe(true);
     });
@@ -211,9 +237,10 @@ describe("a seat a bot has taken over", () => {
       const seats = SEATS[gameId];
       const state = dealt(gameId, seats);
       // Viewer at seat 0, so seat 1 is somebody else's pod either way.
-      const marked = CALLERS[gameId](0, state, seats, (seat) => seat === 1);
-      expect(marked.find((v) => v.seat === 1)?.away, `${gameId} seat 1`).toBe(true);
-      expect(marked.find((v) => v.seat === 2)?.away, `${gameId} seat 2`).toBe(false);
+      const [flagged, other] = probeOf(gameId);
+      const marked = CALLERS[gameId](0, state, seats, (seat) => seat === flagged);
+      expect(marked.find((v) => v.seat === flagged)?.away, `${gameId} seat ${flagged}`).toBe(true);
+      expect(marked.find((v) => v.seat === other)?.away, `${gameId} seat ${other}`).toBe(false);
 
       // And an offline view supplies no `awayFor` at all, which has to
       // read as "nobody is away" rather than as undefined behaviour.
@@ -279,6 +306,10 @@ describe("standings, seen by somebody who is not playing", () => {
       (lrcStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.lrc(v, state, seats)),
     bs: (v, state, seats) =>
       (bsStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.bs(v, state, seats)),
+    chromaly: (v, state, seats) =>
+      (chromalyStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.chromaly(v, state, seats)),
+    mindmeld: (v, state, seats) =>
+      (mindmeldStandings as AnyFn)(viewFor(v), state, fakeLive(state), CALLERS.mindmeld(v, state, seats)),
     rummy: (v, state, seats) => (rummyStandings as AnyFn)(viewFor(v), seats)(state),
   };
 
@@ -296,6 +327,9 @@ describe("standings, seen by somebody who is not playing", () => {
     poker: true,
     lrc: true,
     bs: true,
+    chromaly: true,
+    // A pair's row, "You & Seat 0".
+    mindmeld: true,
     rummy: false,
   };
 

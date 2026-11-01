@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { HERO, type GameDefinition, type PieceId, type SeatId } from "@/engine/types";
 import type { Density } from "./geometry";
 import type { SeatView } from "./SeatRing";
+import { GameCredit, hasGameCredit } from "@/ui/GameCredit";
 import { TableSurface } from "./TableSurface";
 import { SeatRing } from "./SeatRing";
 import { SeatBubbles } from "./SeatBubbles";
@@ -37,6 +38,7 @@ import {
   type SettingValues,
 } from "./gameSettings";
 import { useSlamFeedback } from "./slamFeedback";
+import { playWinFlourish, useTableSounds } from "./tableSounds";
 import { useShownTurnClock } from "./shownTurnClock";
 import {
   GameEndSummary,
@@ -71,6 +73,8 @@ export interface GameHostProps<S, A> {
   pileAnchor?: number;
   /** See `TableSurfaceProps.panelReserve`. Poker only. */
   panelReserve?: number;
+  /** See `ResolveOptions.pairs`: partners sit together. Mind Meld. */
+  seatPairs?: boolean;
   /** Dev-only one-shot rigs, handed the live runtime so a game can build
    *  a state that is otherwise only reachable by waiting for it. */
   scenarios?: (live: GameRuntime<S, A>) => ReadonlyArray<{ label: string; run: () => void }>;
@@ -251,6 +255,7 @@ export function GameHostView<S, A>({
   bottomZone,
   panelReserve,
   pileAnchor,
+  seatPairs,
   scenarios,
   gameTitle,
   standings,
@@ -283,6 +288,7 @@ export function GameHostView<S, A>({
     sound: settingValues.sound !== false,
     vibration: settingValues.vibration !== false,
   });
+  useTableSounds({ sound: settingValues.sound !== false });
   // Hints off draws no game's `dimmed` marks — see `TableState.hintsShown`.
   // A game without a Hints setting keeps them, as it always has.
   const hintsShown = settingValues.hints !== false;
@@ -338,6 +344,15 @@ export function GameHostView<S, A>({
   // (Dominoes cut-throat, LRC) and correctly crowns BOTH partners when a
   // partnership game scores a round — team dominoes, the first to do so.
   const winningSeats = live.winningSeats ?? live.roundWinningSeats;
+  // The crown and confetti have a sound of their own, once per win.
+  const heroWon = viewerSeat !== null && (winningSeats?.includes(viewerSeat ?? HERO) ?? false);
+  const soundOn = settingValues.sound !== false;
+  const matchWon = live.winningSeats !== null;
+  useEffect(() => {
+    if (heroWon && soundOn) playWinFlourish(matchWon);
+    // Only on the edge into a win; a setting flipped mid-celebration is not one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroWon]);
   // Not before the seat is on turn on THIS screen — see `useShownTurnClock`.
   const shownClock = useShownTurnClock(turnClock, live);
   const seatViews = players(live.state, live).map((view) => {
@@ -411,6 +426,8 @@ export function GameHostView<S, A>({
       pileAnchor={pileAnchor}
       viewerSeat={viewerSeat}
       handBleed={handBleed}
+      pairs={seatPairs}
+      game={definition.id}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}
     >
       <SeatRing players={seatViews} />
@@ -521,6 +538,11 @@ export function GameHostView<S, A>({
         // A game on this device can always be ended from here; a room's
         // table brings its own buttons instead.
         actions={menuActions ?? (serverDriven || !onLobby ? undefined : <EndGameAction onEnd={onLobby} />)}
+        footnote={
+          hasGameCredit(definition.id) ? (
+            <GameCredit game={definition.id} className="border-t border-bone-50/10 pt-3" />
+          ) : undefined
+        }
       />
     </TableSurface>
   );

@@ -289,6 +289,7 @@ export function SettingsSheet({
   values,
   onChange,
   actions,
+  footnote,
 }: {
   open: boolean;
   onClose: () => void;
@@ -296,10 +297,12 @@ export function SettingsSheet({
   values: SettingValues;
   onChange: (key: string, value: SettingValue) => void;
   actions?: React.ReactNode;
+  /** Pinned at the very bottom, under everything that scrolls: a game's credit. */
+  footnote?: React.ReactNode;
 }) {
   return (
     // From the right, where the Settings button sits.
-    <InfoSheet open={open} title="Settings" onClose={onClose} side="right">
+    <InfoSheet open={open} title="Settings" onClose={onClose} side="right" footer={footnote}>
       <div className="flex flex-col gap-3">
         {settings.map((s) =>
           s.kind === "choice" ? (

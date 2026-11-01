@@ -13,6 +13,7 @@
 
 import { GAMES, type GameId } from "@/session/registry";
 import { CardBack, CardFace } from "./CardFace";
+import { ChromaFace } from "./ChromaFace";
 import { ChipFace } from "./ChipFace";
 import { DiceFace } from "./DiceFace";
 import { TileFace } from "./TileFace";
@@ -20,7 +21,21 @@ import { TileFace } from "./TileFace";
 /** How tall the piece is drawn, in px. The home page's tiles are `md`. */
 const HEIGHT = { sm: 40, md: 50 } as const;
 
+/**
+ * Each game's picture wears ITS OWN game's colours, whatever page it is on: a
+ * BS card back and Mind Meld's orbs are drawn in the theme's felt and accent,
+ * and in a Poker room's picker they came out navy and champagne.
+ * `display: contents`, so the wrapper adds a colour scope and no box.
+ */
 export function GameThumb({ id, size = "md" }: { id: GameId; size?: keyof typeof HEIGHT }) {
+  return (
+    <span data-game={id} className="contents">
+      <Thumb id={id} size={size} />
+    </span>
+  );
+}
+
+function Thumb({ id, size }: { id: GameId; size: keyof typeof HEIGHT }) {
   const h = HEIGHT[size];
   const card = Math.round(h * 0.72);
   const round = Math.round(h * 0.8);
@@ -38,7 +53,28 @@ export function GameThumb({ id, size = "md" }: { id: GameId; size?: keyof typeof
     case "bs":
       // A back rather than a face, because the back of a card is the whole game.
       return <CardBack w={card} h={h} ariaHidden />;
+    case "chromaly":
+      return <ChromaFace card="RV.1" w={card} h={h} detail="index" ariaHidden />;
+    case "mindmeld":
+      return <MeldThumb size={round} />;
   }
+}
+
+/** Mind Meld has no pieces, so its tile is the table's own motif: two orbs drawn together. */
+function MeldThumb({ size }: { size: number }) {
+  const orb = Math.round(size * 0.66);
+  return (
+    <span aria-hidden className="relative inline-block" style={{ width: size, height: size }}>
+      <span
+        className="absolute rounded-full"
+        style={{ width: orb, height: orb, left: 0, top: size - orb, background: "var(--color-brass-300)", opacity: 0.9 }}
+      />
+      <span
+        className="absolute rounded-full"
+        style={{ width: orb, height: orb, right: 0, top: 0, background: "var(--color-team-b)", opacity: 0.85, mixBlendMode: "screen" }}
+      />
+    </span>
+  );
 }
 
 /**
@@ -58,4 +94,6 @@ export const GAME_BLURBS: Record<GameId, string> = {
   poker: "No-limit hold'em, with real side pots and a proper showdown.",
   lrc: "Three dice, three chips, and not one decision to make.",
   bs: "Claim the rank, lie about it, and see who doubts you before the next card goes down.",
+  chromaly: "Match the colour or the number and empty your hand first — with every house rule you can think of, switched on or off.",
+  mindmeld: "Two minds, one word. Write at the same moment, then reveal — and keep bridging until you say the same thing.",
 };

@@ -16,9 +16,10 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 async function player(page: Page, name: string): Promise<void> {
-  // The home page, which is where people actually start: its own form
-  // makes or joins in one press (see HomeEntry).
+  // The home page, which is where people actually start: its sheet makes
+  // or joins in one press (see HomeScreen).
   await page.goto("/");
+  await page.getByRole("button", { name: /join with code/i }).click();
   await page.getByLabel(/your name/i).fill(name);
 }
 
@@ -87,7 +88,10 @@ test.describe("on a phone", () => {
     await bo.getByRole("button", { name: /join room/i }).click();
     await expect(ada.getByText("Bo").first()).toBeVisible({ timeout: 15_000 });
 
-    await ada.getByRole("button", { name: /^Spades,/ }).click();
+    // The room already has Spades (the home carousel's first game), folded
+    // to one line on a phone: open it, as the leader would to change it.
+    await ada.getByRole("button", { name: "Change" }).click();
+    await expect(ada.getByRole("button", { name: /^Spades,/ })).toBeVisible();
     await expect(ada.getByText("Team B").first()).toBeVisible();
 
     // After the game's options have finished opening: the column is sized

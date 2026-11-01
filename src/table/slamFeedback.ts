@@ -22,10 +22,12 @@
 import { useEffect, useRef } from "react";
 import { SLAM_FINAL_LAND_MS, SLAM_LAND_MS, prefersReducedMotion } from "@/motion/presets";
 import { onSlam } from "./fx";
+import { useTableStore } from "./store";
 
 let context: AudioContext | null = null;
 
-function audio(): AudioContext | null {
+/** The page's one audio context, created on first use; null where there is none. */
+export function audioContext(): AudioContext | null {
   if (context) return context;
   const Ctor =
     typeof window === "undefined"
@@ -43,13 +45,13 @@ function audio(): AudioContext | null {
 
 /** Called from a user gesture, which is what lets the context start. */
 export function unlockAudio(): void {
-  const ctx = audio();
+  const ctx = audioContext();
   if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
 }
 
 /** One thud. `final` is the round-ending slam: lower, longer, louder. */
 export function playSlamSound(final: boolean): void {
-  const ctx = audio();
+  const ctx = audioContext();
   if (!ctx || ctx.state !== "running") return;
   const now = ctx.currentTime;
   const out = ctx.createGain();
@@ -89,11 +91,58 @@ export function playSlamSound(final: boolean): void {
   knock.start(now);
 }
 
-/** A buzz, where the device and browser can (Android; not iOS Safari). */
-export function vibrateSlam(final: boolean): void {
+/**
+ * A CARD slammed down - a Chromaly draw card, a jump-in, the last card. A
+ * slap, not a thud: paper on felt is a sharp crack with very little body,
+ * and the dominoes thud under a card read as wrong (the user, 2026-10-30).
+ */
+export function playCardSlap(final: boolean): void {
+  const ctx = audioContext();
+  if (!ctx || ctx.state !== "running") return;
+  const now = ctx.currentTime;
+  const length = Math.floor(ctx.sampleRate * (final ? 0.12 : 0.08));
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  // Cosmetic noise; see `playSlamSound`.
+  for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length) ** 3;
+  const slap = ctx.createBufferSource();
+  slap.buffer = buffer;
+  const high = ctx.createBiquadFilter();
+  high.type = "highpass";
+  high.frequency.value = final ? 900 : 1300;
+  const gain = ctx.createGain();
+  gain.gain.value = final ? 0.75 : 0.55;
+  slap.connect(high).connect(gain).connect(ctx.destination);
+  slap.start(now);
+
+  // The "pap" of a hand flat on the card: mid-range noise, quick to die. It
+  // used to be a falling low sine, which is exactly the domino slam's body,
+  // and a +2 slammed down still sounded like a tile (the user, 2026-10-31).
+  const pLength = Math.floor(ctx.sampleRate * (final ? 0.09 : 0.06));
+  const pBuffer = ctx.createBuffer(1, pLength, ctx.sampleRate);
+  const pData = pBuffer.getChannelData(0);
+  for (let i = 0; i < pLength; i++) pData[i] = (Math.random() * 2 - 1) * (1 - i / pLength) ** 4;
+  const pap = ctx.createBufferSource();
+  pap.buffer = pBuffer;
+  const mid = ctx.createBiquadFilter();
+  mid.type = "bandpass";
+  mid.frequency.value = final ? 800 : 1000;
+  mid.Q.value = 1.1;
+  const papGain = ctx.createGain();
+  papGain.gain.value = final ? 0.6 : 0.4;
+  pap.connect(mid).connect(papGain).connect(ctx.destination);
+  pap.start(now);
+}
+
+/**
+ * A buzz, where the device and browser can (Android; not iOS Safari).
+ * Longer and harder than it was, for a domino (the user, 2026-10-30): the
+ * slam is the one moment the table is meant to be felt.
+ */
+export function vibrateSlam(final: boolean, tile = true): void {
   if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return;
   try {
-    navigator.vibrate(final ? [45, 35, 90] : 50);
+    navigator.vibrate(tile ? (final ? [90, 40, 180] : 85) : final ? [45, 35, 90] : 50);
   } catch {
     /* Some browsers throw instead of ignoring it; either way, no buzz. */
   }
@@ -114,7 +163,8 @@ export function useSlamFeedback({ sound, vibration }: { sound: boolean; vibratio
     window.addEventListener("pointerdown", unlock);
     window.addEventListener("keydown", unlock);
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    const off = onSlam(({ final }) => {
+    const off = onSlam(({ piece, final }) => {
+      const tile = useTableStore.getState().meta[piece]?.kind === "tile";
       const { sound: withSound, vibration: withBuzz } = prefs.current;
       if (!withSound && !withBuzz) return;
       // With reduced motion the slam does not animate, so there is no
@@ -122,8 +172,11 @@ export function useSlamFeedback({ sound, vibration }: { sound: boolean; vibratio
       const delay = prefersReducedMotion() ? 0 : final ? SLAM_FINAL_LAND_MS : SLAM_LAND_MS;
       const timer = setTimeout(() => {
         timers.delete(timer);
-        if (withSound) playSlamSound(final);
-        if (withBuzz) vibrateSlam(final);
+        if (withSound) {
+          if (tile) playSlamSound(final);
+          else playCardSlap(final);
+        }
+        if (withBuzz) vibrateSlam(final, tile);
       }, delay);
       timers.add(timer);
     });

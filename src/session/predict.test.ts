@@ -128,12 +128,17 @@ const FLOORS: Record<GameId, Record<string, { state?: number; gesture?: number }
     drawDiscard: { gesture: 1, state: 1 },
   },
   bs: { play: { gesture: 1, state: 1 } },
+  chromaly: { play: { gesture: 0.8, state: 0.5 } },
   dominoes: { play: { gesture: 1, state: 0.9 } },
   // Chips move at the end of a street, so a bet is a state, not a gesture;
   // a call or check that closes the street deals cards nobody has seen.
   poker: { fold: { state: 0.85 }, bet: { state: 0.9 }, raise: { state: 0.8 } },
   // The roll is the server's (`unpredictable`): its tumble starts on the press.
   lrc: {},
+  // A submit is `unpredictable`: what it does depends on a word nobody else has
+  // seen, and a pair that melds on it reveals both. The page shows "Locked in"
+  // itself.
+  mindmeld: {},
 };
 
 describe("a prediction never lies", () => {

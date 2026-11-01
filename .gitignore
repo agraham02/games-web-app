@@ -46,3 +46,6 @@ next-env.d.ts
 /blob-report/
 
 audit
+
+# downloaded build inputs (word vectors), never committed
+/.cache/

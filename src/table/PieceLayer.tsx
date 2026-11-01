@@ -25,6 +25,7 @@ import { memo, useEffect } from "react";
 import { motion, useAnimate } from "motion/react";
 import { HERO, type PieceId } from "@/engine/types";
 import { CardBack, CardFace } from "@/ui/primitives/CardFace";
+import { ChromaBack, ChromaFace } from "@/ui/primitives/ChromaFace";
 import { TileBack, TileFace } from "@/ui/primitives/TileFace";
 import { ChipFace } from "@/ui/primitives/ChipFace";
 import { baseSize, handArt, layoutPiece } from "./layout";
@@ -47,6 +48,14 @@ import {
   useTableStore,
 } from "./store";
 import {
+  JOLT_KEYFRAMES,
+  JOLT_KEYFRAMES_FINAL,
+  JOLT_TIMING,
+  JOLT_TIMING_FINAL,
+  SHAKE_KEYFRAMES_TILE,
+  SHAKE_KEYFRAMES_TILE_FINAL,
+  SLAM_KEYFRAMES_TILE,
+  SLAM_KEYFRAMES_TILE_FINAL,
   SHAKE_KEYFRAMES,
   SHAKE_KEYFRAMES_FINAL,
   SHAKE_TIMING,
@@ -139,17 +148,6 @@ export interface PieceLayerProps {
 }
 
 /**
- * While a piece is being slammed it has to draw over everything —
- * including the hand it just left and any pod it flies past. Above
- * `Z_SELECTED` (5000), and set imperatively rather than through the
- * placement map because it is a hard switch, not something to tween: it
- * lands on the same frame the grow starts and is put back on the same
- * frame the piece settles. This is the one place the piece layer touches
- * z-index outside `layoutPiece`, and it is deliberately transient.
- */
-const Z_SLAM = 6000;
-
-/**
  * A piece id, made safe to sit inside a QUOTED attribute selector.
  * `CSS.escape` is the wrong tool here — it escapes identifiers, not
  * string contents, so it would turn `6-3` into `6\-3` (which happens to
@@ -177,12 +175,112 @@ export function fxSelector(id: PieceId): string {
  * the same tile twice would need a changing token threaded through the
  * render. Calling `animate()` again simply plays it again.
  */
+/**
+ * What a domino hitting the table looks like where it lands (the user,
+ * 2026-10-30): a ring of felt pushed out from under it, a little dust kicked
+ * up, and the whole table taking the jolt. The round-ending tile gets a second
+ * ring, more dust and a flash.
+ *
+ * Drawn imperatively into the piece layer and removed when done, like the
+ * slam itself: a one-shot with no state, nothing for the store to reconcile.
+ * The jolt goes on the table's own container, not the piece layer - a
+ * transform there would make it a stacking context, and tucked hands draw
+ * BEHIND their pods only because it is not one. Cleared afterwards, so the
+ * container is never left transformed.
+ */
+export function impact(
+  root: HTMLElement,
+  target: HTMLElement,
+  final: boolean,
+  animate: (el: Element, keyframes: object, options?: object) => { then(done: () => void): unknown },
+): void {
+  const box = root.getBoundingClientRect();
+  const hit = target.getBoundingClientRect();
+  const cx = hit.left + hit.width / 2 - box.left;
+  const cy = hit.top + hit.height / 2 - box.top;
+  const size = Math.max(hit.width, hit.height);
+
+  const spawn = (style: Partial<CSSStyleDeclaration>) => {
+    const el = document.createElement("div");
+    Object.assign(el.style, {
+      position: "absolute",
+      left: `${cx}px`,
+      top: `${cy}px`,
+      pointerEvents: "none",
+      zIndex: "5990",
+      borderRadius: "9999px",
+      ...style,
+    });
+    el.setAttribute("aria-hidden", "true");
+    root.appendChild(el);
+    return el;
+  };
+  const gone = (el: HTMLElement) => () => el.remove();
+
+  const rings = final ? [0, 0.12] : [0];
+  for (const delay of rings) {
+    const d = size * (final ? 1.1 : 0.9);
+    const ringEl = spawn({
+      width: `${d}px`,
+      height: `${d}px`,
+      marginLeft: `${-d / 2}px`,
+      marginTop: `${-d / 2}px`,
+      border: `${final ? 4 : 3}px solid rgb(245 242 234 / 0.75)`,
+      boxShadow: "0 0 18px rgb(212 175 106 / 0.45)",
+    });
+    void animate(
+      ringEl,
+      { scale: [0.4, final ? 3.2 : 2.3], opacity: [0.9, 0] },
+      { duration: final ? 0.75 : 0.5, delay, ease: "easeOut" },
+    ).then(gone(ringEl));
+  }
+
+  if (final) {
+    const d = size * 5;
+    const flash = spawn({
+      width: `${d}px`,
+      height: `${d}px`,
+      marginLeft: `${-d / 2}px`,
+      marginTop: `${-d / 2}px`,
+      background: "radial-gradient(closest-side, rgb(255 246 222 / 0.55), transparent 70%)",
+    });
+    void animate(flash, { opacity: [1, 0], scale: [0.6, 1.2] }, { duration: 0.55, ease: "easeOut" }).then(gone(flash));
+  }
+
+  const motes = final ? 16 : 9;
+  for (let i = 0; i < motes; i++) {
+    // Cosmetic scatter, like the slam's noise: nothing replays from it.
+    const angle = (i / motes) * Math.PI * 2 + Math.random() * 0.5;
+    const reach = size * (final ? 1.4 : 0.9) * (0.7 + Math.random() * 0.6);
+    const dot = 3 + Math.random() * (final ? 4 : 3);
+    const mote = spawn({
+      width: `${dot}px`,
+      height: `${dot}px`,
+      marginLeft: `${-dot / 2}px`,
+      marginTop: `${-dot / 2}px`,
+      background: "rgb(236 228 210 / 0.85)",
+    });
+    void animate(
+      mote,
+      { x: [0, Math.cos(angle) * reach], y: [0, Math.sin(angle) * reach - size * 0.15], opacity: [1, 0], scale: [1, 0.4] },
+      { duration: final ? 0.7 : 0.5, ease: "easeOut" },
+    ).then(gone(mote));
+  }
+
+  const table = root.parentElement;
+  if (table) {
+    void animate(table, final ? JOLT_KEYFRAMES_FINAL : JOLT_KEYFRAMES, final ? JOLT_TIMING_FINAL : JOLT_TIMING).then(() => {
+      table.style.transform = "";
+    });
+  }
+}
+
 function useSlamFx() {
   const [scope, animate] = useAnimate<HTMLDivElement>();
 
-  useEffect(
-    () =>
-      onSlam(({ piece, shake, final }) => {
+  useEffect(() => {
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const off = onSlam(({ piece, shake, final }) => {
         const root = scope.current;
         if (!root) return;
         // MotionConfig's reducedMotion governs motion COMPONENTS; this
@@ -190,9 +288,22 @@ function useSlamFx() {
         // or the one animation most worth suppressing would survive.
         if (prefersReducedMotion()) return;
 
-        const slamKeyframes = final ? SLAM_KEYFRAMES_FINAL : SLAM_KEYFRAMES;
+        const tile = useTableStore.getState().meta[piece]?.kind === "tile";
+        const slamKeyframes = tile
+          ? final
+            ? SLAM_KEYFRAMES_TILE_FINAL
+            : SLAM_KEYFRAMES_TILE
+          : final
+            ? SLAM_KEYFRAMES_FINAL
+            : SLAM_KEYFRAMES;
         const slamTiming = final ? SLAM_TIMING_FINAL : SLAM_TIMING;
-        const shakeKeyframes = final ? SHAKE_KEYFRAMES_FINAL : SHAKE_KEYFRAMES;
+        const shakeKeyframes = tile
+          ? final
+            ? SHAKE_KEYFRAMES_TILE_FINAL
+            : SHAKE_KEYFRAMES_TILE
+          : final
+            ? SHAKE_KEYFRAMES_FINAL
+            : SHAKE_KEYFRAMES;
         const shakeTiming = final ? SHAKE_TIMING_FINAL : SHAKE_TIMING;
         const landMs = final ? SLAM_FINAL_LAND_MS : SLAM_LAND_MS;
 
@@ -201,12 +312,23 @@ function useSlamFx() {
           // The piece's own parent — the positional root — is what has
           // to come forward; lifting the wrapper alone would leave it
           // inside a stacking context that is still behind the hand.
+          //
+          // Through an attribute and a stylesheet rule (`[data-slamming]`),
+          // never by writing `style.zIndex`. It used to save the inline value
+          // and put it back afterwards - but the slam starts while the card is
+          // still in the hand, so what it saved was the HAND's z-index, and
+          // React never rewrites a style it thinks has not changed. Every
+          // slammed card stayed at hand height for good: on Chromaly's
+          // discard, one card sat on top of every card played after it.
           const lifted = target.parentElement;
-          const restore = lifted?.style.zIndex ?? "";
-          if (lifted) lifted.style.zIndex = String(Z_SLAM);
+          lifted?.setAttribute("data-slamming", "");
           void animate(target, slamKeyframes, slamTiming).then(() => {
-            if (lifted) lifted.style.zIndex = restore;
+            lifted?.removeAttribute("data-slamming");
           });
+          if (tile) {
+            const timer = setTimeout(() => impact(root, target, final, (el, k, o) => animate(el, k as never, o as never)), landMs);
+            timers.add(timer);
+          }
         }
 
         // Only what was already on the table. The engine decides that
@@ -224,9 +346,12 @@ function useSlamFx() {
             delay: landMs / 1000,
           });
         }
-      }),
-    [animate, scope],
-  );
+      });
+    return () => {
+      off();
+      for (const t of timers) clearTimeout(t);
+    };
+  }, [animate, scope]);
 
   // A press answered before the server has (`emitPress`), on the same
   // wrapper the slam uses, so it composes over wherever the piece sits.
@@ -476,11 +601,12 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // `placements()`), so this is a plain if/else, not a priority
         // fight.
         //
-        // Illegal-target dimming (POLICY.md: "dim, don't hide") stays a
-        // grayscale/darken filter rather than reduced opacity — a light
-        // card face loses too much legibility fading toward the felt,
-        // and this reuses the exact "disabled" idiom SeatRing already
-        // uses for an eliminated seat's avatar. `filter` is not a
+        // Illegal-target dimming (POLICY.md: "dim, don't hide") is a deep
+        // darken, not reduced opacity (a light card face loses too much
+        // legibility fading toward the felt) and NOT grayscale: a greyed
+        // card hid its colour, which is the very thing a player choosing a
+        // wild's colour needs to read off the rest of their hand (the user,
+        // 2026-10-31). `filter` is not a
         // compositor-only property the way transform/opacity are (see
         // CLAUDE.md), but at hand-sized piece counts (a dozen or so
         // cards, not a 52-card deal) the cost is not visible.
@@ -491,7 +617,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // bidding, where every seat's hand dims while waiting its turn
         // and nothing has actually been ruled illegal yet.
         filter: dimmed
-          ? "grayscale(0.85) brightness(0.78)"
+          ? "brightness(0.45)"
           : isHeroHand && !heroTurnActive
             ? "brightness(0.86)"
             : "none",
@@ -556,7 +682,13 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
         // Flipper's dual-face 3D wrapper entirely: one motion.div
         // instead of two per piece, which matters once a game like LRC
         // can have 30 chips on screen at once.
-        <PieceFace kind={meta.kind} face={meta.face} w={base.w} h={base.h} detail={detail} />
+        //
+        // Centred in its card-shaped box: drawn at the box's top, a chip sat
+        // a few px above where layout puts it, and a stack's count (written
+        // at the box's centre) read low on the chip (the user, 2026-10-31).
+        <div className="flex h-full w-full items-center justify-center">
+          <PieceFace kind={meta.kind} face={meta.face} w={base.w} h={base.h} detail={detail} />
+        </div>
       ) : (
         // Cards AND tiles both have a real face-down state — dominoes
         // deal into hidden hands and draw from a face-down boneyard, so
@@ -569,6 +701,8 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
           back={
             meta.kind === "tile" ? (
               <TileBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
+            ) : meta.kind === "chroma" ? (
+              <ChromaBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
             ) : (
               <CardBack w={base.w} h={base.h} ariaHidden={placement.faceUp} />
             )
@@ -581,6 +715,7 @@ const Piece = memo(function Piece({ id, onTap }: PieceProps) {
             h={base.h}
             detail={detail}
             ariaHidden={!placement.faceUp}
+            tint={placement.tint}
           />
         </Flipper>
       )}
@@ -722,6 +857,7 @@ function PieceFace({
   h,
   detail,
   ariaHidden,
+  tint,
 }: {
   kind: string;
   face: string;
@@ -730,8 +866,13 @@ function PieceFace({
   detail: "full" | "index";
   /** Flippable kinds — hides the front face while the back is showing. */
   ariaHidden?: boolean;
+  /** See `Placement.tint`. */
+  tint?: string;
 }) {
   if (kind === "tile") return <TileFace tile={face} w={w} h={h} ariaHidden={ariaHidden} />;
   if (kind === "chip") return <ChipFace colour={face} size={Math.min(w, h)} />;
+  if (kind === "chroma") {
+    return <ChromaFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} tint={tint} />;
+  }
   return <CardFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
 }

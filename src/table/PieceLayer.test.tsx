@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { doubleSixSet } from "@/games/_shared/tiles";
 import { rummyDeck } from "@/games/rummy/cards";
 import { HIDDEN_TILE } from "@/games/dominoes/state";
-import { fxSelector } from "./PieceLayer";
+import { fxSelector, impact } from "./PieceLayer";
 
 /**
  * The slam reaches its pieces by CSS selector rather than by per-piece
@@ -64,5 +64,49 @@ describe("fxSelector", () => {
       expect(() => document.querySelector(fxSelector(id))).not.toThrow();
       expect(findsItself(id), id).toBe(true);
     }
+  });
+});
+
+describe("a domino's impact", () => {
+  function table() {
+    const box = document.createElement("div");
+    const root = document.createElement("div");
+    const target = document.createElement("div");
+    box.append(root);
+    root.append(target);
+    root.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect;
+    target.getBoundingClientRect = () => ({ left: 390, top: 290, width: 20, height: 40 }) as DOMRect;
+    return { box, root, target };
+  }
+
+  it("puts a ring and dust where the tile lands, then takes them away", async () => {
+    const { root, target } = table();
+    let finish: () => void = () => {};
+    const done = new Promise<void>((r) => (finish = r));
+    const animate = vi.fn(() => done);
+    impact(root, target, false, animate);
+    const drawn = [...root.children].filter((c) => c !== target) as HTMLElement[];
+    expect(drawn.length).toBeGreaterThan(5);
+    // Centred on the tile, in the layer's own coordinates.
+    expect(drawn.every((el) => el.style.left === "400px" && el.style.top === "310px")).toBe(true);
+    finish();
+    await done;
+    await Promise.resolve();
+    expect([...root.children]).toEqual([target]);
+  });
+
+  it("is bigger for the tile that ends the round, and jolts the table, leaving it untransformed", async () => {
+    const plain = table();
+    impact(plain.root, plain.target, false, () => Promise.resolve());
+    const big = table();
+    let jolted: Element | null = null;
+    impact(big.root, big.target, true, (el) => {
+      if (el === big.box) jolted = el;
+      return Promise.resolve();
+    });
+    expect(big.root.children.length).toBeGreaterThan(plain.root.children.length);
+    expect(jolted).toBe(big.box);
+    await Promise.resolve();
+    expect(big.box.style.transform).toBe("");
   });
 });

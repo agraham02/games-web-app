@@ -177,6 +177,67 @@ describe("resolveTable", () => {
     }
   });
 
+  describe("pairs (Mind Meld): partners sit together", () => {
+    const screens = [
+      ...VIEWPORTS,
+      { name: "phone 430", w: 430, h: 932 },
+      { name: "landscape 932", w: 932, h: 430 },
+    ];
+    const overlap = (a: Box, b: Box) =>
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    const partnerOf = (seat: number) => (seat % 2 === 0 ? seat + 1 : seat - 1);
+
+    for (const vp of screens) {
+      for (const seats of [2, 4, 6, 8, 10]) {
+        for (const viewerSeat of [0, 1, 3, null] as const) {
+          if (viewerSeat !== null && viewerSeat >= seats) continue;
+          const ctx = `${vp.name}/${seats} seats/viewer ${viewerSeat}`;
+          it(`${ctx}: every pod on screen, clear of every other, beside its partner`, () => {
+            const g = resolveTable({ seats, width: vp.w, height: vp.h, bandZone: 64, viewerSeat, pairs: true });
+            expect(g.seats.map((s) => s.seat).sort((a, b) => a - b)).toEqual(
+              Array.from({ length: seats }, (_, i) => i),
+            );
+            const own = viewerSeat === null ? -1 : Math.floor(viewerSeat / 2);
+            // The viewer's own pair has no pods; everybody else does.
+            const pods = g.seats
+              .filter((s) => Math.floor(s.seat / 2) !== own)
+              .map((s) => ({ s, b: podBox(s, g.density) }));
+            for (const { s, b } of pods) {
+              expect(b.x, `${ctx}: seat ${s.seat} off the left`).toBeGreaterThanOrEqual(0);
+              expect(b.y, `${ctx}: seat ${s.seat} off the top`).toBeGreaterThanOrEqual(0);
+              expect(b.x + b.w, `${ctx}: seat ${s.seat} off the right`).toBeLessThanOrEqual(vp.w);
+              expect(b.y + b.h, `${ctx}: seat ${s.seat} off the bottom`).toBeLessThanOrEqual(vp.h);
+            }
+            for (let i = 0; i < pods.length; i++) {
+              for (let j = i + 1; j < pods.length; j++) {
+                expect(overlap(pods[i]!.b, pods[j]!.b), `${ctx}: seats ${pods[i]!.s.seat} and ${pods[j]!.s.seat}`).toBe(false);
+              }
+            }
+            // Touching: a partner's pod is within a few px of its own, on the
+            // same edge, nearer than any other pod.
+            const size = POD_SIZE[g.density];
+            for (const { s } of pods) {
+              const mate = g.seats.find((t) => t.seat === partnerOf(s.seat))!;
+              expect(mate.anchor, `${ctx}: seat ${s.seat}'s partner is on another edge`).toBe(s.anchor);
+              const apart = Math.hypot(mate.x - s.x, mate.y - s.y);
+              expect(apart, `${ctx}: seat ${s.seat} is ${Math.round(apart)}px from its partner`).toBeLessThanOrEqual(
+                Math.max(size.w, size.h) + 10,
+              );
+            }
+          });
+        }
+      }
+    }
+
+    it("leaves every other game's ring exactly as it was", () => {
+      const plain = resolveTable({ seats: 6, width: 1440, height: 900 });
+      const paired = resolveTable({ seats: 7, width: 1440, height: 900, pairs: true });
+      // An odd count has no pairs: laid out as usual.
+      expect(paired.seats).toEqual(resolveTable({ seats: 7, width: 1440, height: 900 }).seats);
+      expect(plain.seats).toHaveLength(6);
+    });
+  });
+
   it("orders opponents anticlockwise from the hero's left", () => {
     // 7 seats on a desktop = 6 opponents = [2 left, 2 top, 2 right].
     const g = resolveTable({ seats: 7, width: 1440, height: 900 });

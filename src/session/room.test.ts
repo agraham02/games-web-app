@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createRng } from "@/engine/rng";
-import { GAMES, GAME_IDS, gameEntry } from "./registry";
+import { GAMES, GAME_IDS, clampSeats, gameEntry } from "./registry";
 import {
   applyCommand,
   createRoom,
@@ -575,6 +575,41 @@ describe("the seating plan", () => {
     expect(teamOfSeat(spades(r), 3)).toBe(1);
     // Past the last seat is nobody's team.
     expect(teamOfSeat(spades(r), 4)).toBeNull();
+  });
+
+  describe("Mind Meld's pairs", () => {
+    function mindMeld(r: Room, seats: number): Room {
+      return ok(
+        r,
+        { t: "selectGame", gameId: "mindmeld", settings: {}, seats, difficulty: "steady" },
+        { actor: LEADER },
+      );
+    }
+
+    it("sits partners side by side: seats 0 and 1, 2 and 3", () => {
+      // The opposite of Spades, where the seat across is the partner.
+      const r = mindMeld(withMembers(["Sam"]), 6);
+      expect([0, 1, 2, 3, 4, 5].map((i) => teamOfSeat(r, i))).toEqual([0, 0, 1, 1, 2, 2]);
+    });
+
+    it("rounds an odd count up to a whole pair, where the empty seat is a bot's", () => {
+      expect(clampSeats("mindmeld", {}, 3)).toBe(4);
+      expect(clampSeats("mindmeld", {}, 5)).toBe(6);
+      // Already whole, and the ends, are left alone.
+      expect(clampSeats("mindmeld", {}, 4)).toBe(4);
+      expect(clampSeats("mindmeld", {}, 1)).toBe(2);
+      expect(clampSeats("mindmeld", {}, 99)).toBe(10);
+      // And no other game is stepped.
+      expect(clampSeats("poker", {}, 5)).toBe(5);
+    });
+
+    it("seats three people at a four-seat table, with a bot for the fourth", () => {
+      let r = withMembers(["Sam", "Kofi"]);
+      r = mindMeld(r, 3);
+      r = ok(r, { t: "startGame" }, { actor: LEADER });
+      expect(r.seats).toBe(4);
+      expect(r.game!.seatOwner.filter(Boolean)).toHaveLength(3);
+    });
   });
 });
 

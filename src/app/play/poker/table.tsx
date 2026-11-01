@@ -228,7 +228,7 @@ export function playerViews(view: PokerView, state: PokerState, live: Live): Sea
     // names the NEXT actor the instant a decision is computed, before
     // its `think` beat has actually played, which would jump the glow
     // to the wrong pod during the pause.
-    const cue = seatCue(live, seat);
+    const cue = seatCue(live, seat, "next");
 
     out.push({
       seat,

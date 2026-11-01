@@ -75,7 +75,27 @@ export interface SeatCue {
   thinking: boolean;
 }
 
-export function seatCue(live: TurnCueSource, seat: SeatId): SeatCue {
+/**
+ * What a bot's PAUSE before it moves shows (`pendingReveal`: the turn hold,
+ * then its thinking time — two seconds or so in Chromaly).
+ *
+ *  - `mover` (the default): the seat that just moved stays lit. LRC's case:
+ *    the dice it rolled are still on screen, and naming the next seat over
+ *    them would be wrong.
+ *  - `next`: the seat about to move is lit, and pulses. Every game but LRC
+ *    (2026-10-31). A card game's case:
+ *    nothing of the last move is still being shown, and with `mover` the
+ *    ring sat on the PREVIOUS player for the whole of the next one's think,
+ *    while the table's own line already said "Mia is thinking…" — so the ring
+ *    looked as if it was not there at all (the user, Chromaly, 2026-10-31).
+ */
+export type HoldShows = "mover" | "next";
+
+export function seatCue(live: TurnCueSource, seat: SeatId, hold: HoldShows = "mover"): SeatCue {
+  if (hold === "next" && live.pendingReveal && !live.animating) {
+    const up = live.currentSeat === seat;
+    return { active: up, thinking: up };
+  }
   const showing = live.animating || live.pendingReveal;
   const acting = showing && live.lastAction?.seat === seat;
   // The complement of `showing`, so the two terms can never name

@@ -20,7 +20,13 @@ import { TOKEN_KEY } from "./connection";
 export const NAME_KEY = "table-games.display-name";
 const INTENT_KEY = "table-games.entry-intent";
 
-export type EntryIntent = { t: "make" } | { t: "join"; code: string };
+/**
+ * `game`, on a make: the game the home page's carousel was showing. The new
+ * room is set up for it as soon as it exists, so the lobby opens on a game
+ * rather than on "Pick a game first". Not validated here — storage is
+ * anybody's — but by `isGameId` where it is acted on.
+ */
+export type EntryIntent = { t: "make"; game?: string } | { t: "join"; code: string };
 
 /** The name typed last time, or "". Storage can be locked down; then "". */
 export function readSavedName(): string {
@@ -66,7 +72,9 @@ export function takeEntryIntent(): EntryIntent | null {
     window.sessionStorage.removeItem(INTENT_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as EntryIntent;
-    if (parsed?.t === "make") return parsed;
+    if (parsed?.t === "make") {
+      return typeof parsed.game === "string" ? { t: "make", game: parsed.game } : { t: "make" };
+    }
     if (parsed?.t === "join" && typeof parsed.code === "string") return parsed;
     return null;
   } catch {

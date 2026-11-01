@@ -22,6 +22,7 @@ import {
   type TableGeometry,
   type ZoneName,
 } from "./geometry";
+import { themeAttrs } from "@/ui/gameTheme";
 import { useTableStore } from "./store";
 import { PieceLayer } from "./PieceLayer";
 
@@ -65,6 +66,10 @@ export interface TableSurfaceProps {
   band?: boolean;
   /** See `ResolveOptions.handBleed`. `GameHost` works it out per game. */
   handBleed?: boolean;
+  /** See `ResolveOptions.pairs`. */
+  pairs?: boolean;
+  /** The game being played: its surface (see `ui/gameTheme.ts`). */
+  game?: string;
 }
 
 export function TableSurface({
@@ -83,6 +88,8 @@ export function TableSurface({
   viewerSeat,
   band = true,
   handBleed,
+  pairs,
+  game,
 }: TableSurfaceProps) {
   const ref = useRef<HTMLDivElement>(null);
   const setGeometry = useTableStore((s) => s.setGeometry);
@@ -133,9 +140,10 @@ export function TableSurface({
         pileAnchor,
         viewerSeat,
         handBleed,
+        pairs,
       }),
     );
-  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, pairs, setGeometry]);
 
   return (
     <div
@@ -154,6 +162,7 @@ export function TableSurface({
       // the felt opts out of selection entirely — there is no text on a
       // card table anyone wants to select anyway.
       className={`felt felt-weave relative touch-none select-none overflow-hidden ${className ?? ""}`}
+      {...(game ? themeAttrs(game) : {})}
       style={
         fill === "viewport"
           ? {

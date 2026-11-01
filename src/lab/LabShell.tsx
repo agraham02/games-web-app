@@ -17,6 +17,8 @@ const ROUTES = [
   { href: "/lab/phases", label: "Phases" },
   { href: "/lab/rummy", label: "Rummy" },
   { href: "/lab/redact", label: "Redact" },
+  { href: "/lab/design/bold", label: "Design: Bold" },
+  { href: "/lab/design/luxury", label: "Design: Luxury" },
 ];
 
 export function LabNav() {

@@ -1,0 +1,19 @@
+vectors-v2.bin and vocab-v2.json — Mind Meld's word data
+
+This data contains semantic vectors from ConceptNet Numberbatch, by Luminoso
+Technologies, Inc. You may redistribute or modify the data under the terms of
+the CC-By-SA 4.0 license: https://creativecommons.org/licenses/by-sa/4.0/
+
+Source: ConceptNet Numberbatch 19.08, English
+(https://github.com/commonsense/conceptnet-numberbatch), described in
+Speer, Chin and Havasi (2017), "ConceptNet 5.5: An Open Multilingual Graph of
+General Knowledge", AAAI 2017.
+
+Changes made: reduced to about 15,000 common English words (the word list and
+its frequency order came from GloVe 6B, public domain under the PDDL), centred
+on their mean, scaled to unit length and stored as signed bytes. Built by
+scripts/build-mindmeld-numberbatch.ts.
+
+As a modified version of Numberbatch, these two files are themselves licensed
+under CC BY-SA 4.0. This licence covers this data only, not the rest of the
+application's code.

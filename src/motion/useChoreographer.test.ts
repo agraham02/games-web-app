@@ -15,14 +15,20 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameEvent } from "@/engine/types";
+import { STAGGER } from "./presets";
 import { useChoreographer } from "./useChoreographer";
 
-function drawBatch(n: number): GameEvent[] {
+/**
+ * A batch that genuinely runs concurrently. Plays, not draws: a run of draws
+ * now streams in on purpose (`STAGGER.draw`), so it is no longer the example
+ * of "offset 0".
+ */
+function concurrentBatch(n: number): GameEvent[] {
   return Array.from({ length: n }, (_, i) => ({
-    t: "draw" as const,
+    t: "play" as const,
     piece: `C${i + 2}`,
-    from: "discard" as const,
-    to: 0,
+    from: 0,
+    to: "discard" as const,
     faceUp: true,
   }));
 }
@@ -56,13 +62,51 @@ describe("useChoreographer — playback timing", () => {
       useChoreographer({ apply: (e) => applied.push(e) }),
     );
 
-    act(() => result.current.push(drawBatch(6)));
+    act(() => result.current.push(concurrentBatch(6)));
     act(() => void vi.advanceTimersByTime(50));
 
-    // `choreograph` gives every `draw` an offset of 0. Six of them must
+    // `choreograph` gives every `play` an offset of 0. Six of them must
     // therefore land together, not spread across ~1.3s of `beatOf`
     // fallbacks — which is what a falsy-0 check produces.
     expect(applied).toHaveLength(6);
+  });
+
+  it("applies a hand handed over whole in one tick, so it renders and leaves as one", () => {
+    const applied: GameEvent[] = [];
+    const { result } = renderHook(() =>
+      useChoreographer({ apply: (e) => applied.push(e) }),
+    );
+    const handOver: GameEvent[] = Array.from({ length: 12 }, (_, i) => ({
+      t: "deal" as const,
+      piece: `C${i + 2}`,
+      to: 1,
+      faceUp: false,
+      together: true,
+    }));
+
+    // No timers advanced at all: one `setTimeout(0)` per card put a render
+    // between each, and twenty cards visibly left one by one.
+    act(() => result.current.push(handOver));
+    expect(applied).toHaveLength(12);
+  });
+
+  it("streams a run of draws one after another, so a penalty can be counted", () => {
+    const applied: GameEvent[] = [];
+    const { result } = renderHook(() =>
+      useChoreographer({ apply: (e) => applied.push(e) }),
+    );
+    const draws: GameEvent[] = Array.from({ length: 4 }, (_, i) => ({
+      t: "draw" as const,
+      piece: `D${i}`,
+      from: "deck" as const,
+      to: 1,
+      faceUp: false,
+    }));
+    act(() => result.current.push(draws));
+    act(() => void vi.advanceTimersByTime(50));
+    expect(applied).toHaveLength(1);
+    act(() => void vi.advanceTimersByTime(4 * STAGGER.draw * 1000));
+    expect(applied).toHaveLength(4);
   });
 
   it("still waits where an offset is genuinely absent", () => {
@@ -138,7 +182,7 @@ describe("useChoreographer — playback timing", () => {
     const { result } = renderHook(() =>
       useChoreographer({ apply: (e) => applied.push(e) }),
     );
-    act(() => result.current.push([{ t: "think", seat: 1, ms: 300 }, ...drawBatch(5)]));
+    act(() => result.current.push([{ t: "think", seat: 1, ms: 300 }, ...concurrentBatch(5)]));
     act(() => void vi.advanceTimersByTime(400));
     expect(applied).toHaveLength(6);
   });
@@ -148,7 +192,7 @@ describe("useChoreographer — playback timing", () => {
     const { result } = renderHook(() =>
       useChoreographer({ apply: () => {}, onIdle }),
     );
-    act(() => result.current.push(drawBatch(3)));
+    act(() => result.current.push(concurrentBatch(3)));
     act(() => void vi.advanceTimersByTime(100));
     expect(onIdle).toHaveBeenCalled();
   });

@@ -50,15 +50,17 @@ export interface SeatsSliderProps {
   onChange: (n: number) => void;
   /** Shown, not changeable by this person (a room's setting). */
   locked?: boolean;
+  /** Seats come in groups of this many (Mind Meld's pairs). */
+  step?: number;
 }
 
 /** The player-count control: a slider with the count in the header.
  * `onChange` hears where a drag ends, not every step (`useSliderDraft`). */
-export function SeatsSlider({ value, min, max, onChange, locked = false }: SeatsSliderProps) {
+export function SeatsSlider({ value, min, max, onChange, locked = false, step = 1 }: SeatsSliderProps) {
   const draft = useSliderDraft(value, onChange, locked);
   return (
     <SetupField label="Players" value={draft.value}>
-      <Slider label="Players" min={min} max={max} step={1} disabled={locked} {...draft.props} />
+      <Slider label="Players" min={min} max={max} step={step} disabled={locked} {...draft.props} />
     </SetupField>
   );
 }

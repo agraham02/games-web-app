@@ -61,6 +61,33 @@ export const DURATION = {
 } as const;
 
 /**
+ * How long each `cue` takes to play, in seconds. The numbers are the longest
+ * a piece of table chrome ever runs for that cue (`ChromalyFx`), and the
+ * choreographer reserves exactly that so a cue is not cut off by the next
+ * frame. Short on purpose: nothing here may feel like waiting.
+ */
+export const CUE_SECONDS: Record<string, number> = {
+    skip: 0.7,
+    reverse: 0.7,
+    draw: 0.6,
+    stack: 0.5,
+    colour: 0.55,
+    jump: 0.6,
+    called: 0.6,
+    caught: 0.7,
+    bluff: 0.9,
+    clean: 0.9,
+    swap: 0.8,
+    pass: 0.8,
+    shuffleHands: 1.0,
+    // Mind Meld's reveal: a beat per number and a hold on the last.
+    countdown: 2.4,
+    meld: 1.4,
+    close: 1.0,
+    miss: 0.7,
+};
+
+/**
  * Deliberate pauses BEFORE a step starts — distinct from DURATION, which
  * is how long a step itself takes once it begins. `trick` is the beat
  * between a trick's 4th card landing and the `collect` event actually
@@ -71,10 +98,22 @@ export const DURATION = {
  */
 export const HOLD = {
     trick: 0.9,
+    /**
+     * The beat between an action landing and what it caused starting (a
+     * `settle` event): long enough to SEE the card that did it before the
+     * cards it deals start moving, short enough not to read as a stall.
+     */
+    consequence: 0.32,
 } as const;
 
 export const STAGGER = {
     deal: 0.065,
+    /**
+     * A run of draws into one hand - a +2's penalty, a caught last card. A
+     * stream the eye can count, not a clump that lands as one: every draw
+     * had offset 0, so a penalty of six arrived as a single card-shaped blur.
+     */
+    draw: 0.11,
     collect: 0.04,
     meld: 0.05,
     /** See DURATION.sweep — capped low deliberately, not a per-piece pace. */
@@ -218,6 +257,39 @@ export const SHAKE_TIMING_FINAL = {
     duration: 0.52,
     ease: "easeOut" as const,
 };
+
+/**
+ * The DOMINO's slam, which the user asked to be more prominent again
+ * (2026-10-30: bigger motion, an impact you can see, a harder buzz). Tiles
+ * only - Chromaly slams cards with the presets above, and a card is a thin
+ * thing that a bigger arc would only make look thrown. Same `times` and
+ * durations, so the impact lands exactly where the sound and buzz do.
+ */
+export const SLAM_KEYFRAMES_TILE = {
+    scale: [1, 2.35, 2.35, 0.8, 1],
+    rotate: [0, -6, -6, 3, 0],
+};
+
+export const SLAM_KEYFRAMES_TILE_FINAL = {
+    scale: [1, 3.6, 3.6, 0.64, 1],
+    rotate: [0, -12, -12, 6, 0],
+};
+
+export const SHAKE_KEYFRAMES_TILE = {
+    x: [0, -10, 10, -7, 7, 0],
+    y: [0, 5, -3, 3, 0, 0],
+};
+
+export const SHAKE_KEYFRAMES_TILE_FINAL = {
+    x: [0, -18, 18, -12, 12, 0],
+    y: [0, 9, -6, 5, 0, 0],
+};
+
+/** The whole table taking the hit, a beat after the board does. */
+export const JOLT_KEYFRAMES = { y: [0, 4, -2, 1, 0] };
+export const JOLT_KEYFRAMES_FINAL = { y: [0, 9, -5, 2.5, 0], x: [0, -3, 3, -1, 0] };
+export const JOLT_TIMING = { duration: 0.28, ease: "easeOut" as const };
+export const JOLT_TIMING_FINAL = { duration: 0.42, ease: "easeOut" as const };
 
 /** Honoured by the choreographer, by <Piece>'s slam, and — via
  * `MotionConfig reducedMotion="user"` in the root layout — by every

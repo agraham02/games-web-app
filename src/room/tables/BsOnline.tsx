@@ -148,7 +148,7 @@ export function BsOnline({ api, room, frame, held, onClearHeld, setHeld, corner 
 
 function TableWaiting({ onLeave }: { onLeave: () => void }) {
   return (
-    <main className="felt felt-weave flex h-svh flex-col items-center justify-center gap-4">
+    <main data-game="bs" className="felt felt-weave flex h-svh flex-col items-center justify-center gap-4">
       <span className="eyebrow">Dealing you in</span>
       <Button size="sm" onClick={onLeave}>
         Back to the lobby

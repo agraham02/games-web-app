@@ -138,7 +138,7 @@ export function CodeInput({ value, onChange, onEnter, label = "Room code", error
             <div
               key={i}
               className={cn(
-                "flex h-14 flex-1 items-center justify-center rounded-lg bg-felt-950/60 font-display text-2xl text-bone-50 ring-1 ring-bone-50/16",
+                "flex h-14 flex-1 items-center justify-center rounded-sm bg-transparent font-title text-3xl font-light text-bone-50 ring-1 ring-bone-50/22",
                 error && "ring-destructive/60",
                 i === value.length && "group-focus-within:ring-2 group-focus-within:ring-brass-400",
               )}

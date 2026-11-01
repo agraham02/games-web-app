@@ -67,6 +67,8 @@ export interface RosterProps {
   seatCount: number;
   /** Whether the selected game plays in partnerships (seat decides team). */
   teamsEnabled: boolean;
+  /** Which side a seat plays for: across by default, side by side in Mind Meld. */
+  teamOf?: (seat: number) => number;
   onPromote: (session: string) => void;
   onKick: (session: string) => void;
   /** Leader only, between games: the rearranged plan. Absent, no dragging. */
@@ -100,7 +102,7 @@ export function Roster(props: RosterProps) {
 /** During a game: the people, with the seats they hold. */
 function MemberList({ members, you, youAreLeader, onPromote, onKick, onPhoto }: RosterProps) {
   return (
-    <ul aria-label="Room members" className="flex w-full flex-col gap-1.5">
+    <ul aria-label="Room members" className="flex w-full flex-col divide-y divide-bone-50/8">
       {members.map((m) => (
         <li key={m.session} className={ROW}>
           <MemberCells
@@ -136,6 +138,7 @@ function SeatingPlan({
   plan,
   seatCount,
   teamsEnabled,
+  teamOf,
   onPromote,
   onKick,
   onArrange,
@@ -180,13 +183,13 @@ function SeatingPlan({
         setKeys(next);
       }}
       aria-label="Seating plan"
-      className="flex w-full flex-col gap-1.5"
+      className="flex w-full flex-col divide-y divide-bone-50/8"
     >
       {keys.map((key, i) => {
         const member = isBotKey(key) ? null : byId.get(key);
         const seated = i < seatCount;
         const label = seated ? `Seat ${i + 1}` : "No seat";
-        const team = teamsEnabled && seated ? i % 2 : null;
+        const team = teamsEnabled && seated ? (teamOf ? teamOf(i) : i % 2) : null;
         return (
           <SeatRow
             key={key}
@@ -230,8 +233,9 @@ function SeatingPlan({
   );
 }
 
-const ROW =
-  "flex items-center gap-3 rounded-lg bg-bone-50/4 px-3 py-2.5 ring-1 ring-bone-50/8";
+// Rows of ONE list, divided by hairlines, not a box each: the lobby draws the
+// table as a card, and a box per row inside it was cards in a card.
+const ROW = "flex items-center gap-3 px-1 py-2.5";
 
 function SeatRow({
   value,
@@ -264,7 +268,15 @@ function SeatRow({
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={TRANSITIONS.uiEnter}
-      whileDrag={{ scale: 1.02, zIndex: 1, boxShadow: "0 8px 24px rgb(0 0 0 / 0.35)" }}
+      // A row has no box of its own any more, so it takes one while it is
+      // carried: over the rows it passes, bare text on text was unreadable.
+      whileDrag={{
+        scale: 1.02,
+        zIndex: 1,
+        borderRadius: 8,
+        backgroundColor: "rgb(24 24 24 / 0.96)",
+        boxShadow: "0 8px 24px rgb(0 0 0 / 0.45)",
+      }}
     >
       {canArrange ? (
         <button
@@ -303,19 +315,22 @@ function SeatLabel({ label }: { label: string | null }) {
 }
 
 /** The side a seat plays for — partners sit across, so the seat decides. */
+const TEAM_TOKENS = ["a", "b", "c", "d", "e"] as const;
+
 function TeamChip({ team }: { team: number | null }) {
   if (team === null) return null;
-  const b = team === 1;
+  const token = TEAM_TOKENS[team % TEAM_TOKENS.length]!;
+  const colour = `var(--color-team-${token})`;
   return (
     <span
       className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
       style={{
-        color: b ? "var(--color-team-b)" : "var(--color-team-a)",
-        background: `color-mix(in srgb, ${b ? "var(--color-team-b)" : "var(--color-team-a)"} 16%, transparent)`,
-        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${b ? "var(--color-team-b)" : "var(--color-team-a)"} 45%, transparent)`,
+        color: colour,
+        background: `color-mix(in srgb, ${colour} 16%, transparent)`,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${colour} 45%, transparent)`,
       }}
     >
-      Team {b ? "B" : "A"}
+      Team {token.toUpperCase()}
     </span>
   );
 }

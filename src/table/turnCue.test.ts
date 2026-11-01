@@ -61,6 +61,20 @@ describe("seatCue", () => {
     expect(seatCue(held, 1).active).toBe(true);
   });
 
+  it("can light the seat about to move for its whole pause instead (a card game)", () => {
+    // Chromaly, 2026-10-31: the ring sat on the previous player all through
+    // the next one's think, while the table said "Mia is thinking…".
+    const held = idle({ pendingReveal: true });
+    expect(seatCue(held, 2, "next")).toEqual({ active: true, thinking: true });
+    expect(seatCue(held, 1, "next")).toEqual({ active: false, thinking: false });
+    // A move still animating is still the mover's, either way.
+    const moving = idle({ animating: true, pendingReveal: true });
+    expect(seatCue(moving, 1, "next").active).toBe(true);
+    expect(seatCue(moving, 2, "next").active).toBe(false);
+    // And the default is unchanged: LRC keeps the roller lit over their dice.
+    expect(seatCue(held, 1).active).toBe(true);
+  });
+
   it("lights nobody when the table is waiting on nobody", () => {
     // Between rounds, and after the last hand. A pod left glowing through
     // a scorecard reads as a turn nobody can take.
@@ -89,8 +103,10 @@ describe("seatCue", () => {
       idle({ lastAction: null }),
       idle({ currentSeat: null }),
     ]) {
-      const lit = [0, 1, 2, 3].filter((seat) => seatCue(source, seat).active);
-      expect(lit.length, JSON.stringify(source)).toBeLessThanOrEqual(1);
+      for (const hold of ["mover", "next"] as const) {
+        const lit = [0, 1, 2, 3].filter((seat) => seatCue(source, seat, hold).active);
+        expect(lit.length, `${hold} ${JSON.stringify(source)}`).toBeLessThanOrEqual(1);
+      }
     }
   });
 

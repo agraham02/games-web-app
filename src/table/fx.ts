@@ -18,7 +18,7 @@
  * once and drives Motion imperatively from the callback.
  */
 
-import type { PieceId } from "@/engine/types";
+import type { GameEvent, PieceId } from "@/engine/types";
 
 export interface SlamFx {
   /** The piece being brought down. */
@@ -126,4 +126,26 @@ export function noteTap(piece: PieceId): void {
 /** The piece tapped within `withinMs`, if any. */
 export function recentTap(withinMs: number): PieceId | null {
   return lastTap && Date.now() - lastTap.at <= withinMs ? lastTap.piece : null;
+}
+
+/**
+ * A `cue` event - a skip, a reverse, a stack growing, a bluff called - for
+ * whatever chrome and sound a game draws for it. Like the slam it names no
+ * piece and writes nothing to the store, so it rides the same fire-and-forget
+ * seam: the game's own overlay and its sound hook subscribe once, and nothing
+ * re-renders anywhere else when one fires.
+ */
+export type CueFx = Extract<GameEvent, { t: "cue" }>;
+
+const cueListeners = new Set<(fx: CueFx) => void>();
+
+export function onCue(listener: (fx: CueFx) => void): () => void {
+  cueListeners.add(listener);
+  return () => {
+    cueListeners.delete(listener);
+  };
+}
+
+export function emitCue(fx: CueFx): void {
+  for (const listener of cueListeners) listener(fx);
 }
