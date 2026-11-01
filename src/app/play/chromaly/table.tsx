@@ -43,7 +43,7 @@ import {
   type Color,
 } from "@/games/chromaly/cards";
 import { groupable, legalDoubles, sameGroup, swapsHands, whyNotPlayable } from "@/games/chromaly/state";
-import { validate } from "@/games/chromaly/rules";
+import { placements, validate } from "@/games/chromaly/rules";
 import type { ChromalyAction, ChromalyState } from "@/games/chromaly/types";
 import { HAND_SPACING_SETTING, hintsSetting, type GameSetting, type SettingValues } from "@/table/gameSettings";
 import { HandPan } from "@/table/HandPan";
@@ -197,6 +197,50 @@ export function togglePlayCard(held: readonly PieceId[], id: PieceId): PieceId[]
   return [...held, id];
 }
 
+/**
+ * Could this card join the group already picked up? A card that could not go
+ * on the pile by itself may still go down WITH one that can (the user,
+ * 2026-10-31). One test for the tap (`onPieceTap`) and for the dimming
+ * (`useUndimJoiners`), because they have to agree: a card the tap accepts but
+ * the piece layer will not pass a tap to is the bug that wrote this.
+ */
+export function joinsHeld(state: ChromalyState, held: readonly PieceId[], id: PieceId): boolean {
+  const first = held[0] === undefined ? null : parseCard(held[0]);
+  const mine = parseCard(id);
+  return first !== null && mine !== null && sameGroup(first, mine) && state.drawn === null;
+}
+
+/**
+ * Hints dim every card that cannot be played ALONE, and the piece layer passes
+ * no tap to a dimmed card. So once the first card of a pair is picked up, the
+ * rest of its group sat dimmed and dead although `onPieceTap` would take them.
+ * This lifts the dimming off whatever could join the pick, and puts it back
+ * when the pick is put down or played.
+ *
+ * What stays dimmed is read from the game's own `placements` rather than
+ * worked out again here, so when and why a card is dimmed has one answer.
+ * Hints off dims nothing, so there is nothing to lift.
+ */
+export function useUndimJoiners(state: ChromalyState, seat: SeatId, held: readonly PieceId[]): void {
+  const key = held.join(",");
+  useEffect(() => {
+    const store = useTableStore.getState();
+    const picked = key ? key.split(",") : [];
+    const base = placements(state, seat);
+    const lift: PieceId[] = [];
+    const restore: PieceId[] = [];
+    for (const id of state.hands[seat] ?? []) {
+      const now = store.placements[id];
+      if (!now) continue;
+      const dimmed = Boolean(base[id]?.dimmed) && !joinsHeld(state, picked, id);
+      if (Boolean(now.dimmed) === dimmed) continue;
+      (dimmed ? restore : lift).push(id);
+    }
+    if (lift.length) store.patchMany(lift, { dimmed: false });
+    if (restore.length) store.patchMany(restore, { dimmed: true });
+  }, [state, seat, key]);
+}
+
 /** The marks on a card picked up: lifted and ringed, as a meld's in Rummy. */
 const HELD_MARKS = { selected: true, highlighted: true } as const;
 const HELD_OFF = { selected: false, highlighted: false } as const;
@@ -275,9 +319,7 @@ export function onPieceTap(
   // A group is picked a card at a time, and the FIRST has to go on the pile by
   // itself: a card that could not may JOIN a group already picked up, but never
   // start one (the user, 2026-10-31).
-  const first = held[0] === undefined ? null : parseCard(held[0]);
-  const mine = parseCard(id);
-  const joins = first !== null && mine !== null && sameGroup(first, mine) && state.drawn === null;
+  const joins = joinsHeld(state, held, id);
   if (refused && !joins) {
     announce(refused, "bad");
     return;
@@ -340,6 +382,7 @@ export function ChromalyTable({
   // Re-asserted after every batch: you can be picking a pair for your own
   // turn while opponents answer a window, and each answer resets the store.
   useHeldMarks(held, HELD_MARKS, live.state);
+  useUndimJoiners(live.state, view.viewerSeat, held);
   useWindowCountdown(view, live);
   useCueFeedback({
     sound: settings?.sound !== false,
