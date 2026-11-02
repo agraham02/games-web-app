@@ -144,8 +144,8 @@ export function TurnIndicator({ label, show }: { label: string; show: boolean })
               transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
             />
             <span
-              className="relative text-[10px] font-bold tracking-widest text-brass-300 uppercase"
-              style={{ textShadow: "0 0 10px rgb(212 175 106 / 0.7)" }}
+              className="relative text-[13px] leading-tight font-extrabold tracking-[0.16em] text-brass-200 uppercase"
+              style={{ textShadow: "0 0 12px rgb(212 175 106 / 0.9), 0 0 3px rgb(212 175 106 / 0.8)" }}
             >
               {label}
             </span>

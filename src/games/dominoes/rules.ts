@@ -68,7 +68,7 @@ import type {
 import { HERO } from "@/engine/types";
 import type { Rng } from "@/engine/rng";
 import { botName } from "@/games/_shared/botIdentity";
-import { doubleSixSet } from "@/games/_shared/tiles";
+import { doubleSixSet, sortTilesForDisplay } from "@/games/_shared/tiles";
 import { initialArms, placeTile } from "./board";
 import { dominoBots } from "./bots";
 import {
@@ -623,8 +623,11 @@ export function placements(state: DomState, viewer: SeatId): PlacementMap {
   const choosesEnd = new Set(mine.filter((p) => p.ends.length > 1).map((p) => p.tile));
 
   for (let seat = 0; seat < state.seats; seat++) {
-    const hand = state.hands[seat] ?? [];
     const isViewerHand = seat === viewer;
+    // Your own rack is laid out in order. Everybody else's is face down, so
+    // there is nothing to read in its order and it stays as dealt.
+    const dealt = state.hands[seat] ?? [];
+    const hand = isViewerHand ? sortTilesForDisplay(dealt) : dealt;
     hand.forEach((id, i) => {
       out[id] = {
         zone: "hand",

@@ -26,6 +26,7 @@
  */
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { MOVE_CODE_LENGTH } from "@/session/protocol";
 import { CODE_LENGTH } from "@/session/room";
 import { Collapse } from "@/ui/motion";
 import { Button } from "@/ui/primitives/Button";
@@ -42,9 +43,15 @@ export interface RoomEntryFormProps {
   notice?: string;
   /** The server's answer about one field — a name already taken, a code
    * with no room behind it. Shown under that field until the next try. */
-  errors?: { name?: string; code?: string };
+  errors?: { name?: string; code?: string; pin?: string };
   onMake: (name: string) => void;
   onJoin: (code: string, name: string) => void;
+  /**
+   * Moving to this device from one already in the room: the room's code (the
+   * field above) and the digits that device showed. Without it the form has
+   * no such option. It needs no name — the seat has one.
+   */
+  onClaim?: (code: string, pin: string) => void;
   /**
    * Something else on the screen is the one thing to do — the home
    * screen's "go back to your room" — so none of these buttons is brass.
@@ -59,6 +66,7 @@ export function RoomEntryForm({
   errors,
   onMake,
   onJoin,
+  onClaim,
   quiet = false,
 }: RoomEntryFormProps) {
   const [name, setName] = useState("");
@@ -67,6 +75,10 @@ export function RoomEntryForm({
   const [missing, setMissing] = useState<"name" | "code" | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
+  // Moving from another device. Open from the start when the last try at it
+  // was refused: its answer belongs under the digits.
+  const [moving, setMoving] = useState(Boolean(errors?.pin));
+  const [pin, setPin] = useState("");
 
   useEffect(() => {
     // After mount, not in a lazy initializer: the page is prerendered, and
@@ -97,11 +109,17 @@ export function RoomEntryForm({
     saveName(name);
     onJoin(code, name.trim());
   };
+  const move = () => {
+    if (!complete) return stopAt("code");
+    if (pin.length !== MOVE_CODE_LENGTH) return;
+    onClaim?.(code, pin);
+  };
   const loud = quiet ? "ghost" : "primary";
   // Enter presses the primary button, whichever that is right now.
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (joinFirst) join();
+    if (moving) move();
+    else if (joinFirst) join();
     else make();
   };
 
@@ -175,6 +193,45 @@ export function RoomEntryForm({
           </Button>
         </>
       )}
+
+      {onClaim ? (
+        <>
+          <button
+            type="button"
+            aria-expanded={moving}
+            className="self-center text-xs text-bone-400 underline-offset-4 hover:text-bone-200 hover:underline"
+            onClick={() => setMoving((m) => !m)}
+          >
+            {moving ? "Never mind" : "Already playing on another device?"}
+          </button>
+          <Collapse open={moving}>
+            <div className="flex flex-col gap-3">
+              <p className="text-xs leading-relaxed text-bone-400">
+                On that device, open Settings and choose Play on another device. Type the room code above and the
+                four digits it shows.
+              </p>
+              <TextField
+                label="Code from your other device"
+                value={pin}
+                onChange={(v) => setPin(v.replace(/\D/g, "").slice(0, MOVE_CODE_LENGTH))}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="0000"
+                maxLength={MOVE_CODE_LENGTH}
+                error={errors?.pin}
+              />
+              <Button
+                type="submit"
+                tone={loud}
+                className="w-full"
+                disabled={!complete || pin.length !== MOVE_CODE_LENGTH}
+              >
+                Continue here
+              </Button>
+            </div>
+          </Collapse>
+        </>
+      ) : null}
     </form>
   );
 }

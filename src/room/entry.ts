@@ -26,7 +26,11 @@ const INTENT_KEY = "table-games.entry-intent";
  * rather than on "Pick a game first". Not validated here — storage is
  * anybody's — but by `isGameId` where it is acted on.
  */
-export type EntryIntent = { t: "make"; game?: string } | { t: "join"; code: string };
+export type EntryIntent =
+  | { t: "make"; game?: string }
+  | { t: "join"; code: string }
+  /** Moving here from another device: the room's code and the digits it showed. */
+  | { t: "claim"; code: string; pin: string };
 
 /** The name typed last time, or "". Storage can be locked down; then "". */
 export function readSavedName(): string {
@@ -76,6 +80,9 @@ export function takeEntryIntent(): EntryIntent | null {
       return typeof parsed.game === "string" ? { t: "make", game: parsed.game } : { t: "make" };
     }
     if (parsed?.t === "join" && typeof parsed.code === "string") return parsed;
+    if (parsed?.t === "claim" && typeof parsed.code === "string" && typeof parsed.pin === "string") {
+      return { t: "claim", code: parsed.code, pin: parsed.pin };
+    }
     return null;
   } catch {
     return null;

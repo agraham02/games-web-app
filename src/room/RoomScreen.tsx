@@ -113,6 +113,9 @@ export function RoomScreen({ code }: { code?: string }) {
   useEffect(() => {
     if (!intent) return;
     const name = readSavedName();
+    // The one intent that needs no name: the seat being moved here already
+    // has its own.
+    const claim = intent.t === "claim" ? intent : null;
     const ready =
       api.phase === "idle" ||
       // Already in a room — somebody who was still in one pressed Make or
@@ -121,6 +124,11 @@ export function RoomScreen({ code }: { code?: string }) {
     if (!ready) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIntent(null);
+    if (claim) {
+      setActing(claim);
+      api.claimMoveCode(claim.code, claim.pin);
+      return;
+    }
     if (!name) return;
     if (intent.t === "join" && api.room?.code === intent.code) return;
     setActing(intent);
@@ -359,8 +367,8 @@ export function RoomScreen({ code }: { code?: string }) {
             // settled — which read as the game desyncing rather than as
             // what it was.
             <RoomStatusScreen
-              title="Playing in another tab"
-              line="You opened this room somewhere else. Your seat is still yours — carry on there, or bring the game back here."
+              title="Playing somewhere else"
+              line="You opened this room on another tab or device. Your seat is still yours — carry on there, or bring the game back here."
               action={
                 <Button size="sm" onClick={api.resume}>
                   Play here instead
@@ -465,6 +473,7 @@ function useDiscardNotice() {
 function intentLabel(intent: EntryIntent | null): string {
   if (intent?.t === "make") return "Making your room…";
   if (intent?.t === "join") return `Joining ${intent.code}…`;
+  if (intent?.t === "claim") return "Moving your seat here…";
   return "Connecting…";
 }
 
@@ -477,10 +486,11 @@ function intentLabel(intent: EntryIntent | null): string {
  * turned away, removed, full — is the form's `notice`, and it names the
  * room, because by now the player may have seen three.
  */
-function refusalOf(api: RoomApi): { notice?: string; name?: string; code?: string } {
+function refusalOf(api: RoomApi): { notice?: string; name?: string; code?: string; pin?: string } {
   const error = api.error;
   if (error) {
     const text = sentence(error.message);
+    if (error.code === "bad-move-code") return { pin: text };
     if (error.code === "name-required" || error.code === "name-taken") return { name: text };
     if (error.code === "no-such-room") return { code: "No room with that code" };
     return { notice: text };
@@ -520,6 +530,7 @@ function EntryScreen({ api, urlCode }: { api: RoomApi; urlCode?: string }) {
   const invited = cleanCode(urlCode);
   const mode: RoomEntryMode =
     refusal.notice || refusal.code ? "retry" : invited.length === CODE_LENGTH ? "invite" : "home";
+  // Told to the form that was open, so the digits are still there to fix.
   // Worth asking again only where the answer could change: a knock that was
   // turned down. Not a room you were removed from, or one that has closed.
   const reason = api.farewell?.reason;
@@ -550,9 +561,10 @@ function EntryScreen({ api, urlCode }: { api: RoomApi; urlCode?: string }) {
         mode={mode}
         initialCode={initialCode}
         notice={refusal.notice}
-        errors={{ name: refusal.name, code: refusal.code }}
+        errors={{ name: refusal.name, code: refusal.code, pin: refusal.pin }}
         onMake={(name) => api.createRoom(name)}
         onJoin={(code, name) => api.joinRoom(code, name)}
+        onClaim={(code, pin) => api.claimMoveCode(code, pin)}
       />
 
       <Link href="/" className="text-xs text-bone-400 underline-offset-4 hover:underline">

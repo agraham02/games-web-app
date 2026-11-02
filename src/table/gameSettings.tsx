@@ -104,6 +104,23 @@ export const HAND_SPACING_SETTING: ChoiceSetting = {
   shared: true,
 };
 
+/**
+ * Bigger ranks, suits and pips (a player's parents could not read a Spades
+ * hand on a phone). Shared, like Card spacing, and offered by every game that
+ * draws playing cards or dominoes: Chromaly's faces and Mind Meld's words are
+ * not what it changes, so there it would do nothing.
+ *
+ * A big index needs room, so each Card spacing choice is wider while it is
+ * on (`LARGE_HAND_FLOORS`) and the hand scrolls sideways sooner.
+ */
+export const LARGE_SYMBOLS_SETTING: GameSetting = {
+  key: "largeSymbols",
+  label: "Large symbols",
+  description: "Bigger ranks, suits and domino dots, for a small screen or tired eyes.",
+  default: false,
+  shared: true,
+};
+
 /** Every table has these; `GameHost` appends them to a game's own. */
 export const TABLE_SETTINGS: readonly GameSetting[] = [SOUND_SETTING, VIBRATION_SETTING];
 

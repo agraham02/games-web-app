@@ -172,6 +172,10 @@ export function HomeScreen({ lab = false }: { lab?: boolean }) {
               setEntryIntent({ t: "join", code });
               router.push(`/room/${code}`);
             }}
+            onClaim={(code, pin) => {
+              setEntryIntent({ t: "claim", code, pin });
+              router.push(`/room/${code}`);
+            }}
           />
         </div>
       </InfoSheet>
