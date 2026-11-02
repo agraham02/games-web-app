@@ -131,6 +131,8 @@ export function RummyOnline({ api, room, frame, corner }: OnlineTableProps) {
             }}
             onEndGame={api.endGame}
             onCloseRoom={api.closeRoom}
+            moveCode={api.moveCode}
+            onMoveCode={api.requestMoveCode}
           />
         }
         live={live}

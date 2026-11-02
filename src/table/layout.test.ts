@@ -5,6 +5,7 @@ import {
   TUCK_PEEK_FRACTION,
   discardMaxScroll,
   HAND_FLOORS,
+  LARGE_TILE_FLOORS,
   handFanMaxScroll,
   heroFan,
   handHeaderHeight,
@@ -273,6 +274,40 @@ describe("domino line — camera framing", () => {
       expect(unit).toBeLessThanOrEqual(previous + 1e-9);
       previous = unit;
     }
+  });
+});
+
+describe("a spectator's rack at the bottom seat", () => {
+  // A spectator has no hand strip, so the seat at the bottom is an opponent's
+  // like any other — and its rack fell into the side-seat branch, whose room
+  // is measured down to the ring's bottom edge. The pod is BELOW that edge, so
+  // every tile landed on one spot: a hand of six showed one tile.
+  const place = (g: ReturnType<typeof resolveTable>, index: number, count: number) => {
+    const t = layoutPiece({ zone: "hand", seat: 0, index, count, faceUp: false }, g, { kind: "tile" });
+    return t.x + baseSize(g).w / 2;
+  };
+
+  it("spreads every tile along the pod, at every viewport and hand size", () => {
+    for (const vp of VIEWPORTS) {
+      if (resolveTable({ seats: 4, width: vp.w, height: vp.h, viewerSeat: null }).tuck) continue;
+      for (const seats of [2, 3, 4]) {
+        const g = resolveTable({ seats, width: vp.w, height: vp.h, viewerSeat: null });
+        for (let count = 2; count <= 7; count++) {
+          const xs = Array.from({ length: count }, (_, i) => place(g, i, count));
+          const label = `${vp.name}/${seats}seats/hand${count}`;
+          expect(new Set(xs.map((x) => Math.round(x))).size, label).toBe(count);
+          // Centred on the pod it belongs to.
+          const mid = (Math.min(...xs) + Math.max(...xs)) / 2;
+          expect(Math.abs(mid - g.seats[0]!.x), label).toBeLessThan(1);
+        }
+      }
+    }
+  });
+
+  it("stands the rack above its pod, on the felt side", () => {
+    const g = resolveTable({ seats: 4, width: 1440, height: 900, viewerSeat: null });
+    const t = layoutPiece({ zone: "hand", seat: 0, index: 0, count: 6, faceUp: false }, g, { kind: "tile" });
+    expect(t.y + baseSize(g).h / 2).toBeLessThan(g.seats[0]!.y);
   });
 });
 
@@ -627,6 +662,35 @@ describe("hero hand — never draws a card outside the hand zone", () => {
     expect(gone, "no hand in this matrix overflowed — nothing was tested").toBeGreaterThan(10);
   });
 
+  it("always has a card fading out at the end that hides more, at rest", () => {
+    // The ramp used to be a fixed fraction of a card, and cards sit a gap
+    // apart: whether any card stood in the ramp depended on the screen's
+    // width, and on some the last card in view was solid and the next simply
+    // gone — nothing to say the hand went on. At rest (the near-edge pan a
+    // dealt hand starts at) one card must be part-way out, whatever the width.
+    let swept = 0;
+    for (let w = 340; w <= 440; w += 3) {
+      const g = resolveTable({ seats: 4, width: w, height: 844 });
+      for (const floor of [HAND_FLOORS.comfortable, HAND_FLOORS.roomy, 0.8, 0.95]) {
+        for (const count of [10, 13]) {
+          const range = handFanMaxScroll(g, count, floor);
+          // A few px of overflow is the hand brushing the strip's margin, with
+          // every card still wholly on screen: nothing there to hint at.
+          if (range < 12) continue;
+          swept++;
+          const cards = Array.from({ length: count }, (_, i) => handCard(i, count, g, range / 2, floor));
+          const label = `${w}px/floor${floor}/${count}cards`;
+          expect(cards[0]!.opacity, `${label}: the first card is solid`).toBe(1);
+          expect(
+            cards.some((c) => c.opacity > 0 && c.opacity < 1),
+            `${label}: nothing is fading at the far end`,
+          ).toBe(true);
+        }
+      }
+    }
+    expect(swept, "nothing overflowed — nothing was tested").toBeGreaterThan(20);
+  });
+
   it("leaves an ordinary hand completely untouched", () => {
     // The common case: a hand that fits must be drawn exactly as before.
     // Thirteen cards no longer fit a portrait phone at half a card each
@@ -661,6 +725,42 @@ describe("hero hand — never draws a card outside the hand zone", () => {
     expect(comfortable.step).toBeCloseTo(comfortable.w / 2, 1);
     expect(roomy.step).toBeCloseTo((roomy.w * 2) / 3, 1);
     expect(roomy.range).toBeGreaterThan(comfortable.range);
+  });
+
+  it("gives a rack the whole strip when there is no boneyard", () => {
+    // Caribbean has no draw pile, and its rack was still giving up the
+    // boneyard's width on BOTH sides: seven tiles in a third of a phone, a
+    // fade that began well inside the screen, and nothing in the room it
+    // left (the user, 2026-11-02).
+    for (const w of [360, 390, 430]) {
+      const withPile = resolveTable({ seats: 4, width: w, height: 844 });
+      const without = resolveTable({ seats: 4, width: w, height: 844, boneyard: false });
+      expect(heroFan(withPile, true).within.w).toBeLessThan(without.zones.hand.w);
+      expect(heroFan(without, true).within).toEqual(without.zones.hand);
+      // Cards never had a gutter.
+      expect(heroFan(without, false).within).toEqual(without.zones.hand);
+    }
+  });
+
+  it("lays seven large-symbol tiles out edge to edge on a phone, none under another", () => {
+    const g = resolveTable({ seats: 4, width: 390, height: 844, boneyard: false });
+    const fan = heroFan(g, true);
+    for (const choice of ["comfortable", "roomy"] as const) {
+      const floor = LARGE_TILE_FLOORS[choice];
+      expect(handFanMaxScroll(g, 7, floor, true), `${choice}: seven tiles should fit`).toBe(0);
+      const xs = Array.from({ length: 7 }, (_, i) => {
+        const t = layoutPiece({ zone: "hand", seat: 0, index: i, count: 7, faceUp: true }, g, {
+          kind: "tile",
+          handScroll: 0,
+          handIndex: i,
+          handFloor: floor,
+        });
+        return t.x + baseSize(g).w / 2;
+      });
+      for (let i = 1; i < xs.length; i++) {
+        expect(xs[i]! - xs[i - 1]!, `${choice}: tiles ${i - 1} and ${i} overlap`).toBeGreaterThanOrEqual(fan.size - 0.5);
+      }
+    }
   });
 
   it("spaces and pans a domino rack the same way, off the boneyard", () => {

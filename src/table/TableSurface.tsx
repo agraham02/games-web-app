@@ -66,6 +66,8 @@ export interface TableSurfaceProps {
   band?: boolean;
   /** See `ResolveOptions.handBleed`. `GameHost` works it out per game. */
   handBleed?: boolean;
+  /** See `ResolveOptions.boneyard`. `GameHost` asks the game. */
+  boneyard?: boolean;
   /** See `ResolveOptions.pairs`. */
   pairs?: boolean;
   /** The game being played: its surface (see `ui/gameTheme.ts`). */
@@ -88,6 +90,7 @@ export function TableSurface({
   viewerSeat,
   band = true,
   handBleed,
+  boneyard,
   pairs,
   game,
 }: TableSurfaceProps) {
@@ -140,10 +143,11 @@ export function TableSurface({
         pileAnchor,
         viewerSeat,
         handBleed,
+        boneyard,
         pairs,
       }),
     );
-  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, pairs, setGeometry]);
+  }, [size, seats, density, handZone, topZone, bottomZone, bandZone, pileAnchor, viewerSeat, handBleed, boneyard, pairs, setGeometry]);
 
   return (
     <div

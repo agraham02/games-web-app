@@ -12,7 +12,7 @@
  * the piece layer's transform, so one render serves every zone.
  */
 
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import {
   isRed,
   jokerLabel,
@@ -20,6 +20,7 @@ import {
   SUIT_GLYPH,
   cardLabel,
   type Rank,
+  type Suit,
 } from "@/games/_shared/cards";
 import type { PieceId } from "@/engine/types";
 
@@ -70,6 +71,12 @@ export interface CardFaceProps {
    * inactive face is explicitly hidden here.
    */
   ariaHidden?: boolean;
+  /**
+   * The Large symbols setting: one big corner index and a big suit, and no
+   * pips or court panel. A fanned hand shows only a card's left edge, so the
+   * index is what has to be readable.
+   */
+  large?: boolean;
 }
 
 function CardFaceImpl({
@@ -78,6 +85,7 @@ function CardFaceImpl({
   h,
   detail = "full",
   ariaHidden = false,
+  large = false,
 }: CardFaceProps) {
   // Checked before parseCard, which throws on a joker id (see
   // _shared/cards.ts) — only ever reached when a game opts into jokers
@@ -85,13 +93,28 @@ function CardFaceImpl({
   // normal path below completely unchanged.
   const joker = jokerLabel(card);
   if (joker) {
-    return <JokerFace joker={joker} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
+    return <JokerFace joker={joker} w={w} h={h} detail={detail} ariaHidden={ariaHidden} large={large} />;
   }
 
   const { suit, rank } = parseCard(card);
   const red = isRed(suit);
   const glyph = SUIT_GLYPH[suit];
   const colour = red ? "var(--color-suit-red)" : "var(--color-suit-ink)";
+
+  if (large) {
+    return (
+      <LargeCardFace
+        id={card}
+        suit={suit}
+        rank={rank}
+        glyph={glyph}
+        colour={colour}
+        w={w}
+        h={h}
+        ariaHidden={ariaHidden}
+      />
+    );
+  }
 
   const pad = w * 0.075;
   const rankSize = w * 0.27;
@@ -169,6 +192,160 @@ function CardFaceImpl({
       )}
 
       {index(true)}
+    </div>
+  );
+}
+
+/** How far each half of a large face is nudged so its INK is centred, in px. */
+interface InkShift {
+  dy: number;
+  rankDx: number;
+  suitDx: number;
+}
+
+/**
+ * Where the ink of `rank` and `suit` really is, and so how far to move them.
+ *
+ * Centring the text BOXES is not centring what you see: a font leaves its own
+ * room above a digit and either side of a suit glyph (and the suit comes from
+ * whichever font the device falls back on), so the index sat low and the suit
+ * a hair right of the rank (the user, 2026-11-02, "not centred in the card
+ * vertically or horizontally"). The canvas will say exactly where a string's
+ * ink is for the font actually in use, which no CSS can; this turns that into
+ * a nudge. Null where there is no canvas (a test, a server) or the browser
+ * cannot say, and the boxes' own centring stands.
+ */
+function inkShift(rank: HTMLElement, suit: HTMLElement): InkShift | null {
+  const group = rank.offsetParent;
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx || !(group instanceof HTMLElement)) return null;
+
+  const measure = (el: HTMLElement) => {
+    const style = getComputedStyle(el);
+    ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const m = ctx.measureText(el.textContent ?? "");
+    if (!m.fontBoundingBoxAscent && !m.fontBoundingBoxDescent) return null;
+    // The baseline sits in the line box by half-leading, as CSS lays it out.
+    const baseline =
+      el.offsetTop + (el.offsetHeight - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2 + m.fontBoundingBoxAscent;
+    return {
+      top: baseline - m.actualBoundingBoxAscent,
+      bottom: baseline + m.actualBoundingBoxDescent,
+      // The text starts at the box's left edge, and its ink runs from
+      // `-actualBoundingBoxLeft` to `actualBoundingBoxRight` of that.
+      centre: el.offsetLeft + (m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2,
+    };
+  };
+  const r = measure(rank);
+  const u = measure(suit);
+  if (!r || !u) return null;
+
+  const mid = { x: group.clientWidth / 2, y: group.clientHeight / 2 };
+  const round = (n: number) => Math.round(n * 10) / 10;
+  return {
+    dy: round(mid.y - (r.top + u.bottom) / 2),
+    rankDx: round(mid.x - r.centre),
+    suitDx: round(mid.x - u.centre),
+  };
+}
+
+/**
+ * The Large symbols card: one index, rank over suit, as big as the card
+ * allows, with its ink centred on the card both ways. Nothing else is drawn:
+ * a second suit, or the mirrored index, only fought it.
+ */
+function LargeCardFace({
+  id,
+  suit,
+  rank,
+  glyph,
+  colour,
+  w,
+  h,
+  ariaHidden,
+}: {
+  id: string;
+  suit: Suit;
+  rank: Rank;
+  glyph: string;
+  colour: string;
+  w: number;
+  h: number;
+  ariaHidden: boolean;
+}) {
+  const rankRef = useRef<HTMLSpanElement>(null);
+  const suitRef = useRef<HTMLSpanElement>(null);
+  const [shift, setShift] = useState<InkShift | null>(null);
+
+  useLayoutEffect(() => {
+    let live = true;
+    const measure = () => {
+      if (!live || !rankRef.current || !suitRef.current) return;
+      const next = inkShift(rankRef.current, suitRef.current);
+      setShift((prev) =>
+        prev?.dy === next?.dy && prev?.rankDx === next?.rankDx && prev?.suitDx === next?.suitDx ? prev : next,
+      );
+    };
+    measure();
+    // Again once the fonts are in: measured against a fallback they would be
+    // nudged by the wrong amount.
+    void document.fonts?.ready.then(measure);
+    return () => {
+      live = false;
+    };
+  }, [w, h, rank, suit]);
+
+  return (
+    <div
+      role={ariaHidden ? undefined : "img"}
+      aria-hidden={ariaHidden || undefined}
+      aria-label={ariaHidden ? undefined : cardLabel({ id, suit, rank })}
+      style={{
+        width: w,
+        height: h,
+        borderRadius: w * 0.1,
+        background: "var(--color-card-face)",
+        border: "1px solid var(--color-card-edge)",
+        boxShadow: "var(--shadow-e1)",
+        position: "relative",
+        overflow: "hidden",
+        backfaceVisibility: "hidden",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          lineHeight: 0.92,
+          color: colour,
+        }}
+      >
+        <span
+          ref={rankRef}
+          style={{
+            fontFamily: "var(--font-rank)",
+            fontWeight: 700,
+            fontSize: w * 0.64,
+            transform: shift ? `translate(${shift.rankDx}px, ${shift.dy}px)` : undefined,
+          }}
+        >
+          {rank}
+        </span>
+        <span
+          ref={suitRef}
+          style={{
+            fontSize: w * 0.5,
+            marginTop: -w * 0.02,
+            transform: shift ? `translate(${shift.suitDx}px, ${shift.dy}px)` : undefined,
+          }}
+        >
+          {glyph}
+        </span>
+      </div>
     </div>
   );
 }
@@ -285,12 +462,14 @@ function JokerFace({
   h,
   detail,
   ariaHidden,
+  large,
 }: {
   joker: "big" | "little";
   w: number;
   h: number;
   detail: "full" | "index";
   ariaHidden: boolean;
+  large: boolean;
 }) {
   const colour = joker === "big" ? "var(--color-suit-red)" : "var(--color-suit-ink)";
   const label = joker === "big" ? "BIG" : "LIT";
@@ -309,10 +488,10 @@ function JokerFace({
         alignSelf: flip ? "flex-end" : "flex-start",
       }}
     >
-      <span style={{ fontFamily: "var(--font-rank)", fontWeight: 700, fontSize: w * 0.2 }}>
+      <span style={{ fontFamily: "var(--font-rank)", fontWeight: 700, fontSize: w * (large ? 0.3 : 0.2) }}>
         {label}
       </span>
-      <span style={{ fontSize: w * 0.2, marginTop: -w * 0.012 }}>{glyph}</span>
+      <span style={{ fontSize: w * (large ? 0.3 : 0.2), marginTop: -w * 0.012 }}>{glyph}</span>
     </div>
   );
 

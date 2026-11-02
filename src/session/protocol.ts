@@ -31,6 +31,20 @@ import type { ChatMessage, ChatMode } from "./chat";
 
 export const PROTOCOL_VERSION = 4;
 
+/**
+ * Moving to another device: the phone asks for a code, the desktop types it.
+ *
+ * Four digits, because it is typed once by somebody sitting at a keyboard
+ * (the user, 2026-11-01: "I don't think it needs to be anything that bad").
+ * What makes four enough is everything around it: it works ONCE, for two
+ * minutes, only together with the room's own code, and a room that gets
+ * `MOVE_CODE_MISSES` wrong is shut to guesses for `MOVE_CODE_LOCK_MS`.
+ */
+export const MOVE_CODE_LENGTH = 4;
+export const MOVE_CODE_TTL_MS = 120_000;
+export const MOVE_CODE_MISSES = 5;
+export const MOVE_CODE_LOCK_MS = 60_000;
+
 /* ============================================================
    Client -> server
    ============================================================ */
@@ -99,6 +113,17 @@ export type ClientMessage =
   | ({ t: "setTurnTimer"; on?: boolean; seconds?: number } & Addressed)
   /** "I'm back" — after the turn timer handed your seat to a bot. */
   | ({ t: "resume" } & Addressed)
+  /**
+   * A member asks for a one-time code to move to another device. Answered
+   * with a `moveCode`; asking again replaces the last.
+   */
+  | ({ t: "moveCode" } & Addressed)
+  /**
+   * From a device that is NOT in the room: the room's code and a `moveCode`
+   * a member was given. If they match, this device becomes that member —
+   * same seat, same hand — and the first one is superseded.
+   */
+  | ({ t: "claimCode"; code: RoomCode; pin: string } & Addressed)
   /**
    * A move. `action` is the game's own action type, validated server-side.
    *
@@ -299,6 +324,12 @@ export type ServerErrorCode =
   | "move-refused"
   /** Not a picture the server will keep: the wrong kind, or too big. */
   | "photo-rejected"
+  /**
+   * A move code that did not work: wrong, spent, expired, or the room is
+   * shut to guesses for the moment. One code for all four, so a wrong guess
+   * learns nothing about which it was.
+   */
+  | "bad-move-code"
   /** Typed, or not table-safe, during a partnership hand you are in. */
   | "chat-locked"
   /** More than `CHAT_RATE` allows. */
@@ -367,6 +398,7 @@ export const ERROR_TEXT: Record<ServerErrorCode, string> = {
   "move-refused": "that move is no longer available",
   "protocol-mismatch": "this page is out of date — reload to keep playing",
   "photo-rejected": "that picture could not be used — try another",
+  "bad-move-code": "that code did not work — ask for a new one on your other device",
   "chat-locked": "no table talk during the hand — quick replies only",
   "chat-limited": "a few messages at a time — try again in a moment",
   "chat-invalid": "that message could not be sent",
@@ -442,6 +474,8 @@ export type ServerMessage =
    * exactly like the game desyncing.
    */
   | { t: "superseded" }
+  /** The answer to `moveCode`: the digits, and how long they work for. */
+  | { t: "moveCode"; pin: string; expiresInMs: number }
   | {
       t: "error";
       code: ServerErrorCode;
@@ -652,6 +686,15 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         reqId,
       };
 
+    case "claimCode": {
+      const code = str("code");
+      const pin = str("pin");
+      // Shape only; whether it is RIGHT is the registry's to say.
+      if (code === null || pin === null || code.length > 16 || pin.length > 16) return null;
+      return { t: "claimCode", code, pin, reqId };
+    }
+
+    case "moveCode":
     case "leaveRoom":
     case "withdraw":
     case "shuffleSeats":

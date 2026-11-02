@@ -49,6 +49,7 @@ import { GameOptions } from "@/ui/setup/GameOptions";
 import { readSavedSetup, saveSetup } from "@/ui/setup/savedSetup";
 import { useMediaQuery } from "@/ui/useMediaQuery";
 import { InviteCard } from "./InviteCard";
+import { MoveDevice } from "./MoveDevice";
 import { Roster } from "./Roster";
 import { SettleUp } from "./SettleUp";
 import type { RoomApi } from "./useRoom";
@@ -96,6 +97,13 @@ function Card({ title, aside, children }: { title: string; aside?: React.ReactNo
 
 const leaderName = (room: RoomView) => room.members.find((m) => m.isLeader)?.name ?? "the party leader";
 const here = (room: RoomView) => room.members.filter((m) => m.connected).length;
+/**
+ * Whether this viewer holds a seat in the running game — one a bot is playing
+ * while they are in the lobby, and which is theirs to walk back to. The seat
+ * is not "open" (`openSeats` is for newcomers), so every question the lobby
+ * asks about a full table has to ask this first.
+ */
+const holdsSeat = (room: RoomView) => room.members.find((m) => m.session === room.you)?.seat != null;
 
 /**
  * What Start is waiting for, in words — or null when nothing is.
@@ -106,6 +114,7 @@ const here = (room: RoomView) => room.members.filter((m) => m.connected).length;
  */
 export function lobbyStatus(room: RoomView): string | null {
   if (room.gameRunning) {
+    if (holdsSeat(room)) return "Your seat is waiting — a bot is playing it for now";
     const open = room.openSeats.length;
     return open > 0 ? `A game is on — ${open} seat${open === 1 ? "" : "s"} free` : "A game is on — every seat is taken";
   }
@@ -123,7 +132,16 @@ function LobbyFooter({ api }: { api: RoomApi }) {
   const ready = leader && room.gameId !== null && here(room) >= MIN_ROOM_PLAYERS;
   const full = room.openSeats.length === 0;
 
-  const main = room.gameRunning ? (
+  const main = room.gameRunning && holdsSeat(room) ? (
+    // Going back to your own seat is not "joining" and not a thing to watch
+    // instead of: the server hands the seat back whichever way it is asked.
+    // This used to read "Table is full", disabled, to the very person whose
+    // seat it was — a leader who stepped out to the lobby had to Watch to
+    // get back in.
+    <Button tone="primary" className="w-full" onClick={() => api.enterGame("player")}>
+      Back to your seat →
+    </Button>
+  ) : room.gameRunning ? (
     <div className="flex w-full gap-2">
       {/* Dimmed rather than hidden at a full table, with the reason above
           it: `openSeats` used to go unread, and pressing this at a full
@@ -469,6 +487,10 @@ function RoomPanel({ api }: { api: RoomApi }) {
         locked={!leader || room.gameRunning}
         onChange={api.setTurnTimer}
       />
+      <div className="flex flex-col gap-2 border-t border-bone-50/8 pt-4">
+        <span className="text-xs font-bold text-bone-200">Another device</span>
+        <MoveDevice code={room.code} moveCode={api.moveCode} onRequest={api.requestMoveCode} />
+      </div>
     </Card>
   );
 }

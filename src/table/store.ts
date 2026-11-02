@@ -73,6 +73,12 @@ interface TableState {
    */
   heroTurnActive: boolean;
   /**
+   * It is the viewer's own turn — what lights the strip above their hand
+   * (`HandZone`). Not `heroTurnActive`, which is "the hand can act" and
+   * defaults true: this defaults false, so a table with no host never glows.
+   */
+  heroTurn: boolean;
+  /**
    * Whether a game's `dimmed` marks are drawn — the player's Hints
    * setting, synced in by GameHost. Off, a card that cannot be played
    * looks and taps like any other, and the game says why after the tap
@@ -80,6 +86,12 @@ interface TableState {
    * behaviour, and a table with no Hints setting keeps it.
    */
   hintsShown: boolean;
+  /**
+   * The player's Large symbols setting, synced in by GameHost: cards drawn
+   * as a big corner index and no pips, dominoes with bigger dots. For a phone
+   * held at arm's length by somebody who cannot read a corner index.
+   */
+  largeSymbols: boolean;
   /**
    * A move of this player's is on its way and the page cannot show it yet
    * (`GameRuntime.sending`): the action bar's buttons are off until the
@@ -171,7 +183,9 @@ interface TableState {
   clearFlags(): void;
   setHeroHoverIndex(index: number | null): void;
   setHeroTurnActive(active: boolean): void;
+  setHeroTurn(turn: boolean): void;
   setHintsShown(shown: boolean): void;
+  setLargeSymbols(large: boolean): void;
   setMoveInFlight(sending: boolean): void;
   setDiscardScroll(px: number | null): void;
   setHandScroll(px: number | null): void;
@@ -239,7 +253,9 @@ export const useTableStore = create<TableState>((set) => {
     ghosts: [],
     heroHoverIndex: null,
     heroTurnActive: true,
+    heroTurn: false,
     hintsShown: true,
+    largeSymbols: false,
     moveInFlight: false,
     discardScroll: null,
     discardCount: 0,
@@ -341,11 +357,14 @@ export const useTableStore = create<TableState>((set) => {
     setHeroHoverIndex: (index) =>
       set((s) => (s.heroHoverIndex === index ? s : { heroHoverIndex: index })),
 
+    setHeroTurn: (turn) => set((s) => (s.heroTurn === turn ? s : { heroTurn: turn })),
     setHeroTurnActive: (active) =>
       set((s) => (s.heroTurnActive === active ? s : { heroTurnActive: active })),
 
     setHintsShown: (shown) =>
       set((s) => (s.hintsShown === shown ? s : { hintsShown: shown })),
+    setLargeSymbols: (large) =>
+      set((s) => (s.largeSymbols === large ? s : { largeSymbols: large })),
 
     setMoveInFlight: (sending) =>
       set((s) => (s.moveInFlight === sending ? s : { moveInFlight: sending })),
@@ -419,6 +438,9 @@ export const useHeroTurnActive = (enabled: boolean) =>
  */
 export const useHintsShown = (enabled: boolean) =>
   useTableStore((s) => (enabled ? s.hintsShown : true));
+
+/** See `TableState.largeSymbols`. */
+export const useLargeSymbols = () => useTableStore((s) => s.largeSymbols);
 
 /** See `TableState.moveInFlight`. */
 export const useMoveInFlight = () => useTableStore((s) => s.moveInFlight);

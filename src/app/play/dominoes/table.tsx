@@ -36,7 +36,7 @@ import { seatCue } from "@/table/turnCue";
 import { useBoardView, useGeometry, useTableStore } from "@/table/store";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { announce } from "@/ui/disclosure";
-import { HAND_SPACING_SETTING, hintsSetting, type GameSetting } from "@/table/gameSettings";
+import { HAND_SPACING_SETTING, LARGE_SYMBOLS_SETTING, hintsSetting, type GameSetting } from "@/table/gameSettings";
 import { HandPan } from "@/table/HandPan";
 import type { GameRuntime } from "@/table/useGameRuntime";
 
@@ -119,9 +119,17 @@ export function tapTile(
  * Dominoes' Hints (the dimming of tiles that cannot be played) and Card
  * spacing — a draw game's rack can outgrow a phone.
  */
+/**
+ * Whether a draw pile sits beside the rack: Block & Draw only. Caribbean
+ * deals the whole set, so its rack has the strip to itself (`GameHost`'s
+ * `hasBoneyard`).
+ */
+export const dominoHasBoneyard = (state: DomState): boolean => state.rules.mode !== "caribbean";
+
 export const DOMINO_SETTINGS: readonly GameSetting[] = [
   hintsSetting("Dim the tiles you cannot play. Off, every tile looks playable."),
   HAND_SPACING_SETTING,
+  LARGE_SYMBOLS_SETTING,
 ];
 
 /* ============================================================

@@ -56,12 +56,18 @@ export interface Peer {
   connection: Connection;
   /** Null until a valid `hello` has been seen. */
   session: SessionId | null;
+  /**
+   * The token that `hello` presented — kept only so a move to another
+   * device can point it at somebody else's identity (`claimCode`). Never
+   * sent anywhere.
+   */
+  token: string | null;
   windowStartedAt: number;
   countInWindow: number;
 }
 
 export function makePeer(connection: Connection, now: number): Peer {
-  return { connection, session: null, windowStartedAt: now, countInWindow: 0 };
+  return { connection, session: null, token: null, windowStartedAt: now, countInWindow: 0 };
 }
 
 export class Router {
@@ -173,6 +179,11 @@ export class Router {
       return;
     }
 
+    if (message.t === "claimCode") {
+      this.claimCode(peer, session, message.code, message.pin, message.reqId);
+      return;
+    }
+
     if (message.t === "withdraw") {
       this.withdraw(peer, session);
       return;
@@ -190,6 +201,16 @@ export class Router {
     }
 
     switch (message.t) {
+      case "moveCode": {
+        const issued = this.registry.issueMoveCode(session);
+        if (!issued) {
+          this.fail(peer, "no-room", errorText("no-room"), message.reqId);
+          return;
+        }
+        peer.connection.send({ t: "moveCode", ...issued });
+        return;
+      }
+
       case "action": {
         const tag = tagOf(message);
         const result = runtime.submitAction(session, message.action, tag);
@@ -489,6 +510,7 @@ export class Router {
     }
 
     peer.session = session;
+    peer.token = token;
     const runtime = this.registry.roomOf(session);
     peer.connection.send({
       t: "hello",
@@ -505,6 +527,39 @@ export class Router {
     // replays the table's current position — the seat they own is still
     // theirs because nothing ever gave it away.
     runtime.attach(session, peer.connection);
+  }
+
+  /**
+   * Moves a member to this device, given the room's code and the one-time
+   * code they were shown.
+   *
+   * What changes is who this browser's token IS: from here on it names the
+   * member's own identity, so everything that was theirs — seat, hand,
+   * place in the roster — is simply this device's, and the usual hello path
+   * takes over from there. `attach` supersedes the first device's socket
+   * (`superseded`), which is the same screen a second tab gets, with its
+   * "Play here instead" to take it back.
+   *
+   * Whatever this device was doing is dropped first, as a join does it: it
+   * may have been sitting in a room of its own.
+   */
+  private claimCode(peer: Peer, session: SessionId, code: string, pin: string, reqId?: string): void {
+    const target = this.registry.claimMoveCode(code, pin);
+    const runtime = target ? this.registry.roomOf(target) : null;
+    if (!target || !runtime || !peer.token) {
+      this.fail(peer, "bad-move-code", errorText("bad-move-code"), reqId);
+      return;
+    }
+
+    if (target !== session) {
+      this.leaveCurrentRoom(peer, session);
+      this.registry.rebind(peer.token, target);
+      peer.session = target;
+    }
+    log.info("moved device", { room: runtime.code, session: target });
+    peer.connection.send({ t: "hello", session: target, protocol: PROTOCOL_VERSION, inRoom: true });
+    this.registry.place(target, runtime.code);
+    runtime.attach(target, peer.connection);
   }
 
   private createRoom(peer: Peer, session: SessionId, name: string, reqId?: string): void {

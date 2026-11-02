@@ -100,10 +100,10 @@ import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { TRANSITIONS } from "@/motion/presets";
-import { HAND_SPACING_SETTING, type GameSetting } from "@/table/gameSettings";
+import { HAND_SPACING_SETTING, LARGE_SYMBOLS_SETTING, type GameSetting } from "@/table/gameSettings";
 
 /** Rummy's own Settings: how condensed the hand is (see `HAND_SPACING_SETTING`). */
-export const RUMMY_SETTINGS: readonly GameSetting[] = [HAND_SPACING_SETTING];
+export const RUMMY_SETTINGS: readonly GameSetting[] = [HAND_SPACING_SETTING, LARGE_SYMBOLS_SETTING];
 
 
 /* ============================================================

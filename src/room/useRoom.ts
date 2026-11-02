@@ -95,6 +95,15 @@ export interface RefusedMove {
   at: number;
 }
 
+/**
+ * The code this player was given for moving to another device, and until
+ * when it works (`endsAt`, on this machine's clock).
+ */
+export interface MoveCodeState {
+  pin: string;
+  endsAt: number;
+}
+
 export interface RoomApi {
   phase: RoomPhase;
   status: ConnectionStatus;
@@ -113,6 +122,12 @@ export interface RoomApi {
   resume: () => void;
   /** The newest frame, or null when no game is running or we are in the lobby. */
   frame: FrameView | null;
+
+  /** Moving to another device: this end asks for a code to type there. */
+  moveCode: MoveCodeState | null;
+  requestMoveCode: () => void;
+  /** The other end: the room's code and the digits shown on the first device. */
+  claimMoveCode: (code: string, pin: string) => void;
 
   createRoom: (name: string) => void;
   joinRoom: (code: string, name: string) => void;
@@ -195,6 +210,7 @@ export function useRoom(): RoomApi {
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [chatLiveAfter, setChatLiveAfter] = useState(0);
   const [turnClock, setTurnClock] = useState<LocalTurnClock | null>(null);
+  const [moveCode, setMoveCode] = useState<MoveCodeState | null>(null);
   /** The room we are in or knocking on, for `farewell` to name. Read inside
    * the message handler, which is created once and would see stale state. */
   const codeRef = useRef<string | null>(null);
@@ -323,6 +339,7 @@ export function useRoom(): RoomApi {
             setRoom(null);
             setFrame(null);
             setPendingCode(null);
+            setMoveCode(null);
             lastSeq.current = -1;
             // Every reason is said out loud — only "kicked" used to be, so
             // being turned away from a private room dropped you back on the
@@ -338,6 +355,10 @@ export function useRoom(): RoomApi {
             });
             codeRef.current = null;
             closingRef.current = false;
+            break;
+
+          case "moveCode":
+            setMoveCode({ pin: message.pin, endsAt: Date.now() + message.expiresInMs });
             break;
 
           case "chatLog":
@@ -445,6 +466,15 @@ export function useRoom(): RoomApi {
       frame,
       error,
       clearError: () => setError(null),
+      moveCode,
+      requestMoveCode: () => send({ t: "moveCode" }),
+      claimMoveCode: (code, pin) => {
+        setError(null);
+        setFarewell(null);
+        const reqId = nextReqId();
+        attemptRef.current = reqId;
+        send({ t: "claimCode", code: code.toUpperCase(), pin, reqId });
+      },
       farewell,
       resume: () => connection.resume(),
       send,
@@ -507,6 +537,7 @@ export function useRoom(): RoomApi {
       pendingCode,
       frame,
       error,
+      moveCode,
       farewell,
       chat,
       chatLiveAfter,

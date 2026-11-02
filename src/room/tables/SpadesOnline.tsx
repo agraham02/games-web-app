@@ -130,6 +130,8 @@ export function SpadesOnline({
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
             onCloseRoom={api.closeRoom}
+            moveCode={api.moveCode}
+            onMoveCode={api.requestMoveCode}
           />
         }
         live={live}
