@@ -32,7 +32,9 @@ export type TableSound =
   | { t: "sweep" }
   | { t: "shuffle" }
   | { t: "dice" }
-  | { t: "gather" };
+  | { t: "gather" }
+  /** It has become your turn (`useYourTurnCue`). */
+  | { t: "turn" };
 
 /** How long a slammed piece's own play stays covered by the slam's sound. */
 const SLAM_COVERS_MS = 1_500;
@@ -196,6 +198,14 @@ export function playTableSound(sound: TableSound): void {
         noise(ctx, now + i * 0.026 * (1 - i / 40), { s: 0.018, f: jitter(3400, 0.2), q: 1.8, gain: 0.07 });
       }
       return;
+    case "turn": {
+      // Two soft notes rising, a fifth apart: "you". Sines with a quick
+      // fade, quiet beside the cards — it plays in a room where people are
+      // talking, and is only there for somebody who looked away.
+      ring(ctx, now, { f: 587, s: 0.22, gain: 0.07 });
+      ring(ctx, now + 0.11, { f: 880, s: 0.3, gain: 0.06 });
+      return;
+    }
     case "dice": {
       // Thrown: a few knocks as they tumble, the last one the landing.
       const knocks = [0, 0.09, 0.17, 0.27, 0.36, 0.5];
@@ -222,6 +232,7 @@ const GAP_MS: Record<TableSound["t"], number> = {
   shuffle: 300,
   dice: 300,
   gather: 120,
+  turn: 400,
 };
 
 /* ------------------------------------------------------------- channel */

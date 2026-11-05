@@ -55,7 +55,8 @@
  */
 
 import { handHeaderHeight } from "./geometry";
-import { useGeometry, useMoveInFlight } from "./store";
+import { motion } from "motion/react";
+import { useGeometry, useMoveInFlight, useTableStore } from "./store";
 
 // Re-exported: callers reserved the band by hand before the surface did.
 export { HAND_HEADER_H, HAND_HEADER_H_SHORT, handHeaderHeight } from "./geometry";
@@ -104,6 +105,7 @@ export function HandZone({ left, center, right, bar, panel, overHand = false }: 
   // A move on its way that the page cannot show yet: its buttons are off
   // until the server answers, so BS! or Rummy! is never sent twice.
   const sending = useMoveInFlight();
+  const yourTurn = useTableStore((s) => s.heroTurn);
   if (!geometry) return null;
 
   const hand = geometry.zones.hand;
@@ -138,6 +140,42 @@ export function HandZone({ left, center, right, bar, panel, overHand = false }: 
           {panel}
         </fieldset>
       ) : null}
+      {/* Your turn, where your eyes are (the user, 2026-11-02): the strip over
+          the hand lit gold, rising from its top edge with a bright line along
+          it, both breathing. Soft in every direction — a hard-edged block read
+          as a slab, not a light. Decoration only, behind the band's own
+          content, and opacity only so the pulse costs nothing (`FOREVER_SAFE`). */}
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 -z-10"
+        style={{
+          height: rowH + 48,
+          // Fades to nothing at both ends, whatever is under it: the gradient
+          // inside is soft but still lit at the box's own edges, which is
+          // where it was visibly cut off (the user, 2026-11-02).
+          maskImage: "linear-gradient(to right, transparent, #000 22%, #000 78%, transparent)",
+          WebkitMaskImage: "linear-gradient(to right, transparent, #000 22%, #000 78%, transparent)",
+        }}
+        initial={false}
+        animate={yourTurn ? { opacity: [0.55, 1, 0.55] } : { opacity: 0 }}
+        transition={yourTurn ? { duration: 2.2, repeat: Infinity, ease: "easeInOut" } : { duration: 0.25 }}
+      >
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 50% 100% at 50% 100%, rgb(212 175 106 / 0.6), rgb(212 175 106 / 0.22) 55%, transparent 100%)",
+          }}
+        />
+        <div
+          className="absolute inset-x-0 bottom-0 h-0.5"
+          style={{
+            background:
+              "linear-gradient(to right, transparent, rgb(236 204 140 / 0.95) 15%, rgb(236 204 140 / 0.95) 85%, transparent)",
+            boxShadow: "0 0 14px 1px rgb(212 175 106 / 0.8)",
+          }}
+        />
+      </motion.div>
       <div className="flex w-full max-w-3xl flex-col px-3">
         {bar ? (
           <fieldset

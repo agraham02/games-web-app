@@ -126,6 +126,8 @@ export function PokerOnline({ api, room, frame, corner }: OnlineTableProps) {
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
             onCloseRoom={api.closeRoom}
+            moveCode={api.moveCode}
+            onMoveCode={api.requestMoveCode}
           />
         }
       >

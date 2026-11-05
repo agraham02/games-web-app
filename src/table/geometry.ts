@@ -130,6 +130,11 @@ export interface TableGeometry {
    * `ResolveOptions.handBleed`).
    */
   handBleed: boolean;
+  /**
+   * A draw pile shares the viewer's hand strip (`ResolveOptions.boneyard`):
+   * a domino rack keeps clear of it. False where the game has none.
+   */
+  boneyard: boolean;
   seats: SeatSlot[];
   /** See `ResolveOptions.viewerSeat`. Echoed so layout needs no second source. */
   viewerSeat: SeatId | null;
@@ -907,6 +912,14 @@ export interface ResolveOptions {
    */
   handBleed?: boolean;
   /**
+   * The game has a draw pile, which sits at the left end of the hand strip
+   * and which a domino rack keeps clear of. Default true. Caribbean dominoes
+   * has none, and its rack was still giving up the room — on both sides, to
+   * stay centred — which squeezed seven tiles into a third of a phone's width
+   * with nothing beside them (the user, 2026-11-02).
+   */
+  boneyard?: boolean;
+  /**
    * Seats are PAIRS - seats 2i and 2i+1 are partners (Mind Meld) - and
    * partners sit together: side by side on the top edge, one above the other
    * on a side, and the viewer's partner beside them at the bottom rather than
@@ -1653,6 +1666,7 @@ export function resolveTable(opts: ResolveOptions): TableGeometry {
     tuck: rim.tuck,
     tuckPeek: { top: topPeek, side: sidePeek },
     handBleed,
+    boneyard: opts.boneyard !== false,
     seats,
     viewerSeat,
     zones,
@@ -1813,12 +1827,31 @@ export interface FanSlot {
  */
 const FADE_BAND_FRACTION = 0.45;
 
-function alongVisibility(centre: number, extent: number, lo: number, hi: number): number {
+function alongVisibility(
+  centre: number,
+  extent: number,
+  lo: number,
+  hi: number,
+  /** How far, in px, the fan runs on past each end: more than a gap of it widens that end's ramp. */
+  hidden?: { lo: number; hi: number; gap: number },
+): number {
   if (extent <= 0) return 1;
-  const band = extent * FADE_BAND_FRACTION;
-  if (band <= 0) return 1;
-  const inside = Math.min(centre - lo, hi - centre);
-  return Math.max(0, Math.min(1, inside / band));
+  const base = extent * FADE_BAND_FRACTION;
+  if (base <= 0) return 1;
+  // The ramp is a fixed fraction of a piece, and pieces are a gap apart: when
+  // the gap is wider than the ramp, how many pieces stand IN it depends on
+  // where the fan happens to rest, and often none does — the last piece in
+  // view is drawn solid and the next is simply gone, with nothing to say
+  // there is more (the user, 2026-11-02). At an end that hides pieces the
+  // ramp is at least a gap wide, so there is always one fading in it; an end
+  // that hides nothing keeps the plain ramp, and the first piece stays solid.
+  const band = (side: number | undefined) => {
+    if (!hidden || !side || hidden.gap <= base) return base;
+    return base + (hidden.gap * 1.1 - base) * Math.min(1, side / hidden.gap);
+  };
+  const near = (centre - lo) / band(hidden?.lo);
+  const far = (hi - centre) / band(hidden?.hi);
+  return Math.max(0, Math.min(1, near, far));
 }
 
 export interface FanOptions {
@@ -1877,8 +1910,8 @@ function fanSpread(
   maxGap: number,
   minGap = 0,
   pan = 0,
-): { offset: number; t: number; overflow: number } {
-  if (count <= 1) return { offset: 0, t: 0, overflow: 0 };
+): { offset: number; t: number; overflow: number; gap: number } {
+  if (count <= 1) return { offset: 0, t: 0, overflow: 0, gap: 0 };
   const usable = Math.max(0, available - size);
   // `minGap` is the compression floor. Without one (the default, and
   // every pre-existing caller) this is the original
@@ -1896,6 +1929,7 @@ function fanSpread(
     // 0.000000000000007px of hidden content" is not a thing to offer the
     // player a drag for.
     overflow: spread - usable >= 1 ? spread - usable : 0,
+    gap,
   };
 }
 
@@ -1943,21 +1977,25 @@ export function fanSlot(o: FanOptions): FanSlot {
     };
   }
 
-  const { offset, t } = fanSpread(
-    index,
-    count,
-    within.w,
-    size.w,
-    maxGap,
-    o.minGap ?? 0,
-    o.pan ?? 0,
-  );
+  const pan = o.pan ?? 0;
+  const { offset, t, overflow, gap } = fanSpread(index, count, within.w, size.w, maxGap, o.minGap ?? 0, pan);
 
   const x = within.x + within.w / 2 + offset;
   // Measured along the spread axis only. The cross axis is fixed by
   // construction — a fan never moves off it — so folding it in would
   // only introduce false fades from rounding.
-  const visible = alongVisibility(x, size.w, within.x, within.x + within.w);
+  //
+  // Pan is signed (see `fanPanRange`): at +overflow/2 the first piece is
+  // flush with the near edge and everything hidden is past the far one.
+  const visible = alongVisibility(
+    x,
+    size.w,
+    within.x,
+    within.x + within.w,
+    overflow > 0
+      ? { lo: Math.max(0, overflow / 2 - pan), hi: Math.max(0, overflow / 2 + pan), gap }
+      : undefined,
+  );
 
   return {
     x,
@@ -2140,11 +2178,40 @@ export const HAND_FLOORS = {
 
 export type HandSpacing = keyof typeof HAND_FLOORS;
 
-/** The floor for a stored Card spacing value, the default for anything else. */
-export function handFloorOf(spacing: unknown): number {
-  return typeof spacing === "string" && spacing in HAND_FLOORS
-    ? HAND_FLOORS[spacing as HandSpacing]
-    : MIN_HAND_GAP_FRACTION;
+/**
+ * The same three choices with Large symbols on (the user, 2026-11-02: spread
+ * out more than the ordinary ones). The index is centred on its card, so a
+ * card's visible slice has to reach past the middle to show it — about
+ * three quarters of a card for one character, nearly all of it for "10".
+ * "Fit all" is no longer no floor at all: squeezed, the big index is
+ * overlapped just as a small one is.
+ */
+export const LARGE_HAND_FLOORS = {
+  fit: 0.6,
+  comfortable: 0.8,
+  roomy: 0.95,
+} as const satisfies Record<HandSpacing, number>;
+
+/**
+ * Large symbols, for a domino rack. A tile's big dots fill its whole face, so
+ * a tile partly under its neighbour loses some: none of these overlap, and
+ * "Roomy" leaves a hairline of felt between tiles.
+ */
+export const LARGE_TILE_FLOORS = {
+  fit: 0.85,
+  comfortable: 1,
+  roomy: 1.1,
+} as const satisfies Record<HandSpacing, number>;
+
+/**
+ * The floor for a stored Card spacing value, the default for anything else;
+ * `large` for the Large symbols setting's wider ones, `tiles` for a rack.
+ */
+export function handFloorOf(spacing: unknown, large = false, tiles = false): number {
+  const floors = large ? (tiles ? LARGE_TILE_FLOORS : LARGE_HAND_FLOORS) : HAND_FLOORS;
+  return typeof spacing === "string" && spacing in floors
+    ? floors[spacing as HandSpacing]
+    : floors.comfortable;
 }
 
 /**
@@ -2419,14 +2486,15 @@ export function handFanMaxScroll(
  *
  * A domino rack stands its tiles edge to edge, and keeps clear of the
  * boneyard, which shares the strip — on BOTH sides, so the hand stays
- * centred on the zone (see layout's hand case). A card hand has the strip.
+ * centred on the zone (see layout's hand case) — when the game has one. A
+ * card hand has the strip.
  */
 export function heroFan(
   g: TableGeometry,
   tiles: boolean,
 ): { within: Box; size: number; maxGap: number } {
   if (!tiles) return { within: g.zones.hand, size: g.handCard.w, maxGap: g.handCard.w * 0.78 };
-  const gutter = g.zones.boneyard.w + 14;
+  const gutter = g.boneyard ? g.zones.boneyard.w + 14 : 0;
   const size = tileShortSide(g.handCard);
   return {
     within: { ...g.zones.hand, x: g.zones.hand.x + gutter, w: g.zones.hand.w - gutter * 2 },

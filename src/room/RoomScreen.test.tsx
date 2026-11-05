@@ -224,12 +224,75 @@ describe("the room client", () => {
     expect(socket().lastSent("joinRoom")).toMatchObject({ code: "ABCD", name: "Ada" });
   });
 
+  describe("moving to this device", () => {
+    const openMove = async () => {
+      await open();
+      fireEvent.click(screen.getByRole("button", { name: /already playing on another device/i }));
+    };
+
+    it("sends the room's code and the digits, with no name asked for", async () => {
+      await openMove();
+      fireEvent.change(screen.getByLabelText(/room code/i), { target: { value: "wxyz" } });
+      fireEvent.change(screen.getByLabelText(/code from your other device/i), { target: { value: "4821" } });
+      fireEvent.click(screen.getByRole("button", { name: /continue here/i }));
+
+      expect(socket().lastSent("claimCode")).toMatchObject({ t: "claimCode", code: "WXYZ", pin: "4821" });
+      expect(socket().lastSent("joinRoom")).toBeUndefined();
+    });
+
+    it("takes digits only, and no more than four", async () => {
+      await openMove();
+      const pin = screen.getByLabelText(/code from your other device/i);
+      fireEvent.change(pin, { target: { value: "12ab345" } });
+      expect(pin).toHaveValue("1234");
+    });
+
+    it("waits for the whole room code and all four digits", async () => {
+      await openMove();
+      const go = screen.getByRole("button", { name: /continue here/i });
+      expect(go).toBeDisabled();
+      fireEvent.change(screen.getByLabelText(/room code/i), { target: { value: "wxyz" } });
+      fireEvent.change(screen.getByLabelText(/code from your other device/i), { target: { value: "48" } });
+      expect(go).toBeDisabled();
+      fireEvent.change(screen.getByLabelText(/code from your other device/i), { target: { value: "4821" } });
+      expect(go).toBeEnabled();
+    });
+
+    it("says under the digits when they did not work, and leaves them to be fixed", async () => {
+      await openMove();
+      fireEvent.change(screen.getByLabelText(/room code/i), { target: { value: "wxyz" } });
+      fireEvent.change(screen.getByLabelText(/code from your other device/i), { target: { value: "4821" } });
+      fireEvent.click(screen.getByRole("button", { name: /continue here/i }));
+
+      socket().deliver({
+        t: "error",
+        code: "bad-move-code",
+        message: "that code did not work — ask for a new one on your other device",
+        reqId: socket().lastSent("claimCode")!.reqId as string,
+      });
+      expect(await screen.findByText(/that code did not work/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/code from your other device/i)).toHaveValue("4821");
+    });
+  });
+
   describe("the lobby", () => {
     async function enterLobby(over: Partial<RoomView> = {}) {
       await open();
       socket().deliver({ t: "room", room: roomView(over) });
       await screen.findByText("ABCD");
     }
+
+    it("shows the code for another device once asked, and that it works once", async () => {
+      await enterLobby();
+      fireEvent.click(screen.getByRole("button", { name: /play on another device/i }));
+      expect(socket().lastSent("moveCode")).toBeDefined();
+
+      socket().deliver({ t: "moveCode", pin: "4821", expiresInMs: 120_000 });
+      expect(await screen.findByText("4821")).toBeInTheDocument();
+      expect(screen.getByText(/works once/i)).toBeInTheDocument();
+      // The other device needs the room's code too, so it is said alongside.
+      expect(screen.getByText(/enter room/i).textContent).toContain("ABCD");
+    });
 
     it("lets go of a room the server no longer has", async () => {
       // A server restart is the ordinary way here: the socket comes back,
@@ -407,6 +470,20 @@ describe("the room client", () => {
       expect(screen.getByRole("button", { name: /table is full/i })).toBeDisabled();
       // Watching is still on offer, and is now the honest way in.
       expect(screen.getByRole("button", { name: /watch instead/i })).toBeEnabled();
+    });
+
+    it("takes you back to your own seat when the table is otherwise full", async () => {
+      // A seat held while you are away is not an open one, so `openSeats` is
+      // empty — and this read "Table is full", disabled, to the leader who
+      // had stepped out to the lobby. The only way back was Watch.
+      const members = roomView().members.map((m) => (m.session === "me" ? { ...m, seat: 0 } : m));
+      await enterLobby({ gameId: "dominoes", gameRunning: true, openSeats: [], members });
+
+      expect(screen.queryByRole("button", { name: /table is full/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /watch instead/i })).toBeNull();
+      expect(screen.getByText(/your seat is waiting/i)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /back to your seat/i }));
+      expect(socket().lastSent("enterGame")).toMatchObject({ as: "player" });
     });
 
     it("tells a kicked player, and sends them back to the entry screen", async () => {
@@ -630,6 +707,25 @@ describe("the room client", () => {
     expect(screen.queryByLabelText(/your name/i)).toBeNull();
     // Consumed: a refresh must not make a second room.
     expect(window.sessionStorage.getItem("table-games.entry-intent")).toBeNull();
+  });
+
+  it("moves a seat here from the home page's form, with no name saved", async () => {
+    // A desktop that has never been in a room has no name — and needs none:
+    // the seat being moved already has one.
+    window.sessionStorage.setItem(
+      "table-games.entry-intent",
+      JSON.stringify({ t: "claim", code: "WXYZ", pin: "4821" }),
+    );
+    await arrive();
+    await waitFor(() =>
+      expect(socket().lastSent("claimCode")).toMatchObject({ code: "WXYZ", pin: "4821" }),
+    );
+    expect(socket().lastSent("joinRoom")).toBeUndefined();
+    expect(screen.getByText("Moving your seat here…")).toBeInTheDocument();
+
+    socket().deliver({ t: "hello", session: "me", protocol: PROTOCOL_VERSION, inRoom: true });
+    socket().deliver({ t: "room", room: roomView({ code: "WXYZ" }) });
+    expect(await screen.findByText("WXYZ")).toBeInTheDocument();
   });
 
   it("sets the new room up for the game the carousel showed, before the lobby appears", async () => {

@@ -22,6 +22,21 @@ export function parseTile(id: PieceId): [number, number] {
   return [a ?? 0, b ?? 0];
 }
 
+/**
+ * A hand as the owner reads it, left to right (the user, 2026-11-02: the way
+ * Spades and Rummy sort theirs): grouped by the number on each tile's top
+ * half, 0 up to 6, and within a group by the bottom half — so 1-0, 1-1, 2-0,
+ * 2-1, 2-2, 3-0 ... and every tile with a given top number sits together.
+ * Display only: the hand itself keeps the order it was dealt in.
+ */
+export function sortTilesForDisplay(ids: readonly PieceId[]): PieceId[] {
+  return [...ids].sort((x, y) => {
+    const [xh, xl] = parseTile(x);
+    const [yh, yl] = parseTile(y);
+    return xh - yh || xl - yl;
+  });
+}
+
 export function isDouble(id: PieceId): boolean {
   const [a, b] = parseTile(id);
   return a === b;

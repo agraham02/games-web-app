@@ -345,3 +345,42 @@ describe("dominoes — determinism", () => {
 function rngOf(seed: number) {
   return createRng(seed);
 }
+
+describe("your rack, laid out in order", () => {
+  // The user, 2026-11-02: sorted by default, as Spades and Rummy sort theirs —
+  // tiles grouped by the number on their top half, 0 up to 6, left to right.
+  const rack = (state: DomState, def: ReturnType<typeof createDominoes>, viewer: number) => {
+    const placed = def.placements(state, viewer);
+    return Object.entries(placed)
+      .filter(([, p]) => p.zone === "hand" && p.seat === viewer)
+      .sort(([, a], [, b]) => a.index - b.index)
+      .map(([id]) => id);
+  };
+
+  it("reads 0 to 6 across, grouped by top number then bottom", () => {
+    for (const seed of [1, 7, 23]) {
+      const { def, state } = fresh(4, seed);
+      const ids = rack(state, def, 0);
+      expect(ids).toHaveLength(state.hands[0]!.length);
+      const keys = ids.map((id) => id.split("-").map(Number) as [number, number]);
+      for (let i = 1; i < keys.length; i++) {
+        const [ph, pl] = keys[i - 1]!;
+        const [h, l] = keys[i]!;
+        expect(h > ph || (h === ph && l >= pl), `${ids.join(" ")} is out of order at ${i}`).toBe(true);
+      }
+    }
+  });
+
+  it("changes only the drawing order, never the hand itself", () => {
+    const { def, state } = fresh(4, 7);
+    const before = [...state.hands[0]!];
+    expect([...rack(state, def, 0)].sort()).toEqual([...before].sort());
+    expect(state.hands[0]).toEqual(before);
+  });
+
+  it("leaves everybody else's face-down rack as dealt", () => {
+    const { def, state } = fresh(4, 7);
+    const placed = def.placements(state, 0);
+    state.hands[1]!.forEach((id, i) => expect(placed[id]!.index, id).toBe(i));
+  });
+});

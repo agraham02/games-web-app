@@ -1697,6 +1697,42 @@ function layoutLoose(p: Placement, g: TableGeometry, ctx?: LayoutContext): Piece
           };
         }
 
+        // BOTTOM — only ever a spectator's (the viewer's own seat has the hand
+        // strip instead): TOP's rack, mirrored, standing above the pod. It
+        // used to fall through to the side branch below, whose room is
+        // measured down to the ring's bottom edge — and a spectator's pod sits
+        // BELOW that edge, so the room was nothing and every tile landed on
+        // the same spot: one tile showing for a hand of six.
+        //
+        // Capped to the gap between this pod and its neighbour on the edge
+        // (the viewer's "partner" in a team game sits beside it) so two
+        // racks never run together.
+        if (seat.anchor === "bottom") {
+          const neighbour = g.seats
+            .filter((s) => s.anchor === "bottom" && s.seat !== seat.seat)
+            .reduce((nearest, s) => Math.min(nearest, Math.abs(s.x - seat.x)), Infinity);
+          const rackW = Math.min(fanW, neighbour - miniW * 0.5);
+          const anchorX = seat.x;
+          const anchorY = seat.y - (pod.h / 2 + miniH / 2 + TILE_HAND_GAP);
+          const slot = fanSlot({
+            index: p.index,
+            count: p.count,
+            within: { x: anchorX - rackW / 2, y: anchorY, w: rackW, h: 0 },
+            size: { w: miniW, h: miniH },
+            maxRotation: 0,
+            arcLift: 0,
+            maxGap: miniW * 0.7,
+          });
+          return {
+            x: slot.x - base.w / 2,
+            y: slot.y - base.h / 2,
+            rotate: slot.rotation,
+            scale: miniScale,
+            z,
+            opacity,
+          };
+        }
+
         // LEFT/RIGHT: stood on its SHORT side and stacked in a column
         // along the pod's own edge, rather than reaching straight out
         // from it — the redesign [[domino-side-seat-hand-overlap]]

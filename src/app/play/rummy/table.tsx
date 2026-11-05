@@ -100,10 +100,33 @@ import { CountdownButton } from "@/ui/primitives/CountdownButton";
 import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import { TRANSITIONS } from "@/motion/presets";
-import { HAND_SPACING_SETTING, type GameSetting } from "@/table/gameSettings";
+import {
+  HAND_SPACING_SETTING,
+  LARGE_SYMBOLS_SETTING,
+  useGameSettings,
+  type ChoiceSetting,
+  type GameSetting,
+} from "@/table/gameSettings";
 
 /** Rummy's own Settings: how condensed the hand is (see `HAND_SPACING_SETTING`). */
-export const RUMMY_SETTINGS: readonly GameSetting[] = [HAND_SPACING_SETTING];
+export const RUMMY_SETTINGS: readonly GameSetting[] = [HAND_SPACING_SETTING, LARGE_SYMBOLS_SETTING];
+
+/**
+ * How the hand is sorted, kept between games like any other preference (the
+ * user, 2026-11-02): it was a `useState`, so it went back to Smart every
+ * time. A setting in the same store as the rest but NOT in `RUMMY_SETTINGS`:
+ * it has its own menu beside the hand, so the Settings sheet does not list
+ * it twice. The store ignores a stored value that is not one of the choices.
+ */
+export const HAND_SORT_SETTING: ChoiceSetting = {
+  kind: "choice",
+  key: "handSort",
+  label: "Hand sort",
+  description: "How your hand is ordered.",
+  choices: HAND_SORTS.map((s) => ({ value: s.id, label: s.label })),
+  default: "smart" satisfies HandSort,
+};
+const HAND_SORT_SETTINGS: readonly GameSetting[] = [HAND_SORT_SETTING];
 
 
 /* ============================================================
@@ -585,7 +608,9 @@ export function RummyTable({
   const seat = mySeat(view);
   const [snap, setSnap] = useState(0);
 
-  const [sortMode, setSortMode] = useState<HandSort>("smart");
+  const [kept, keep] = useGameSettings("rummy", HAND_SORT_SETTINGS);
+  const sortMode = kept.handSort as HandSort;
+  const setSortMode = (mode: HandSort) => keep("handSort", mode);
 
   usePanWiring();
   useClearOnTurnEnd(live.isHeroTurn, clearSelection);

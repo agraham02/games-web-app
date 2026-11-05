@@ -23,6 +23,8 @@ function menu(leader: boolean) {
       onStepAway={() => {}}
       onEndGame={onEndGame}
       onCloseRoom={onCloseRoom}
+      moveCode={null}
+      onMoveCode={() => {}}
     />,
   );
   return Object.assign(onEndGame, { onCloseRoom });

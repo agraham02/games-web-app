@@ -21,7 +21,9 @@
  * in a roster is a credential handed to every other player.
  */
 
+import { randomInt } from "node:crypto";
 import { createRng, randomSeed, type Rng } from "@/engine/rng";
+import { MOVE_CODE_LENGTH, MOVE_CODE_LOCK_MS, MOVE_CODE_MISSES, MOVE_CODE_TTL_MS } from "@/session/protocol";
 import { createRoom, makeCode, type Room, type RoomCode, type SessionId } from "@/session/room";
 import { realClock, type Clock, type TimerHandle } from "@/session/clock";
 import { RoomRuntime } from "./RoomRuntime";
@@ -63,6 +65,12 @@ const CODE_ATTEMPTS = 50;
  */
 const MAX_IDLE_IDENTITIES = 5_000;
 
+/** One member's code for moving to another device. */
+interface MoveCode {
+  pin: string;
+  expiresAt: number;
+}
+
 export interface RegistryOptions {
   clock?: Clock;
   /** Seeded for tests; a real deployment wants a fresh one. */
@@ -76,6 +84,10 @@ export class RoomRegistry {
   private readonly sessions = new Map<string, SessionId>();
   /** Which room a session is in, so a socket message needs no room code. */
   private readonly located = new Map<SessionId, RoomCode>();
+  /** Live move codes, one per member (`issueMoveCode`). */
+  private readonly moveCodes = new Map<SessionId, MoveCode>();
+  /** Wrong guesses per room, and until when it is shut to them. */
+  private readonly moveMisses = new Map<RoomCode, { misses: number; lockedUntil: number }>();
   private readonly reapers = new Map<RoomCode, TimerHandle>();
   /** Told whenever a room goes, whatever the reason. See `onRoomDestroyed`. */
   private readonly destroyListeners: Array<(code: RoomCode) => void> = [];
@@ -152,6 +164,74 @@ export class RoomRegistry {
     }
   }
 
+  /**
+   * Makes `token` another way of being `session`.
+   *
+   * Moving to a new device is this and nothing more: the new browser's own
+   * token now names the old one's identity, so the seat, the hand and the
+   * room are simply its own. No secret changes hands — each device keeps its
+   * own token — and the token's old identity (minted a moment ago, in no
+   * room) is left to nobody.
+   */
+  rebind(token: string, session: SessionId): void {
+    this.sessions.delete(token);
+    this.sessions.set(token, session);
+  }
+
+  /**
+   * A code for moving `session` to another device, or null if they are in no
+   * room — there would be nothing to move to. Replaces their last one.
+   *
+   * Four digits, unique among the room's live ones so a code names one
+   * member, and from the system's own randomness rather than the room's
+   * seeded one (which exists to make a deal replayable).
+   */
+  issueMoveCode(session: SessionId): { pin: string; expiresInMs: number } | null {
+    const code = this.located.get(session);
+    if (!code) return null;
+    const now = this.clock.now();
+    const taken = new Set<string>();
+    for (const [other, entry] of this.moveCodes) {
+      if (other !== session && entry.expiresAt > now && this.located.get(other) === code) taken.add(entry.pin);
+    }
+    let pin: string;
+    do pin = String(randomInt(10 ** MOVE_CODE_LENGTH)).padStart(MOVE_CODE_LENGTH, "0");
+    while (taken.has(pin));
+    this.moveCodes.set(session, { pin, expiresAt: now + MOVE_CODE_TTL_MS });
+    return { pin, expiresInMs: MOVE_CODE_TTL_MS };
+  }
+
+  /**
+   * Whose code this is, for the room: the member it was issued to, and it is
+   * spent. Null for anything else — wrong, used, expired, no such room, or a
+   * room that has had too many wrong guesses (`MOVE_CODE_MISSES`) — and every
+   * one of them counts as a miss against the room.
+   */
+  claimMoveCode(roomCode: RoomCode, pin: string): SessionId | null {
+    const room = roomCode.toUpperCase();
+    const now = this.clock.now();
+    const state = this.moveMisses.get(room) ?? { misses: 0, lockedUntil: 0 };
+    if (state.lockedUntil > now) return null;
+
+    for (const [session, entry] of this.moveCodes) {
+      if (entry.expiresAt <= now) {
+        this.moveCodes.delete(session);
+        continue;
+      }
+      if (this.located.get(session) !== room || entry.pin !== pin) continue;
+      this.moveCodes.delete(session);
+      this.moveMisses.delete(room);
+      return session;
+    }
+
+    const misses = state.lockedUntil !== 0 && state.lockedUntil <= now ? 1 : state.misses + 1;
+    this.moveMisses.set(
+      room,
+      misses >= MOVE_CODE_MISSES ? { misses: 0, lockedUntil: now + MOVE_CODE_LOCK_MS } : { misses, lockedUntil: 0 },
+    );
+    return null;
+  }
+
   roomOf(session: SessionId): RoomRuntime | null {
     const code = this.located.get(session);
     return code ? (this.rooms.get(code) ?? null) : null;
@@ -224,6 +304,7 @@ export class RoomRegistry {
   displace(session: SessionId): void {
     const code = this.located.get(session);
     this.located.delete(session);
+    this.moveCodes.delete(session);
     if (!code) return;
     const runtime = this.rooms.get(code);
     if (!runtime) return;
@@ -294,7 +375,11 @@ export class RoomRegistry {
     const runtime = this.rooms.get(code);
     if (!runtime) return;
     log.info("room destroyed", { room: code });
-    for (const session of Object.keys(runtime.room.members)) this.located.delete(session);
+    for (const session of Object.keys(runtime.room.members)) {
+      this.located.delete(session);
+      this.moveCodes.delete(session);
+    }
+    this.moveMisses.delete(code);
     runtime.dispose();
     this.rooms.delete(code);
     this.cancelReap(code);
@@ -306,5 +391,7 @@ export class RoomRegistry {
     for (const code of [...this.rooms.keys()]) this.destroy(code);
     this.sessions.clear();
     this.located.clear();
+    this.moveCodes.clear();
+    this.moveMisses.clear();
   }
 }
