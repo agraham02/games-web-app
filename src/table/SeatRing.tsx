@@ -225,6 +225,9 @@ export const SeatPod = memo(function SeatPod({
   const tags = podTags(view);
   return (
     <motion.div
+      // For a test to read, rather than matching the styling: a class that was
+      // renamed took the pod-on-turn e2e check with it (2026-11-05).
+      data-lit={highlighted ? "true" : undefined}
       initial={false}
       animate={{ scale: highlighted ? 1.08 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}

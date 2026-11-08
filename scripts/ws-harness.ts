@@ -1360,8 +1360,12 @@ async function main(): Promise<void> {
     await sleep(900);
 
     const def = createChromaly({ jumpIn: true, windowMs: 2000, sevenZero: true });
+    // Up to 50s, not 20: bots deliberate in real time, so a slow CI runner
+    // plays far fewer cards in the same wall-clock and a window can fail to
+    // open at all (it did, once, on a PR — 2026-11-05). Costs nothing when one
+    // opens early, which it does in a couple of seconds locally.
     let opened = false;
-    for (let tick = 0; tick < 200 && !opened; tick++) {
+    for (let tick = 0; tick < 500 && !opened; tick++) {
       for (const c of [a, b]) {
         const f = c.latest("frame")?.frame as { seat: number; state: ChromalyState } | undefined;
         if (!f || f.seat === null) continue;

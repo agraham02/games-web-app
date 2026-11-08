@@ -383,8 +383,10 @@ test.describe("a room, in real browsers", () => {
     await expect(away).toHaveCount(0);
 
     await stepAway(bo);
-    // Back in the lobby, with the game still running for everyone else.
-    await expect(bo.getByRole("button", { name: /join the game/i })).toBeVisible();
+    // Back in the lobby, with the game still running for everyone else. Bo's
+    // seat is held for him, so it is a way BACK to it — not "Join the game",
+    // and not "Table is full" (the table IS full, of him).
+    await expect(bo.getByRole("button", { name: /back to your seat/i })).toBeVisible();
     await atTable(ada);
 
     /*
@@ -402,7 +404,7 @@ test.describe("a room, in real browsers", () => {
     await expect(away).toHaveCount(1);
     await expect(ada.getByText("Away", { exact: true })).toBeVisible();
 
-    await bo.getByRole("button", { name: /join the game/i }).click();
+    await bo.getByRole("button", { name: /back to your seat/i }).click();
     await atTable(bo);
     // And it clears again on the way back in, for the same reason.
     await expect(away).toHaveCount(0);
@@ -628,15 +630,15 @@ test.describe("a room, in real browsers", () => {
     const watcher = onTurn === "Ada" ? bo : ada;
 
     /*
-      "Lit" is the highlighted branch's full-strength ring. Not a
-      box-shadow test: every pod carries `ring-brass-400/20` at rest, which
-      is also a box-shadow, so that check calls every pod lit and passes
-      against any bug at all. It did, when it was written that way.
+      "Lit" is what the pod itself says: `data-lit`, set only on the
+      highlighted pod. Not a style test: every pod carries a faint ring and a
+      shadow at rest, so a check on those calls every pod lit and passes
+      against any bug at all (it did, when it was written that way) — and a
+      check on the lit ring's class broke the day that class was renamed.
     */
     const litPods = () =>
       watcher.evaluate(() =>
-        [...document.querySelectorAll("div.backdrop-blur-md.rounded-xl")]
-          .filter((el) => el.classList.contains("ring-brass-400"))
+        [...document.querySelectorAll("[data-lit]")]
           .map((el) => el.textContent?.replace(/\s+/g, " ").trim() ?? ""),
       );
 
@@ -817,17 +819,17 @@ test.describe("a room, in real browsers", () => {
     await expect(second.getByText(code, { exact: true })).toBeVisible();
 
     // The old one stands down and says so, rather than flickering.
-    await expect(first.getByText(/playing in another tab/i)).toBeVisible();
+    await expect(first.getByText(/playing somewhere else/i)).toBeVisible();
 
     // And it stays stood down, instead of trading the socket back.
     await first.waitForTimeout(3_000);
-    await expect(first.getByText(/playing in another tab/i)).toBeVisible();
+    await expect(first.getByText(/playing somewhere else/i)).toBeVisible();
     await expect(second.getByText(code, { exact: true })).toBeVisible();
 
     // Taking it back is deliberate, and works.
     await first.getByRole("button", { name: /play here instead/i }).click();
     await expect(first.getByText(code, { exact: true })).toBeVisible();
-    await expect(second.getByText(/playing in another tab/i)).toBeVisible();
+    await expect(second.getByText(/playing somewhere else/i)).toBeVisible();
   });
 
 
