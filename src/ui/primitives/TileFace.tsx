@@ -35,9 +35,10 @@ const PIP_GRID: Record<number, ReadonlyArray<number>> = {
   6: [0, 2, 3, 5, 6, 8],
 };
 
-function Half({ pips, size }: { pips: number; size: number }) {
+function Half({ pips, size, large }: { pips: number; size: number; large: boolean }) {
   const cells = PIP_GRID[pips] ?? [];
-  const dot = size * 0.15;
+  // Large: dots that nearly fill their cells, like a die's.
+  const dot = size * (large ? 0.23 : 0.15);
   return (
     <div
       style={{
@@ -46,7 +47,7 @@ function Half({ pips, size }: { pips: number; size: number }) {
         gridTemplateColumns: "repeat(3, 1fr)",
         gridTemplateRows: "repeat(3, 1fr)",
         placeItems: "center",
-        padding: size * 0.13,
+        padding: size * (large ? 0.07 : 0.13),
       }}
     >
       {Array.from({ length: 9 }, (_, i) => (
@@ -100,6 +101,7 @@ export const TileFace = memo(function TileFace({
   w,
   h,
   ariaHidden = false,
+  large = false,
 }: {
   tile: string;
   w: number;
@@ -113,6 +115,8 @@ export const TileFace = memo(function TileFace({
    * opponents' hands are secret.
    */
   ariaHidden?: boolean;
+  /** Bigger dots — the Large symbols setting. */
+  large?: boolean;
 }) {
   const [a, b] = parseTile(tile);
   const box = tileBox(w, h);
@@ -134,7 +138,7 @@ export const TileFace = memo(function TileFace({
           backfaceVisibility: "hidden",
         }}
       >
-        <Half pips={a} size={box.w} />
+        <Half pips={a} size={box.w} large={large} />
         <div
           style={{
             height: 1,
@@ -142,7 +146,7 @@ export const TileFace = memo(function TileFace({
             background: "var(--color-card-edge)",
           }}
         />
-        <Half pips={b} size={box.w} />
+        <Half pips={b} size={box.w} large={large} />
       </div>
     </Inset>
   );

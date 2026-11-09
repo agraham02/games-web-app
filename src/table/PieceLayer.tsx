@@ -41,6 +41,7 @@ import {
   useHeroHoverIndex,
   useHeroTurnActive,
   useHintsShown,
+  useLargeSymbols,
   usePieceIds,
   usePlacement,
   usePieceMeta,
@@ -908,10 +909,11 @@ function PieceFace({
   /** See `Placement.tint`. */
   tint?: string;
 }) {
-  if (kind === "tile") return <TileFace tile={face} w={w} h={h} ariaHidden={ariaHidden} />;
+  const large = useLargeSymbols();
+  if (kind === "tile") return <TileFace tile={face} w={w} h={h} ariaHidden={ariaHidden} large={large} />;
   if (kind === "chip") return <ChipFace colour={face} size={Math.min(w, h)} />;
   if (kind === "chroma") {
     return <ChromaFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} tint={tint} />;
   }
-  return <CardFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} />;
+  return <CardFace card={face} w={w} h={h} detail={detail} ariaHidden={ariaHidden} large={large} />;
 }

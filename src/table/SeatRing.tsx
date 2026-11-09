@@ -157,6 +157,8 @@ const POD_STYLES: Record<Density, { pod: string; avatar: number; name: string; m
 export function SeatRing({ players }: { players: readonly SeatView[] }) {
   const geometry = useGeometry();
   if (!geometry) return null;
+  // While somebody is on turn, everybody else steps back a little.
+  const someoneActive = players.some((p) => p.active || p.winning);
 
   return (
     <div className="pointer-events-none absolute inset-0 z-800">
@@ -171,7 +173,7 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
               className="absolute -translate-x-1/2 -translate-y-1/2"
               style={{ left: slot.x, top: slot.y }}
             >
-              <SeatPod view={view} density={geometry.density} solid={geometry.tuck} />
+              <SeatPod view={view} density={geometry.density} solid={geometry.tuck} dimmed={someoneActive} />
             </div>
           );
         })}
@@ -193,6 +195,14 @@ export function SeatRing({ players }: { players: readonly SeatView[] }) {
 const POD_LINES = 2;
 
 /**
+ * How much darker the pods NOT on turn go, while one is: black at this
+ * opacity over them. First "just very little" (the user, 2026-11-02), then
+ * "I barely notice": enough that the lit pod wins a glance, not so much that
+ * anyone looks switched off.
+ */
+const TURN_DIM = 0.3;
+
+/**
  * `solid`: the seat's hand is tucked BEHIND this pod (phones — see
  * `TableGeometry.tuck`), so the pod has to be opaque. Translucent, the white
  * backs of the cards behind it washed its stats out to grey on grey.
@@ -201,25 +211,49 @@ export const SeatPod = memo(function SeatPod({
   view,
   density,
   solid,
+  dimmed = false,
 }: {
   view: SeatView;
   density: Density;
   solid: boolean;
+  /** Somebody else is on turn: this pod steps back, a little (`TURN_DIM`). */
+  dimmed?: boolean;
 }) {
   const highlighted = view.active || view.winning;
+  const stepBack = dimmed && !highlighted;
   const s = POD_STYLES[density];
   const tags = podTags(view);
   return (
     <motion.div
+      // For a test to read, rather than matching the styling: a class that was
+      // renamed took the pod-on-turn e2e check with it (2026-11-05).
+      data-lit={highlighted ? "true" : undefined}
       initial={false}
-      animate={{ scale: highlighted ? 1.06 : 1, opacity: view.eliminated ? 0.45 : 1 }}
+      animate={{ scale: highlighted ? 1.08 : 1, opacity: view.eliminated ? 0.45 : 1 }}
       transition={TRANSITIONS.ui}
       className={`relative flex ${s.pod} flex-col items-center rounded-xl px-1 backdrop-blur-md transition-colors ${
         highlighted
-          ? `${solid ? "bg-felt-950" : "bg-felt-950/70"} ring-1 ring-brass-400 shadow-[0_0_20px_rgb(212_175_106/0.35)]`
+          ? `${solid ? "bg-felt-950" : "bg-felt-950/70"} ring-[3px] ring-inset ring-brass-300 shadow-[0_0_30px_rgb(212_175_106/0.65)]`
           : `${solid ? "bg-felt-950" : "bg-felt-950/55"} ring-1 ring-brass-400/20`
       }`}
     >
+      {/* The turn, loud enough for somebody who is not looking for it (the
+          user, 2026-11-02): a thicker outline, a stronger glow, and the glow
+          breathing. The breathing is the glow's OWN layer fading in and out —
+          opacity only, so it costs the main thread nothing forever
+          (`FOREVER_SAFE`) — rather than a shadow being animated, which would
+          repaint every frame. Only a turn pulses; a winner's glow holds. */}
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute -inset-px rounded-xl shadow-[0_0_46px_12px_rgb(212_175_106/0.7)]"
+        initial={false}
+        animate={view.active && !view.winning ? { opacity: [0.55, 1, 0.55] } : { opacity: 0 }}
+        transition={
+          view.active && !view.winning
+            ? { duration: 2.6, repeat: Infinity, ease: "easeInOut" }
+            : TRANSITIONS.ui
+        }
+      />
       {view.timer ? (
         // ON the pod's own edge, not outside it: a side pod sits flush with
         // the screen's edge on a phone, and a ring outside it lost that side
@@ -283,6 +317,27 @@ export const SeatPod = memo(function SeatPod({
       ) : null}
 
       <Stats lines={view.stats ?? []} max={POD_LINES - (tags.length > 0 ? 1 : 0)} className={s.meta} />
+
+      {/* The lit pod filled with gold, faintly: an outline alone is easy to
+          miss on a pod this dark. Not pulsed, so there is always something
+          there to find, whichever moment you look. */}
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-xl bg-brass-400"
+        initial={false}
+        animate={{ opacity: view.active && !view.winning ? 0.2 : 0 }}
+        transition={TRANSITIONS.ui}
+      />
+      {/* The others, darker. Over the pod rather than the pod's
+          own opacity: on a phone the pod is opaque so the cards tucked behind
+          it do not show through, and fading it would let them. */}
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-xl bg-black"
+        initial={false}
+        animate={{ opacity: stepBack ? TURN_DIM : 0 }}
+        transition={TRANSITIONS.ui}
+      />
     </motion.div>
   );
 });

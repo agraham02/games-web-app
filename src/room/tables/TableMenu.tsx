@@ -14,6 +14,8 @@
 import { EndGameAction } from "@/table/gameSettings";
 import { Button } from "@/ui/primitives/Button";
 import { InviteCard } from "../InviteCard";
+import { MoveDevice } from "../MoveDevice";
+import type { MoveCodeState } from "../useRoom";
 
 export function TableMenu({
   code,
@@ -22,6 +24,8 @@ export function TableMenu({
   onStepAway,
   onEndGame,
   onCloseRoom,
+  moveCode,
+  onMoveCode,
 }: {
   /** The room's code, for the invite. */
   code: string;
@@ -33,6 +37,9 @@ export function TableMenu({
   onEndGame: () => void;
   /** Leader only. A game played for money is settled first, as by End game. */
   onCloseRoom: () => void;
+  /** Moving to another device — see `MoveDevice`. */
+  moveCode: MoveCodeState | null;
+  onMoveCode: () => void;
 }) {
   return (
     <>
@@ -43,6 +50,7 @@ export function TableMenu({
           Your seat is kept. A bot plays it until you come back.
         </p>
       )}
+      <MoveDevice code={code} moveCode={moveCode} onRequest={onMoveCode} />
       {leader ? (
         <EndGameAction
           onEnd={onEndGame}

@@ -123,6 +123,8 @@ export function ChromalyOnline({ api, room, frame, held, onClearHeld, setHeld, c
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
             onCloseRoom={api.closeRoom}
+            moveCode={api.moveCode}
+            onMoveCode={api.requestMoveCode}
           />
         }
         live={live}

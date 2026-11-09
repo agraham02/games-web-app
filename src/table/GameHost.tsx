@@ -26,6 +26,7 @@ import { DevPanel } from "./DevPanel";
 import { HeroWinFlourish } from "./HeroWinFlourish";
 import { DEFAULT_DEAL_STAGGER_MS, useDevSettings } from "./devSettings";
 import { handFloorOf, toastLane } from "./geometry";
+import { useYourTurnCue } from "./yourTurn";
 import { useGeometry, useTableStore } from "./store";
 import { GameToaster } from "@/ui/disclosure";
 import { Button } from "@/ui/primitives/Button";
@@ -75,6 +76,12 @@ export interface GameHostProps<S, A> {
   panelReserve?: number;
   /** See `ResolveOptions.pairs`: partners sit together. Mind Meld. */
   seatPairs?: boolean;
+  /**
+   * Whether the game has a draw pile beside the viewer's hand, which a
+   * domino rack keeps clear of. Asked of the live state because it can
+   * depend on the rules in play (Caribbean dominoes has none). Default yes.
+   */
+  hasBoneyard?: (state: S) => boolean;
   /** Dev-only one-shot rigs, handed the live runtime so a game can build
    *  a state that is otherwise only reachable by waiting for it. */
   scenarios?: (live: GameRuntime<S, A>) => ReadonlyArray<{ label: string; run: () => void }>;
@@ -256,6 +263,7 @@ export function GameHostView<S, A>({
   panelReserve,
   pileAnchor,
   seatPairs,
+  hasBoneyard,
   scenarios,
   gameTitle,
   standings,
@@ -280,6 +288,14 @@ export function GameHostView<S, A>({
   roundNoun = "Round",
   children,
 }: GameHostProps<S, A> & { live: GameRuntime<S, A> }) {
+  const pieceVocabulary = useMemo(
+    () => definition.pieces(live.rawState),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [definition],
+  );
+  // A domino game: a rack rather than a fan, with its own spacing and, in
+  // some rule sets, a boneyard beside it.
+  const tileGame = Object.values(pieceVocabulary).some((m) => m.kind === "tile");
   const allSettings = useMemo(() => [...(settings ?? []), ...TABLE_SETTINGS], [settings]);
   const geometry = useGeometry();
   const [settingValues, setSetting] = useGameSettings(definition.id, allSettings);
@@ -289,6 +305,7 @@ export function GameHostView<S, A>({
     vibration: settingValues.vibration !== false,
   });
   useTableSounds({ sound: settingValues.sound !== false });
+  useYourTurnCue({ yourTurn: live.isHeroTurn, vibration: settingValues.vibration !== false });
   // Hints off draws no game's `dimmed` marks — see `TableState.hintsShown`.
   // A game without a Hints setting keeps them, as it always has.
   const hintsShown = settingValues.hints !== false;
@@ -297,10 +314,18 @@ export function GameHostView<S, A>({
   }, [hintsShown]);
   // Card spacing, for the hand's fan and its pan (`TableState.handFloor`).
   // A game without the setting gets the default, which is what it had.
-  const handFloor = handFloorOf(settingValues.handSpacing);
+  //
+  // Large symbols have wider floors of their own (`LARGE_HAND_FLOORS`): a big
+  // corner index overlapped by its neighbour is no easier to read than a
+  // small one.
+  const largeSymbols = settingValues.largeSymbols === true;
+  const handFloor = handFloorOf(settingValues.handSpacing, largeSymbols, tileGame);
   useEffect(() => {
     useTableStore.getState().setHandFloor(handFloor);
   }, [handFloor]);
+  useEffect(() => {
+    useTableStore.getState().setLargeSymbols(largeSymbols);
+  }, [largeSymbols]);
   // Synced into the shared table store, not read as a prop threaded
   // through PieceLayer — the piece that actually needs this (a hero-hand
   // card, in any game) lives several components below here, and a
@@ -315,6 +340,12 @@ export function GameHostView<S, A>({
     useTableStore.getState().setMoveInFlight(live.sending);
   }, [live.sending]);
   useEffect(() => () => useTableStore.getState().setMoveInFlight(false), []);
+  // The viewer's own turn, for the glow over their hand.
+  const yourTurn = live.isHeroTurn;
+  useEffect(() => {
+    useTableStore.getState().setHeroTurn(yourTurn);
+  }, [yourTurn]);
+  useEffect(() => () => useTableStore.getState().setHeroTurn(false), []);
   const handLive = handActive ? handActive(live) : live.isHeroTurn;
   useEffect(() => {
     const store = useTableStore.getState();
@@ -399,16 +430,11 @@ export function GameHostView<S, A>({
   // 52-entry map on every render just to hand it to the dev panel would
   // quietly undo that. Keyed on the definition, which is the only thing
   // that can change it.
-  const pieceVocabulary = useMemo(
-    () => definition.pieces(live.rawState),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [definition],
-  );
 
   // A card is read from its corner, so on a short screen a card hand may run
   // off the bottom edge and give the board what it saves; a domino needs
   // both halves, so a tile game keeps its whole hand (see `handBleed`).
-  const handBleed = !Object.values(pieceVocabulary).some((m) => m.kind === "tile");
+  const handBleed = !tileGame;
 
   const pendingSeat = live.pendingReveal ? definition.currentSeat(live.state) : null;
   // Built only while it is actually showing: a game's scorecard reads
@@ -426,6 +452,7 @@ export function GameHostView<S, A>({
       pileAnchor={pileAnchor}
       viewerSeat={viewerSeat}
       handBleed={handBleed}
+      boneyard={hasBoneyard ? hasBoneyard(live.state) : undefined}
       pairs={seatPairs}
       game={definition.id}
       onPieceTap={onPieceTap ? (id) => onPieceTap(id, live) : undefined}

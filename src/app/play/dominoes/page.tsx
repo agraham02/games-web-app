@@ -36,6 +36,7 @@ import {
   standings,
   tapTile,
   DOMINO_SETTINGS,
+  dominoHasBoneyard,
 } from "./table";
 import type { GameRuntime } from "@/table/useGameRuntime";
 import { useTableStore } from "@/table/store";
@@ -117,6 +118,7 @@ export default function DominoesPlayPage() {
       scenarios={dominoScenarios}
       onPieceTap={onPieceTap}
       settings={DOMINO_SETTINGS}
+      hasBoneyard={dominoHasBoneyard}
       onRematch={() => {
         release();
         setGameKey((k) => k + 1);

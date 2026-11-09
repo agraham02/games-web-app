@@ -35,6 +35,7 @@ import {
   tapTile,
   type DomView,
   DOMINO_SETTINGS,
+  dominoHasBoneyard,
 } from "@/app/play/dominoes/table";
 import { tintFor } from "../Roster";
 import { awayFrom, botFrom, autoContinueFor, continueWaitingFor, openingPosition, useOnlineRuntime, nameForSeat } from "../useOnlineRuntime";
@@ -128,6 +129,7 @@ export function DominoesOnline({
         corner={corner}
         turnClock={api.turnClock}
         settings={DOMINO_SETTINGS}
+        hasBoneyard={dominoHasBoneyard}
         menuActions={
           <TableMenu
             code={room.code}
@@ -136,6 +138,8 @@ export function DominoesOnline({
             onStepAway={api.exitGame}
             onEndGame={api.endGame}
             onCloseRoom={api.closeRoom}
+            moveCode={api.moveCode}
+            onMoveCode={api.requestMoveCode}
           />
         }
         live={live}

@@ -33,7 +33,7 @@ import { NumberStepper } from "@/ui/primitives/NumberStepper";
 import { useMediaQuery } from "@/ui/useMediaQuery";
 import { HeroStatusBadge, TurnIndicator, type ScoreRow } from "@/ui/phases/PhaseScreens";
 import type { RoundNote } from "@/table/GameHost";
-import type { GameSetting } from "@/table/gameSettings";
+import { LARGE_SYMBOLS_SETTING, type GameSetting } from "@/table/gameSettings";
 import { BandNote, HandZone } from "@/table/HandZone";
 import type { SeatStat, SeatView } from "@/table/SeatRing";
 import { seatCue } from "@/table/turnCue";
@@ -265,6 +265,7 @@ export const POKER_SETTINGS: readonly GameSetting[] = [
     description: "Explains each choice under its button, and spells out the dealer and blind markers.",
     default: true,
   },
+  LARGE_SYMBOLS_SETTING,
 ];
 
 /** This viewer's best hand so far, in words — or null when they hold none. */
